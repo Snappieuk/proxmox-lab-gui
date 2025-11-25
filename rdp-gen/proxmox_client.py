@@ -217,14 +217,15 @@ def get_all_vms() -> List[Dict[str, Any]]:
             except Exception as e:
                 logger.debug("failed to list qemu on %s: %s", node, e)
                 vmlist = []
-        print(f"{vmlist} VMLIST")
         
 
         for vm in (vmlist or []):
             logger.debug(f"Processing VM: {vm}")
+            print(f"Processing VM: {vm}")
             try:
                 out.append(_build_vm_dict(vm))
                 logger.debug(f"Building VM {vm}")
+                print(out)
             except Exception:
                 continue
 
