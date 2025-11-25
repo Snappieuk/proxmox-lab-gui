@@ -151,6 +151,10 @@ def _build_vm_dict(raw: Dict[str, Any]) -> Dict[str, Any]:
     status = raw.get("status", "unknown")
     vmtype = raw.get("type", "qemu")
 
+    print(f"{raw} - Printing the raw for Build Dictionary")
+    print(f"{node} Printing out the node")
+    print(f"{status}, {vmtype}")
+          
     category = _guess_category(raw)
     # Prefer any IP info embedded in the API response (e.g. cloud-init or cache),
     # fallback to guest agent lookup if enabled and running.
