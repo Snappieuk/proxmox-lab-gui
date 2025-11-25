@@ -36,6 +36,8 @@ class ProxmoxAdminWrapper:
         vms = []
         try:
             qemu_vms = self._admin.nodes(node).qemu.get() or []
+            for vm in qemu_vms:
+                vm['node'] = node
             vms.extend(qemu_vms)
             logger.debug(vms)
         except Exception as e:
@@ -43,6 +45,8 @@ class ProxmoxAdminWrapper:
         
         try:
             lxc_vms = self._admin.nodes(node).lxc.get() or []
+            for vm in lxc_vms:
+                vm['node'] = node
             vms.extend(lxc_vms)
             logger.debug(lxc_vms)
         except Exception as e:
@@ -146,25 +150,21 @@ def _lookup_vm_ip(node: str, vmid: int, vmtype: str) -> Optional[str]:
 
 def _build_vm_dict(raw: Dict[str, Any]) -> Dict[str, Any]:
     vmid = int(raw["vmid"])
-   #node = raw["node"]
+    node = raw["node"]
     name = raw.get("name", f"vm-{vmid}")
     status = raw.get("status", "unknown")
     vmtype = raw.get("type", "qemu")
 
- #   print(f"{raw} - Printing the raw for Build Dictionary")
- #  print(f"{node} Printing out the node")
-#   print(f"{status}, {vmtype}")
-          
     category = _guess_category(raw)
     # Prefer any IP info embedded in the API response (e.g. cloud-init or cache),
     # fallback to guest agent lookup if enabled and running.
     ip = raw.get("ip")
-#   if not ip and status == "running":
-#      ip = _lookup_vm_ip(node, vmid, vmtype)
+    if not ip and status == "running":
+        ip = _lookup_vm_ip(node, vmid, vmtype)
 
     return {
         "vmid": vmid,
- #      "node": node,
+        "node": node,
         "name": name,
         "status": status,
         "type": vmtype,      # 'qemu' or 'lxc'
@@ -202,11 +202,8 @@ def get_all_vms() -> List[Dict[str, Any]]:
         except Exception as e:
             logger.debug("failed to get cluster resources: %s", e)
 
-    list_of_nodes = []
-
     for n in nodes or []:
         node = n["node"]
-        list_of_nodes.append(node)
         if VALID_NODES and node not in VALID_NODES:
             continue
         # list per-node VMs via wrapper if available
@@ -219,24 +216,18 @@ def get_all_vms() -> List[Dict[str, Any]]:
                 vmlist = []
         else:
             try:
-                vmlist = proxmox_admin.nodes(node).qemu.get()
-                
+                qemu_vms = proxmox_admin.nodes(node).qemu.get() or []
+                for vm in qemu_vms:
+                    vm['node'] = node
+                vmlist = qemu_vms
             except Exception as e:
                 logger.debug("failed to list qemu on %s: %s", node, e)
                 vmlist = []
-        i = 0
-        print(list_of_nodes)
-
 
         for vm in (vmlist or []):
-            print(vm)
-            node = list_of_nodes[i]
-            print(node[i])
             logger.debug(f"Processing VM: {vm}")
             out.append(_build_vm_dict(vm))
             logger.debug(f"Building VM {vm}")
-           # print(f"{out} THIS IS THE OUT LIST")
-
 
     logger.info("get_all_vms: returning %d VM(s)", len(out))
 
