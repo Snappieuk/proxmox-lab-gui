@@ -159,8 +159,8 @@ def _build_vm_dict(raw: Dict[str, Any]) -> Dict[str, Any]:
     # Prefer any IP info embedded in the API response (e.g. cloud-init or cache),
     # fallback to guest agent lookup if enabled and running.
     ip = raw.get("ip")
-    if not ip and status == "running":
-        ip = _lookup_vm_ip(node, vmid, vmtype)
+#   if not ip and status == "running":
+#      ip = _lookup_vm_ip(node, vmid, vmtype)
 
     return {
         "vmid": vmid,
