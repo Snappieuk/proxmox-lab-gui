@@ -54,7 +54,11 @@ def require_user() -> str:
 @app.context_processor
 def inject_admin_flag():
     user = session.get("user")
-    return {"is_admin": is_admin_user(user) if user else False}
+    is_admin = is_admin_user(user) if user else False
+    # Log admin status for debugging (INFO level to be visible)
+    if user:
+        app.logger.info("inject_admin_flag: user=%s is_admin=%s", user, is_admin)
+    return {"is_admin": is_admin}
 
 
 # ---------------------------------------------------------------------------
@@ -93,7 +97,7 @@ def login():
             error = "Invalid username or password."
         else:
             session["user"] = full_user
-            app.logger.debug("user logged in: %s", full_user)
+            app.logger.info("user logged in: %s", full_user)
             next_url = request.args.get("next") or url_for("portal")
             return redirect(next_url)
 

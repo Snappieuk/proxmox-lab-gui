@@ -297,7 +297,13 @@ def _user_in_group(user: str, groupid: str) -> bool:
         elif isinstance(m, dict) and "userid" in m:
             members.append(m["userid"])
 
-    return user in members
+    # Accept both realm variants for matching: user (full), or username@pam, username@pve
+    variants = {user}
+    if "@" in user:
+        name, realm = user.split("@", 1)
+        for r in ("pam", "pve"):
+            variants.add(f"{name}@{r}")
+    return any(u in members for u in variants)
 
 
 def _debug_is_admin_user(user: str) -> bool:
