@@ -6,7 +6,11 @@ on:
 
 jobs:
   deploy:
-    runs-on: self-hosted  # <-- instead of "ubuntu-latest"
+    runs-on: self-hosted
     steps:
       - name: Pull and restart
-        run: ./Pull-Action.sh
+        run: |
+          cd ~/proxmox-lab-gui
+          git pull origin main
+          pkill -f "python.*app.py"
+          nohup python3 app.py > app.log 2>&1 &
