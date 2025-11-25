@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1>User ↔ VM mappings</h1>
+        <p class="page-subtitle">
+            Assign which VMs each Proxmox user (pve realm) is allowed to see/control.
+        </p>
+    </div>
+</div>
+
+<div class="mapping-layout">
+
+    <div class="mapping-form-card">
+        <h2>Edit mapping</h2>
+
+        {% if message %}
+            <div class="mapping-message">{{ message }}</div>
+        {% endif %}
+        {% if error %}
+            <div class="mapping-error">{{ error }}</div>
+        {% endif %}
+
+        <form method="post">
+            <label for="user">User</label>
+            <select id="user" name="user" required>
+                <option value="">Select a user…</option>
+                {% for u in users %}
+                    <option value="{{ u.userid }}">{{ u.userid }}</option>
+                {% endfor %}
+            </select>
+
+            <label for="vmids">VM IDs (comma separated)</label>
+            <input type="text" id="vmids" name="vmids"
+                   placeholder="e.g. 101,102,103">
+
+            <p class="help-text">
+                Leave empty and save to remove mapping for that user.
+            </p>
+
+            <button type="submit" class="btn-primary mapping-btn">Save</button>
+        </form>
+    </div>
+
+    <div class="mapping-table-card">
+        <h2>Current mappings</h2>
+        <table class="mapping-table">
+            <thead>
+            <tr>
+                <th>User</th>
+                <th>VM IDs</th>
+            </tr>
+            </thead>
+            <tbody>
+            {% if mapping %}
+                {% for user_id, vmids in mapping.items() %}
+                    <tr>
+                        <td>{{ user_id }}</td>
+                        <td>{{ vmids|join(', ') }}</td>
+                    </tr>
+                {% endfor %}
+            {% else %}
+                <tr><td colspan="2">No mappings defined.</td></tr>
+            {% endif %}
+            </tbody>
+        </table>
+
+        <p class="help-text">
+            Existing VM IDs: {{ all_vm_ids|join(', ') }}
+        </p>
+    </div>
+
+</div>
+{% endblock %}
+

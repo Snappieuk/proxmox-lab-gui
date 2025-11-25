@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Lab VM Portal</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Segoe+UI:wght@400;600&display=swap" rel="stylesheet">
+</head>
+<body>
+<header class="topbar">
+    <div class="topbar-left">
+        <span class="logo-square"></span>
+        <span class="topbar-title">Lab VMs</span>
+    </div>
+    <div class="topbar-right">
+        {% if session.get("user") %}
+            <span class="topbar-user">{{ session.get("user") }}</span>
+            <a href="{{ url_for('logout') }}" class="topbar-link">Sign out</a>
+        {% endif %}
+    </div>
+</header>
+
+<div class="app-shell">
+    <nav class="sidebar">
+        <div class="sidebar-section-title">Navigation</div>
+        {% if session.get("user") %}
+            <a class="sidebar-link {% if request.endpoint == 'portal' %}sidebar-link-active{% endif %}"
+               href="{{ url_for('portal') }}">My machines</a>
+            {% if is_admin %}
+                <a class="sidebar-link {% if request.endpoint == 'admin_view' %}sidebar-link-active{% endif %}"
+                   href="{{ url_for('admin_view') }}">Admin view</a>
+                <a class="sidebar-link {% if request.endpoint == 'admin_mappings' %}sidebar-link-active{% endif %}"
+                   href="{{ url_for('admin_mappings') }}">User ↔ VM mappings</a>
+            {% endif %}
+        {% endif %}
+    </nav>
+
+    <main class="main">
+        {% block content %}{% endblock %}
+    </main>
+</div>
+</body>
+</html>
+

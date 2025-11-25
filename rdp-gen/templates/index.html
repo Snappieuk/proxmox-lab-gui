@@ -1,0 +1,167 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1>My Lab Machines</h1>
+        <p class="page-subtitle">
+            Windows: RDP. Linux: SSH.
+        </p>
+    </div>
+</div>
+
+{% macro vm_cards(vms) %}
+<div class="cards-grid">
+    {% for vm in vms %}
+    <div class="vm-card" data-vmid="{{ vm.vmid }}">
+        <div class="vm-card-header">
+            <div>
+                <div class="vm-name">{{ vm.name }}</div>
+                <div class="vm-meta">
+                    VMID {{ vm.vmid }} · {{ vm.node }}
+                </div>
+            </div>
+            <div class="vm-status vm-status-{{ vm.status }}">
+                {{ vm.status|capitalize }}
+            </div>
+        </div>
+
+        <div class="vm-body">
+            <div class="vm-row">
+                <span class="vm-label">IP address</span>
+                <span class="vm-value vm-ip">
+                    {% if vm.ip %}
+                        {{ vm.ip }}
+                    {% else %}
+                        Not available
+                    {% endif %}
+                </span>
+            </div>
+            {% if vm.category == "windows" %}
+            <div class="vm-row">
+                <span class="vm-label">Connection</span>
+                <span class="vm-value">RDP (3389)</span>
+            </div>
+            {% elif vm.category == "linux" %}
+            <div class="vm-row">
+                <span class="vm-label">Connection</span>
+                <span class="vm-value">SSH (22)</span>
+            </div>
+            <div class="vm-row">
+                <span class="vm-label">SSH command</span>
+                <span class="vm-value vm-ssh">
+                    {% if vm.ip %}
+                        ssh &lt;user&gt;@{{ vm.ip }}
+                    {% else %}
+                        ssh &lt;user&gt;@&lt;ip&gt;
+                    {% endif %}
+                </span>
+            </div>
+            {% endif %}
+        </div>
+
+        <div class="vm-footer">
+            <button class="btn-secondary btn-power"
+                    data-vmid="{{ vm.vmid }}" data-action="stop">
+                Stop
+            </button>
+            <button class="btn-primary btn-power"
+                    data-vmid="{{ vm.vmid }}" data-action="start">
+                Start
+            </button>
+
+            {% if vm.category == "windows" %}
+            <a class="btn-link" href="/rdp/{{ vm.vmid }}.rdp">RDP file</a>
+            {% endif %}
+        </div>
+    </div>
+    {% else %}
+    <p>No VMs in this category.</p>
+    {% endfor %}
+</div>
+{% endmacro %}
+
+{% if windows_vms %}
+<h2 class="section-title">Windows machines</h2>
+{{ vm_cards(windows_vms) }}
+{% endif %}
+
+{% if linux_vms %}
+<h2 class="section-title">Linux machines</h2>
+{{ vm_cards(linux_vms) }}
+{% endif %}
+
+{% if other_vms %}
+<h2 class="section-title">Other / unknown</h2>
+{{ vm_cards(other_vms) }}
+{% endif %}
+
+<script>
+async function refreshVmStatus() {
+    try {
+        const resp = await fetch("/api/vms");
+        if (!resp.ok) return;
+        const data = await resp.json();
+
+        data.forEach(vm => {
+            const card = document.querySelector('.vm-card[data-vmid="' + vm.vmid + '"]');
+            if (!card) return;
+
+            const statusEl = card.querySelector('.vm-status');
+            const ipEl = card.querySelector('.vm-ip');
+            const sshEl = card.querySelector('.vm-ssh');
+
+            if (statusEl) {
+                const text = vm.status ? vm.status.charAt(0).toUpperCase() + vm.status.slice(1) : "Unknown";
+                statusEl.textContent = text;
+                statusEl.classList.remove("vm-status-running", "vm-status-stopped", "vm-status-unknown");
+                statusEl.classList.add("vm-status-" + vm.status);
+            }
+            if (ipEl) {
+                ipEl.textContent = vm.ip ? vm.ip : "Not available";
+            }
+            if (sshEl) {
+                if (vm.ip) {
+                    sshEl.textContent = "ssh <user>@" + vm.ip;
+                } else {
+                    sshEl.textContent = "ssh <user>@<ip>";
+                }
+            }
+        });
+    } catch (e) {}
+}
+
+async function sendPowerAction(vmid, action, btn) {
+    try {
+        btn.disabled = true;
+        btn.classList.add("btn-disabled");
+        const resp = await fetch(`/api/vm/${vmid}/${action}`, { method: "POST" });
+        if (!resp.ok) {
+            console.error("Power action failed", await resp.text());
+        }
+        setTimeout(refreshVmStatus, 2000);
+    } catch (e) {
+        console.error(e);
+    } finally {
+        btn.disabled = false;
+        btn.classList.remove("btn-disabled");
+    }
+}
+
+window.addEventListener("load", function () {
+    refreshVmStatus();
+    // slow polling (20s) to avoid hammering Proxmox
+    setInterval(refreshVmStatus, 20000);
+
+    document.addEventListener("click", function (e) {
+        const btn = e.target.closest(".btn-power");
+        if (!btn) return;
+        const vmid = btn.getAttribute("data-vmid");
+        const action = btn.getAttribute("data-action");
+        if (!vmid || !action) return;
+        sendPowerAction(vmid, action, btn);
+    });
+});
+</script>
+{% endblock %}
+

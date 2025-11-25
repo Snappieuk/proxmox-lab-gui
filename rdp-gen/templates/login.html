@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="login-wrapper">
+    <div class="login-card">
+        <h1>Sign in</h1>
+        {% if error %}
+            <div class="login-error">{{ error }}</div>
+        {% endif %}
+        <form method="post">
+            <label for="username">Proxmox user (pve realm)</label>
+            <input type="text" id="username" name="username" placeholder="e.g. student1" required>
+
+            <label for="password">Password</label>
+            <input type="password" id="password" name="password" required>
+
+            <button type="submit" class="btn-primary login-btn">Sign in</button>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
