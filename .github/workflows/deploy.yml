@@ -1,0 +1,6 @@
+jobs:
+  deploy:
+    runs-on: self-hosted  # <-- instead of "ubuntu-latest"
+    steps:
+      - name: Pull and restart
+        run: ./Pull-Action.sh
