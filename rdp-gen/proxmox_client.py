@@ -146,13 +146,13 @@ def _lookup_vm_ip(node: str, vmid: int, vmtype: str) -> Optional[str]:
 
 def _build_vm_dict(raw: Dict[str, Any]) -> Dict[str, Any]:
     vmid = int(raw["vmid"])
-    node = raw["node"]
+   #node = raw["node"]
     name = raw.get("name", f"vm-{vmid}")
     status = raw.get("status", "unknown")
     vmtype = raw.get("type", "qemu")
 
     print(f"{raw} - Printing the raw for Build Dictionary")
-    print(f"{node} Printing out the node")
+ #  print(f"{node} Printing out the node")
     print(f"{status}, {vmtype}")
           
     category = _guess_category(raw)
@@ -164,7 +164,7 @@ def _build_vm_dict(raw: Dict[str, Any]) -> Dict[str, Any]:
 
     return {
         "vmid": vmid,
-        "node": node,
+ #      "node": node,
         "name": name,
         "status": status,
         "type": vmtype,      # 'qemu' or 'lxc'
