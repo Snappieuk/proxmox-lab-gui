@@ -31,8 +31,22 @@ class ProxmoxAdminWrapper:
         return self._admin.nodes.get()
 
     def list_qemu(self, node: str):
-        # returns list of VMs for a node; align with cache expectations
-        return self._admin.nodes(node).qemu.get()
+        # returns list of QEMU VMs + LXC containers for a node
+        # Combine both qemu and lxc to get all VMs/containers
+        vms = []
+        try:
+            qemu_vms = self._admin.nodes(node).qemu.get() or []
+            vms.extend(qemu_vms)
+        except Exception as e:
+            logger.debug("failed to list qemu on %s: %s", node, e)
+        
+        try:
+            lxc_vms = self._admin.nodes(node).lxc.get() or []
+            vms.extend(lxc_vms)
+        except Exception as e:
+            logger.debug("failed to list lxc on %s: %s", node, e)
+        
+        return vms
 
     def status_qemu(self, node: str, vmid: int):
         return self._admin.nodes(node).qemu(vmid).status.get()
