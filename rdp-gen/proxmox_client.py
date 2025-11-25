@@ -225,8 +225,11 @@ def get_all_vms() -> List[Dict[str, Any]]:
                 logger.debug("failed to list qemu on %s: %s", node, e)
                 vmlist = []
         i = 0
+        print(list_of_nodes)
+
 
         for vm in (vmlist or []):
+
             print(vm)
             node = list_of_nodes[i]
             print(node[i])
