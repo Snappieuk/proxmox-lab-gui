@@ -128,8 +128,8 @@ def root():
 def portal():
     user = require_user()
     vms = get_vms_for_user(user)
-    print("got here")
-    print(vms)
+ #   print("got here")
+#  print(vms)
     app.logger.info("portal: user=%s vms=%d", user, len(vms))
 
     windows_vms = [v for v in vms if v.get("category") == "windows"]

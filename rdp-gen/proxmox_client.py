@@ -187,6 +187,7 @@ def get_all_vms() -> List[Dict[str, Any]]:
     if proxmox_admin_wrapper:
         try:
             nodes = proxmox_admin_wrapper.get_nodes()
+            print(nodes)
         except Exception as e:
             logger.debug("failed to list nodes via wrapper: %s", e)
     else:
