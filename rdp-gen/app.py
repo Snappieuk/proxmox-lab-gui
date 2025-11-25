@@ -83,7 +83,7 @@ def admin_required(f):
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if session.get("user"):
-        # Already logged in
+           # Already logged in — redirect to portal
         return redirect(url_for("index"))
 
     error = None
