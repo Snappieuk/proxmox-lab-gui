@@ -300,6 +300,22 @@ def _user_in_group(user: str, groupid: str) -> bool:
     return user in members
 
 
+def _debug_is_admin_user(user: str) -> bool:
+    try:
+        grp = proxmox_admin.access.groups(ADMIN_GROUP).get()
+    except Exception:
+        grp = {}
+    raw_members = (grp.get("members", []) or []) if isinstance(grp, dict) else []
+    members = []
+    for m in raw_members:
+        if isinstance(m, str):
+            members.append(m)
+        elif isinstance(m, dict) and "userid" in m:
+            members.append(m["userid"])
+    logger.debug("DEBUG: ADMIN_GROUP=%s members=%s, user=%s", ADMIN_GROUP, members, user)
+    return user in members
+
+
 def is_admin_user(user: str) -> bool:
     """
     Admin if:
@@ -311,7 +327,9 @@ def is_admin_user(user: str) -> bool:
     if user in ADMIN_USERS:
         return True
     if ADMIN_GROUP:
-        return _user_in_group(user, ADMIN_GROUP)
+        res = _user_in_group(user, ADMIN_GROUP)
+        logger.debug("is_admin_user(%s) -> %s (ADMIN_USERS=%s, ADMIN_GROUP=%s)", user, res, ADMIN_USERS, ADMIN_GROUP)
+        return res
     return False
 
 
