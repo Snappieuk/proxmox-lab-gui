@@ -365,6 +365,7 @@ def get_vms_for_user(user: str) -> List[Dict[str, Any]]:
     Admin: all VMs.
     """
     vms = get_all_vms()
+    print(vms)
     admin = is_admin_user(user)
     logger.debug("get_vms_for_user: user=%s is_admin=%s all_vms=%d", user, admin, len(vms))
     if admin:
