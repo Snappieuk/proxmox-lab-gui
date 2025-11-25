@@ -228,7 +228,7 @@ def get_all_vms() -> List[Dict[str, Any]]:
             logger.debug(f"Processing VM: {vm}")
             out.append(_build_vm_dict(vm))
             logger.debug(f"Building VM {vm}")
-            print(f"{out} THIS IS THE OUT LIST")
+           # print(f"{out} THIS IS THE OUT LIST")
 
 
     logger.info("get_all_vms: returning %d VM(s)", len(out))
