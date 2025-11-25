@@ -13,6 +13,13 @@
     {% if message %}
     <div class="page-banner">{{ message }}</div>
     {% endif %}
+    {% if probe %}
+    <div class="page-banner">
+        <strong>Probe:</strong>
+        Nodes: {{ probe.nodes_count }}; Resources: {{ probe.resources_count }}; Valid nodes: {{ probe.valid_nodes }}
+        {% if probe.error %}<br/>Error: {{ probe.error }}{% endif %}
+    </div>
+    {% endif %}
 
 {% macro vm_cards(vms) %}
 <div class="cards-grid">

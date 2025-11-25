@@ -28,11 +28,13 @@
         {% if session.get("user") %}
             <a class="sidebar-link {% if request.endpoint == 'portal' %}sidebar-link-active{% endif %}"
                href="{{ url_for('portal') }}">My machines</a>
-            {% if is_admin %}
+                {% if is_admin %}
                 <a class="sidebar-link {% if request.endpoint == 'admin_view' %}sidebar-link-active{% endif %}"
                    href="{{ url_for('admin_view') }}">Admin view</a>
                 <a class="sidebar-link {% if request.endpoint == 'admin_mappings' %}sidebar-link-active{% endif %}"
                    href="{{ url_for('admin_mappings') }}">User ↔ VM mappings</a>
+                <a class="sidebar-link {% if request.endpoint == 'admin_probe' %}sidebar-link-active{% endif %}"
+                   href="{{ url_for('admin_probe') }}">Proxmox probe</a>
             {% endif %}
     {% endif %}
 </nav>

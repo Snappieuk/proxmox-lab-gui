@@ -479,3 +479,45 @@ def get_pve_users() -> List[Dict[str, str]]:
 
     out.sort(key=lambda x: x["userid"])
     return out
+
+
+def probe_proxmox() -> Dict[str, Any]:
+    """Return diagnostics information helpful for admin troubleshooting.
+
+    Contains node list, resource count, a small sample of resources, and any error
+    messages encountered while querying the Proxmox API.
+    """
+    info: Dict[str, Any] = {
+        "ok": True,
+        "nodes": [],
+        "nodes_count": 0,
+        "resources_count": 0,
+        "resources_sample": [],
+        "valid_nodes": VALID_NODES,
+        "admin_users": ADMIN_USERS,
+        "admin_group": ADMIN_GROUP,
+        "error": None,
+    }
+    try:
+        nodes = proxmox_admin.nodes.get() or []
+        info["nodes"] = [n.get("node") for n in nodes if isinstance(n, dict) and "node" in n]
+        info["nodes_count"] = len(info["nodes"])
+    except Exception as e:
+        info["ok"] = False
+        info["error"] = f"nodes error: {e}"
+        logger.exception("probe_proxmox: nodes error")
+        return info
+
+    try:
+        resources = proxmox_admin.cluster.resources.get(type="vm") or []
+        info["resources_count"] = len(resources)
+        info["resources_sample"] = [
+            {"vmid": r.get("vmid"), "node": r.get("node"), "name": r.get("name")} for r in resources[:10]
+        ]
+    except Exception as e:
+        info["ok"] = False
+        info["error"] = f"resources error: {e}"
+        logger.exception("probe_proxmox: resources error")
+        return info
+
+    return info

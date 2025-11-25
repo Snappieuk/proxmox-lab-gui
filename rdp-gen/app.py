@@ -27,6 +27,7 @@ from proxmox_client import (
     set_user_vm_mapping,
     get_pve_users,
     proxmox_admin_wrapper,
+    probe_proxmox,
 )
 
 import re
@@ -210,6 +211,7 @@ def admin_view():
     linux_vms = [v for v in vms if v.get("category") == "linux"]
     other_vms = [v for v in vms if v.get("category") not in ("windows", "linux")]
     message = None
+    probe = probe_proxmox()
     if not vms:
         message = "No VMs discovered — check Proxmox connection or credentials."
     return render_template(
@@ -219,7 +221,16 @@ def admin_view():
         other_vms=other_vms,
         user=user,
         message=message,
+        probe=probe,
     )
+
+
+@app.route("/admin/probe")
+@admin_required
+def admin_probe():
+    """Return Proxmox diagnostics as JSON (admin-only)."""
+    info = probe_proxmox()
+    return jsonify(info)
 
 
 # ---------------------------------------------------------------------------
