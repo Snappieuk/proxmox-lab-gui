@@ -10,7 +10,7 @@ jobs:
     steps:
       - name: Pull and restart
         run: |
-          cd ~/proxmox-lab-gui
+          cd ~/rdp-gen
           git pull origin main
           pkill -f "python.*app.py"
           nohup python3 app.py > app.log 2>&1 &
