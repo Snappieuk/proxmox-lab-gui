@@ -202,8 +202,11 @@ def get_all_vms() -> List[Dict[str, Any]]:
         except Exception as e:
             logger.debug("failed to get cluster resources: %s", e)
 
+    list_of_nodes = []
+
     for n in nodes or []:
         node = n["node"]
+        list_of_nodes.append(node)
         if VALID_NODES and node not in VALID_NODES:
             continue
         # list per-node VMs via wrapper if available
@@ -216,16 +219,18 @@ def get_all_vms() -> List[Dict[str, Any]]:
                 vmlist = []
         else:
             try:
-                vmlist = [node, proxmox_admin.nodes(node).qemu.get()]
-                print(node)
-                print(vmlist)
+                vmlist = proxmox_admin.nodes(node).qemu.get()
                 
             except Exception as e:
                 logger.debug("failed to list qemu on %s: %s", node, e)
                 vmlist = []
-        
+        i = 0
 
         for vm in (vmlist or []):
+            print(vm)
+            node = list_of_nodes[i]
+            print(node[i])
+            i += 1
             logger.debug(f"Processing VM: {vm}")
             out.append(_build_vm_dict(vm))
             logger.debug(f"Building VM {vm}")
