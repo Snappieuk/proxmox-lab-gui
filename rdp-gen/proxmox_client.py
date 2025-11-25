@@ -207,6 +207,8 @@ def get_all_vms() -> List[Dict[str, Any]]:
             except Exception:
                 continue
 
+    logger.info("get_all_vms: returning %d VM(s)", len(out))
+
     _vm_cache_data = out
     _vm_cache_ts = now
     return out
@@ -345,16 +347,20 @@ def get_vms_for_user(user: str) -> List[Dict[str, Any]]:
     Admin: all VMs.
     """
     vms = get_all_vms()
-
-    if is_admin_user(user):
+    admin = is_admin_user(user)
+    logger.debug("get_vms_for_user: user=%s is_admin=%s all_vms=%d", user, admin, len(vms))
+    if admin:
         return vms
 
     mapping = get_user_vm_map()
     allowed = set(mapping.get(user, []))
+    logger.debug("get_vms_for_user: user=%s allowed_vmids=%s", user, allowed)
     if not allowed:
         return []
 
-    return [vm for vm in vms if vm["vmid"] in allowed]
+    result = [vm for vm in vms if vm["vmid"] in allowed]
+    logger.debug("get_vms_for_user: user=%s visible_vms=%d", user, len(result))
+    return result
 
 
 def find_vm_for_user(user: str, vmid: int) -> Optional[Dict[str, Any]]:
@@ -369,6 +375,7 @@ def find_vm_for_user(user: str, vmid: int) -> Optional[Dict[str, Any]]:
     for vm in get_vms_for_user(user):
         if vm["vmid"] == vmid:
             return vm
+    logger.debug("find_vm_for_user: user=%s vmid=%s -> not found", user, vmid)
     return None
 
 

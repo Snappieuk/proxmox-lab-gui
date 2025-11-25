@@ -83,8 +83,8 @@ def admin_required(f):
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if session.get("user"):
-           # Already logged in — redirect to portal
-        return redirect(url_for("index"))
+        # Already logged in — redirect to portal
+        return redirect(url_for("portal"))
 
     error = None
 
@@ -127,16 +127,24 @@ def root():
 def portal():
     user = require_user()
     vms = get_vms_for_user(user)
+    app.logger.info("portal: user=%s vms=%d", user, len(vms))
 
     windows_vms = [v for v in vms if v.get("category") == "windows"]
     linux_vms = [v for v in vms if v.get("category") == "linux"]
     other_vms = [v for v in vms if v.get("category") not in ("windows", "linux")]
 
+    message = None
+    if not vms:
+        if is_admin_user(user):
+            message = "No VMs discovered — check Proxmox connection or cluster resources."
+        else:
+            message = "No VMs assigned to you — ask an admin to map VMs."
     return render_template(
         "index.html",
         windows_vms=windows_vms,
         linux_vms=linux_vms,
         other_vms=other_vms,
+        message=message,
     )
 
 
@@ -152,14 +160,17 @@ def health():
 @app.route("/admin/mappings", methods=["GET", "POST"])
 @admin_required
 def admin_mappings():
+    user = require_user()
     message = None
     error = None
+    selected_user = None
 
     if request.method == "POST":
-        user = (request.form.get("user") or "").strip()
+        # selected_user is the user being edited, not the logged-in user
+        selected_user = (request.form.get("user") or "").strip()
         vmids_str = (request.form.get("vmids") or "").strip()
 
-        if not user:
+        if not selected_user:
             error = "User is required."
         else:
             try:
@@ -168,7 +179,7 @@ def admin_mappings():
                     vmids = [int(p) for p in parts if p]
                 else:
                     vmids = []
-                set_user_vm_mapping(user, vmids)
+                set_user_vm_mapping(selected_user, vmids)
                 message = "Mapping updated."
             except ValueError:
                 error = "VM IDs must be integers."
@@ -185,6 +196,7 @@ def admin_mappings():
         all_vm_ids=all_vm_ids,
         message=message,
         error=error,
+        selected_user=selected_user,
     )
 
 
@@ -193,15 +205,20 @@ def admin_mappings():
 def admin_view():
     user = require_user()
     vms = get_all_vms()
+    app.logger.info("admin_view: user=%s vms=%d", user, len(vms))
     windows_vms = [v for v in vms if v.get("category") == "windows"]
     linux_vms = [v for v in vms if v.get("category") == "linux"]
     other_vms = [v for v in vms if v.get("category") not in ("windows", "linux")]
+    message = None
+    if not vms:
+        message = "No VMs discovered — check Proxmox connection or credentials."
     return render_template(
         "index.html",
         windows_vms=windows_vms,
         linux_vms=linux_vms,
         other_vms=other_vms,
         user=user,
+        message=message,
     )
 
 
