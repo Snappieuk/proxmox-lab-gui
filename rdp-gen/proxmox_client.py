@@ -217,6 +217,7 @@ def get_all_vms() -> List[Dict[str, Any]]:
         else:
             try:
                 vmlist = [node, proxmox_admin.nodes(node).qemu.get()]
+                print(node)
                 print(vmlist)
                 
             except Exception as e:
