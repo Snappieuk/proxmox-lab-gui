@@ -26,16 +26,15 @@
     <nav class="sidebar">
         <div class="sidebar-section-title">Navigation</div>
         {% if session.get("user") %}
-            <a class="sidebar-link {% if request.endpoint == 'portal' %}sidebar-link-active{% endif %}"
-               href="{{ url_for('portal') }}">My machines</a>
-            {% if is_admin %}
-                <a class="sidebar-link {% if request.endpoint == 'admin_view' %}sidebar-link-active{% endif %}"
-                   href="{{ url_for('admin_view') }}">Admin view</a>
-                <a class="sidebar-link {% if request.endpoint == 'admin_mappings' %}sidebar-link-active{% endif %}"
-                   href="{{ url_for('admin_mappings') }}">User ↔ VM mappings</a>
-            {% endif %}
+            <a class="sidebar-link {% if request.endpoint == 'index' %}sidebar-link-active{% endif %}"
+            href="{{ url_for('index') }}">My machines</a>
+        {% if is_admin %}
+                <a class="sidebar-link {% if request.endpoint == 'mappings' %}sidebar-link-active{% endif %}"
+                href="{{ url_for('mappings') }}">User ↔ VM mappings</a>
         {% endif %}
-    </nav>
+    {% endif %}
+</nav>
+
 
     <main class="main">
         {% block content %}{% endblock %}

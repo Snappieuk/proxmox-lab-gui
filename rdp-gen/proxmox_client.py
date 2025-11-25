@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import re
 import time
@@ -22,6 +23,20 @@ from config import (
 # ---------------------------------------------------------------------------
 # Proxmox connection (admin account)
 # ---------------------------------------------------------------------------
+class ProxmoxAdminWrapper:
+    def __init__(self, admin: ProxmoxAPI):
+        self._admin = admin
+
+    def get_nodes(self):
+        return self._admin.nodes.get()
+
+    def list_qemu(self, node: str):
+        # returns list of VMs for a node; align with cache expectations
+        return self._admin.nodes(node).qemu.get()
+
+    def status_qemu(self, node: str, vmid: int):
+        return self._admin.nodes(node).qemu(vmid).status.get()
+
 
 proxmox_admin = ProxmoxAPI(
     PVE_HOST,
@@ -29,6 +44,13 @@ proxmox_admin = ProxmoxAPI(
     password=PVE_ADMIN_PASS,
     verify_ssl=PVE_VERIFY,
 )
+proxmox_admin_wrapper = ProxmoxAdminWrapper(proxmox_admin)
+
+
+# proxmox_admin_wrapper is a thin wrapper around `proxmox_admin` used by `ProxmoxCache`.
+
+# logger
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # VM cache: single cluster snapshot, reused everywhere
@@ -84,9 +106,12 @@ def _lookup_vm_ip(node: str, vmid: int, vmtype: str) -> Optional[str]:
         data = proxmox_admin.nodes(node).qemu(vmid).agent.get(
             "network-get-interfaces"
         )
-    except Exception:
+    except Exception as e:
+        logger.debug("guest agent call failed for %s/%s: %s", node, vmid, e)
         return None
 
+    if not data:
+        return None
     try:
         interfaces = data.get("result", [])
     except AttributeError:
@@ -111,8 +136,10 @@ def _build_vm_dict(raw: Dict[str, Any]) -> Dict[str, Any]:
     vmtype = raw.get("type", "qemu")
 
     category = _guess_category(raw)
-    ip = None
-    if status == "running":
+    # Prefer any IP info embedded in the API response (e.g. cloud-init or cache),
+    # fallback to guest agent lookup if enabled and running.
+    ip = raw.get("ip")
+    if not ip and status == "running":
         ip = _lookup_vm_ip(node, vmid, vmtype)
 
     return {
@@ -138,16 +165,47 @@ def get_all_vms() -> List[Dict[str, Any]]:
     if _vm_cache_data is not None and (now - _vm_cache_ts) < VM_CACHE_TTL:
         return _vm_cache_data
 
-    # Single cheap API call: /cluster/resources?type=vm
-    # This returns both QEMU and LXC entries. :contentReference[oaicite:1]{index=1}
-    resources = proxmox_admin.cluster.resources.get(type="vm")
-
+    # Using the wrapper to keep per-node listing consistent.
     out: List[Dict[str, Any]] = []
-    for vm in resources:
-        node = vm["node"]
+    nodes = []
+    if proxmox_admin_wrapper:
+        try:
+            nodes = proxmox_admin_wrapper.get_nodes()
+        except Exception as e:
+            logger.debug("failed to list nodes via wrapper: %s", e)
+    else:
+        try:
+            resources = proxmox_admin.cluster.resources.get(type="vm") or []
+            # convert to node list in the format expected by wrapper
+            nodes = sorted({r["node"] for r in resources})
+            nodes = [{"node": n} for n in nodes]
+        except Exception as e:
+            logger.debug("failed to get cluster resources: %s", e)
+
+    for n in nodes or []:
+        node = n["node"]
         if VALID_NODES and node not in VALID_NODES:
             continue
-        out.append(_build_vm_dict(vm))
+        # list per-node VMs via wrapper if available
+        vmlist = []
+        if proxmox_admin_wrapper:
+            try:
+                vmlist = proxmox_admin_wrapper.list_qemu(node)
+            except Exception as e:
+                logger.debug("failed to list qemu on %s via wrapper: %s", node, e)
+                vmlist = []
+        else:
+            try:
+                vmlist = proxmox_admin.nodes(node).qemu.get()
+            except Exception as e:
+                logger.debug("failed to list qemu on %s: %s", node, e)
+                vmlist = []
+
+        for vm in (vmlist or []):
+            try:
+                out.append(_build_vm_dict(vm))
+            except Exception:
+                continue
 
     _vm_cache_data = out
     _vm_cache_ts = now
@@ -165,7 +223,8 @@ def _load_mapping() -> Dict[str, List[int]]:
     try:
         with open(MAPPINGS_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
-    except Exception:
+    except Exception as e:
+        logger.debug("failed to load mappings file %s: %s", MAPPINGS_FILE, e)
         return {}
 
     out: Dict[str, List[int]] = {}
@@ -181,8 +240,11 @@ def _save_mapping(mapping: Dict[str, List[int]]) -> None:
     tmp = {}
     for user, vmids in mapping.items():
         tmp[user] = sorted({int(v) for v in vmids})
-    with open(MAPPINGS_FILE, "w", encoding="utf-8") as f:
-        json.dump(tmp, f, indent=2)
+    try:
+        with open(MAPPINGS_FILE, "w", encoding="utf-8") as f:
+            json.dump(tmp, f, indent=2)
+    except Exception as e:
+        logger.exception("failed to save mappings file %s: %s", MAPPINGS_FILE, e)
 
 
 def get_user_vm_map() -> Dict[str, List[int]]:
@@ -211,23 +273,30 @@ def set_user_vm_mapping(user: str, vmids: List[int]) -> None:
     _save_mapping(mapping)
 
 
-# ---------------------------------------------------------------------------
-# Per-user VM filtering
-# ---------------------------------------------------------------------------
-
 def _user_in_group(user: str, groupid: str) -> bool:
     """
-    Check if user is member of Proxmox group via /access/groups/{groupid}. :contentReference[oaicite:2]{index=2}
+    Handles both possible Proxmox group member formats:
+    - members: ["user@pve", "other@pve"]
+    - members: [{"userid": "user@pve"}, {"userid": "other@pve"}]
     """
     if not groupid:
         return False
 
     try:
         data = proxmox_admin.access.groups(groupid).get()
+        if not data:
+            return False
     except Exception:
         return False
 
-    members = data.get("members", []) or []
+    raw_members = data.get("members", []) or []
+    members = []
+    for m in raw_members:
+        if isinstance(m, str):
+            members.append(m)
+        elif isinstance(m, dict) and "userid" in m:
+            members.append(m["userid"])
+
     return user in members
 
 
@@ -318,10 +387,13 @@ def start_vm(vm: Dict[str, Any]) -> None:
     node = vm["node"]
     vmtype = vm.get("type", "qemu")
 
-    if vmtype == "lxc":
-        proxmox_admin.nodes(node).lxc(vmid).status.start.post()
-    else:
-        proxmox_admin.nodes(node).qemu(vmid).status.start.post()
+    try:
+        if vmtype == "lxc":
+            proxmox_admin.nodes(node).lxc(vmid).status.start.post()
+        else:
+            proxmox_admin.nodes(node).qemu(vmid).status.start.post()
+    except Exception as e:
+        logger.exception("failed to start vm %s/%s: %s", node, vmid, e)
 
     _invalidate_vm_cache()
 
@@ -331,12 +403,15 @@ def shutdown_vm(vm: Dict[str, Any]) -> None:
     node = vm["node"]
     vmtype = vm.get("type", "qemu")
 
-    if vmtype == "lxc":
-        # Graceful stop for containers
-        proxmox_admin.nodes(node).lxc(vmid).status.shutdown.post()
-    else:
-        # Graceful shutdown for QEMU; use .stop() if you want hard power-off
-        proxmox_admin.nodes(node).qemu(vmid).status.shutdown.post()
+    try:
+        if vmtype == "lxc":
+            # Graceful stop for containers
+            proxmox_admin.nodes(node).lxc(vmid).status.shutdown.post()
+        else:
+            # Graceful shutdown for QEMU; use .stop() if you want hard power-off
+            proxmox_admin.nodes(node).qemu(vmid).status.shutdown.post()
+    except Exception as e:
+        logger.exception("failed to shutdown vm %s/%s: %s", node, vmid, e)
 
     _invalidate_vm_cache()
 
@@ -351,8 +426,12 @@ def get_pve_users() -> List[Dict[str, str]]:
     """
     try:
         users = proxmox_admin.access.users.get()
-    except Exception:
+    except Exception as e:
+        logger.debug("failed to list pve users: %s", e)
         return []
+
+    if users is None:
+        users = []
 
     out: List[Dict[str, str]] = []
     for u in users:

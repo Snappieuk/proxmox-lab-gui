@@ -1,9 +1,14 @@
 from functools import wraps
+from typing import Optional
+import logging
 
 from flask import session, redirect, url_for, request
 from proxmoxer import ProxmoxAPI
 
 from config import PVE_HOST, PVE_VERIFY
+
+
+logger = logging.getLogger(__name__)
 
 
 def login_required(f):
@@ -15,14 +20,14 @@ def login_required(f):
     return wrapper
 
 
-def current_user():
+def current_user() -> Optional[str]:
     """
     Returns the logged-in user ID, e.g. 'student1@pve', or None.
     """
     return session.get("user")
 
 
-def authenticate_proxmox_user(username: str, password: str):
+def authenticate_proxmox_user(username: str, password: str) -> Optional[str]:
     """
     Try to authenticate a PVE realm user: '<username>@pve'.
 
@@ -44,5 +49,6 @@ def authenticate_proxmox_user(username: str, password: str):
         # Simple cheap call to verify credentials
         prox.version.get()
         return full_user
-    except Exception:
+    except Exception as e:
+        logger.debug("proxmox auth failed for %s: %s", full_user, e)
         return None

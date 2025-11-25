@@ -13,7 +13,7 @@ from flask import (
     url_for,
 )
 
-from config import SECRET_KEY
+from config import SECRET_KEY, VM_CACHE_TTL
 from auth import login_required, current_user, authenticate_proxmox_user
 from proxmox_client import (
     get_all_vms,
@@ -26,12 +26,29 @@ from proxmox_client import (
     get_user_vm_map,
     set_user_vm_mapping,
     get_pve_users,
+    proxmox_admin_wrapper,
 )
 
 import re
+import logging
 
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
+
+# Optional cache (uses wrapper or real client)
+from cache import ProxmoxCache
+cache = ProxmoxCache(proxmox_admin_wrapper, ttl=VM_CACHE_TTL)
+
+
+def require_user() -> str:
+    """Return current user or abort with 401.
+
+    This helps the type checker and centralizes the session -> username conversion.
+    """
+    user = current_user()
+    if not user:
+        abort(401)
+    return user
 
 
 # ---------------------------------------------------------------------------
@@ -42,7 +59,7 @@ def admin_required(f):
     @wraps(f)
     @login_required
     def wrapper(*args, **kwargs):
-        user = current_user()
+        user = require_user()
         if not is_admin_user(user):
             abort(403)
         return f(*args, **kwargs)
@@ -90,7 +107,7 @@ def logout():
 @app.route("/")
 @login_required
 def index():
-    user = current_user()
+    user = require_user()
     vms = get_vms_for_user(user)
 
     windows_vms = [v for v in vms if v.get("category") == "windows"]
@@ -103,6 +120,11 @@ def index():
         linux_vms=linux_vms,
         other_vms=other_vms,
     )
+
+
+@app.route("/health")
+def health():
+    return jsonify({"ok": True})
 
 
 # ---------------------------------------------------------------------------
@@ -154,7 +176,7 @@ def mappings():
 @app.route("/api/vms")
 @login_required
 def api_vms():
-    user = current_user()
+    user = require_user()
     vms = get_vms_for_user(user)
     return jsonify(vms)
 
@@ -162,7 +184,7 @@ def api_vms():
 @app.route("/api/vm/<int:vmid>/start", methods=["POST"])
 @login_required
 def api_vm_start(vmid: int):
-    user = current_user()
+    user = require_user()
     vm = find_vm_for_user(user, vmid)
     if not vm:
         return jsonify({"ok": False, "error": "VM not found or not allowed"}), 404
@@ -178,7 +200,7 @@ def api_vm_start(vmid: int):
 @app.route("/api/vm/<int:vmid>/stop", methods=["POST"])
 @login_required
 def api_vm_stop(vmid: int):
-    user = current_user()
+    user = require_user()
     vm = find_vm_for_user(user, vmid)
     if not vm:
         return jsonify({"ok": False, "error": "VM not found or not allowed"}), 404
@@ -198,7 +220,7 @@ def api_vm_stop(vmid: int):
 @app.route("/rdp/<int:vmid>.rdp")
 @login_required
 def rdp_file(vmid: int):
-    user = current_user()
+    user = require_user()
     vm = find_vm_for_user(user, vmid)
     if not vm:
         abort(404)
@@ -218,4 +240,5 @@ def rdp_file(vmid: int):
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
     app.run(host="0.0.0.0", port=8080)
