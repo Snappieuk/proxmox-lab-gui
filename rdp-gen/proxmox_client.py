@@ -229,11 +229,9 @@ def get_all_vms() -> List[Dict[str, Any]]:
 
 
         for vm in (vmlist or []):
-
             print(vm)
             node = list_of_nodes[i]
             print(node[i])
-            i += 1
             logger.debug(f"Processing VM: {vm}")
             out.append(_build_vm_dict(vm))
             logger.debug(f"Building VM {vm}")
