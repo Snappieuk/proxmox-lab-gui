@@ -9,8 +9,4 @@ jobs:
     runs-on: self-hosted
     steps:
       - name: Pull and restart
-        run: |
-          cd ~/rdp-gen
-          git pull origin main
-          pkill -f "python.*app.py"
-          nohup python3 app.py > app.log 2>&1 &
+        run: ~/rdp-gen/deploy.sh
