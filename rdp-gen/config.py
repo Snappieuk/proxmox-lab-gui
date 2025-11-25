@@ -35,4 +35,4 @@ VM_CACHE_TTL = int(os.getenv("VM_CACHE_TTL", "120"))
 
 # If True, try to query the guest agent for IP addresses.
 # This can be slow on large numbers of VMs.
-ENABLE_IP_LOOKUP = False
+ENABLE_IP_LOOKUP = True
