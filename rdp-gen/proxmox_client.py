@@ -151,9 +151,9 @@ def _build_vm_dict(raw: Dict[str, Any]) -> Dict[str, Any]:
     status = raw.get("status", "unknown")
     vmtype = raw.get("type", "qemu")
 
-    print(f"{raw} - Printing the raw for Build Dictionary")
+ #   print(f"{raw} - Printing the raw for Build Dictionary")
  #  print(f"{node} Printing out the node")
-    print(f"{status}, {vmtype}")
+#   print(f"{status}, {vmtype}")
           
     category = _guess_category(raw)
     # Prefer any IP info embedded in the API response (e.g. cloud-init or cache),
@@ -191,7 +191,6 @@ def get_all_vms() -> List[Dict[str, Any]]:
     if proxmox_admin_wrapper:
         try:
             nodes = proxmox_admin_wrapper.get_nodes()
-            print(nodes)
         except Exception as e:
             logger.debug("failed to list nodes via wrapper: %s", e)
     else:
@@ -217,7 +216,9 @@ def get_all_vms() -> List[Dict[str, Any]]:
                 vmlist = []
         else:
             try:
-                vmlist = proxmox_admin.nodes(node).qemu.get()
+                vmlist = [node, proxmox_admin.nodes(node).qemu.get()]
+                print(vmlist)
+                
             except Exception as e:
                 logger.debug("failed to list qemu on %s: %s", node, e)
                 vmlist = []
