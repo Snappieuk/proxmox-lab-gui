@@ -201,11 +201,13 @@ def get_all_vms() -> List[Dict[str, Any]]:
 
     for n in nodes or []:
         node = n["node"]
+        print(f"{node} Nodes + n {n}")
         if VALID_NODES and node not in VALID_NODES:
             continue
         # list per-node VMs via wrapper if available
         vmlist = []
         if proxmox_admin_wrapper:
+            print(proxmox_admin_wrapper)
             try:
                 vmlist = proxmox_admin_wrapper.list_qemu(node)
             except Exception as e:
