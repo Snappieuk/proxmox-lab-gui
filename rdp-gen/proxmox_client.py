@@ -37,12 +37,14 @@ class ProxmoxAdminWrapper:
         try:
             qemu_vms = self._admin.nodes(node).qemu.get() or []
             vms.extend(qemu_vms)
+            logger.debug(vms)
         except Exception as e:
             logger.debug("failed to list qemu on %s: %s", node, e)
         
         try:
             lxc_vms = self._admin.nodes(node).lxc.get() or []
             vms.extend(lxc_vms)
+            logger.debug(lxc_vms)
         except Exception as e:
             logger.debug("failed to list lxc on %s: %s", node, e)
         
