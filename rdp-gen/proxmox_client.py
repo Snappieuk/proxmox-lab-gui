@@ -216,8 +216,10 @@ def get_all_vms() -> List[Dict[str, Any]]:
                 vmlist = []
 
         for vm in (vmlist or []):
+            logger.debug(f"Processing VM: {vm}")
             try:
                 out.append(_build_vm_dict(vm))
+                logger.debug(f"Building VM {vm}")
             except Exception:
                 continue
 
