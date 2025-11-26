@@ -287,20 +287,39 @@ def api_vm_stop(vmid: int):
 @login_required
 def rdp_file(vmid: int):
     user = require_user()
+    app.logger.info("rdp_file: user=%s requesting vmid=%s", user, vmid)
+    
     vm = find_vm_for_user(user, vmid)
     if not vm:
+        app.logger.warning("rdp_file: VM %s not found for user %s", vmid, user)
         abort(404)
 
     if vm.get("category") != "windows":
+        app.logger.warning("rdp_file: VM %s is not Windows (category=%s)", vmid, vm.get("category"))
         abort(404)
 
-    content = build_rdp(vm)
-    filename = f"{vm.get('name', 'vm')}-{vmid}.rdp"
-
-    resp = Response(content)
-    resp.headers["Content-Type"] = "application/x-rdp"
-    resp.headers["Content-Disposition"] = f'attachment; filename="{filename}"'
-    return resp
+    try:
+        content = build_rdp(vm)
+        filename = f"{vm.get('name', 'vm')}-{vmid}.rdp"
+        
+        app.logger.info("rdp_file: generated RDP for VM %s (%s)", vmid, vm.get('name'))
+        
+        resp = Response(content)
+        resp.headers["Content-Type"] = "application/x-rdp"
+        resp.headers["Content-Disposition"] = f'attachment; filename="{filename}"'
+        return resp
+    except ValueError as e:
+        # Expected errors like missing IP address
+        app.logger.warning("rdp_file: cannot generate RDP for VM %s: %s", vmid, e)
+        return render_template(
+            "error.html",
+            error_title="RDP File Not Available",
+            error_message=str(e),
+            back_url=url_for("portal")
+        ), 503
+    except Exception as e:
+        app.logger.exception("rdp_file: failed to generate RDP for VM %s: %s", vmid, e)
+        abort(500)
 
 
 # ---------------------------------------------------------------------------

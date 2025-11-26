@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1>{{ error_title or "Error" }}</h1>
+    </div>
+</div>
+
+<div class="page-banner" style="background-color: #f8d7da; border-color: #f5c6cb; color: #721c24;">
+    {{ error_message or "An unexpected error occurred." }}
+</div>
+
+<div style="margin-top: 2rem;">
+    {% if back_url %}
+    <a href="{{ back_url }}" class="btn-primary">Go Back</a>
+    {% else %}
+    <a href="{{ url_for('portal') }}" class="btn-primary">Go to Portal</a>
+    {% endif %}
+</div>
+
+{% endblock %}

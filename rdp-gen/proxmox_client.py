@@ -409,9 +409,21 @@ def find_vm_for_user(user: str, vmid: int) -> Optional[Dict[str, Any]]:
 def build_rdp(vm: Dict[str, Any]) -> str:
     """
     Build a minimal .rdp file content for a Windows VM.
+    Raises ValueError if VM is missing required fields or has no IP.
     """
-    ip = vm.get("ip") or "<ip>"
-    name = vm.get("name") or f"vm-{vm.get('vmid')}"
+    if not vm:
+        raise ValueError("VM dict is None or empty")
+    
+    vmid = vm.get("vmid")
+    if not vmid:
+        raise ValueError("VM missing vmid field")
+    
+    ip = vm.get("ip")
+    if not ip or ip == "<ip>":
+        raise ValueError(f"VM {vmid} has no IP address - ensure guest agent is installed and VM is running")
+    
+    name = vm.get("name") or f"vm-{vmid}"
+    
     # Simple RDP profile; Windows will accept this format.
     return (
         f"full address:s:{ip}:3389\r\n"
