@@ -51,21 +51,25 @@ class SSHWebSocketHandler:
             
             # Start SSH process with PTY
             # Flags to disable key auth and force password-only
+            ssh_cmd = [
+                'ssh',
+                '-o', 'StrictHostKeyChecking=no',
+                '-o', 'UserKnownHostsFile=/dev/null',
+                '-o', 'PubkeyAuthentication=no',
+                '-o', 'PreferredAuthentications=password',
+                '-o', 'NumberOfPasswordPrompts=1',
+                f'{self.username}@{self.ip}'
+            ]
+            logger.info("Starting SSH with command: %s", ' '.join(ssh_cmd))
+            
             self.process = subprocess.Popen(
-                [
-                    'ssh',
-                    '-o', 'StrictHostKeyChecking=no',
-                    '-o', 'UserKnownHostsFile=/dev/null',
-                    '-o', 'PubkeyAuthentication=no',
-                    '-o', 'PreferredAuthentications=password',
-                    '-o', 'NumberOfPasswordPrompts=1',
-                    f'{self.username}@{self.ip}'
-                ],
+                ssh_cmd,
                 stdin=self.slave_fd,
                 stdout=self.slave_fd,
                 stderr=self.slave_fd,
                 preexec_fn=os.setsid
             )
+            logger.info("SSH process started with PID: %d", self.process.pid)
             
             # Close slave fd in parent (only child needs it)
             os.close(self.slave_fd)
@@ -86,12 +90,14 @@ class SSHWebSocketHandler:
             time.sleep(0.3)
             
             # Check if process is still running
-            if self.process.poll() is not None:
-                logger.error("SSH process exited with code %d", self.process.returncode)
+            poll_result = self.process.poll()
+            if poll_result is not None:
+                logger.error("SSH process exited with code %d", poll_result)
                 self.running = False
+                self.send_to_client(f"\r\n\x1b[1;31mSSH process terminated with exit code {poll_result}\x1b[0m\r\n")
                 return False
             
-            logger.info("SSH session established")
+            logger.info("SSH session established, process PID %d still running", self.process.pid)
             return True
             
         except Exception as e:
@@ -103,6 +109,7 @@ class SSHWebSocketHandler:
         """
         Background thread to read from SSH PTY and send to WebSocket.
         """
+        logger.debug("SSH read thread started")
         while self.running and self.master_fd:
             try:
                 # Use select to wait for data with timeout
@@ -112,9 +119,12 @@ class SSHWebSocketHandler:
                     data = os.read(self.master_fd, 4096)
                     if data:
                         # Send to WebSocket client
-                        self.send_to_client(data.decode('utf-8', errors='replace'))
+                        decoded = data.decode('utf-8', errors='replace')
+                        logger.debug("SSH output (%d bytes): %r", len(data), decoded[:100])
+                        self.send_to_client(decoded)
                     else:
                         # EOF - SSH process closed
+                        logger.info("SSH process sent EOF, connection closed")
                         self.running = False
                         break
                         
@@ -177,7 +187,7 @@ class SSHWebSocketHandler:
         """
         Close SSH connection and cleanup.
         """
-        logger.debug("Closing SSH connection")
+        logger.info("Closing SSH connection (running=%s, process=%s)", self.running, self.process)
         self.running = False
         
         try:
