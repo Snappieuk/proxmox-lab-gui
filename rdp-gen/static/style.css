@@ -12,7 +12,7 @@ body {
 /* Top bar */
 .topbar {
     height: 56px;
-    background: linear-gradient(135deg, #005a9e 0%, #0078d4 50%, #50e6ff 100%);
+    background: linear-gradient(135deg, #001f3f 0%, #003d73 50%, #0078d4 100%);
     color: white;
     display: flex;
     align-items: center;
