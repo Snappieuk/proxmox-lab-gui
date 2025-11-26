@@ -1,4 +1,5 @@
 flask
+flask-caching
 flask-sock
 proxmoxer
 python-dotenv

@@ -71,9 +71,8 @@ A lightweight Flask webapp providing a lab VM portal similar to Azure Labs. Thin
 - `current_user()` – returns userid from session or None
 
 **Production deployment files**:
-- `gunicorn.conf.py` – Gunicorn config (workers = CPU count × 2 + 1, port 8080, logging to stdout/stderr)
-- `start.sh` – Activates venv, loads `.env`, runs `gunicorn --config gunicorn.conf.py --chdir rdp-gen app:app`
-- `deploy.sh` – Graceful reload: detects systemd service or standalone Gunicorn, sends HUP signal or restarts
+- `start.sh` – Activates venv, loads `.env`, runs Flask with threaded mode
+- `deploy.sh` – Graceful reload: detects systemd service or standalone Flask, restarts
 - `proxmox-gui.service` – Systemd unit file (edit User/Group/paths, then `systemctl enable/start`)
 - `.env.example` – Template for local `.env` file (gitignored)
 
@@ -91,8 +90,8 @@ cd rdp-gen && python3 app.py  # Runs on http://0.0.0.0:8080
 
 **Production deployment**:
 ```bash
-# Quick start with Gunicorn
-./start.sh  # Activates venv, loads .env, runs gunicorn
+# Quick start with Flask
+./start.sh  # Activates venv, loads .env, runs Flask with threaded mode
 
 # Or via systemd (recommended)
 sudo cp proxmox-gui.service /etc/systemd/system/
@@ -102,7 +101,7 @@ sudo systemctl enable --now proxmox-gui
 sudo systemctl status proxmox-gui
 
 # Graceful reload after git pull
-./deploy.sh  # Auto-detects systemd or standalone gunicorn, sends HUP signal
+./deploy.sh  # Auto-detects systemd or standalone Flask, restarts
 ```
 
 **Debugging tips**:

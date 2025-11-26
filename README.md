@@ -16,7 +16,7 @@ export MAPPINGS_FILE=rdp-gen/mappings.json
 python3 rdp-gen/app.py
 ```
 
-## Production Deployment with Gunicorn
+## Production Deployment
 
 ### Quick Start
 
@@ -29,14 +29,26 @@ chmod +x start.sh
 ./start.sh
 ```
 
-### Manual Gunicorn Start
+### Manual Start
 
 ```bash
-# With default config (from gunicorn.conf.py)
-gunicorn --config gunicorn.conf.py --chdir rdp-gen app:app
+# Run directly with Python (recommended for lab/internal use)
+cd rdp-gen
+python3 app.py
+```
 
-# Or specify options directly
-gunicorn -w 4 -b 0.0.0.0:8080 --chdir rdp-gen app:app
+### Alternative: Waitress WSGI Server
+
+For production deployments requiring a WSGI server, you can use Waitress:
+
+```bash
+# Install waitress
+pip install waitress
+
+# Run with waitress
+waitress-serve --host=0.0.0.0 --port=8080 --call 'app:create_app'
+# Or simpler:
+# waitress-serve --host=0.0.0.0 --port=8080 app:app
 ```
 
 ### Systemd Service (Recommended for Production)
@@ -69,9 +81,12 @@ sudo systemctl restart proxmox-gui
 
 ### Configuration
 
-- **gunicorn.conf.py** - Gunicorn server settings (workers, ports, logging)
 - **.env** - Environment variables (see `.env.example`)
 - **rdp-gen/config.py** - Application configuration
+
+Key environment variables:
+- `PROXMOX_CACHE_TTL` - Short-lived cache TTL in seconds (default: 10)
+- `VM_CACHE_TTL` - VM list cache TTL in seconds (default: 120)
 
 ### Auto-restart on Git Push
 

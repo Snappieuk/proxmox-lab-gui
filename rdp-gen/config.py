@@ -41,6 +41,10 @@ SECRET_KEY = os.getenv("SECRET_KEY", "change-me-session-key")
 # VM cache TTL (seconds) – avoids hammering Proxmox API
 VM_CACHE_TTL = int(os.getenv("VM_CACHE_TTL", "120"))
 
+# Proxmox API cache TTL (seconds) – short-lived cache for cluster-wide queries
+# This is used for flask-caching to cache aggregated VM/container lists
+PROXMOX_CACHE_TTL = int(os.getenv("PROXMOX_CACHE_TTL", "10"))
+
 # If True, try to query the guest agent for IP addresses.
 # This can be slow on large numbers of VMs.
 ENABLE_IP_LOOKUP = True
