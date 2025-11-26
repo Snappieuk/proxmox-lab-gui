@@ -407,4 +407,5 @@ def rdp_file(vmid: int):
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    app.run(host="0.0.0.0", port=8080)
+    # Run with threaded mode for concurrent requests
+    app.run(host="0.0.0.0", port=8080, threaded=True, debug=False)
