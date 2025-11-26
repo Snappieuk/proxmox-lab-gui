@@ -93,13 +93,18 @@
 {% endmacro %}
 
 {% if windows_vms %}
-<h2 class="section-title">Windows machines</h2>
+<h2 class="section-title">Windows VMs</h2>
 {{ vm_cards(windows_vms) }}
 {% endif %}
 
 {% if linux_vms %}
-<h2 class="section-title">Linux machines</h2>
+<h2 class="section-title">Linux VMs</h2>
 {{ vm_cards(linux_vms) }}
+{% endif %}
+
+{% if lxc_containers %}
+<h2 class="section-title">LXC Containers</h2>
+{{ vm_cards(lxc_containers) }}
 {% endif %}
 
 {% if other_vms %}

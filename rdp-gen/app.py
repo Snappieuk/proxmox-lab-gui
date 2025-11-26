@@ -128,13 +128,13 @@ def root():
 def portal():
     user = require_user()
     vms = get_vms_for_user(user)
- #   print("got here")
-#  print(vms)
     app.logger.info("portal: user=%s vms=%d", user, len(vms))
 
-    windows_vms = [v for v in vms if v.get("category") == "windows"]
-    linux_vms = [v for v in vms if v.get("category") == "linux"]
-    other_vms = [v for v in vms if v.get("category") not in ("windows", "linux")]
+    # Separate by type (QEMU vs LXC) and category (Windows vs Linux)
+    windows_vms = [v for v in vms if v.get("type") == "qemu" and v.get("category") == "windows"]
+    linux_vms = [v for v in vms if v.get("type") == "qemu" and v.get("category") == "linux"]
+    lxc_containers = [v for v in vms if v.get("type") == "lxc"]
+    other_vms = [v for v in vms if v.get("type") == "qemu" and v.get("category") not in ("windows", "linux")]
 
     message = None
     if not vms:
@@ -146,6 +146,7 @@ def portal():
         "index.html",
         windows_vms=windows_vms,
         linux_vms=linux_vms,
+        lxc_containers=lxc_containers,
         other_vms=other_vms,
         message=message,
     )
@@ -209,9 +210,13 @@ def admin_view():
     user = require_user()
     vms = get_all_vms()
     app.logger.info("admin_view: user=%s vms=%d", user, len(vms))
-    windows_vms = [v for v in vms if v.get("category") == "windows"]
-    linux_vms = [v for v in vms if v.get("category") == "linux"]
-    other_vms = [v for v in vms if v.get("category") not in ("windows", "linux")]
+    
+    # Separate by type (QEMU vs LXC) and category (Windows vs Linux)
+    windows_vms = [v for v in vms if v.get("type") == "qemu" and v.get("category") == "windows"]
+    linux_vms = [v for v in vms if v.get("type") == "qemu" and v.get("category") == "linux"]
+    lxc_containers = [v for v in vms if v.get("type") == "lxc"]
+    other_vms = [v for v in vms if v.get("type") == "qemu" and v.get("category") not in ("windows", "linux")]
+    
     message = None
     probe = probe_proxmox()
     if not vms:
@@ -220,6 +225,7 @@ def admin_view():
         "index.html",
         windows_vms=windows_vms,
         linux_vms=linux_vms,
+        lxc_containers=lxc_containers,
         other_vms=other_vms,
         user=user,
         message=message,
@@ -294,6 +300,9 @@ def rdp_file(vmid: int):
         app.logger.warning("rdp_file: VM %s not found for user %s", vmid, user)
         abort(404)
 
+    app.logger.info("rdp_file: Found VM: vmid=%s, name=%s, type=%s, category=%s, ip=%s", 
+                    vm.get('vmid'), vm.get('name'), vm.get('type'), vm.get('category'), vm.get('ip'))
+
     if vm.get("category") != "windows":
         app.logger.warning("rdp_file: VM %s is not Windows (category=%s)", vmid, vm.get("category"))
         abort(404)
@@ -302,10 +311,13 @@ def rdp_file(vmid: int):
         content = build_rdp(vm)
         filename = f"{vm.get('name', 'vm')}-{vmid}.rdp"
         
-        app.logger.info("rdp_file: generated RDP for VM %s (%s)", vmid, vm.get('name'))
+        app.logger.info("rdp_file: generated RDP for VM %s (%s) with IP %s", vmid, vm.get('name'), vm.get('ip'))
         
-        resp = Response(content)
-        resp.headers["Content-Type"] = "application/x-rdp"
+        # Ensure content is bytes for proper file download
+        if isinstance(content, str):
+            content = content.encode('utf-8')
+        
+        resp = Response(content, mimetype='application/x-rdp')
         resp.headers["Content-Disposition"] = f'attachment; filename="{filename}"'
         return resp
     except ValueError as e:
@@ -319,7 +331,12 @@ def rdp_file(vmid: int):
         ), 503
     except Exception as e:
         app.logger.exception("rdp_file: failed to generate RDP for VM %s: %s", vmid, e)
-        abort(500)
+        return render_template(
+            "error.html",
+            error_title="RDP Generation Failed",
+            error_message=f"Failed to generate RDP file: {str(e)}",
+            back_url=url_for("portal")
+        ), 500
 
 
 # ---------------------------------------------------------------------------
