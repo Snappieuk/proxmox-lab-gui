@@ -192,13 +192,18 @@ async function loadVMs() {
         
         const resp = await fetch(url);
         if (!resp.ok) {
+            console.error("API returned non-ok status:", resp.status, resp.statusText);
             showMessage("Failed to load VMs");
             return;
         }
         const data = await resp.json();
         
-        // Check if response is an error object
-        if (data.error) {
+        console.log("API response:", data);
+        console.log("Is array?", Array.isArray(data));
+        console.log("Has error?", data.error);
+        
+        // Check if response is an error object (not an array)
+        if (data && typeof data === 'object' && !Array.isArray(data) && data.error) {
             showMessage(data.message || "Failed to load VMs");
             document.getElementById('loading-indicator')?.remove();
             return;
