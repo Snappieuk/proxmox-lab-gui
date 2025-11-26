@@ -1,89 +1,165 @@
 # Copilot Instructions for proxmox-lab-gui
 
 ## What this repo is
-- A lightweight Flask webapp that provides a lab VM portal similar to Azure Labs.
-- `rdp-gen/` contains the whole application: `app.py`, `auth.py`, `config.py`, `proxmox_client.py`, `cache.py`, templates and static assets.
-- The app talks to a Proxmox API via `proxmoxer` using an admin service account defined in `rdp-gen/config.py`.
+- A lightweight Flask webapp providing a lab VM portal similar to Azure Labs
+- `rdp-gen/` contains the entire application: Flask app, templates, static assets, and Proxmox integration
+- Talks to Proxmox VE API via `proxmoxer` using an admin service account from `config.py`
 
 ## Big picture architecture
-- Single Flask app (no front-end framework) serving templates under `rdp-gen/templates/` and static files in `rdp-gen/static/`.
-- `proxmox_client.py` is the Proxmox integration layer (server-side client) used by endpoints to query VMs and perform actions.
-  - `get_all_vms()` returns a cached list of VMs.
-  - `get_vms_for_user(user)` filters `get_all_vms()` using mappings from `mappings.json`.
-  - `start_vm`, `shutdown_vm` call the Proxmox API actions using `proxmoxer`.
-- `auth.py` uses a lightweight authentication method: it checks Proxmox 'pve' realm credentials by instantiating `ProxmoxAPI` with the provided user/password and calling `version.get()` to verify credentials.
-- There is an in-process cache `ProxmoxCache(proxmox, ttl)` that expects a Proxmox client interface with `get_nodes`, `list_qemu`, `status_qemu` methods (see `cache.py`).
-  - Note: `proxmox_admin` in `proxmox_client.py` is *not* the client used by `ProxmoxCache`; the code references a variable `proxmox` in `app.py` but it isn't defined in this repo. You may either supply a wrapper object implementing `get_nodes`, `list_qemu`, and `status_qemu`, or change `app.py` to pass a suitable client.
-  - We now expose `proxmox_admin_wrapper` in `proxmox_client.py` for use with `ProxmoxCache`.
+
+**Single Flask app (no frontend framework)** serving Jinja2 templates with progressive loading:
+- `/portal` and `/admin` render empty page shells, VMs load via client-side `fetch("/api/vms")`
+- `proxmox_client.py` is the core integration layer with **two-tier caching**:
+  - Module-level `_vm_cache_data` (TTL from `VM_CACHE_TTL`) for full VM list
+  - Separate `_ip_cache` (5min TTL) for guest agent IP lookups to avoid hammering slow APIs
+- **ProxmoxAdminWrapper** bridges `proxmoxer.ProxmoxAPI` to `ProxmoxCache` interface
+  - `get_nodes()`, `list_qemu(node)`, `status_qemu(node, vmid)`
+  - Combines both QEMU VMs and LXC containers in `list_qemu()` 
+  - App uses `cache = ProxmoxCache(proxmox_admin_wrapper, ttl=VM_CACHE_TTL)` in `app.py`
+
+**Authentication pattern** (`auth.py`):
+- Validates Proxmox 'pve' realm users by attempting `ProxmoxAPI(...).version.get()` with provided credentials
+- Session stores full userid like `student1@pve`
+- `@login_required` decorator protects routes, `@admin_required` checks admin status
+
+**User-VM mapping** (`mappings.json`):
+- Non-admins only see VMs listed in `mappings.json` for their userid
+- Admins (in `ADMIN_USERS` list or `ADMIN_GROUP` Proxmox group) see all VMs
+- `set_user_vm_mapping(user, [vmids])` persists to JSON file
 
 ## Important files and patterns
-- `rdp-gen/app.py` - Flask routes and UI rendering; this is the main entrypoint.
-  - Routes: `/login`, `/logout`, `/portal`, `/admin`, `/admin/mappings`, `/rdp/<vmid>.rdp`, `/api/*` routes for start/stop and listing VMs.
-  - Uses `login_required` decorator from `auth.py` for route protection.
-- `rdp-gen/proxmox_client.py` - Proxmox API interface used by the app; includes caching and user mapping logic.
-- `rdp-gen/config.py` - Secrets and configuration (hardcoded defaults in repo; in production consider environment injection or `./config_override.py`).
-- `rdp-gen/mappings.json` - Stores per-user VM mappings; `set_user_vm_mapping()` updates this file.
-  - Mapping file path is the value of `MAPPINGS_FILE` from `config.py` and is referenced relative to the working dir — expect it to be created under the `rdp-gen` folder when running locally.
-- Templates under `rdp-gen/templates/` — use Jinja2 standard patterns.
 
-## Project conventions / patterns
-- No external process/service discovery: this repo expects a reachable Proxmox host and a working admin account configured in `config.py`.
-- Minimal/no tests in the repo. Keep changes small and test locally against a Proxmox setup or by mocking `ProxmoxAPI`.
-- When updating logic that queries Proxmox, be mindful of the cache in `proxmox_client.py` and the `ProxmoxCache` in `cache.py`.
-- Admin vs non-admin behavior:
-  - Admins are defined in `ADMIN_USERS` or members of `ADMIN_GROUP` in `config.py`.
-  - Admins can see and manage all VMs, while non-admins only view VMs mapped in the `mappings.json` file.
-    - Caution: `is_admin_user` is defined twice in `proxmox_client.py`. The second (cached) implementation will override the first; prefer to keep only the cached variant if you modify this logic.
+**`rdp-gen/app.py`** - Flask routes and main entrypoint:
+- Routes: `/login`, `/register`, `/logout`, `/portal`, `/admin`, `/admin/mappings`, `/rdp/<vmid>.rdp`
+- API routes: `/api/vms` (GET), `/api/vm/<vmid>/start` (POST), `/api/vm/<vmid>/stop` (POST)
+- `require_user()` helper aborts with 401 if no session
+- `admin_required` decorator wraps `login_required` and checks `is_admin_user()`
+- **Progressive loading**: portal renders empty shell, JavaScript fetches `/api/vms` and populates dynamically
 
-## Examples / Useful snippets
-- Return only allowed VMs for a user: `get_vms_for_user(user)` in `proxmox_client.py`.
-- Start/Stop VM from Flask route:
-  - `start_vm(vm)` — proxmox action: `nodes(node).qemu(vmid).status.start.post()`
-  - `shutdown_vm(vm)` — proxmox action: `nodes(node).qemu(vmid).status.shutdown.post()`
-- RDP file generation uses `build_rdp(ip)` in `proxmox_client.py` and served from `app.py` at `/rdp/<vmid>.rdp`.
+**`rdp-gen/proxmox_client.py`** - Proxmox API interface (680 lines):
+- `proxmox_admin` = `ProxmoxAPI(...)` singleton for admin operations
+- `proxmox_admin_wrapper` = `ProxmoxAdminWrapper(proxmox_admin)` for `ProxmoxCache`
+- `get_all_vms()` returns cached list with category guessing (`_guess_category`)
+  - Windows detection: name contains "win" → category "windows"
+  - All LXC → "linux", other QEMU → "linux", fallback → "other"
+- IP address lookup:
+  - LXC: uses `.lxc(vmid).interfaces.get()` API (fast, works when stopped)
+  - QEMU: uses `.qemu(vmid).agent.get("network-get-interfaces")` (requires running VM + guest agent)
+- `start_vm(vm)` / `shutdown_vm(vm)` handle both qemu and lxc types, call `_invalidate_vm_cache()`
+- `build_rdp(vm)` generates .rdp file content, raises `ValueError` if no IP
+- `get_vms_for_user(user, search)` filters by admin status + mappings, supports search by name/vmid/ip
+- `create_pve_user(username, password)` for self-registration (validates username/password, creates user@pve)
 
-## Developer workflows (local dev & quick checks)
-- Run the app locally using the built-in Flask server (development only):
+**`rdp-gen/config.py`** - Configuration with env var overrides:
+- All settings read via `os.getenv()` with hardcoded defaults (DO NOT commit production secrets)
+- `PVE_HOST`, `PVE_ADMIN_USER`, `PVE_ADMIN_PASS`, `PVE_VERIFY` for Proxmox API
+- `VALID_NODES` (comma-separated) restricts which nodes are queried
+- `ADMIN_USERS` (comma-separated) + `ADMIN_GROUP` define admin privileges
+- `VM_CACHE_TTL` (default 120s) controls cache expiration
+- `ENABLE_IP_LOOKUP` (default True) toggles guest agent IP queries
 
+**`rdp-gen/cache.py`** - `ProxmoxCache` class (50 lines):
+- Expects client with `get_nodes()`, `list_qemu(node)`, `status_qemu(node, vmid)` interface
+- Threadsafe with `threading.Lock()`, refreshes on TTL expiration
+- Bulk fetches nodes → VMs per node → statuses (cheap)
+- Used by `app.py` but NOT by `proxmox_client.py` functions (they use module-level cache)
+
+**`rdp-gen/templates/index.html`** - Main portal UI:
+- Progressive loading: skeleton → `fetch("/api/vms")` → populate VM cards
+- VM cards grouped by category: windows, linux, lxc, other
+- Start/Stop buttons call `/api/vm/<vmid>/{start|stop}`, refresh VM card on success
+- RDP download button only shown for Windows VMs with IP addresses
+
+## Developer workflows
+
+**Local development**:
 ```bash
 cd rdp-gen
-python3 app.py
-```
-- The app runs on 0.0.0.0:8080; useful for quick testing with proxmox API access.
-- Install dependencies in a venv; this repo uses `proxmoxer`:
-
-```bash
 python3 -m venv venv
 source venv/bin/activate
-pip install proxmoxer flask
+pip install -r ../requirements.txt
+# Configure via env vars or .env file (see .env.example)
+export PVE_HOST=10.220.15.249
+export PVE_ADMIN_USER=root@pam
+export PVE_ADMIN_PASS=secret
+python3 app.py  # Runs on 0.0.0.0:8080
 ```
 
-- There are no automated tests present — test functionality manually:
-  - Create `mappings.json` entries for users if testing user access.
-  - Update `config.py` or use a local override for `PVE_HOST` and credentials.
-  - For development without a Proxmox instance, you can mock `ProxmoxAPI` calls in tests by implementing a fixture that matches `get_nodes`, `list_qemu`, and `status_qemu` methods.
+**Testing without Proxmox**:
+- No mock client maintained (`mock_client.py` removed)
+- Implement minimal wrapper: `get_nodes()`, `list_qemu(node)`, `status_qemu(node, vmid)` returning dummy data
+- Substitute `proxmox_admin_wrapper` in `app.py` for local testing
+
+**Adding VM fields**:
+1. Update `_build_vm_dict()` in `proxmox_client.py` to extract new field from raw VM data
+2. Modify `index.html` template to display the field in VM cards
+3. Cache invalidation happens automatically on start/stop/shutdown
+
+**Environment configuration**:
+- Use `.env` file (gitignored) or export env vars
+- See `.env.example` for all available settings
+- Production: inject secrets via container env or systemd EnvironmentFile
 
 ## Security & secrets
-- `rdp-gen/config.py` contains hardcoded credentials in the repo. Do NOT commit production credentials to the repo.
-- Prefer injecting secrets via environment variables or an external config file in CI/deployment.
+- `config.py` has hardcoded defaults for local dev (10.220.15.249, password!)
+- **NEVER commit production credentials** - use environment variables
+- Sessions use `SECRET_KEY` from config (change in production)
+- Proxmox API calls use SSL verification controlled by `PVE_VERIFY` (default False for dev)
 
-## What to watch for / gotchas
-- `ProxmoxCache` expects a minimal client interface with `get_nodes`, `list_qemu`, `status_qemu`. The app uses `ProxmoxCache(proxmox, ttl=5)` but there is no `proxmox` variable defined in the repo — the app imports it but does not define a proxmox client object directly. Search for a missing connector if you run into an import error.
-  - Quick fix: Use `ProxmoxCache(proxmox_client.proxmox_admin_wrapper, ttl)` where `proxmox_admin_wrapper` is a tiny wrapper class around `proxmox_admin` exposing `get_nodes`, `list_qemu`, and `status_qemu`.
-- `mappings.json` usage: absent file is treated as empty; `set_user_vm_mapping()` writes/creates it.
-- Admin list membership may be represented in two formats by Proxmox: `members` arrays of strings or dicts — helper `_user_in_group` handles both.
+## Critical gotchas
 
-## Common tasks and how-to snippets
-- Add a new field to the VM cards: update `proxmox_client.get_all_vms()` to include the field (e.g. `guest_os`), then update `index.html` to show it.
-- Add a new API endpoint: create a new Flask route in `app.py`, use `@login_required`, call helper functions in `proxmox_client.py` and return JSON responses.
-- Add robust error handling when calling proxmox: wrap calls to `proxmox_admin` then return appropriate flask `abort` or JSON error responses.
+**Dual caching layers**:
+- `ProxmoxCache` in `cache.py` (used by app startup, not extensively)
+- Module-level `_vm_cache_data` in `proxmox_client.py` (primary cache for all endpoints)
+- IP lookups have separate `_ip_cache` (5min TTL) to avoid guest agent timeout storms
 
-## Housekeeping for AI agents
-- Preserve `config.py` defaults when editing; the repo stores default host and creds which are likely for local development only.
-- For any change that touches `proxmox_client.py`, ensure the caching and mapping logic are preserved.
-- When suggesting code, use existing helper functions (`get_all_vms`, `get_vms_for_user`, `find_vm_for_user`) instead of re-implementing VM filtering.
-- The UI uses simple CSS and toggles; server-side changes should keep JSON field names stable (`vmid`, `status`, `ip`, `category`).
+**Admin group membership formats**:
+- Proxmox API returns `members` as either `["user@pve", ...]` OR `[{"userid": "user@pve"}, ...]`
+- `_user_in_group()` handles both formats, checks all realm variants (user@pam, user@pve)
 
----
+**LXC vs QEMU differences**:
+- LXC: `nodes(node).lxc(vmid)`, IP lookup via `.interfaces.get()` (works when stopped)
+- QEMU: `nodes(node).qemu(vmid)`, IP lookup via `.agent.get()` (requires running + guest agent)
+- Both handled transparently by `type` field ("lxc" or "qemu") in VM dict
 
-If anything here is unclear or you want additional `AGENTS.md`-style detailed instructions (e.g. for running integration tests or for CI), tell me what specific areas to expand and I'll update the file accordingly.
+**RDP file generation**:
+- Returns `ValueError` if VM has no IP address (common for stopped VMs or missing guest agent)
+- `app.py` catches this and renders `error.html` template with 503 status
+- Template in `index.html` hides RDP button if `vm.ip` is falsy or "<ip>"
+
+**mappings.json location**:
+- Path from `MAPPINGS_FILE` env var, defaults to `rdp-gen/mappings.json`
+- Created on first write if missing
+- Format: `{"user@pve": [vmid1, vmid2], ...}`
+
+## Common tasks
+
+**Add new API endpoint**:
+```python
+@app.route("/api/vm/<int:vmid>/reboot", methods=["POST"])
+@login_required
+def api_vm_reboot(vmid: int):
+    user = require_user()
+    vm = find_vm_for_user(user, vmid)
+    if not vm:
+        return jsonify({"ok": False, "error": "VM not found"}), 404
+    # Call proxmox_admin.nodes(vm["node"]).qemu(vmid).status.reboot.post()
+    return jsonify({"ok": True})
+```
+
+**Add VM metadata field**:
+1. In `proxmox_client.py` `_build_vm_dict()`, extract from `raw` dict: `cores = raw.get("maxcpu")`
+2. Add to return dict: `"cores": cores`
+3. In `index.html`, add display: `<div>Cores: {{ vm.cores }}</div>`
+
+**Debug admin access**:
+- Check `is_admin_user(user)` returns True (logs to INFO level)
+- Verify user in `ADMIN_USERS` list or member of `ADMIN_GROUP` Proxmox group
+- Use `/admin/probe` endpoint (admin-only) to see node/resource diagnostics
+
+**Manually test authentication**:
+```python
+from auth import authenticate_proxmox_user
+result = authenticate_proxmox_user("student1", "password")
+print(result)  # Should return "student1@pve" or None
+```

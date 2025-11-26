@@ -161,9 +161,10 @@
 <h2 class="section-title">Other / unknown</h2>
 {{ vm_cards(other_vms) }}
 {% endif %}
+{% endif %}
 
-<script>
 {% if progressive_load %}
+<script>
 // Progressive loading: fetch VMs and populate page dynamically
 let isInitialLoad = true;
 
@@ -277,7 +278,6 @@ function createVMCard(vm) {
         </div>
     `;
 }
-{% endif %}
 
 async function refreshVmStatus() {
     try {
@@ -331,17 +331,19 @@ async function sendPowerAction(vmid, action, btn) {
 }
 
 window.addEventListener("load", function () {
-    {% if progressive_load %}
-    // Load VMs immediately on page load
-    loadVMs();
-    // Then poll for updates every 15 seconds
-    setInterval(refreshVmStatus, 15000);
-    {% else %}
-    // Delay initial refresh slightly to let page render first
-    setTimeout(refreshVmStatus, 500);
-    // Poll for updates every 15 seconds
-    setInterval(refreshVmStatus, 15000);
-    {% endif %}
+    const progressiveLoad = {{ 'true' if progressive_load else 'false' }};
+    
+    if (progressiveLoad) {
+        // Load VMs immediately on page load
+        loadVMs();
+        // Then poll for updates every 15 seconds
+        setInterval(refreshVmStatus, 15000);
+    } else {
+        // Delay initial refresh slightly to let page render first
+        setTimeout(refreshVmStatus, 500);
+        // Poll for updates every 15 seconds
+        setInterval(refreshVmStatus, 15000);
+    }
 
     document.addEventListener("click", function (e) {
         const btn = e.target.closest(".btn-power");
@@ -353,5 +355,75 @@ window.addEventListener("load", function () {
     });
 });
 </script>
+{% else %}
+<script>
+async function refreshVmStatus() {
+    try {
+        const resp = await fetch("/api/vms");
+        if (!resp.ok) return;
+        const data = await resp.json();
+
+        data.forEach(vm => {
+            const card = document.querySelector('.vm-card[data-vmid="' + vm.vmid + '"]');
+            if (!card) return;
+
+            const statusEl = card.querySelector('.vm-status');
+            const ipEl = card.querySelector('.vm-ip');
+            const sshEl = card.querySelector('.vm-ssh');
+
+            if (statusEl) {
+                const text = vm.status ? vm.status.charAt(0).toUpperCase() + vm.status.slice(1) : "Unknown";
+                statusEl.textContent = text;
+                statusEl.classList.remove("vm-status-running", "vm-status-stopped", "vm-status-unknown");
+                statusEl.classList.add("vm-status-" + vm.status);
+            }
+            if (ipEl) {
+                ipEl.textContent = vm.ip ? vm.ip : "Not available";
+            }
+            if (sshEl) {
+                if (vm.ip) {
+                    sshEl.textContent = "ssh <user>@" + vm.ip;
+                } else {
+                    sshEl.textContent = "ssh <user>@<ip>";
+                }
+            }
+        });
+    } catch (e) {}
+}
+
+async function sendPowerAction(vmid, action, btn) {
+    try {
+        btn.disabled = true;
+        btn.classList.add("btn-disabled");
+        const resp = await fetch(`/api/vm/${vmid}/${action}`, { method: "POST" });
+        if (!resp.ok) {
+            console.error("Power action failed", await resp.text());
+        }
+        setTimeout(refreshVmStatus, 2000);
+    } catch (e) {
+        console.error(e);
+    } finally {
+        btn.disabled = false;
+        btn.classList.remove("btn-disabled");
+    }
+}
+
+window.addEventListener("load", function () {
+    // Delay initial refresh slightly to let page render first
+    setTimeout(refreshVmStatus, 500);
+    // Poll for updates every 15 seconds
+    setInterval(refreshVmStatus, 15000);
+
+    document.addEventListener("click", function (e) {
+        const btn = e.target.closest(".btn-power");
+        if (!btn) return;
+        const vmid = btn.getAttribute("data-vmid");
+        const action = btn.getAttribute("data-action");
+        if (!vmid || !action) return;
+        sendPowerAction(vmid, action, btn);
+    });
+});
+</script>
+{% endif %}
 {% endblock %}
 
