@@ -32,6 +32,9 @@ MAPPINGS_FILE = os.getenv("MAPPINGS_FILE") or os.path.join(os.path.dirname(__fil
 # IP address cache file (persistent storage)
 IP_CACHE_FILE = os.getenv("IP_CACHE_FILE") or os.path.join(os.path.dirname(__file__), "ip_cache.json")
 
+# VM data cache file (persistent storage for VM list across restarts)
+VM_CACHE_FILE = os.getenv("VM_CACHE_FILE") or os.path.join(os.path.dirname(__file__), "vm_cache.json")
+
 # Flask secret
 SECRET_KEY = os.getenv("SECRET_KEY", "change-me-session-key")
 

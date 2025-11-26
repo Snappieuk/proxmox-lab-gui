@@ -20,6 +20,7 @@ from config import (
     ADMIN_GROUP,
     MAPPINGS_FILE,
     IP_CACHE_FILE,
+    VM_CACHE_FILE,
     VM_CACHE_TTL,
     ENABLE_IP_LOOKUP,
     ENABLE_IP_PERSISTENCE,
@@ -65,6 +66,7 @@ logger = logging.getLogger(__name__)
 
 _vm_cache_data: Optional[List[Dict[str, Any]]] = None
 _vm_cache_ts: float = 0.0
+_vm_cache_loaded: bool = False
 
 # IP address cache: vmid -> {"ip": "x.x.x.x", "timestamp": unix_time}
 # Stored in JSON file for persistence across restarts
@@ -106,10 +108,52 @@ def _save_ip_cache() -> None:
     except Exception as e:
         logger.warning("Failed to save IP cache: %s", e)
 
+def _load_vm_cache() -> None:
+    """Load VM cache from JSON file on startup."""
+    global _vm_cache_data, _vm_cache_ts, _vm_cache_loaded
+    if _vm_cache_loaded:
+        return
+    
+    if not os.path.exists(VM_CACHE_FILE):
+        _vm_cache_data = None
+        _vm_cache_ts = 0.0
+        _vm_cache_loaded = True
+        return
+    
+    try:
+        with open(VM_CACHE_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            _vm_cache_data = data.get("vms", [])
+            _vm_cache_ts = data.get("timestamp", 0.0)
+        logger.info("Loaded VM cache with %d VMs from %s", len(_vm_cache_data), VM_CACHE_FILE)
+    except Exception as e:
+        logger.warning("Failed to load VM cache: %s", e)
+        _vm_cache_data = None
+        _vm_cache_ts = 0.0
+    
+    _vm_cache_loaded = True
+
+def _save_vm_cache() -> None:
+    """Save VM cache to JSON file."""
+    if _vm_cache_data is None:
+        return
+    
+    try:
+        data = {
+            "vms": _vm_cache_data,
+            "timestamp": _vm_cache_ts
+        }
+        with open(VM_CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        logger.debug("Saved VM cache with %d VMs", len(_vm_cache_data))
+    except Exception as e:
+        logger.warning("Failed to save VM cache: %s", e)
+
 def _invalidate_vm_cache() -> None:
     global _vm_cache_data, _vm_cache_ts
     _vm_cache_data = None
     _vm_cache_ts = 0.0
+    # Note: Don't reset _vm_cache_loaded - we want to keep trying disk cache
 
 def _get_cached_ip(vmid: int) -> Optional[str]:
     """Get IP from persistent cache if not expired."""
@@ -489,6 +533,9 @@ def get_all_vms(skip_ips: bool = False, force_refresh: bool = False) -> List[Dic
     """
     global _vm_cache_data, _vm_cache_ts
 
+    # Load from disk on first call
+    _load_vm_cache()
+
     now = time.time()
     # Check if we have valid cached data
     cache_valid = _vm_cache_data is not None and (now - _vm_cache_ts) < VM_CACHE_TTL
@@ -562,6 +609,7 @@ def get_all_vms(skip_ips: bool = False, force_refresh: bool = False) -> List[Dic
     # Cache the VM structure (always cache, even with skip_ips)
     _vm_cache_data = out
     _vm_cache_ts = now
+    _save_vm_cache()  # Persist to disk for fast restart
     
     return out
 
