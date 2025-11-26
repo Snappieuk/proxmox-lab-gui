@@ -388,8 +388,8 @@ async function loadVMs() {
         
         if (loadingIndicator) loadingIndicator.remove();
         
-        // Now fetch with IPs in the background
-        fetchIPsInBackground();
+        // Now fetch with IPs in the background (slight delay to let page render)
+        setTimeout(fetchIPsInBackground, 500);
     } catch (e) {
         console.error('Failed to load VMs:', e);
         if (loadingIndicator) loadingIndicator.remove();
@@ -397,12 +397,18 @@ async function loadVMs() {
 }
 
 async function fetchIPsInBackground() {
+    console.log('Fetching IPs in background...');
     try {
         // Fetch VMs with IPs (slow but runs in background after page loads)
         const resp = await fetch("/api/vms");
-        if (!resp.ok) return;
+        if (!resp.ok) {
+            console.error('Failed to fetch IPs, status:', resp.status);
+            return;
+        }
         const data = await resp.json();
+        console.log('Received VM data with IPs:', data.length, 'VMs');
         updateVMsFromData(data);
+        console.log('Updated VM IPs in UI');
     } catch (e) {
         console.error('Failed to fetch IPs:', e);
     }
