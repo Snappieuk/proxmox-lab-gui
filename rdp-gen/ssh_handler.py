@@ -53,6 +53,7 @@ class SSHWebSocketHandler:
             # Minimal flags - let SSH try all authentication methods
             ssh_cmd = [
                 'ssh',
+                '-vvv',  # Verbose logging to see what's happening
                 '-o', 'StrictHostKeyChecking=no',
                 '-o', 'UserKnownHostsFile=/dev/null',
                 '-o', 'NumberOfPasswordPrompts=3',
