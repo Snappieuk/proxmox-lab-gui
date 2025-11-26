@@ -8,5 +8,7 @@ jobs:
   deploy:
     runs-on: self-hosted
     steps:
-      - name: Pull and restart
-        run: ~/rdp-gen/deploy.sh
+      - name: Pull and restart with Gunicorn
+        run: |
+          cd ${{ github.workspace }}
+          ./deploy.sh
