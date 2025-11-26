@@ -2,7 +2,6 @@ import json
 import logging
 import os
 import re
-import ssl
 import time
 from typing import Dict, List, Any, Optional
 
@@ -86,6 +85,7 @@ def _get_connection_lock():
 
 def _create_proxmox_connection():
     """Create a fresh ProxmoxAPI connection with retry on SSL errors."""
+    import ssl  # Import here to avoid loading SSL context on module import
     max_retries = 3
     for attempt in range(max_retries):
         try:
@@ -143,6 +143,7 @@ def _api_call_with_retry(func, *args, **kwargs):
     Execute an API call with automatic retry on SSL errors.
     Recreates connection once on SSL/connection errors.
     """
+    import ssl  # Import here to avoid loading SSL context on module import
     try:
         return func(*args, **kwargs)
     except (ssl.SSLError, ConnectionError, BrokenPipeError, OSError) as e:
