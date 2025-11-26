@@ -10,5 +10,5 @@ jobs:
     steps:
       - name: Pull and restart with Gunicorn
         run: |
-          cd /root/
+          cd ..
           ./deploy.sh
