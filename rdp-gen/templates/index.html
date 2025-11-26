@@ -345,7 +345,7 @@ async function sendPowerAction(vmid, action, btn) {
 }
 
 window.addEventListener("load", function () {
-    const progressiveLoad = {{ 'true' if progressive_load else 'false' }};
+    const progressiveLoad = {% if progressive_load %}true{% else %}false{% endif %};
     
     if (progressiveLoad) {
         // Load VMs immediately on page load
