@@ -43,25 +43,29 @@ except ImportError:
 
 # ---------------------------------------------------------------------------
 # Proxmox connection (admin account) - thread-safe singleton
+# Uses double-checked locking pattern to ensure only one connection is created
+# even when multiple threads attempt to access it concurrently.
 # ---------------------------------------------------------------------------
 
-# Thread-safe lock for Proxmox connection
+# Thread-safe lock for Proxmox connection - prevents race conditions during initialization
 _proxmox_lock = threading.Lock()
-# Lazy connection - only created when first accessed
+# Lazy connection - only created when first accessed, reused by all threads
 _proxmox_admin = None
 
 def get_proxmox_admin():
     """Get or create Proxmox connection on first use (lazy initialization).
     
-    Thread-safe: uses a lock to ensure only one connection is created.
-    The ProxmoxAPI client is reused for all subsequent calls.
+    Thread-safe singleton pattern: uses double-checked locking to ensure
+    only one Proxmox connection is created even in multi-threaded scenarios.
+    The ProxmoxAPI client is reused for all subsequent calls, avoiding
+    authentication overhead on each request.
     """
     global _proxmox_admin
     if _proxmox_admin is not None:
         return _proxmox_admin
     
     with _proxmox_lock:
-        # Double-check inside lock
+        # Double-check inside lock to handle race conditions
         if _proxmox_admin is None:
             _proxmox_admin = ProxmoxAPI(
                 PVE_HOST,
@@ -120,7 +124,20 @@ _mappings_cache: Optional[Dict[str, List[int]]] = None
 _mappings_cache_loaded = False
 
 # ThreadPoolExecutor for parallel IP lookups (limited concurrency)
+# Note: Flask's threaded mode handles process lifecycle, so cleanup is automatic.
+# For explicit shutdown (e.g., in tests), call shutdown_executor().
 _ip_lookup_executor = ThreadPoolExecutor(max_workers=10)
+
+
+def shutdown_executor() -> None:
+    """Shutdown the ThreadPoolExecutor gracefully.
+    
+    Call this on application shutdown to ensure clean resource release.
+    In Flask's normal lifecycle, this is typically handled automatically.
+    """
+    global _ip_lookup_executor
+    _ip_lookup_executor.shutdown(wait=True)
+
 
 def _load_ip_cache() -> None:
     """Load IP cache from JSON file."""
@@ -320,6 +337,32 @@ def _get_cached_ip(vmid: int) -> Optional[str]:
             if time.time() - ts < IP_CACHE_TTL:
                 return ip
     return None
+
+
+def _get_cached_ips_batch(vmids: List[int]) -> Dict[int, str]:
+    """Get multiple IPs from cache in a single lock acquisition.
+    
+    More efficient than calling _get_cached_ip() in a loop for many VMs.
+    Thread-safe.
+    
+    Returns:
+        Dict mapping vmid to cached IP (only includes VMs with valid cached IPs)
+    """
+    _load_ip_cache()
+    now = time.time()
+    results: Dict[int, str] = {}
+    
+    with _ip_cache_lock:
+        for vmid in vmids:
+            if vmid in _ip_cache:
+                entry = _ip_cache[vmid]
+                ip = entry.get("ip")
+                ts = entry.get("timestamp", 0)
+                if now - ts < IP_CACHE_TTL:
+                    results[vmid] = ip
+    
+    return results
+
 
 def _cache_ip(vmid: int, ip: Optional[str]) -> None:
     """Store IP in persistent cache. Thread-safe."""
@@ -620,14 +663,18 @@ def lookup_ips_parallel(vms: List[Dict[str, Any]]) -> Dict[int, str]:
     Returns:
         Dict mapping vmid to discovered IP address
     """
+    # Get all vmids and batch-check cache (more efficient than per-VM checks)
+    all_vmids = [vm.get("vmid") for vm in vms if vm.get("vmid")]
+    cached_ips = _get_cached_ips_batch(all_vmids)
+    
     # Filter VMs that need IP lookup (running QEMU VMs or all LXC containers)
     vms_needing_lookup = []
     for vm in vms:
         vmid = vm.get("vmid")
         if not vmid:
             continue
-        # Skip if already has IP from cache
-        if _get_cached_ip(vmid):
+        # Skip if already has IP from cache (using batch result)
+        if vmid in cached_ips:
             continue
         # LXC containers: always try (config readable even when stopped)
         # QEMU VMs: only when running (guest agent required)

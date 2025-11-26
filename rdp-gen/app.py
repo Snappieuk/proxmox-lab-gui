@@ -616,9 +616,11 @@ def api_vm_start(vmid: int):
 
     try:
         start_vm(vm)
-        # Invalidate caches after VM state change
-        cache.clear()
+        # Invalidate module-level cluster cache in proxmox_client
+        # (primary caching layer for VM data)
         invalidate_cluster_cache()
+        # Also clear Flask-level cache in case any cached views exist
+        cache.clear()
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
@@ -635,9 +637,11 @@ def api_vm_stop(vmid: int):
 
     try:
         shutdown_vm(vm)
-        # Invalidate caches after VM state change
-        cache.clear()
+        # Invalidate module-level cluster cache in proxmox_client
+        # (primary caching layer for VM data)
         invalidate_cluster_cache()
+        # Also clear Flask-level cache in case any cached views exist
+        cache.clear()
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
