@@ -50,12 +50,15 @@ class SSHWebSocketHandler:
             self.master_fd, self.slave_fd = pty.openpty()
             
             # Start SSH process with PTY
-            # Only flag needed: auto-accept host keys (required for web terminal)
+            # Flags to disable key auth and force password-only
             self.process = subprocess.Popen(
                 [
                     'ssh',
                     '-o', 'StrictHostKeyChecking=no',
                     '-o', 'UserKnownHostsFile=/dev/null',
+                    '-o', 'PubkeyAuthentication=no',
+                    '-o', 'PreferredAuthentications=password',
+                    '-o', 'NumberOfPasswordPrompts=1',
                     f'{self.username}@{self.ip}'
                 ],
                 stdin=self.slave_fd,
