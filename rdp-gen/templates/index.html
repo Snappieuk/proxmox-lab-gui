@@ -10,6 +10,21 @@
     </div>
 </div>
 
+<!-- Search box -->
+<div style="margin-bottom: 2rem;">
+    <form method="get" action="" style="display: flex; gap: 0.5rem; max-width: 600px;">
+        <input type="text" 
+               name="search" 
+               placeholder="Search by name, VMID, or IP..." 
+               value="{{ request.args.get('search', '') }}"
+               style="flex: 1; padding: 0.5rem 1rem; border: 1px solid #ddd; border-radius: 4px; font-size: 14px;">
+        <button type="submit" class="btn-primary" style="padding: 0.5rem 1.5rem;">Search</button>
+        {% if request.args.get('search') %}
+        <a href="{{ request.path }}" class="btn-secondary" style="padding: 0.5rem 1rem;">Clear</a>
+        {% endif %}
+    </form>
+</div>
+
     {% if message %}
     <div class="page-banner">{{ message }}</div>
     {% endif %}

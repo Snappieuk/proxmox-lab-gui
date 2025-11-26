@@ -79,11 +79,27 @@ logger = logging.getLogger(__name__)
 _vm_cache_data: Optional[List[Dict[str, Any]]] = None
 _vm_cache_ts: float = 0.0
 
+# IP address cache: vmid -> (ip, timestamp)
+# Separate cache with longer TTL to avoid hammering guest agent
+_ip_cache: Dict[int, tuple[Optional[str], float]] = {}
+IP_CACHE_TTL = 300  # 5 minutes
 
 def _invalidate_vm_cache() -> None:
     global _vm_cache_data, _vm_cache_ts
     _vm_cache_data = None
     _vm_cache_ts = 0.0
+
+def _get_cached_ip(vmid: int) -> Optional[str]:
+    """Get IP from cache if not expired."""
+    if vmid in _ip_cache:
+        ip, ts = _ip_cache[vmid]
+        if time.time() - ts < IP_CACHE_TTL:
+            return ip
+    return None
+
+def _cache_ip(vmid: int, ip: Optional[str]) -> None:
+    """Store IP in cache."""
+    _ip_cache[vmid] = (ip, time.time())
 
 
 def _guess_category(vm: Dict[str, Any]) -> str:
@@ -159,8 +175,16 @@ def _build_vm_dict(raw: Dict[str, Any]) -> Dict[str, Any]:
     # Prefer any IP info embedded in the API response (e.g. cloud-init or cache),
     # fallback to guest agent lookup if enabled and running.
     ip = raw.get("ip")
+    
+    # Check IP cache first to avoid slow guest agent calls
+    if not ip:
+        ip = _get_cached_ip(vmid)
+    
+    # Only do guest agent lookup if no cached IP and VM is running
     if not ip and status == "running":
         ip = _lookup_vm_ip(node, vmid, vmtype)
+        # Cache the result (even if None) to avoid repeated failed lookups
+        _cache_ip(vmid, ip)
 
     return {
         "vmid": vmid,
@@ -178,6 +202,8 @@ def get_all_vms() -> List[Dict[str, Any]]:
     Cached list of all VMs/containers visible to the admin user.
 
     Each item: { vmid, node, name, status, ip, category, type }
+    
+    Uses ProxmoxCache for the base VM list, then enriches with IPs.
     """
     global _vm_cache_data, _vm_cache_ts
 
@@ -225,9 +251,7 @@ def get_all_vms() -> List[Dict[str, Any]]:
                 vmlist = []
 
         for vm in (vmlist or []):
-            logger.debug(f"Processing VM: {vm}")
             out.append(_build_vm_dict(vm))
-            logger.debug(f"Building VM {vm}")
 
     logger.info("get_all_vms: returning %d VM(s)", len(out))
 
@@ -363,27 +387,37 @@ def is_admin_user(user: str) -> bool:
     return False
 
 
-def get_vms_for_user(user: str) -> List[Dict[str, Any]]:
+def get_vms_for_user(user: str, search: Optional[str] = None) -> List[Dict[str, Any]]:
     """
     Non-admin: only VMs listed in mappings.
     Admin: all VMs.
+    Optional search parameter filters by VM name (case-insensitive).
     """
     vms = get_all_vms()
-    print(vms)
     admin = is_admin_user(user)
     logger.debug("get_vms_for_user: user=%s is_admin=%s all_vms=%d", user, admin, len(vms))
-    if admin:
-        return vms
-
-    mapping = get_user_vm_map()
-    allowed = set(mapping.get(user, []))
-    logger.debug("get_vms_for_user: user=%s allowed_vmids=%s", user, allowed)
-    if not allowed:
-        return []
-
-    result = [vm for vm in vms if vm["vmid"] in allowed]
-    logger.debug("get_vms_for_user: user=%s visible_vms=%d", user, len(result))
-    return result
+    
+    if not admin:
+        mapping = get_user_vm_map()
+        allowed = set(mapping.get(user, []))
+        logger.debug("get_vms_for_user: user=%s allowed_vmids=%s", user, allowed)
+        if not allowed:
+            return []
+        vms = [vm for vm in vms if vm["vmid"] in allowed]
+    
+    # Apply search filter if provided
+    if search:
+        search_lower = search.lower()
+        vms = [
+            vm for vm in vms
+            if search_lower in vm.get("name", "").lower()
+            or search_lower in str(vm.get("vmid", ""))
+            or search_lower in vm.get("ip", "").lower()
+        ]
+        logger.debug("get_vms_for_user: search=%s filtered_vms=%d", search, len(vms))
+    
+    logger.debug("get_vms_for_user: user=%s visible_vms=%d", user, len(vms))
+    return vms
 
 
 def find_vm_for_user(user: str, vmid: int) -> Optional[Dict[str, Any]]:

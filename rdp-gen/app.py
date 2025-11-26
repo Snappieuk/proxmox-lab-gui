@@ -127,8 +127,9 @@ def root():
 @login_required
 def portal():
     user = require_user()
-    vms = get_vms_for_user(user)
-    app.logger.info("portal: user=%s vms=%d", user, len(vms))
+    search = request.args.get('search', '').strip()
+    vms = get_vms_for_user(user, search=search if search else None)
+    app.logger.info("portal: user=%s vms=%d search=%s", user, len(vms), search or 'none')
 
     # Separate by type (QEMU vs LXC) and category (Windows vs Linux)
     windows_vms = [v for v in vms if v.get("type") == "qemu" and v.get("category") == "windows"]
@@ -138,7 +139,9 @@ def portal():
 
     message = None
     if not vms:
-        if is_admin_user(user):
+        if search:
+            message = f"No VMs found matching '{search}'."
+        elif is_admin_user(user):
             message = "No VMs discovered — check Proxmox connection or cluster resources."
         else:
             message = "No VMs assigned to you — ask an admin to map VMs."
@@ -208,8 +211,22 @@ def admin_mappings():
 @admin_required
 def admin_view():
     user = require_user()
-    vms = get_all_vms()
-    app.logger.info("admin_view: user=%s vms=%d", user, len(vms))
+    search = request.args.get('search', '').strip()
+    
+    # For admin view, get all VMs then apply search filter manually
+    all_vms = get_all_vms()
+    if search:
+        search_lower = search.lower()
+        vms = [
+            vm for vm in all_vms
+            if search_lower in vm.get("name", "").lower()
+            or search_lower in str(vm.get("vmid", ""))
+            or search_lower in vm.get("ip", "").lower()
+        ]
+    else:
+        vms = all_vms
+    
+    app.logger.info("admin_view: user=%s vms=%d search=%s", user, len(vms), search or 'none')
     
     # Separate by type (QEMU vs LXC) and category (Windows vs Linux)
     windows_vms = [v for v in vms if v.get("type") == "qemu" and v.get("category") == "windows"]
@@ -220,7 +237,10 @@ def admin_view():
     message = None
     probe = probe_proxmox()
     if not vms:
-        message = "No VMs discovered — check Proxmox connection or credentials."
+        if search:
+            message = f"No VMs found matching '{search}'."
+        else:
+            message = "No VMs discovered — check Proxmox connection or credentials."
     return render_template(
         "index.html",
         windows_vms=windows_vms,
