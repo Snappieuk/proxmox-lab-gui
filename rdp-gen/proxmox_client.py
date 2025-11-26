@@ -415,13 +415,14 @@ def get_vm_ip(vmid: int, node: str, vmtype: str) -> Optional[str]:
     return ip
 
 
-def get_vms_for_user(user: str, search: Optional[str] = None) -> List[Dict[str, Any]]:
+def get_vms_for_user(user: str, search: Optional[str] = None, skip_ips: bool = False) -> List[Dict[str, Any]]:
     """
     Non-admin: only VMs listed in mappings.
     Admin: all VMs.
     Optional search parameter filters by VM name (case-insensitive).
+    Set skip_ips=True to skip IP lookups for fast initial load.
     """
-    vms = get_all_vms()
+    vms = get_all_vms(skip_ips=skip_ips)
     admin = is_admin_user(user)
     logger.debug("get_vms_for_user: user=%s is_admin=%s all_vms=%d", user, admin, len(vms))
     

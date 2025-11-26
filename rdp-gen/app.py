@@ -280,24 +280,10 @@ def api_vms():
     user = require_user()
     # Check if we should skip IPs for fast initial load
     skip_ips = request.args.get('skip_ips', 'false').lower() == 'true'
+    search = request.args.get('search', '')
     
     try:
-        # Pass skip_ips through the call chain for fast loading
-        if skip_ips:
-            # Direct call to optimized function
-            from proxmox_client import get_all_vms as _get_all_vms
-            all_vms = _get_all_vms(skip_ips=True)
-            # Filter by user permissions
-            if is_admin_user(user):
-                vms = all_vms
-            else:
-                from proxmox_client import get_user_vm_map
-                mapping = get_user_vm_map()
-                allowed_vmids = set(mapping.get(user, []))
-                vms = [vm for vm in all_vms if vm["vmid"] in allowed_vmids]
-        else:
-            vms = get_vms_for_user(user)
-        
+        vms = get_vms_for_user(user, search=search or None, skip_ips=skip_ips)
         return jsonify(vms)
     except Exception as e:
         app.logger.exception("Failed to get VMs for user %s", user)

@@ -195,7 +195,16 @@ async function loadVMs() {
             showMessage("Failed to load VMs");
             return;
         }
-        const vms = await resp.json();
+        const data = await resp.json();
+        
+        // Check if response is an error object
+        if (data.error) {
+            showMessage(data.message || "Failed to load VMs");
+            document.getElementById('loading-indicator')?.remove();
+            return;
+        }
+        
+        const vms = data;
         
         // If we skipped IPs, lazy-load them after rendering
         if (skipIps) {
