@@ -29,7 +29,7 @@ except ImportError:
     logger = __import__('logging').getLogger(__name__)
     logger.warning("flask-sock not installed, WebSocket SSH terminal disabled")
 
-from config import SECRET_KEY, VM_CACHE_TTL
+from config import SECRET_KEY
 from auth import login_required, current_user, authenticate_proxmox_user
 from proxmox_client import (
     get_all_vms,
