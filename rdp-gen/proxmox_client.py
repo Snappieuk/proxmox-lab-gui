@@ -533,8 +533,9 @@ def get_all_vms(skip_ips: bool = False, force_refresh: bool = False) -> List[Dic
     """
     global _vm_cache_data, _vm_cache_ts
 
-    # Load from disk on first call
+    # Load both caches from disk on first call
     _load_vm_cache()
+    _load_ip_cache()
 
     now = time.time()
     # Check if we have valid cached data
@@ -544,12 +545,13 @@ def get_all_vms(skip_ips: bool = False, force_refresh: bool = False) -> List[Dic
     # When skip_ips=True, return cached data including any IPs from persistent cache
     if not force_refresh and cache_valid and _vm_cache_data is not None:
         if skip_ips:
-            # Return cached VMs with persistent IPs (don't query new IPs)
-            # Enrich with cached IPs from ip_cache.json
+            # Return cached VMs with IPs from both caches (vm_cache.json + ip_cache.json)
+            # VMs already have IPs from vm_cache, but enrich with fresher ones from ip_cache if available
             result = []
             for vm in _vm_cache_data:
                 cached_ip = _get_cached_ip(vm['vmid'])
-                result.append({**vm, "ip": cached_ip or vm.get('ip')})
+                # Use cached IP if available and not expired, otherwise keep VM's stored IP
+                result.append({**vm, "ip": cached_ip if cached_ip else vm.get('ip')})
             return result
         else:
             # Return full cached data
