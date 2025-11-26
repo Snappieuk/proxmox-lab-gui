@@ -40,7 +40,8 @@
 <!-- Loading indicator -->
 <div id="loading-indicator" style="padding: 3rem 0; text-align: center;">
     <div class="spinner" style="margin: 0 auto 1rem;"></div>
-    <p style="color: #666; font-size: 16px;">Loading virtual machines...</p>
+    <p id="loading-status" style="color: #666; font-size: 16px;">Loading virtual machines...</p>
+    <p id="loading-details" style="color: #999; font-size: 12px; margin-top: 0.5rem;"></p>
 </div>
 <style>
 .spinner {
@@ -58,6 +59,20 @@
 @keyframes pulse {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.5; }
+}
+.status-log {
+    max-width: 600px;
+    margin: 1rem auto;
+    padding: 0.5rem 1rem;
+    background: #f8f9fa;
+    border-left: 3px solid #3498db;
+    text-align: left;
+    font-family: monospace;
+    font-size: 11px;
+    color: #555;
+}
+.status-log div {
+    padding: 2px 0;
 }
 </style>
 
@@ -179,6 +194,13 @@
 // Progressive loading: fetch VMs and populate page dynamically
 let isInitialLoad = true;
 
+function updateLoadingStatus(message, details = '') {
+    const status = document.getElementById('loading-status');
+    const detailsEl = document.getElementById('loading-details');
+    if (status) status.textContent = message;
+    if (detailsEl) detailsEl.textContent = details;
+}
+
 async function loadVMs() {
     const searchParams = new URLSearchParams(window.location.search);
     const search = searchParams.get('search') || '';
@@ -190,6 +212,8 @@ async function loadVMs() {
             (search ? "?search=" + encodeURIComponent(search) : "") +
             (skipIps ? (search ? "&skip_ips=true" : "?skip_ips=true") : "");
         
+        updateLoadingStatus('Fetching VM list...', 'Querying Proxmox API');
+        
         const resp = await fetch(url);
         if (!resp.ok) {
             console.error("API returned non-ok status:", resp.status, resp.statusText);
@@ -197,6 +221,8 @@ async function loadVMs() {
             document.getElementById('loading-indicator')?.remove();
             return;
         }
+        
+        updateLoadingStatus('Processing VMs...', 'Parsing response data');
         const data = await resp.json();
         
         console.log("API response:", data);
@@ -221,9 +247,12 @@ async function loadVMs() {
         
         const vms = data;
         
+        updateLoadingStatus('Rendering VMs...', `Found ${vms.length} virtual machines`);
+        
         // If we skipped IPs, lazy-load them after rendering
         if (skipIps) {
-            lazyLoadIPs(vms);
+            updateLoadingStatus('Loading IP addresses...', 'Running ARP scan in background');
+            setTimeout(() => lazyLoadIPs(vms), 100);
         }
         
         // Sort VMs alphabetically by name
@@ -234,6 +263,8 @@ async function loadVMs() {
         const linux_vms = vms.filter(v => v.type === "qemu" && v.category === "linux");
         const lxc_containers = vms.filter(v => v.type === "lxc");
         const other_vms = vms.filter(v => v.type === "qemu" && !["windows", "linux"].includes(v.category));
+        
+        updateLoadingStatus('Rendering VMs...', `${windows_vms.length} Windows, ${linux_vms.length} Linux, ${lxc_containers.length} LXC`);
         
         // Render sections
         renderVMSection("windows-vms-container", "Windows VMs", windows_vms);
@@ -262,9 +293,12 @@ async function lazyLoadIPs(vms) {
     const vmsNeedingIPs = vms.filter(vm => !vm.ip);
     
     console.log(`Lazy-loading IPs for ${vmsNeedingIPs.length} VMs`);
+    updateLoadingStatus('Loading IP addresses...', `${vmsNeedingIPs.length} VMs need IPs`);
     
     for (let i = 0; i < vmsNeedingIPs.length; i += BATCH_SIZE) {
         const batch = vmsNeedingIPs.slice(i, i + BATCH_SIZE);
+        const progress = Math.min(i + BATCH_SIZE, vmsNeedingIPs.length);
+        updateLoadingStatus('Loading IP addresses...', `${progress}/${vmsNeedingIPs.length} IPs fetched`);
         
         // Fetch IPs in parallel for this batch
         await Promise.all(batch.map(async (vm) => {
@@ -287,6 +321,9 @@ async function lazyLoadIPs(vms) {
             await new Promise(resolve => setTimeout(resolve, 100));
         }
     }
+    
+    // Clear the loading status when done
+    updateLoadingStatus('', '');
 }
 
 function updateVMIP(vmid, ip) {

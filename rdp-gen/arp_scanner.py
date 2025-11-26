@@ -222,7 +222,11 @@ def discover_ips_via_arp(vm_mac_map: Dict[int, str], subnets: Optional[list] = N
             vm_ips[vmid] = arp_table[mac]
             logger.info("VM %d (MAC %s) -> IP %s", vmid, mac, arp_table[mac])
         else:
-            logger.debug("VM %d (MAC %s) not found in ARP table", vmid, mac)
+            logger.warning("VM %d (MAC %s) NOT in ARP table", vmid, mac)
+            # Show a few ARP table entries for comparison
+            if len(arp_table) > 0:
+                sample_macs = list(arp_table.keys())[:3]
+                logger.debug("Sample ARP MACs: %s", sample_macs)
     
     logger.info("Discovered IPs for %d/%d VMs via ARP", len(vm_ips), len(vm_mac_map))
     return vm_ips

@@ -98,23 +98,35 @@ def _get_vm_mac(node: str, vmid: int, vmtype: str) -> Optional[str]:
             # LXC: get config to find MAC
             config = get_proxmox_admin().nodes(node).lxc(vmid).config.get()
             if not config:
+                logger.debug("VM %d: No config returned", vmid)
                 return None
             # LXC net0 format: "name=eth0,bridge=vmbr0,hwaddr=XX:XX:XX:XX:XX:XX,ip=dhcp"
             net0 = config.get("net0", "")
+            logger.debug("VM %d LXC net0: %s", vmid, net0)
             mac_match = re.search(r'hwaddr=([0-9a-fA-F:]+)', net0)
             if mac_match and ARP_SCANNER_AVAILABLE:
-                return normalize_mac(mac_match.group(1))
+                mac = normalize_mac(mac_match.group(1))
+                logger.debug("VM %d: Extracted MAC %s", vmid, mac)
+                return mac
         
         elif vmtype == "qemu":
             # QEMU: get config to find MAC from net0
             config = get_proxmox_admin().nodes(node).qemu(vmid).config.get()
             if not config:
+                logger.debug("VM %d: No config returned", vmid)
                 return None
             # net0 format: "virtio=XX:XX:XX:XX:XX:XX,bridge=vmbr0"
+            # or: "e1000=XX:XX:XX:XX:XX:XX,bridge=vmbr0"
             net0 = config.get("net0", "")
-            mac_match = re.search(r'=([0-9a-fA-F:]+)', net0)
+            logger.debug("VM %d QEMU net0: %s", vmid, net0)
+            # Match MAC address pattern (6 hex pairs separated by colons)
+            mac_match = re.search(r'([0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2})', net0)
             if mac_match and ARP_SCANNER_AVAILABLE:
-                return normalize_mac(mac_match.group(1))
+                mac = normalize_mac(mac_match.group(1))
+                logger.debug("VM %d: Extracted MAC %s", vmid, mac)
+                return mac
+            else:
+                logger.debug("VM %d: No MAC found in net0", vmid)
     
     except Exception as e:
         logger.debug("Failed to get MAC for %s/%s: %s", node, vmid, e)
