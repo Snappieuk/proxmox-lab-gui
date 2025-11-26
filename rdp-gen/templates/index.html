@@ -184,12 +184,23 @@ async function loadVMs() {
     const search = searchParams.get('search') || '';
     
     try {
-        const resp = await fetch("/api/vms" + (search ? "?search=" + encodeURIComponent(search) : ""));
+        // Fast initial load: skip IP lookups
+        const skipIps = isInitialLoad && !search;
+        const url = "/api/vms" + 
+            (search ? "?search=" + encodeURIComponent(search) : "") +
+            (skipIps ? (search ? "&skip_ips=true" : "?skip_ips=true") : "");
+        
+        const resp = await fetch(url);
         if (!resp.ok) {
             showMessage("Failed to load VMs");
             return;
         }
         const vms = await resp.json();
+        
+        // If we skipped IPs, lazy-load them after rendering
+        if (skipIps) {
+            lazyLoadIPs(vms);
+        }
         
         // Sort VMs alphabetically by name
         vms.sort((a, b) => (a.name || '').localeCompare(b.name || ''));

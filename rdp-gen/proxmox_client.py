@@ -160,7 +160,7 @@ def _lookup_vm_ip(node: str, vmid: int, vmtype: str) -> Optional[str]:
     return None
 
 
-def _build_vm_dict(raw: Dict[str, Any]) -> Dict[str, Any]:
+def _build_vm_dict(raw: Dict[str, Any], skip_ip: bool = False) -> Dict[str, Any]:
     vmid = int(raw["vmid"])
     node = raw["node"]
     name = raw.get("name", f"vm-{vmid}")
@@ -168,22 +168,27 @@ def _build_vm_dict(raw: Dict[str, Any]) -> Dict[str, Any]:
     vmtype = raw.get("type", "qemu")
 
     category = _guess_category(raw)
-    # Prefer any IP info embedded in the API response (e.g. cloud-init or cache),
-    # fallback to guest agent lookup if enabled and running.
-    ip = raw.get("ip")
     
-    # Check IP cache first to avoid slow guest agent calls
-    if not ip:
-        ip = _get_cached_ip(vmid)
-    
-    # Lookup IPs:
-    # - LXC: Always try (config available even when stopped)
-    # - QEMU: Only when running (guest agent required)
-    if not ip:
-        if vmtype == "lxc" or status == "running":
-            ip = _lookup_vm_ip(node, vmid, vmtype)
-            # Cache the result (even if None) to avoid repeated failed lookups
-            _cache_ip(vmid, ip)
+    # IP lookup strategy:
+    # - skip_ip=True: Return None immediately (fast initial load)
+    # - Otherwise: Check cache first, then API if needed
+    ip = None
+    if not skip_ip:
+        # Prefer any IP info embedded in the API response (e.g. cloud-init or cache)
+        ip = raw.get("ip")
+        
+        # Check IP cache to avoid slow guest agent calls
+        if not ip:
+            ip = _get_cached_ip(vmid)
+        
+        # Lookup IPs from API:
+        # - LXC: Always try (config available even when stopped)
+        # - QEMU: Only when running (guest agent required)
+        if not ip:
+            if vmtype == "lxc" or status == "running":
+                ip = _lookup_vm_ip(node, vmid, vmtype)
+                # Cache the result (even if None) to avoid repeated failed lookups
+                _cache_ip(vmid, ip)
 
     return {
         "vmid": vmid,
@@ -196,13 +201,14 @@ def _build_vm_dict(raw: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def get_all_vms() -> List[Dict[str, Any]]:
+def get_all_vms(skip_ips: bool = False) -> List[Dict[str, Any]]:
     """
     Cached list of all VMs/containers visible to the admin user.
 
     Each item: { vmid, node, name, status, ip, category, type }
     
-    Uses ProxmoxCache for the base VM list, then enriches with IPs.
+    Uses /cluster/resources endpoint for fast loading (single API call).
+    Set skip_ips=True to avoid IP lookups for initial fast load.
     """
     global _vm_cache_data, _vm_cache_ts
 
@@ -210,43 +216,48 @@ def get_all_vms() -> List[Dict[str, Any]]:
     if _vm_cache_data is not None and (now - _vm_cache_ts) < VM_CACHE_TTL:
         return _vm_cache_data
 
-    # Using cluster resources to get all VMs
+    # Fast path: use cluster resources API (single call vs N node queries)
     out: List[Dict[str, Any]] = []
-    nodes = []
     try:
-        nodes = get_proxmox_admin().nodes.get() or []
+        resources = get_proxmox_admin().cluster.resources.get(type="vm") or []
+        logger.info("get_all_vms: fetched %d resources from cluster API", len(resources))
+        
+        for vm in resources:
+            # Filter by VALID_NODES if configured
+            if VALID_NODES and vm.get("node") not in VALID_NODES:
+                continue
+            
+            out.append(_build_vm_dict(vm, skip_ip=skip_ips))
     except Exception as e:
-        logger.debug("failed to list nodes: %s", e)
+        logger.warning("cluster resources API failed, falling back to per-node queries: %s", e)
+        # Fallback: per-node queries (slower)
         try:
-            resources = get_proxmox_admin().cluster.resources.get(type="vm") or []
-            # convert to node list in the format expected by wrapper
-            nodes = sorted({r["node"] for r in resources})
-            nodes = [{"node": n} for n in nodes]
-        except Exception as e:
-            logger.debug("failed to get cluster resources: %s", e)
+            nodes = get_proxmox_admin().nodes.get() or []
+        except Exception as e2:
+            logger.error("failed to list nodes: %s", e2)
+            nodes = []
 
-    for n in nodes or []:
-        node = n["node"]
-        if VALID_NODES and node not in VALID_NODES:
-            continue
-        # list per-node VMs
-        vmlist = []
-        try:
-            # Get QEMU VMs
-            qemu_vms = get_proxmox_admin().nodes(node).qemu.get() or []
-            for vm in qemu_vms:
-                vm['node'] = node
-            vmlist.extend(qemu_vms)
-            # Get LXC containers
-            lxc_vms = get_proxmox_admin().nodes(node).lxc.get() or []
-            for vm in lxc_vms:
-                vm['node'] = node
-            vmlist.extend(lxc_vms)
-        except Exception as e:
-            logger.debug("failed to list VMs on %s: %s", node, e)
-
-        for vm in (vmlist or []):
-            out.append(_build_vm_dict(vm))
+        for n in nodes:
+            node = n["node"]
+            if VALID_NODES and node not in VALID_NODES:
+                continue
+            
+            try:
+                # Get QEMU VMs
+                qemu_vms = get_proxmox_admin().nodes(node).qemu.get() or []
+                for vm in qemu_vms:
+                    vm['node'] = node
+                    vm['type'] = 'qemu'
+                    out.append(_build_vm_dict(vm, skip_ip=skip_ips))
+                
+                # Get LXC containers
+                lxc_vms = get_proxmox_admin().nodes(node).lxc.get() or []
+                for vm in lxc_vms:
+                    vm['node'] = node
+                    vm['type'] = 'lxc'
+                    out.append(_build_vm_dict(vm, skip_ip=skip_ips))
+            except Exception as e:
+                logger.debug("failed to list VMs on %s: %s", node, e)
 
     # Sort VMs alphabetically by name
     out.sort(key=lambda vm: (vm.get("name") or "").lower())
@@ -383,6 +394,25 @@ def is_admin_user(user: str) -> bool:
         logger.debug("is_admin_user(%s) -> %s (ADMIN_USERS=%s, ADMIN_GROUP=%s)", user, res, ADMIN_USERS, ADMIN_GROUP)
         return res
     return False
+
+
+def get_vm_ip(vmid: int, node: str, vmtype: str) -> Optional[str]:
+    """
+    Get IP address for a specific VM (for lazy loading).
+    
+    Returns IP from cache if available, otherwise performs API lookup.
+    """
+    # Check cache first
+    ip = _get_cached_ip(vmid)
+    if ip:
+        return ip
+    
+    # Lookup from API
+    ip = _lookup_vm_ip(node, vmid, vmtype)
+    if ip:
+        _cache_ip(vmid, ip)
+    
+    return ip
 
 
 def get_vms_for_user(user: str, search: Optional[str] = None) -> List[Dict[str, Any]]:

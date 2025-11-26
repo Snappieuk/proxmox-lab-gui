@@ -25,6 +25,7 @@ from auth import login_required, current_user, authenticate_proxmox_user
 from proxmox_client import (
     get_all_vms,
     get_vms_for_user,
+    get_vm_ip,
     find_vm_for_user,
     is_admin_user,
     build_rdp,
@@ -277,8 +278,26 @@ def admin_probe():
 @login_required
 def api_vms():
     user = require_user()
+    # Check if we should skip IPs for fast initial load
+    skip_ips = request.args.get('skip_ips', 'false').lower() == 'true'
+    
     try:
-        vms = get_vms_for_user(user)
+        # Pass skip_ips through the call chain for fast loading
+        if skip_ips:
+            # Direct call to optimized function
+            from proxmox_client import get_all_vms as _get_all_vms
+            all_vms = _get_all_vms(skip_ips=True)
+            # Filter by user permissions
+            if is_admin_user(user):
+                vms = all_vms
+            else:
+                from proxmox_client import get_user_vm_map
+                mapping = get_user_vm_map()
+                allowed_vmids = set(mapping.get(user, []))
+                vms = [vm for vm in all_vms if vm["vmid"] in allowed_vmids]
+        else:
+            vms = get_vms_for_user(user)
+        
         return jsonify(vms)
     except Exception as e:
         app.logger.exception("Failed to get VMs for user %s", user)
@@ -287,6 +306,27 @@ def api_vms():
             "message": f"Failed to load VMs: {str(e)}",
             "details": "Check if Proxmox server is reachable and credentials are correct"
         }), 500
+
+
+@app.route("/api/vm/<int:vmid>/ip")
+@login_required
+def api_vm_ip(vmid: int):
+    """Get IP address for a specific VM (lazy loading)."""
+    user = require_user()
+    try:
+        vm = find_vm_for_user(user, vmid)
+        if not vm:
+            return jsonify({"error": "VM not found or not accessible"}), 404
+        
+        ip = get_vm_ip(vmid, vm["node"], vm["type"])
+        
+        return jsonify({
+            "vmid": vmid,
+            "ip": ip,
+        })
+    except Exception as e:
+        app.logger.exception("Failed to get IP for VM %d", vmid)
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/mappings")
