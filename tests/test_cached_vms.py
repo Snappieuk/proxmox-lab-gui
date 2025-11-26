@@ -302,10 +302,9 @@ def test_flask_app_creates():
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'rdp-gen'))
     
     # Import should not raise
-    from app import app, cache
+    from app import app
     
     assert app is not None
-    assert cache is not None
     assert app.secret_key is not None
     
     print("✓ Flask app creates successfully")
