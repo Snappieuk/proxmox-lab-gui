@@ -277,6 +277,9 @@ def get_all_vms() -> List[Dict[str, Any]]:
         for vm in (vmlist or []):
             out.append(_build_vm_dict(vm))
 
+    # Sort VMs alphabetically by name
+    out.sort(key=lambda vm: (vm.get("name") or "").lower())
+
     logger.info("get_all_vms: returning %d VM(s)", len(out))
 
     _vm_cache_data = out
@@ -439,6 +442,9 @@ def get_vms_for_user(user: str, search: Optional[str] = None) -> List[Dict[str, 
             or search_lower in (vm.get("ip") or "").lower()
         ]
         logger.debug("get_vms_for_user: search=%s filtered_vms=%d", search, len(vms))
+    
+    # Sort VMs alphabetically by name
+    vms.sort(key=lambda vm: (vm.get("name") or "").lower())
     
     logger.debug("get_vms_for_user: user=%s visible_vms=%d", user, len(vms))
     return vms

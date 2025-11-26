@@ -191,6 +191,9 @@ async function loadVMs() {
         }
         const vms = await resp.json();
         
+        // Sort VMs alphabetically by name
+        vms.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+        
         // Categorize VMs
         const windows_vms = vms.filter(v => v.type === "qemu" && v.category === "windows");
         const linux_vms = vms.filter(v => v.type === "qemu" && v.category === "linux");
