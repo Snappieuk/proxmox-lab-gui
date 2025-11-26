@@ -55,8 +55,15 @@ import json
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
 
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 if WEBSOCKET_AVAILABLE:
     sock = Sock(app)
+    logger.info("WebSocket support ENABLED (flask-sock loaded)")
+else:
+    logger.warning("WebSocket support DISABLED (flask-sock not available)")
 
 
 def require_user() -> str:
