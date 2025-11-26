@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import re
+import ssl
 import time
 from typing import Dict, List, Any, Optional
 
@@ -74,23 +75,27 @@ _proxmox_admin = None
 _proxmox_admin_wrapper = None
 _proxmox_pid = None  # Track which process created the connection
 
-def get_proxmox_admin():
+def _create_proxmox_connection():
+    """Create a fresh ProxmoxAPI connection."""
+    return ProxmoxAPI(
+        PVE_HOST,
+        user=PVE_ADMIN_USER,
+        password=PVE_ADMIN_PASS,
+        verify_ssl=PVE_VERIFY,
+    )
+
+def get_proxmox_admin(force_reconnect=False):
     """
     Get or create the Proxmox API connection.
-    Recreates connection if process has forked (Gunicorn workers).
+    Recreates connection if process has forked (Gunicorn workers) or on SSL errors.
     """
     global _proxmox_admin, _proxmox_pid
     current_pid = os.getpid()
     
-    # Recreate connection if we're in a new process (post-fork)
-    if _proxmox_admin is None or _proxmox_pid != current_pid:
+    # Recreate connection if we're in a new process (post-fork) or forced
+    if force_reconnect or _proxmox_admin is None or _proxmox_pid != current_pid:
         try:
-            _proxmox_admin = ProxmoxAPI(
-                PVE_HOST,
-                user=PVE_ADMIN_USER,
-                password=PVE_ADMIN_PASS,
-                verify_ssl=PVE_VERIFY,
-            )
+            _proxmox_admin = _create_proxmox_connection()
             _proxmox_pid = current_pid
             logger.info("Connected to Proxmox at %s (PID: %s)", PVE_HOST, current_pid)
         except Exception as e:
@@ -98,15 +103,28 @@ def get_proxmox_admin():
             raise
     return _proxmox_admin
 
-def get_proxmox_admin_wrapper():
+def get_proxmox_admin_wrapper(force_reconnect=False):
     """Get or create the Proxmox admin wrapper (recreated per worker)."""
     global _proxmox_admin_wrapper, _proxmox_pid
     current_pid = os.getpid()
     
-    # Recreate wrapper if we're in a new process
-    if _proxmox_admin_wrapper is None or _proxmox_pid != current_pid:
-        _proxmox_admin_wrapper = ProxmoxAdminWrapper(get_proxmox_admin())
+    # Recreate wrapper if we're in a new process or forced
+    if force_reconnect or _proxmox_admin_wrapper is None or _proxmox_pid != current_pid:
+        _proxmox_admin_wrapper = ProxmoxAdminWrapper(get_proxmox_admin(force_reconnect))
     return _proxmox_admin_wrapper
+
+def _api_call_with_retry(func, *args, **kwargs):
+    """
+    Execute an API call with automatic retry on SSL errors.
+    Recreates connection once on SSL/connection errors.
+    """
+    try:
+        return func(*args, **kwargs)
+    except (ssl.SSLError, ConnectionError, BrokenPipeError, OSError) as e:
+        logger.warning("API call failed with connection error, reconnecting: %s", e)
+        # Force reconnection and retry once
+        get_proxmox_admin(force_reconnect=True)
+        return func(*args, **kwargs)
 
 # ---------------------------------------------------------------------------
 # VM cache: single cluster snapshot, reused everywhere
@@ -172,7 +190,7 @@ def _lookup_vm_ip(node: str, vmid: int, vmtype: str) -> Optional[str]:
     # LXC containers - use network interfaces API (much more reliable)
     if vmtype == "lxc":
         try:
-            interfaces = get_proxmox_admin().nodes(node).lxc(vmid).interfaces.get()
+            interfaces = _api_call_with_retry(lambda: get_proxmox_admin().nodes(node).lxc(vmid).interfaces.get())
             if interfaces:
                 for iface in interfaces:
                     if iface.get("name") in ("eth0", "veth0"):  # Primary interface
@@ -195,9 +213,9 @@ def _lookup_vm_ip(node: str, vmid: int, vmtype: str) -> Optional[str]:
     # QEMU VMs - use guest agent
     if vmtype == "qemu":
         try:
-            data = get_proxmox_admin().nodes(node).qemu(vmid).agent.get(
+            data = _api_call_with_retry(lambda: get_proxmox_admin().nodes(node).qemu(vmid).agent.get(
                 "network-get-interfaces"
-            )
+            ))
         except Exception as e:
             logger.debug("guest agent call failed for %s/%s: %s", node, vmid, e)
             return None
@@ -277,12 +295,12 @@ def get_all_vms() -> List[Dict[str, Any]]:
     wrapper = get_proxmox_admin_wrapper()
     if wrapper:
         try:
-            nodes = wrapper.get_nodes()
+            nodes = _api_call_with_retry(lambda: wrapper.get_nodes())
         except Exception as e:
             logger.debug("failed to list nodes via wrapper: %s", e)
     else:
         try:
-            resources = get_proxmox_admin().cluster.resources.get(type="vm") or []
+            resources = _api_call_with_retry(lambda: get_proxmox_admin().cluster.resources.get(type="vm")) or []
             # convert to node list in the format expected by wrapper
             nodes = sorted({r["node"] for r in resources})
             nodes = [{"node": n} for n in nodes]
@@ -297,13 +315,13 @@ def get_all_vms() -> List[Dict[str, Any]]:
         vmlist = []
         if wrapper:
             try:
-                vmlist = wrapper.list_qemu(node)
+                vmlist = _api_call_with_retry(lambda: wrapper.list_qemu(node))
             except Exception as e:
                 logger.debug("failed to list qemu on %s via wrapper: %s", node, e)
                 vmlist = []
         else:
             try:
-                qemu_vms = get_proxmox_admin().nodes(node).qemu.get() or []
+                qemu_vms = _api_call_with_retry(lambda: get_proxmox_admin().nodes(node).qemu.get()) or []
                 for vm in qemu_vms:
                     vm['node'] = node
                 vmlist = qemu_vms
