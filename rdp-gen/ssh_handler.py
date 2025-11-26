@@ -52,6 +52,9 @@ class SSHWebSocketHandler:
             # Flags:
             # -o StrictHostKeyChecking=no: Auto-accept host keys
             # -o UserKnownHostsFile=/dev/null: Don't save host keys
+            # -o IdentitiesOnly=yes: Don't try SSH keys from agent
+            # -o PubkeyAuthentication=no: Disable SSH key auth completely
+            # -o PreferredAuthentications=password: Force password only
             # -o ServerAliveInterval=30: Keep connection alive
             # -o ServerAliveCountMax=3: Disconnect after 3 failed keepalives
             # Note: Connects as current user (root). Target must allow password auth for root.
@@ -61,6 +64,9 @@ class SSHWebSocketHandler:
                     '-p', str(self.port),
                     '-o', 'StrictHostKeyChecking=no',
                     '-o', 'UserKnownHostsFile=/dev/null',
+                    '-o', 'IdentitiesOnly=yes',
+                    '-o', 'PubkeyAuthentication=no',
+                    '-o', 'PreferredAuthentications=password',
                     '-o', 'ServerAliveInterval=30',
                     '-o', 'ServerAliveCountMax=3',
                     self.ip

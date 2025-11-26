@@ -557,6 +557,10 @@ def get_all_vms(skip_ips: bool = False, force_refresh: bool = False) -> List[Dic
         logger.info("get_all_vms: fetched %d resources from cluster API", len(resources))
         
         for vm in resources:
+            # Skip templates (template=1)
+            if vm.get("template") == 1:
+                continue
+            
             # Filter by VALID_NODES if configured
             if VALID_NODES and vm.get("node") not in VALID_NODES:
                 continue
@@ -580,6 +584,9 @@ def get_all_vms(skip_ips: bool = False, force_refresh: bool = False) -> List[Dic
                 # Get QEMU VMs
                 qemu_vms = get_proxmox_admin().nodes(node).qemu.get() or []
                 for vm in qemu_vms:
+                    # Skip templates
+                    if vm.get('template') == 1:
+                        continue
                     vm['node'] = node
                     vm['type'] = 'qemu'
                     out.append(_build_vm_dict(vm, skip_ip=skip_ips))
@@ -587,6 +594,9 @@ def get_all_vms(skip_ips: bool = False, force_refresh: bool = False) -> List[Dic
                 # Get LXC containers
                 lxc_vms = get_proxmox_admin().nodes(node).lxc.get() or []
                 for vm in lxc_vms:
+                    # Skip templates
+                    if vm.get('template') == 1:
+                        continue
                     vm['node'] = node
                     vm['type'] = 'lxc'
                     out.append(_build_vm_dict(vm, skip_ip=skip_ips))
