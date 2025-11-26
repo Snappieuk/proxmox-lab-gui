@@ -3,20 +3,16 @@ Description=Proxmox Lab GUI
 After=network.target
 
 [Service]
-Type=notify
+Type=exec
 User=root
 Group=root
-WorkingDirectory=/root/rdp-gen
-Environment="PATH=/root/rdp-gen/venv/bin"
-EnvironmentFile=-/root/rdp-gen/.env
-ExecStart=/root/rdp-gen/venv/bin/gunicorn --config /root/rdp-gen/gunicorn.conf.py --chdir /root/rdp-gen app:app
+WorkingDirectory=/root/proxmox-lab-gui/rdp-gen
+Environment="PATH=/root/proxmox-lab-gui/venv/bin:/usr/local/bin:/usr/bin:/bin"
+EnvironmentFile=-/root/proxmox-lab-gui/.env
+ExecStart=/root/proxmox-lab-gui/venv/bin/gunicorn -w 4 -b 0.0.0.0:8080 app:app
 ExecReload=/bin/kill -s HUP $MAINPID
 Restart=always
 RestartSec=3
-
-# Security options
-NoNewPrivileges=true
-PrivateTmp=true
 
 [Install]
 WantedBy=multi-user.target
