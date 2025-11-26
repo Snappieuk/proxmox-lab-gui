@@ -1,7 +1,33 @@
 #!/usr/bin/env python3
 """
-Fast IP discovery using broadcast ping + ARP table lookup.
-Maps MAC addresses from Proxmox VMs to IPs discovered on the network.
+ARP-based IP discovery component for Proxmox VM IP discovery.
+
+Usage:
+    This module provides fast IP discovery for VMs by using nmap ARP probes
+    (when running as root or with CAP_NET_RAW capability) to populate the
+    kernel ARP table, then matching VM MAC addresses to discovered IPs.
+
+    For best results, run with root privileges:
+        sudo python app.py
+    
+    Or grant CAP_NET_RAW capability:
+        sudo setcap cap_net_raw+ep /usr/bin/nmap
+
+    When run without root:
+    - nmap -sn -PR (ARP ping) requires root, so falls back to -sn (ICMP/TCP ping)
+    - ARP table will still be parsed, but may have fewer entries
+    - Guest agent/LXC interface lookups remain as fallback
+
+Functions:
+    - normalize_mac(mac: str) -> str: Normalize MAC to lowercase, no separators.
+    - discover_ips_via_arp(vm_mac_map, subnets, background) -> Dict[int, str]
+        If background=True: spawn background thread, return cached results immediately.
+        If background=False: run synchronously, return discovered vmid->ip mapping.
+    - get_scan_status(vmid: int) -> Optional[str]: Get last known IP or status for vmid.
+
+Cache:
+    - Internal cache (_last_discovered) with configurable TTL (default 300s)
+    - Avoids excessive scans by checking cache age before new scans
 """
 
 import subprocess
@@ -189,38 +215,90 @@ def broadcast_ping(subnet: str = "192.168.1.255", count: int = 1) -> bool:
     return False
 
 
+def _is_root() -> bool:
+    """Check if we're running with root privileges."""
+    import os
+    return os.geteuid() == 0
+
+
 def scan_network_range(subnet_cidr: str = "10.220.8.0/21", timeout: int = 2) -> bool:
     """
-    Scan network range to populate ARP table.
-    More reliable than broadcast ping - scans specific network range.
+    Scan network range to populate ARP table using nmap.
+    
+    When running as root (or with CAP_NET_RAW):
+        Uses `nmap -sn -PR <subnet>` (ARP ping) for reliable L2 discovery.
+        ARP probes are the most reliable for local network VM discovery.
+    
+    When running without root:
+        Falls back to `nmap -sn <subnet>` (ICMP/TCP ping).
+        Less reliable but still populates ARP table for responding hosts.
+    
+    After the scan, parse /proc/net/arp to collect MAC->IP mappings.
     
     Args:
         subnet_cidr: Network in CIDR notation (e.g., "10.220.8.0/21")
         timeout: Scan timeout in seconds
     
     Returns:
-        True if scan succeeded
+        True if scan succeeded (nmap ran without error)
     """
-    # Try nmap first (fast and reliable)
+    is_root = _is_root()
+    
+    # Determine nmap arguments based on privileges
+    if is_root:
+        # ARP ping (-PR) is most reliable but requires root
+        nmap_args = ['-sn', '-PR', '-T4', '--max-retries', '1', subnet_cidr]
+        scan_type = "ARP ping (root)"
+    else:
+        # Unprivileged: use standard ping scan without -PR
+        # -sn does ICMP echo, TCP SYN to 443, TCP ACK to 80, ICMP timestamp
+        nmap_args = ['-sn', '-T4', '--max-retries', '1', subnet_cidr]
+        scan_type = "ICMP/TCP ping (unprivileged)"
+    
+    logger.info("Starting %s scan on %s", scan_type, subnet_cidr)
+    
+    # Try nmap with different paths
     for nmap_cmd in ['/usr/bin/nmap', '/usr/local/bin/nmap', 'nmap']:
         try:
             result = subprocess.run(
-                [nmap_cmd, '-sn', '-T4', '--max-retries', '1', subnet_cidr],
+                [nmap_cmd] + nmap_args,
                 capture_output=True,
                 text=True,
-                timeout=timeout + 5
+                timeout=timeout + 30  # ARP scans on large subnets can take time
             )
+            
+            if result.returncode != 0:
+                logger.warning("nmap returned non-zero: %d, stderr: %s", 
+                             result.returncode, result.stderr[:200] if result.stderr else "")
+                # Check if it's a privilege error for -PR
+                if "requires root" in (result.stderr or "").lower() or \
+                   "operation not permitted" in (result.stderr or "").lower():
+                    logger.warning("nmap -PR requires root privileges, falling back to unprivileged scan")
+                    # Retry without -PR
+                    result = subprocess.run(
+                        [nmap_cmd, '-sn', '-T4', '--max-retries', '1', subnet_cidr],
+                        capture_output=True,
+                        text=True,
+                        timeout=timeout + 30
+                    )
+            
             logger.info("Network scan with nmap completed: returncode=%d", result.returncode)
             if result.stdout:
                 # Count how many hosts were found
                 host_count = result.stdout.count("Host is up")
                 logger.info("nmap found %d hosts up", host_count)
             return True
+            
         except FileNotFoundError:
             continue
+        except subprocess.TimeoutExpired:
+            logger.warning("nmap scan timed out after %d seconds", timeout + 30)
+            return False
         except Exception as e:
             logger.debug("nmap scan failed: %s", e)
             continue
+    
+    logger.warning("nmap not found, network scan unavailable")
     
     # Fallback: use fping if available
     for fping_cmd in ['/usr/bin/fping', '/usr/sbin/fping', 'fping']:
