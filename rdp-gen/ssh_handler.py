@@ -49,10 +49,13 @@ class SSHWebSocketHandler:
             # Create a pseudo-terminal
             self.master_fd, self.slave_fd = pty.openpty()
             
-            # Start SSH process with PTY - bare SSH command, no flags
+            # Start SSH process with PTY
+            # Only flag needed: auto-accept host keys (required for web terminal)
             self.process = subprocess.Popen(
                 [
                     'ssh',
+                    '-o', 'StrictHostKeyChecking=no',
+                    '-o', 'UserKnownHostsFile=/dev/null',
                     f'{self.username}@{self.ip}'
                 ],
                 stdin=self.slave_fd,
