@@ -30,6 +30,9 @@ user = None
 group = None
 tmp_upload_dir = None
 
+# Disable preloading to avoid SSL connection fork issues
+preload_app = False
+
 # SSL (uncomment and configure if needed)
 # keyfile = "/path/to/key.pem"
 # certfile = "/path/to/cert.pem"
