@@ -258,6 +258,22 @@ body {
     cursor: default;
 }
 
+.btn-primary:disabled,
+.btn-secondary:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+#refresh-btn:disabled {
+    cursor: not-allowed;
+}
+
+.page-banner.success {
+    background-color: #d4edda;
+    color: #155724;
+    border: 1px solid #c3e6cb;
+}
+
 /* Section titles */
 .section-title {
     margin: 20px 0 8px 0;

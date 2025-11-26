@@ -239,12 +239,16 @@ def _build_vm_dict(raw: Dict[str, Any], skip_ip: bool = False) -> Dict[str, Any]
             ip = _get_cached_ip(vmid)
         
         # Lookup IPs from API:
-        # - LXC: Always try (config available even when stopped)
-        # - QEMU: Only when running (guest agent required)
+        # - LXC: Network interfaces (config readable even when stopped, so always try)
+        # - QEMU: Guest agent (only available when running)
         if not ip:
-            if vmtype == "lxc" or status == "running":
+            if vmtype == "lxc":
+                # LXC containers: config is always readable, cache it
                 ip = _lookup_vm_ip(node, vmid, vmtype)
-                # Cache the result (even if None) to avoid repeated failed lookups
+                _cache_ip(vmid, ip)
+            elif vmtype == "qemu" and status == "running":
+                # QEMU VMs: only query when running (guest agent required)
+                ip = _lookup_vm_ip(node, vmid, vmtype)
                 _cache_ip(vmid, ip)
 
     return {
@@ -255,7 +259,31 @@ def _build_vm_dict(raw: Dict[str, Any], skip_ip: bool = False) -> Dict[str, Any]
         "type": vmtype,      # 'qemu' or 'lxc'
         "category": category,
         "ip": ip,
+        "user_mappings": [],  # Will be populated by _enrich_with_user_mappings()
     }
+
+
+def _enrich_with_user_mappings(vms: List[Dict[str, Any]]) -> None:
+    """
+    Enrich VMs with user mapping information (in-place).
+    Adds 'user_mappings' field with list of users who can access this VM.
+    This is cached once, so we don't recalculate on every request.
+    """
+    mapping = get_user_vm_map()
+    
+    # Invert mapping: vmid -> [users]
+    vmid_to_users: Dict[int, List[str]] = {}
+    for user, vmids in mapping.items():
+        for vmid in vmids:
+            if vmid not in vmid_to_users:
+                vmid_to_users[vmid] = []
+            vmid_to_users[vmid].append(user)
+    
+    # Add to each VM
+    for vm in vms:
+        vm["user_mappings"] = vmid_to_users.get(vm["vmid"], [])
+    
+    logger.debug("Enriched %d VMs with user mappings", len(vms))
 
 
 def _enrich_vms_with_arp_ips(vms: List[Dict[str, Any]]) -> None:
@@ -263,16 +291,33 @@ def _enrich_vms_with_arp_ips(vms: List[Dict[str, Any]]) -> None:
     Enrich VM list with IPs discovered via ARP scanning (fast, in-place).
     
     This is much faster than querying guest agents individually.
+    Runs ARP scan in background thread so VMs load immediately.
+    Only scans QEMU VMs that are running - LXC containers get IPs from direct API calls,
+    and offline QEMU VMs can't have network presence.
     """
     if not ARP_SCANNER_AVAILABLE:
         logger.info("ARP scanner not available, skipping ARP discovery")
         return
     
-    # Build map of vmid -> MAC for VMs that don't have IPs yet
+    # Build map of vmid -> MAC for RUNNING QEMU VMs that don't have IPs yet
+    # Skip LXC containers - they get IPs directly from network config API
     vm_mac_map = {}
     for vm in vms:
+        # Skip if already has IP
         if vm.get("ip"):
-            continue  # Already has IP
+            continue
+        
+        # Skip LXC containers (handled by direct API call in _build_vm_dict)
+        if vm.get("type") == "lxc":
+            logger.debug("VM %d (%s) is LXC, skipping ARP (uses direct API)", 
+                        vm["vmid"], vm["name"])
+            continue
+        
+        # Skip if QEMU VM is not running (offline VMs won't be in ARP table)
+        if vm.get("status") != "running":
+            logger.debug("VM %d (%s) is %s, skipping ARP discovery", 
+                        vm["vmid"], vm["name"], vm.get("status"))
+            continue
         
         mac = _get_vm_mac(vm["node"], vm["vmid"], vm["type"])
         if mac:
@@ -282,24 +327,26 @@ def _enrich_vms_with_arp_ips(vms: List[Dict[str, Any]]) -> None:
             logger.debug("VM %d (%s) has no MAC found", vm["vmid"], vm["name"])
     
     if not vm_mac_map:
-        logger.info("No VMs need ARP discovery (all have IPs or no MACs)")
+        logger.info("No running QEMU VMs need ARP discovery")
         return
     
-    logger.info("Attempting ARP discovery for %d VMs", len(vm_mac_map))
+    logger.info("Starting background ARP discovery for %d running QEMU VMs", len(vm_mac_map))
     
-    # Discover IPs via ARP (broadcast ping + ARP table)
-    discovered_ips = discover_ips_via_arp(vm_mac_map, subnets=ARP_SUBNETS)
+    # Discover IPs via ARP in BACKGROUND mode (non-blocking)
+    # This returns immediately with cached results and starts scan in background
+    discovered_ips = discover_ips_via_arp(vm_mac_map, subnets=ARP_SUBNETS, background=True)
     
-    # Update VMs with discovered IPs
+    # Update VMs with any cached IPs we already have
     for vm in vms:
         if vm["vmid"] in discovered_ips:
             vm["ip"] = discovered_ips[vm["vmid"]]
             _cache_ip(vm["vmid"], vm["ip"])
     
-    logger.info("ARP discovery found IPs for %d VMs", len(discovered_ips))
+    logger.info("ARP discovery returned %d cached IPs (scan running in background)", len(discovered_ips))
 
 
-def get_all_vms(skip_ips: bool = False) -> List[Dict[str, Any]]:
+
+def get_all_vms(skip_ips: bool = False, force_refresh: bool = False) -> List[Dict[str, Any]]:
     """
     Cached list of all VMs/containers visible to the admin user.
 
@@ -307,14 +354,15 @@ def get_all_vms(skip_ips: bool = False) -> List[Dict[str, Any]]:
     
     Uses /cluster/resources endpoint for fast loading (single API call).
     Set skip_ips=True to avoid IP lookups for initial fast load.
+    Set force_refresh=True to bypass cache and fetch fresh data from Proxmox.
     
     Note: When skip_ips=True, the result is NOT cached since it's incomplete.
     """
     global _vm_cache_data, _vm_cache_ts
 
     now = time.time()
-    # Only use cache if it exists and we're not skipping IPs (cache has full data)
-    if not skip_ips and _vm_cache_data is not None and (now - _vm_cache_ts) < VM_CACHE_TTL:
+    # Only use cache if it exists, we're not skipping IPs, not forcing refresh, and cache is valid
+    if not skip_ips and not force_refresh and _vm_cache_data is not None and (now - _vm_cache_ts) < VM_CACHE_TTL:
         return _vm_cache_data
 
     # Fast path: use cluster resources API (single call vs N node queries)
@@ -364,6 +412,9 @@ def get_all_vms(skip_ips: bool = False) -> List[Dict[str, Any]]:
     out.sort(key=lambda vm: (vm.get("name") or "").lower())
 
     logger.info("get_all_vms: returning %d VM(s)", len(out))
+
+    # Always enrich with user mappings (needed for both admin and user views)
+    _enrich_with_user_mappings(out)
 
     # Try ARP-based IP discovery for VMs without IPs (fast batch operation)
     # Run this even with skip_ips since ARP is fast and non-blocking
@@ -524,24 +575,28 @@ def get_vm_ip(vmid: int, node: str, vmtype: str) -> Optional[str]:
     return ip
 
 
-def get_vms_for_user(user: str, search: Optional[str] = None, skip_ips: bool = False) -> List[Dict[str, Any]]:
+def get_vms_for_user(user: str, search: Optional[str] = None, skip_ips: bool = False, force_refresh: bool = False) -> List[Dict[str, Any]]:
     """
     Non-admin: only VMs listed in mappings.
     Admin: all VMs.
     Optional search parameter filters by VM name (case-insensitive).
     Set skip_ips=True to skip IP lookups for fast initial load.
+    Set force_refresh=True to bypass cache and fetch fresh data.
+    
+    NOTE: This function now uses cached user_mappings from get_all_vms(),
+    so switching between admin/user views doesn't trigger new Proxmox API calls.
     """
-    vms = get_all_vms(skip_ips=skip_ips)
+    vms = get_all_vms(skip_ips=skip_ips, force_refresh=force_refresh)
     admin = is_admin_user(user)
     logger.debug("get_vms_for_user: user=%s is_admin=%s all_vms=%d", user, admin, len(vms))
     
     if not admin:
-        mapping = get_user_vm_map()
-        allowed = set(mapping.get(user, []))
-        logger.debug("get_vms_for_user: user=%s allowed_vmids=%s", user, allowed)
-        if not allowed:
+        # Filter using cached user_mappings (no need to call get_user_vm_map again)
+        vms = [vm for vm in vms if user in vm.get("user_mappings", [])]
+        logger.debug("get_vms_for_user: user=%s filtered to %d VMs using cached mappings", user, len(vms))
+        if not vms:
+            logger.info("User %s has no VM mappings", user)
             return []
-        vms = [vm for vm in vms if vm["vmid"] in allowed]
     
     # Apply search filter if provided
     if search:

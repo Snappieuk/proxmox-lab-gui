@@ -7,10 +7,23 @@ Maps MAC addresses from Proxmox VMs to IPs discovered on the network.
 import subprocess
 import re
 import logging
+import threading
+import time
 from typing import Dict, Optional, List
 from collections import defaultdict
 
 logger = logging.getLogger(__name__)
+
+# Module-level cache for ARP results
+_arp_cache: Dict[str, str] = {}  # mac -> ip
+_arp_cache_time: float = 0
+_arp_cache_ttl: int = 300  # 5 minutes
+
+# Background scan state
+_scan_thread: Optional[threading.Thread] = None
+_scan_status: Dict[int, str] = {}  # vmid -> status message
+_scan_in_progress: bool = False
+_scan_lock = threading.Lock()
 
 
 def get_arp_table() -> Dict[str, str]:
@@ -233,7 +246,86 @@ def scan_network_range(subnet_cidr: str = "10.220.8.0/21", timeout: int = 2) -> 
     return False
 
 
-def discover_ips_via_arp(vm_mac_map: Dict[int, str], subnets: Optional[List[str]] = None) -> Dict[int, str]:
+def get_scan_status(vmid: int) -> Optional[str]:
+    """
+    Get the current scan status for a VM.
+    
+    Args:
+        vmid: VM ID
+    
+    Returns:
+        Status message or None
+    """
+    return _scan_status.get(vmid)
+
+
+def _background_scan_worker(vm_mac_map: Dict[int, str], subnets: Optional[List[str]] = None):
+    """
+    Background worker that performs network scan and updates IP cache.
+    
+    Args:
+        vm_mac_map: Dict mapping vmid to MAC address
+        subnets: Optional list of broadcast addresses for fallback
+    """
+    global _scan_in_progress, _scan_status, _arp_cache, _arp_cache_time
+    
+    try:
+        logger.info("Background scan started for %d VMs", len(vm_mac_map))
+        
+        # Update status for all VMs
+        with _scan_lock:
+            for vmid in vm_mac_map.keys():
+                _scan_status[vmid] = "Scanning network..."
+        
+        # Try network range scan first (more reliable than broadcast ping)
+        logger.info("Scanning network range 10.220.8.0/21 to populate ARP")
+        scan_success = scan_network_range("10.220.8.0/21", timeout=3)
+        
+        # If scan failed, try broadcast ping as fallback
+        if not scan_success:
+            subnets = subnets or ["10.220.15.255"]  # Default to 10.220.8.0/21 broadcast
+            logger.info("Falling back to broadcast ping to %d subnets", len(subnets))
+            with _scan_lock:
+                for vmid in vm_mac_map.keys():
+                    _scan_status[vmid] = "Broadcast ping..."
+            for subnet in subnets:
+                broadcast_ping(subnet)
+        
+        # Get updated ARP table
+        arp_table = get_arp_table()
+        logger.info("Post-scan ARP table has %d entries", len(arp_table))
+        
+        # Match VMs to IPs and update cache + status
+        found_count = 0
+        with _scan_lock:
+            for vmid, mac in vm_mac_map.items():
+                if mac in arp_table:
+                    ip = arp_table[mac]
+                    _arp_cache[mac] = ip
+                    _scan_status[vmid] = ip
+                    found_count += 1
+                    logger.info("VM %d (MAC %s) -> IP %s", vmid, mac, ip)
+                else:
+                    _scan_status[vmid] = "Not found in ARP"
+                    logger.warning("VM %d (MAC %s) not found in ARP table", vmid, mac)
+            
+            _arp_cache_time = time.time()
+        
+        logger.info("Background scan complete: discovered IPs for %d/%d VMs", found_count, len(vm_mac_map))
+        
+    except Exception as e:
+        logger.error("Background scan failed: %s", e)
+        with _scan_lock:
+            for vmid in vm_mac_map.keys():
+                _scan_status[vmid] = f"Scan error: {e}"
+    
+    finally:
+        with _scan_lock:
+            global _scan_in_progress
+            _scan_in_progress = False
+
+
+def discover_ips_via_arp(vm_mac_map: Dict[int, str], subnets: Optional[List[str]] = None, background: bool = True) -> Dict[int, str]:
     """
     Discover VM IPs using network scan + ARP lookup.
     
@@ -241,20 +333,23 @@ def discover_ips_via_arp(vm_mac_map: Dict[int, str], subnets: Optional[List[str]
         vm_mac_map: Dict mapping vmid to MAC address (lowercase, no separators)
         subnets: List of broadcast addresses to ping (e.g., ["192.168.1.255", "10.0.0.255"])
                  Note: Now used as fallback; primary method is network range scan
+        background: If True, run scan in background thread and return immediately with cached results
     
     Returns:
-        Dict mapping vmid to discovered IP address
+        Dict mapping vmid to discovered IP address (from cache if background=True)
     """
+    global _scan_thread, _scan_in_progress
+    
     if not vm_mac_map:
         return {}
     
     logger.info("VM MAC map: %s", vm_mac_map)
     
-    # Get existing ARP table first (might already have entries)
+    # Get existing ARP table first (might already have cached entries)
     arp_table = get_arp_table()
-    logger.info("Pre-scan ARP table has %d entries", len(arp_table))
+    logger.info("Current ARP table has %d entries", len(arp_table))
     
-    # Check if we already have matches before scanning
+    # Check if we already have matches in cache
     vm_ips = {}
     for vmid, mac in vm_mac_map.items():
         if mac in arp_table:
@@ -265,6 +360,31 @@ def discover_ips_via_arp(vm_mac_map: Dict[int, str], subnets: Optional[List[str]
     if len(vm_ips) == len(vm_mac_map):
         logger.info("All IPs found in existing ARP cache, skipping network scan")
         return vm_ips
+    
+    # If background mode, start scan thread and return immediately
+    if background:
+        with _scan_lock:
+            if not _scan_in_progress:
+                _scan_in_progress = True
+                _scan_thread = threading.Thread(
+                    target=_background_scan_worker,
+                    args=(vm_mac_map, subnets),
+                    daemon=True
+                )
+                _scan_thread.start()
+                logger.info("Started background network scan")
+                
+                # Set initial status for VMs without IPs
+                for vmid in vm_mac_map.keys():
+                    if vmid not in vm_ips:
+                        _scan_status[vmid] = "Scan starting..."
+            else:
+                logger.info("Background scan already in progress")
+        
+        return vm_ips  # Return whatever we have cached
+    
+    # Synchronous mode (old behavior)
+    logger.info("Running synchronous network scan")
     
     # Try network range scan first (more reliable than broadcast ping)
     logger.info("Scanning network range 10.220.8.0/21 to populate ARP")

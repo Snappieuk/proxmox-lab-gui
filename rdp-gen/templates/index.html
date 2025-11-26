@@ -22,6 +22,9 @@
         {% if request.args.get('search') %}
         <a href="{{ request.path }}" class="btn-secondary" style="padding: 0.5rem 1rem;">Clear</a>
         {% endif %}
+        <button type="button" id="refresh-btn" class="btn-secondary" onclick="refreshVMs()" title="Refresh VM list from Proxmox" style="padding: 0.5rem 1rem;">
+            🔄 Refresh
+        </button>
     </form>
 </div>
 
@@ -201,6 +204,74 @@ function updateLoadingStatus(message, details = '') {
     if (detailsEl) detailsEl.textContent = details;
 }
 
+function showMessage(message, type = 'error') {
+    // Create or update message banner
+    let banner = document.querySelector('.page-banner');
+    if (!banner) {
+        banner = document.createElement('div');
+        banner.className = 'page-banner';
+        const searchBox = document.querySelector('div[style*="margin-bottom: 2rem"]');
+        if (searchBox && searchBox.nextSibling) {
+            searchBox.parentNode.insertBefore(banner, searchBox.nextSibling);
+        }
+    }
+    banner.textContent = message;
+    banner.className = 'page-banner' + (type === 'success' ? ' success' : '');
+    
+    // Auto-hide after 3 seconds
+    setTimeout(() => {
+        if (banner && banner.textContent === message) {
+            banner.remove();
+        }
+    }, 3000);
+}
+
+async function refreshVMs() {
+    const btn = document.getElementById('refresh-btn');
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = '⏳ Refreshing...';
+    }
+    
+    updateLoadingStatus('Refreshing from Proxmox...', 'Fetching latest VM data');
+    
+    try {
+        // Force refresh with skip_ips=false to get fresh data with IPs
+        const resp = await fetch("/api/vms?force_refresh=true&skip_ips=false");
+        if (!resp.ok) {
+            showMessage("Failed to refresh VMs");
+            return;
+        }
+        
+        const data = await resp.json();
+        if (!Array.isArray(data)) {
+            showMessage("Error: Invalid response from server");
+            return;
+        }
+        
+        // Clear and reload the VM list
+        const container = document.getElementById('vm-container');
+        if (container) {
+            container.innerHTML = '';
+            data.forEach(vm => {
+                container.appendChild(createVMCard(vm));
+            });
+        }
+        
+        updateLoadingStatus('', '');
+        showMessage(`Refreshed ${data.length} VMs successfully`, "success");
+    } catch (e) {
+        console.error("Refresh failed:", e);
+        showMessage("Failed to refresh VMs");
+        updateLoadingStatus('', '');
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = '🔄 Refresh';
+        }
+    }
+}
+
 async function loadVMs() {
     const searchParams = new URLSearchParams(window.location.search);
     const search = searchParams.get('search') || '';
@@ -288,42 +359,91 @@ async function loadVMs() {
 
 async function lazyLoadIPs(vms) {
     // Lazy-load IPs for VMs that don't have them yet
-    // Batch requests to avoid overwhelming the server
+    // Shows real-time status from background ARP scan
     const BATCH_SIZE = 5;
+    const POLL_INTERVAL = 2000; // Poll every 2 seconds
+    const MAX_POLLS = 30; // Max 60 seconds of polling
+    
     const vmsNeedingIPs = vms.filter(vm => !vm.ip);
     
     console.log(`Lazy-loading IPs for ${vmsNeedingIPs.length} VMs`);
-    updateLoadingStatus('Loading IP addresses...', `${vmsNeedingIPs.length} VMs need IPs`);
+    updateLoadingStatus('Scanning network for IPs...', `${vmsNeedingIPs.length} VMs need IPs`);
     
-    for (let i = 0; i < vmsNeedingIPs.length; i += BATCH_SIZE) {
-        const batch = vmsNeedingIPs.slice(i, i + BATCH_SIZE);
-        const progress = Math.min(i + BATCH_SIZE, vmsNeedingIPs.length);
-        updateLoadingStatus('Loading IP addresses...', `${progress}/${vmsNeedingIPs.length} IPs fetched`);
-        
-        // Fetch IPs in parallel for this batch
-        await Promise.all(batch.map(async (vm) => {
-            try {
-                const resp = await fetch(`/api/vm/${vm.vmid}/ip`);
-                if (resp.ok) {
-                    const data = await resp.json();
-                    if (data.ip) {
-                        // Update the VM card with the IP
-                        updateVMIP(vm.vmid, data.ip);
-                    }
+    let pollCount = 0;
+    let vmsFound = 0;
+    
+    // Poll for IP updates
+    const pollForIPs = async () => {
+        for (let i = 0; i < vmsNeedingIPs.length; i += BATCH_SIZE) {
+            const batch = vmsNeedingIPs.slice(i, i + BATCH_SIZE);
+            
+            // Fetch IPs in parallel for this batch
+            await Promise.all(batch.map(async (vm) => {
+                // Skip if we already found this VM's IP
+                const card = document.querySelector(`.vm-card[data-vmid="${vm.vmid}"]`);
+                if (card && card.dataset.hasIp === 'true') {
+                    return;
                 }
-            } catch (e) {
-                console.debug(`Failed to load IP for VM ${vm.vmid}:`, e);
+                
+                try {
+                    const resp = await fetch(`/api/vm/${vm.vmid}/ip`);
+                    if (resp.ok) {
+                        const data = await resp.json();
+                        
+                        if (data.ip) {
+                            // Update the VM card with the IP
+                            updateVMIP(vm.vmid, data.ip);
+                            vmsFound++;
+                            if (card) card.dataset.hasIp = 'true';
+                        } else if (data.status) {
+                            // Show scan status
+                            updateVMStatus(vm.vmid, data.status);
+                        }
+                    }
+                } catch (e) {
+                    console.debug(`Failed to load IP for VM ${vm.vmid}:`, e);
+                }
+            }));
+            
+            // Small delay between batches to avoid rate limiting
+            if (i + BATCH_SIZE < vmsNeedingIPs.length) {
+                await new Promise(resolve => setTimeout(resolve, 100));
             }
-        }));
-        
-        // Small delay between batches to avoid rate limiting
-        if (i + BATCH_SIZE < vmsNeedingIPs.length) {
-            await new Promise(resolve => setTimeout(resolve, 100));
         }
-    }
+        
+        // Update progress
+        updateLoadingStatus('Scanning network for IPs...', `${vmsFound}/${vmsNeedingIPs.length} IPs found`);
+        
+        // Continue polling if not all IPs found and haven't exceeded max polls
+        pollCount++;
+        if (vmsFound < vmsNeedingIPs.length && pollCount < MAX_POLLS) {
+            setTimeout(pollForIPs, POLL_INTERVAL);
+        } else {
+            // Done polling
+            if (vmsFound === vmsNeedingIPs.length) {
+                updateLoadingStatus('', 'All IPs loaded');
+            } else {
+                updateLoadingStatus('', `${vmsFound}/${vmsNeedingIPs.length} IPs found`);
+            }
+            setTimeout(() => updateLoadingStatus('', ''), 3000);
+        }
+    };
     
-    // Clear the loading status when done
-    updateLoadingStatus('', '');
+    // Start polling
+    pollForIPs();
+}
+
+function updateVMStatus(vmid, status) {
+    // Update the IP field with scan status
+    const card = document.querySelector(`.vm-card[data-vmid="${vmid}"]`);
+    if (!card) return;
+    
+    const ipSpan = card.querySelector('.vm-ip');
+    if (ipSpan) {
+        ipSpan.textContent = status;
+        ipSpan.style.color = '#888';
+        ipSpan.style.fontStyle = 'italic';
+    }
 }
 
 function updateVMIP(vmid, ip) {
@@ -335,6 +455,7 @@ function updateVMIP(vmid, ip) {
     if (ipSpan) {
         ipSpan.textContent = ip;
         ipSpan.style.color = '';
+        ipSpan.style.fontStyle = '';
     }
     
     // Enable RDP button if this is a Windows VM

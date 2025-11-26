@@ -277,13 +277,26 @@ def admin_probe():
 @app.route("/api/vms")
 @login_required
 def api_vms():
+    """
+    Get VMs for current user.
+    
+    Uses cached VM data - switching between "My Machines" and "Admin View" 
+    doesn't trigger new Proxmox API calls. The cache includes user mappings,
+    so filtering is just a list comprehension, not a new API query.
+    
+    Query parameters:
+    - skip_ips: Skip IP lookups for fast initial load
+    - force_refresh: Bypass cache and fetch fresh data from Proxmox
+    - search: Filter VMs by name/VMID/IP
+    """
     user = require_user()
     # Check if we should skip IPs for fast initial load
     skip_ips = request.args.get('skip_ips', 'false').lower() == 'true'
+    force_refresh = request.args.get('force_refresh', 'false').lower() == 'true'
     search = request.args.get('search', '')
     
     try:
-        vms = get_vms_for_user(user, search=search or None, skip_ips=skip_ips)
+        vms = get_vms_for_user(user, search=search or None, skip_ips=skip_ips, force_refresh=force_refresh)
         return jsonify(vms)
     except Exception as e:
         app.logger.exception("Failed to get VMs for user %s", user)
@@ -304,15 +317,37 @@ def api_vm_ip(vmid: int):
         if not vm:
             return jsonify({"error": "VM not found or not accessible"}), 404
         
+        # First check if we have a scan status (from background ARP scan)
+        from arp_scanner import get_scan_status
+        scan_status = get_scan_status(vmid)
+        
+        if scan_status:
+            # If status is an IP address (contains dots), return it
+            if '.' in scan_status and scan_status.count('.') == 3:
+                return jsonify({
+                    "vmid": vmid,
+                    "ip": scan_status,
+                    "status": "complete"
+                })
+            else:
+                # Otherwise it's a status message
+                return jsonify({
+                    "vmid": vmid,
+                    "ip": None,
+                    "status": scan_status
+                })
+        
+        # Fallback to direct IP lookup (guest agent/interfaces)
         ip = get_vm_ip(vmid, vm["node"], vm["type"])
         
         return jsonify({
             "vmid": vmid,
             "ip": ip,
+            "status": "complete" if ip else "not_found"
         })
     except Exception as e:
         app.logger.exception("Failed to get IP for VM %d", vmid)
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": str(e), "status": "error"}), 500
 
 
 @app.route("/api/mappings")
