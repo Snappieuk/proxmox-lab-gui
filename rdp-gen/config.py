@@ -4,7 +4,9 @@ import os
 PVE_HOST        = os.getenv("PVE_HOST", "10.220.15.249")
 PVE_ADMIN_USER  = os.getenv("PVE_ADMIN_USER", "root@pam")  # admin/service account
 PVE_ADMIN_PASS  = os.getenv("PVE_ADMIN_PASS", "password!")
-PVE_VERIFY      = bool(os.getenv("PVE_VERIFY", "False").lower() in ("true", "1", "yes"))
+# PVE_VERIFY: SSL certificate verification - set to False for self-signed certs
+_verify = os.getenv("PVE_VERIFY", "False").lower()
+PVE_VERIFY = _verify in ("true", "1", "yes")
 
 # Optional: restrict to these nodes, or set to None for all
 # Example: VALID_NODES = ["prox1", "prox2", "prox3"]
