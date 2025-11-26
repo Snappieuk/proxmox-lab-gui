@@ -550,3 +550,235 @@ body {
     margin-top: 4px;
 }
 
+/* Modern Table Layout */
+.summary-tiles {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 16px;
+    margin-bottom: 24px;
+}
+
+.summary-tile {
+    background: #ffffff;
+    border-radius: 6px;
+    border: 1px solid #d1d1d1;
+    padding: 16px;
+    text-align: center;
+}
+
+.summary-tile-title {
+    font-size: 13px;
+    color: #605e5c;
+    margin-bottom: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+.summary-tile-value {
+    font-size: 28px;
+    font-weight: 600;
+    color: #0078d4;
+}
+
+.summary-tile-subtitle {
+    font-size: 12px;
+    color: #8a8886;
+    margin-top: 4px;
+}
+
+/* Section Headers */
+.section-header {
+    font-size: 1.2rem;
+    margin-top: 2rem;
+    margin-bottom: 1rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 2px solid #e2e2e2;
+    color: #323130;
+}
+
+/* Filters */
+.filter-bar {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+}
+
+.filter-select {
+    padding: 6px 12px;
+    border: 1px solid #8a8886;
+    border-radius: 4px;
+    font-size: 13px;
+    background: white;
+}
+
+/* VM Tables */
+.vm-table {
+    width: 100%;
+    border-collapse: collapse;
+    background: #ffffff;
+    border-radius: 6px;
+    overflow: hidden;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+    margin-bottom: 24px;
+}
+
+.vm-table thead {
+    background: #f3f2f1;
+}
+
+.vm-table th {
+    padding: 12px 14px;
+    text-align: left;
+    font-size: 12px;
+    font-weight: 600;
+    color: #605e5c;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    border-bottom: 1px solid #e1dfdd;
+}
+
+.vm-table td {
+    padding: 12px 14px;
+    border-bottom: 1px solid #f3f2f1;
+    font-size: 13px;
+    vertical-align: middle;
+}
+
+.vm-table tbody tr:hover {
+    background: #fafafa;
+}
+
+.vm-table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+/* Badges */
+.badge {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.badge-success {
+    background: #dff6dd;
+    color: #107c10;
+}
+
+.badge-danger {
+    background: #fde7e9;
+    color: #a4262c;
+}
+
+.badge-secondary {
+    background: #f3f2f1;
+    color: #605e5c;
+}
+
+/* Icon Buttons */
+.action-buttons {
+    display: flex;
+    gap: 6px;
+    flex-wrap: nowrap;
+}
+
+.btn-icon {
+    padding: 6px 10px;
+    border-radius: 4px;
+    border: 1px solid transparent;
+    background: transparent;
+    cursor: pointer;
+    font-size: 16px;
+    line-height: 1;
+    transition: all 0.15s ease;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.btn-icon:hover:not(:disabled) {
+    transform: translateY(-1px);
+}
+
+.btn-icon:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.btn-icon-success {
+    color: #107c10;
+    border-color: #107c10;
+}
+
+.btn-icon-success:hover:not(:disabled) {
+    background: #107c10;
+    color: white;
+}
+
+.btn-icon-danger {
+    color: #a4262c;
+    border-color: #a4262c;
+}
+
+.btn-icon-danger:hover:not(:disabled) {
+    background: #a4262c;
+    color: white;
+}
+
+.btn-icon-primary {
+    color: #0078d4;
+    border-color: #0078d4;
+}
+
+.btn-icon-primary:hover:not(:disabled) {
+    background: #0078d4;
+    color: white;
+}
+
+.btn-icon-dark {
+    color: #323130;
+    border-color: #8a8886;
+}
+
+.btn-icon-dark:hover:not(:disabled) {
+    background: #323130;
+    color: white;
+}
+
+/* Tooltip styling */
+[data-tooltip] {
+    position: relative;
+}
+
+[data-tooltip]:hover::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 6px 10px;
+    background: #323130;
+    color: white;
+    font-size: 11px;
+    white-space: nowrap;
+    border-radius: 4px;
+    margin-bottom: 6px;
+    z-index: 1000;
+}
+
+[data-tooltip]:hover::before {
+    content: '';
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    border: 5px solid transparent;
+    border-top-color: #323130;
+    margin-bottom: 1px;
+    z-index: 1000;
+}
+

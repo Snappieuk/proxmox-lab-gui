@@ -19,7 +19,15 @@ from flask import (
     session,
     url_for,
 )
-from flask_sock import Sock
+
+# Optional WebSocket support for SSH terminal
+try:
+    from flask_sock import Sock
+    WEBSOCKET_AVAILABLE = True
+except ImportError:
+    WEBSOCKET_AVAILABLE = False
+    logger = __import__('logging').getLogger(__name__)
+    logger.warning("flask-sock not installed, WebSocket SSH terminal disabled")
 
 from config import SECRET_KEY, VM_CACHE_TTL
 from auth import login_required, current_user, authenticate_proxmox_user
@@ -45,7 +53,9 @@ import json
 
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
-sock = Sock(app)
+
+if WEBSOCKET_AVAILABLE:
+    sock = Sock(app)
 
 
 def require_user() -> str:
@@ -644,54 +654,55 @@ def ssh_terminal(vmid: int):
     )
 
 
-@sock.route("/ws/ssh/<int:vmid>")
-def ssh_websocket(ws, vmid: int):
-    """WebSocket endpoint for SSH connection."""
-    from ssh_handler import SSHWebSocketHandler
-    
-    # Get IP from query parameter
-    ip = request.args.get('ip')
-    if not ip:
-        ws.send("Error: No IP address provided")
-        return
-    
-    # Create SSH handler
-    handler = SSHWebSocketHandler(ws, ip, username='root')
-    
-    # Connect to SSH
-    if not handler.connect():
-        ws.send("\r\n\x1b[1;31mFailed to establish SSH connection.\x1b[0m\r\n")
-        return
-    
-    # Main message loop
-    try:
-        while handler.running:
-            try:
-                message = ws.receive(timeout=1.0)
-                if message is None:
-                    break
-                
-                # Parse message (expecting JSON with type and data)
+if WEBSOCKET_AVAILABLE:
+    @sock.route("/ws/ssh/<int:vmid>")
+    def ssh_websocket(ws, vmid: int):
+        """WebSocket endpoint for SSH connection."""
+        from ssh_handler import SSHWebSocketHandler
+        
+        # Get IP from query parameter
+        ip = request.args.get('ip')
+        if not ip:
+            ws.send("Error: No IP address provided")
+            return
+        
+        # Create SSH handler (no username - SSH will prompt interactively)
+        handler = SSHWebSocketHandler(ws, ip)
+        
+        # Connect to SSH
+        if not handler.connect():
+            ws.send("\r\n\x1b[1;31mFailed to establish SSH connection.\x1b[0m\r\n")
+            return
+        
+        # Main message loop
+        try:
+            while handler.running:
                 try:
-                    msg = json.loads(message)
-                    msg_type = msg.get('type')
+                    message = ws.receive(timeout=1.0)
+                    if message is None:
+                        break
                     
-                    if msg_type == 'input':
-                        data = msg.get('data', '')
-                        handler.handle_client_input(data)
-                    elif msg_type == 'resize':
-                        width = msg.get('width', 80)
-                        height = msg.get('height', 24)
-                        handler.resize_terminal(width, height)
-                except json.JSONDecodeError:
-                    # If not JSON, treat as raw input
-                    handler.handle_client_input(message)
-                    
-            except Exception as e:
-                app.logger.debug("WebSocket error: %s", e)
-                break
-    finally:
-        handler.close()
+                    # Parse message (expecting JSON with type and data)
+                    try:
+                        msg = json.loads(message)
+                        msg_type = msg.get('type')
+                        
+                        if msg_type == 'input':
+                            data = msg.get('data', '')
+                            handler.handle_client_input(data)
+                        elif msg_type == 'resize':
+                            width = msg.get('width', 80)
+                            height = msg.get('height', 24)
+                            handler.resize_terminal(width, height)
+                    except json.JSONDecodeError:
+                        # If not JSON, treat as raw input
+                        handler.handle_client_input(message)
+                        
+                except Exception as e:
+                    app.logger.debug("WebSocket error: %s", e)
+                    break
+        finally:
+            handler.close()
 
 
 # ---------------------------------------------------------------------------

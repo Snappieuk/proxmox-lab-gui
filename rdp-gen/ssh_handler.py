@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 """
-WebSocket SSH handler using paramiko.
+WebSocket SSH handler using subprocess to run native SSH client.
 Provides SSH terminal access through WebSocket connections.
 """
 
 import logging
+import subprocess
 import threading
 import time
 import json
-import paramiko
+import os
+import pty
+import select
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -17,87 +20,51 @@ logger = logging.getLogger(__name__)
 class SSHWebSocketHandler:
     """
     Handles SSH connection and bidirectional communication between WebSocket and SSH.
+    Uses system SSH client for interactive authentication (user types username/password).
     """
     
-    def __init__(self, ws, ip: str, username: str = "root", port: int = 22):
+    def __init__(self, ws, ip: str, port: int = 22):
         self.ws = ws
         self.ip = ip
-        self.username = username
         self.port = port
         
-        self.ssh_client: Optional[paramiko.SSHClient] = None
-        self.channel: Optional[paramiko.Channel] = None
+        self.master_fd: Optional[int] = None
+        self.slave_fd: Optional[int] = None
+        self.process: Optional[subprocess.Popen] = None
         self.running = False
+        self.read_thread: Optional[threading.Thread] = None
         
     def connect(self) -> bool:
         """
-        Establish SSH connection to the target host.
+        Establish SSH connection using system SSH client.
+        Opens interactive terminal where user types credentials.
         
         Returns:
             True if connection successful, False otherwise
         """
         try:
-            self.ssh_client = paramiko.SSHClient()
-            self.ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            logger.info("Starting SSH connection to %s:%d", self.ip, self.port)
             
-            # Try to use SSH keys first, then fall back to keyboard-interactive
-            logger.info("Connecting to %s@%s:%d", self.username, self.ip, self.port)
+            # Create a pseudo-terminal
+            self.master_fd, self.slave_fd = pty.openpty()
             
-            # Look for common SSH key locations
-            key_paths = [
-                '/root/.ssh/id_rsa',
-                '/root/.ssh/id_ed25519',
-                '/root/.ssh/id_ecdsa',
-            ]
-            
-            connected = False
-            for key_path in key_paths:
-                try:
-                    self.ssh_client.connect(
-                        self.ip,
-                        port=self.port,
-                        username=self.username,
-                        key_filename=key_path,
-                        timeout=10,
-                        allow_agent=True,
-                        look_for_keys=True,
-                        banner_timeout=10
-                    )
-                    logger.info("Connected using key: %s", key_path)
-                    connected = True
-                    break
-                except (paramiko.ssh_exception.SSHException, FileNotFoundError):
-                    continue
-            
-            if not connected:
-                # Try without specific key (will use agent or prompt for password)
-                try:
-                    self.ssh_client.connect(
-                        self.ip,
-                        port=self.port,
-                        username=self.username,
-                        timeout=10,
-                        allow_agent=True,
-                        look_for_keys=True,
-                        banner_timeout=10
-                    )
-                    connected = True
-                    logger.info("Connected using SSH agent or default keys")
-                except paramiko.AuthenticationException:
-                    # Password required - send prompt to client
-                    self.send_to_client("\r\n\x1b[1;33mPassword authentication required.\x1b[0m\r\n")
-                    self.send_to_client("Please configure SSH key authentication for passwordless access.\r\n")
-                    self.send_to_client("From the Proxmox host, run:\r\n")
-                    self.send_to_client(f"  ssh-copy-id {self.username}@{self.ip}\r\n\r\n")
-                    return False
-            
-            # Open interactive shell
-            self.channel = self.ssh_client.invoke_shell(
-                term='xterm-256color',
-                width=80,
-                height=24
+            # Start SSH process with PTY
+            self.process = subprocess.Popen(
+                ['ssh', '-p', str(self.port), self.ip],
+                stdin=self.slave_fd,
+                stdout=self.slave_fd,
+                stderr=self.slave_fd,
+                preexec_fn=os.setsid
             )
-            self.channel.settimeout(0.1)
+            
+            # Close slave fd in parent (only child needs it)
+            os.close(self.slave_fd)
+            self.slave_fd = None
+            
+            # Set non-blocking mode on master fd
+            import fcntl
+            flag = fcntl.fcntl(self.master_fd, fcntl.F_GETFL)
+            fcntl.fcntl(self.master_fd, fcntl.F_SETFL, flag | os.O_NONBLOCK)
             
             self.running = True
             
@@ -115,20 +82,31 @@ class SSHWebSocketHandler:
     
     def _read_from_ssh(self):
         """
-        Background thread to read from SSH and send to WebSocket.
+        Background thread to read from SSH PTY and send to WebSocket.
         """
-        while self.running and self.channel:
+        while self.running and self.master_fd:
             try:
-                if self.channel.recv_ready():
-                    data = self.channel.recv(4096)
+                # Use select to wait for data with timeout
+                ready, _, _ = select.select([self.master_fd], [], [], 0.1)
+                
+                if ready:
+                    data = os.read(self.master_fd, 4096)
                     if data:
-                        self.send_to_client(data.decode('utf-8', errors='ignore'))
-                else:
-                    time.sleep(0.01)
-            except Exception as e:
-                if self.running:
-                    logger.debug("Error reading from SSH: %s", e)
+                        # Send to WebSocket client
+                        self.send_to_client(data.decode('utf-8', errors='replace'))
+                    else:
+                        # EOF - SSH process closed
+                        self.running = False
+                        break
+                        
+            except OSError:
+                # PTY closed
                 break
+            except Exception as e:
+                logger.debug("Error reading from SSH: %s", e)
+                break
+        
+        logger.debug("SSH read thread exiting")
     
     def send_to_client(self, data: str):
         """
@@ -151,8 +129,8 @@ class SSHWebSocketHandler:
             data: Input data from client
         """
         try:
-            if self.channel and self.channel.send_ready():
-                self.channel.send(data)
+            if self.master_fd:
+                os.write(self.master_fd, data.encode('utf-8'))
         except Exception as e:
             logger.debug("Error sending to SSH: %s", e)
     
@@ -165,8 +143,14 @@ class SSHWebSocketHandler:
             height: Terminal height in characters
         """
         try:
-            if self.channel:
-                self.channel.resize_pty(width=width, height=height)
+            if self.master_fd:
+                import fcntl
+                import termios
+                import struct
+                # Set window size using ioctl
+                winsize = struct.pack('HHHH', height, width, 0, 0)
+                fcntl.ioctl(self.master_fd, termios.TIOCSWINSZ, winsize)
+                logger.debug("Resized terminal to %dx%d", width, height)
         except Exception as e:
             logger.debug("Error resizing terminal: %s", e)
     
@@ -174,18 +158,26 @@ class SSHWebSocketHandler:
         """
         Close SSH connection and cleanup.
         """
+        logger.debug("Closing SSH connection")
         self.running = False
         
         try:
-            if self.channel:
-                self.channel.close()
-        except:
-            pass
+            if self.process:
+                self.process.terminate()
+                time.sleep(0.5)
+                if self.process.poll() is None:
+                    self.process.kill()
+        except Exception as e:
+            logger.debug("Error terminating SSH process: %s", e)
         
         try:
-            if self.ssh_client:
-                self.ssh_client.close()
-        except:
-            pass
+            if self.master_fd:
+                os.close(self.master_fd)
+                self.master_fd = None
+        except Exception as e:
+            logger.debug("Error closing PTY: %s", e)
+        
+        if self.read_thread and self.read_thread.is_alive():
+            self.read_thread.join(timeout=1.0)
         
         logger.info("SSH session closed")

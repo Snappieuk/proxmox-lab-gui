@@ -1,0 +1,811 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1>My Lab Machines</h1>
+        <p class="page-subtitle">
+            Windows: RDP. Linux: SSH.
+        </p>
+    </div>
+</div>
+
+<!-- Search box -->
+<div style="margin-bottom: 2rem;">
+    <form method="get" action="" style="display: flex; gap: 0.5rem; max-width: 600px;">
+        <input type="text" 
+               name="search" 
+               placeholder="Search by name, VMID, or IP..." 
+               value="{{ request.args.get('search', '') }}"
+               style="flex: 1; padding: 0.5rem 1rem; border: 1px solid #ddd; border-radius: 4px; font-size: 14px;">
+        <button type="submit" class="btn-primary" style="padding: 0.5rem 1.5rem;">Search</button>
+        {% if request.args.get('search') %}
+        <a href="{{ request.path }}" class="btn-secondary" style="padding: 0.5rem 1rem;">Clear</a>
+        {% endif %}
+    </form>
+</div>
+
+    {% if message %}
+    <div class="page-banner">{{ message }}</div>
+    {% endif %}
+    {% if probe %}
+    <div class="page-banner">
+        <strong>Probe:</strong>
+        Nodes: {{ probe.nodes_count }}; Resources: {{ probe.resources_count }}; Valid nodes: {{ probe.valid_nodes }}
+        {% if probe.error %}<br/>Error: {{ probe.error }}{% endif %}
+    </div>
+    {% endif %}
+
+{% if progressive_load %}
+<!-- Loading indicator -->
+<div id="loading-indicator" style="padding: 3rem 0; text-align: center;">
+    <div class="spinner" style="margin: 0 auto 1rem;"></div>
+    <p id="loading-status" style="color: #666; font-size: 16px;">Loading virtual machines...</p>
+    <p id="loading-details" style="color: #999; font-size: 12px; margin-top: 0.5rem;"></p>
+</div>
+<style>
+.spinner {
+    width: 40px;
+    height: 40px;
+    border: 4px solid #f3f3f3;
+    border-top: 4px solid #3498db;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+.status-log {
+    max-width: 600px;
+    margin: 1rem auto;
+    padding: 0.5rem 1rem;
+    background: #f8f9fa;
+    border-left: 3px solid #3498db;
+    text-align: left;
+    font-family: monospace;
+    font-size: 11px;
+    color: #555;
+}
+.status-log div {
+    padding: 2px 0;
+}
+</style>
+
+<!-- Containers for dynamically loaded VMs -->
+<div id="windows-vms-container" style="display: none;">
+    <h2 class="section-title">Windows VMs</h2>
+    <div class="cards-grid"></div>
+</div>
+
+<div id="linux-vms-container" style="display: none;">
+    <h2 class="section-title">Linux VMs</h2>
+    <div class="cards-grid"></div>
+</div>
+
+<div id="lxc-containers-container" style="display: none;">
+    <h2 class="section-title">LXC Containers</h2>
+    <div class="cards-grid"></div>
+</div>
+
+<div id="other-vms-container" style="display: none;">
+    <h2 class="section-title">Other / unknown</h2>
+    <div class="cards-grid"></div>
+</div>
+{% else %}
+{% macro vm_cards(vms) %}
+<div class="cards-grid">
+    {% for vm in vms %}
+    <div class="vm-card" data-vmid="{{ vm.vmid }}">
+        <div class="vm-card-header">
+            <div>
+                <div class="vm-name">{{ vm.name }}</div>
+                <div class="vm-meta">
+                    VMID {{ vm.vmid }} · {{ vm.node }}
+                </div>
+            </div>
+            <div class="vm-status vm-status-{{ vm.status }}">
+                {{ vm.status|capitalize }}
+            </div>
+        </div>
+
+        <div class="vm-body">
+            <div class="vm-row">
+                <span class="vm-label">IP address</span>
+                <span class="vm-value vm-ip">
+                    {% if vm.ip %}
+                        {{ vm.ip }}
+                    {% else %}
+                        Not available
+                    {% endif %}
+                </span>
+            </div>
+            {% if vm.category == "windows" %}
+            <div class="vm-row">
+                <span class="vm-label">Connection</span>
+                <span class="vm-value">RDP (3389)</span>
+            </div>
+            {% elif vm.category == "linux" %}
+            <div class="vm-row">
+                <span class="vm-label">Connection</span>
+                <span class="vm-value">SSH (22)</span>
+            </div>
+            {% endif %}
+        </div>
+
+        <div class="vm-footer">
+            <button class="btn-secondary btn-power"
+                    data-vmid="{{ vm.vmid }}" data-action="stop"
+                    {% if vm.status == 'stopped' %}disabled{% endif %}>
+                Stop
+            </button>
+            <button class="btn-primary btn-power"
+                    data-vmid="{{ vm.vmid }}" data-action="start"
+                    {% if vm.status == 'running' %}disabled{% endif %}>
+                Start
+            </button>
+
+            {% if vm.category == "windows" %}
+            <a class="btn-link" href="/rdp/{{ vm.vmid }}.rdp">Download RDP</a>
+            {% elif vm.category == "linux" %}
+            <button class="btn-primary btn-ssh-launch btn-ssh-web" 
+                    data-vmid="{{ vm.vmid }}"
+                    data-ip="{{ vm.ip or '' }}"
+                    data-name="{{ vm.name }}"
+                    {% if not vm.ip %}disabled{% endif %}>
+                Web SSH
+            </button>
+            <button class="btn-secondary btn-ssh-copy btn-ssh" 
+                    data-vmid="{{ vm.vmid }}"
+                    data-ip="{{ vm.ip or '' }}"
+                    {% if not vm.ip %}disabled{% endif %}>
+                Copy SSH
+            </button>
+            {% endif %}
+        </div>
+    </div>
+    {% else %}
+    <p>No VMs in this category.</p>
+    {% endfor %}
+</div>
+{% endmacro %}
+
+{% if windows_vms %}
+<h2 class="section-title">Windows VMs</h2>
+{{ vm_cards(windows_vms) }}
+{% endif %}
+
+{% if linux_vms %}
+<h2 class="section-title">Linux VMs</h2>
+{{ vm_cards(linux_vms) }}
+{% endif %}
+
+{% if lxc_containers %}
+<h2 class="section-title">LXC Containers</h2>
+{{ vm_cards(lxc_containers) }}
+{% endif %}
+
+{% if other_vms %}
+<h2 class="section-title">Other / unknown</h2>
+{{ vm_cards(other_vms) }}
+{% endif %}
+{% endif %}
+
+{% if progressive_load %}
+<script>
+// Progressive loading: fetch VMs and populate page dynamically
+let isInitialLoad = true;
+
+function updateLoadingStatus(message, details = '') {
+    const status = document.getElementById('loading-status');
+    const detailsEl = document.getElementById('loading-details');
+    if (status) status.textContent = message;
+    if (detailsEl) detailsEl.textContent = details;
+}
+
+function showMessage(message, type = 'error') {
+    // Create or update message banner
+    let banner = document.querySelector('.page-banner');
+    if (!banner) {
+        banner = document.createElement('div');
+        banner.className = 'page-banner';
+        const searchBox = document.querySelector('div[style*="margin-bottom: 2rem"]');
+        if (searchBox && searchBox.nextSibling) {
+            searchBox.parentNode.insertBefore(banner, searchBox.nextSibling);
+        }
+    }
+    banner.textContent = message;
+    banner.className = 'page-banner' + (type === 'success' ? ' success' : '');
+    
+    // Auto-hide after 3 seconds
+    setTimeout(() => {
+        if (banner && banner.textContent === message) {
+            banner.remove();
+        }
+    }, 3000);
+}
+
+async function refreshVMs() {
+    const btn = document.getElementById('refresh-btn');
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Refreshing...';
+    }
+    
+    updateLoadingStatus('Refreshing from Proxmox...', 'Fetching latest VM data');
+    
+    try {
+        // Force refresh with skip_ips=false to get fresh data with IPs
+        const resp = await fetch("/api/vms?force_refresh=true&skip_ips=false");
+        if (!resp.ok) {
+            showMessage("Failed to refresh VMs");
+            return;
+        }
+        
+        const data = await resp.json();
+        if (!Array.isArray(data)) {
+            showMessage("Error: Invalid response from server");
+            return;
+        }
+        
+        // Clear and reload the VM list
+        const container = document.getElementById('vm-container');
+        if (container) {
+            container.innerHTML = '';
+            data.forEach(vm => {
+                container.appendChild(createVMCard(vm));
+            });
+        }
+        
+        updateLoadingStatus('', '');
+        showMessage(`Refreshed ${data.length} VMs successfully`, "success");
+    } catch (e) {
+        console.error("Refresh failed:", e);
+        showMessage("Failed to refresh VMs");
+        updateLoadingStatus('', '');
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = 'Refresh Cache';
+        }
+    }
+}
+
+async function loadVMs() {
+    const searchParams = new URLSearchParams(window.location.search);
+    const search = searchParams.get('search') || '';
+    
+    try {
+        // Fast initial load: skip IP lookups
+        const skipIps = isInitialLoad && !search;
+        const url = "/api/vms" + 
+            (search ? "?search=" + encodeURIComponent(search) : "") +
+            (skipIps ? (search ? "&skip_ips=true" : "?skip_ips=true") : "");
+        
+        updateLoadingStatus('Fetching VM list...', 'Querying Proxmox API');
+        
+        const resp = await fetch(url);
+        if (!resp.ok) {
+            console.error("API returned non-ok status:", resp.status, resp.statusText);
+            showMessage("Failed to load VMs");
+            document.getElementById('loading-indicator')?.remove();
+            return;
+        }
+        
+        updateLoadingStatus('Processing VMs...', 'Parsing response data');
+        const data = await resp.json();
+        
+        console.log("API response:", data);
+        console.log("Is array?", Array.isArray(data));
+        console.log("Has error?", data.error);
+        
+        // Check if response is an error object (not an array)
+        if (data && typeof data === 'object' && !Array.isArray(data) && data.error) {
+            console.error("API returned error:", data);
+            showMessage(data.message || "Failed to load VMs");
+            document.getElementById('loading-indicator')?.remove();
+            return;
+        }
+        
+        // Ensure data is an array
+        if (!Array.isArray(data)) {
+            console.error("API did not return an array:", data);
+            showMessage("Error: Invalid response from server");
+            document.getElementById('loading-indicator')?.remove();
+            return;
+        }
+        
+        const vms = data;
+        
+        updateLoadingStatus('Rendering VMs...', `Found ${vms.length} virtual machines`);
+        
+        // If we skipped IPs, lazy-load them after rendering
+        if (skipIps) {
+            updateLoadingStatus('Loading IP addresses...', 'Running ARP scan in background');
+            setTimeout(() => lazyLoadIPs(vms), 100);
+        }
+        
+        // Sort VMs alphabetically by name
+        vms.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+        
+        // Categorize VMs
+        const windows_vms = vms.filter(v => v.type === "qemu" && v.category === "windows");
+        const linux_vms = vms.filter(v => v.type === "qemu" && v.category === "linux");
+        const lxc_containers = vms.filter(v => v.type === "lxc");
+        const other_vms = vms.filter(v => v.type === "qemu" && !["windows", "linux"].includes(v.category));
+        
+        updateLoadingStatus('Rendering VMs...', `${windows_vms.length} Windows, ${linux_vms.length} Linux, ${lxc_containers.length} LXC`);
+        
+        // Render sections
+        renderVMSection("windows-vms-container", "Windows VMs", windows_vms);
+        renderVMSection("linux-vms-container", "Linux VMs", linux_vms);
+        renderVMSection("lxc-containers-container", "LXC Containers", lxc_containers);
+        renderVMSection("other-vms-container", "Other / unknown", other_vms);
+        
+        // Hide loading indicator
+        document.getElementById('loading-indicator')?.remove();
+        
+        if (vms.length === 0) {
+            showMessage(search ? `No VMs found matching '${search}'` : "No VMs available");
+        }
+        
+        isInitialLoad = false;
+    } catch (e) {
+        console.error("Failed to load VMs:", e);
+        showMessage("Error loading VMs");
+    }
+}
+
+async function lazyLoadIPs(vms) {
+    // Lazy-load IPs for VMs that don't have them yet
+    // Shows real-time status from background ARP scan
+    const BATCH_SIZE = 5;
+    const POLL_INTERVAL = 2000; // Poll every 2 seconds
+    const MAX_POLLS = 30; // Max 60 seconds of polling
+    
+    const vmsNeedingIPs = vms.filter(vm => !vm.ip);
+    
+    console.log(`Lazy-loading IPs for ${vmsNeedingIPs.length} VMs`);
+    updateLoadingStatus('Scanning network for IPs...', `${vmsNeedingIPs.length} VMs need IPs`);
+    
+    let pollCount = 0;
+    let vmsFound = 0;
+    
+    // Poll for IP updates
+    const pollForIPs = async () => {
+        for (let i = 0; i < vmsNeedingIPs.length; i += BATCH_SIZE) {
+            const batch = vmsNeedingIPs.slice(i, i + BATCH_SIZE);
+            
+            // Fetch IPs in parallel for this batch
+            await Promise.all(batch.map(async (vm) => {
+                // Skip if we already found this VM's IP
+                const card = document.querySelector(`.vm-card[data-vmid="${vm.vmid}"]`);
+                if (card && card.dataset.hasIp === 'true') {
+                    return;
+                }
+                
+                try {
+                    const resp = await fetch(`/api/vm/${vm.vmid}/ip`);
+                    if (resp.ok) {
+                        const data = await resp.json();
+                        
+                        if (data.ip) {
+                            // Update the VM card with the IP
+                            updateVMIP(vm.vmid, data.ip);
+                            vmsFound++;
+                            if (card) card.dataset.hasIp = 'true';
+                        } else if (data.status) {
+                            // Show scan status
+                            updateVMStatus(vm.vmid, data.status);
+                        }
+                    }
+                } catch (e) {
+                    console.debug(`Failed to load IP for VM ${vm.vmid}:`, e);
+                }
+            }));
+            
+            // Small delay between batches to avoid rate limiting
+            if (i + BATCH_SIZE < vmsNeedingIPs.length) {
+                await new Promise(resolve => setTimeout(resolve, 100));
+            }
+        }
+        
+        // Update progress
+        updateLoadingStatus('Scanning network for IPs...', `${vmsFound}/${vmsNeedingIPs.length} IPs found`);
+        
+        // Continue polling if not all IPs found and haven't exceeded max polls
+        pollCount++;
+        if (vmsFound < vmsNeedingIPs.length && pollCount < MAX_POLLS) {
+            setTimeout(pollForIPs, POLL_INTERVAL);
+        } else {
+            // Done polling
+            if (vmsFound === vmsNeedingIPs.length) {
+                updateLoadingStatus('', 'All IPs loaded');
+            } else {
+                updateLoadingStatus('', `${vmsFound}/${vmsNeedingIPs.length} IPs found`);
+            }
+            setTimeout(() => updateLoadingStatus('', ''), 3000);
+        }
+    };
+    
+    // Start polling
+    pollForIPs();
+}
+
+function updateVMStatus(vmid, status) {
+    // Update the IP field with scan status
+    const card = document.querySelector(`.vm-card[data-vmid="${vmid}"]`);
+    if (!card) return;
+    
+    const ipSpan = card.querySelector('.vm-ip');
+    if (ipSpan) {
+        ipSpan.textContent = status;
+        ipSpan.style.color = '#888';
+        ipSpan.style.fontStyle = 'italic';
+    }
+}
+
+function updateVMIP(vmid, ip) {
+    // Find the VM card and update the IP display
+    const card = document.querySelector(`.vm-card[data-vmid="${vmid}"]`);
+    if (!card) return;
+    
+    const ipSpan = card.querySelector('.vm-ip');
+    if (ipSpan) {
+        ipSpan.textContent = ip;
+        ipSpan.style.color = '';
+        ipSpan.style.fontStyle = '';
+    }
+    
+    // Enable RDP button if this is a Windows VM
+    const rdpBtn = card.querySelector('.rdp-btn');
+    if (rdpBtn && rdpBtn.disabled) {
+        rdpBtn.disabled = false;
+        rdpBtn.title = 'Download RDP file';
+    }
+    
+    // Enable SSH buttons if this is a Linux VM/container
+    const sshBtns = card.querySelectorAll('.btn-ssh, .btn-ssh-web');
+    sshBtns.forEach(btn => {
+        if (btn.disabled) {
+            btn.disabled = false;
+            btn.setAttribute('data-ip', ip);
+        }
+    });
+}
+
+function showMessage(text) {
+    const existing = document.querySelector('.page-banner');
+    if (existing) existing.textContent = text;
+    else {
+        const banner = document.createElement('div');
+        banner.className = 'page-banner';
+        banner.textContent = text;
+        document.querySelector('.page-header').after(banner);
+    }
+}
+
+function renderVMSection(containerId, title, vms) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    
+    if (vms.length === 0) {
+        container.style.display = 'none';
+        return;
+    }
+    
+    container.style.display = 'block';
+    const titleEl = container.querySelector('h2');
+    if (titleEl) titleEl.textContent = title;
+    
+    const grid = container.querySelector('.cards-grid');
+    grid.innerHTML = vms.map(vm => createVMCard(vm)).join('');
+}
+
+function createVMCard(vm) {
+    const isWindows = vm.category === 'windows';
+    const isLinux = vm.category === 'linux';
+    const sshCommand = vm.ip ? `ssh &lt;user&gt;@${vm.ip}` : 'ssh &lt;user&gt;@&lt;ip&gt;';
+    
+    return `
+        <div class="vm-card" data-vmid="${vm.vmid}">
+            <div class="vm-card-header">
+                <div>
+                    <div class="vm-name">${vm.name}</div>
+                    <div class="vm-meta">VMID ${vm.vmid} · ${vm.node}</div>
+                </div>
+                <div class="vm-status vm-status-${vm.status}">${vm.status.charAt(0).toUpperCase() + vm.status.slice(1)}</div>
+            </div>
+            <div class="vm-body">
+                <div class="vm-row">
+                    <span class="vm-label">IP address</span>
+                    <span class="vm-value vm-ip">${vm.ip || 'Not available'}</span>
+                </div>
+                ${isWindows ? `
+                <div class="vm-row">
+                    <span class="vm-label">Connection</span>
+                    <span class="vm-value">RDP (3389)</span>
+                </div>
+                ` : ''}
+                ${isLinux ? `
+                <div class="vm-row">
+                    <span class="vm-label">Connection</span>
+                    <span class="vm-value">SSH (22)</span>
+                </div>
+                <div class="vm-row">
+                    <span class="vm-label">SSH command</span>
+                    <span class="vm-value vm-ssh">${sshCommand}</span>
+                </div>
+                ` : ''}
+            </div>
+            <div class="vm-footer">
+                <button class="btn-secondary btn-power" data-vmid="${vm.vmid}" data-action="stop" ${vm.status === 'stopped' ? 'disabled' : ''}>Stop</button>
+                <button class="btn-primary btn-power" data-vmid="${vm.vmid}" data-action="start" ${vm.status === 'running' ? 'disabled' : ''}>Start</button>
+                ${isWindows ? `<a class="btn-link" href="/rdp/${vm.vmid}.rdp">Download RDP</a>` : ''}
+                ${isLinux ? `
+                    <button class="btn-primary btn-ssh-launch btn-ssh-web" data-vmid="${vm.vmid}" data-ip="${vm.ip || ''}" data-name="${vm.name}" ${!vm.ip ? 'disabled' : ''}>Web SSH</button>
+                    <button class="btn-secondary btn-ssh-copy btn-ssh" data-vmid="${vm.vmid}" data-ip="${vm.ip || ''}" ${!vm.ip ? 'disabled' : ''}>Copy SSH</button>
+                ` : ''}
+            </div>
+        </div>
+    `;
+}
+
+async function refreshVmStatus() {
+    try {
+        const resp = await fetch("/api/vms");
+        if (!resp.ok) return;
+        const data = await resp.json();
+
+        data.forEach(vm => {
+            const card = document.querySelector('.vm-card[data-vmid="' + vm.vmid + '"]');
+            if (!card) return;
+
+            const statusEl = card.querySelector('.vm-status');
+            const ipEl = card.querySelector('.vm-ip');
+
+            if (statusEl) {
+                const text = vm.status ? vm.status.charAt(0).toUpperCase() + vm.status.slice(1) : "Unknown";
+                statusEl.textContent = text;
+                statusEl.classList.remove("vm-status-running", "vm-status-stopped", "vm-status-unknown");
+                statusEl.classList.add("vm-status-" + vm.status);
+            }
+            if (ipEl) {
+                ipEl.textContent = vm.ip ? vm.ip : "Not available";
+            }
+            
+            // Update SSH button
+            const sshBtn = card.querySelector('.btn-ssh');
+            if (sshBtn) {
+                if (vm.ip) {
+                    sshBtn.disabled = false;
+                    sshBtn.setAttribute('data-ip', vm.ip);
+                } else {
+                    sshBtn.disabled = true;
+                    sshBtn.removeAttribute('data-ip');
+                }
+            }
+        });
+    } catch (e) {}
+}
+
+async function sendPowerAction(vmid, action, btn) {
+    try {
+        btn.disabled = true;
+        btn.classList.add("btn-disabled");
+        const resp = await fetch(`/api/vm/${vmid}/${action}`, { method: "POST" });
+        if (!resp.ok) {
+            console.error("Power action failed", await resp.text());
+        }
+        setTimeout(refreshVmStatus, 2000);
+    } catch (e) {
+        console.error(e);
+    } finally {
+        btn.disabled = false;
+        btn.classList.remove("btn-disabled");
+    }
+}
+
+window.addEventListener("load", function () {
+    const progressiveLoad = {% if progressive_load %}true{% else %}false{% endif %};
+    
+    if (progressiveLoad) {
+        // Load VMs immediately on page load
+        loadVMs();
+        // Then poll for updates every 15 seconds
+        setInterval(refreshVmStatus, 15000);
+    } else {
+        // Delay initial refresh slightly to let page render first
+        setTimeout(refreshVmStatus, 500);
+        // Poll for updates every 15 seconds
+        setInterval(refreshVmStatus, 15000);
+    }
+
+    document.addEventListener("click", function (e) {
+        const btn = e.target.closest(".btn-power");
+        if (!btn) return;
+        const vmid = btn.getAttribute("data-vmid");
+        const action = btn.getAttribute("data-action");
+        if (!vmid || !action) return;
+        sendPowerAction(vmid, action, btn);
+    });
+
+    document.addEventListener("click", function (e) {
+        const btn = e.target.closest(".btn-ssh-copy");
+        if (!btn || btn.disabled) return;
+        const ip = btn.getAttribute("data-ip");
+        if (!ip) return;
+        
+        const sshCommand = `ssh root@${ip}`;
+        navigator.clipboard.writeText(sshCommand).then(() => {
+            const originalText = btn.textContent;
+            btn.textContent = "Copied!";
+            btn.classList.add("btn-success");
+            setTimeout(() => {
+                btn.textContent = originalText;
+                btn.classList.remove("btn-success");
+            }, 2000);
+        }).catch(() => {
+            alert(`SSH command:\n${sshCommand}`);
+        });
+    });
+
+    document.addEventListener("click", function (e) {
+        const btn = e.target.closest(".btn-ssh-web");
+        if (!btn || btn.disabled) return;
+        const vmid = btn.getAttribute("data-vmid");
+        const ip = btn.getAttribute("data-ip");
+        const name = btn.getAttribute("data-name");
+        if (!ip || !vmid) return;
+        
+        // Open web SSH in new window
+        const width = 1000;
+        const height = 600;
+        const left = (screen.width - width) / 2;
+        const top = (screen.height - height) / 2;
+        window.open(
+            `/ssh/${vmid}?ip=${encodeURIComponent(ip)}&name=${encodeURIComponent(name)}`,
+            `ssh-${vmid}`,
+            `width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=no,status=no,toolbar=no,menubar=no`
+        );
+    });
+});
+</script>
+{% else %}
+<script>
+async function refreshVmStatus() {
+    try {
+        const resp = await fetch("/api/vms");
+        if (!resp.ok) return;
+        const data = await resp.json();
+
+        data.forEach(vm => {
+            const card = document.querySelector('.vm-card[data-vmid="' + vm.vmid + '"]');
+            if (!card) return;
+
+            const statusEl = card.querySelector('.vm-status');
+            const ipEl = card.querySelector('.vm-ip');
+
+            if (statusEl) {
+                const text = vm.status ? vm.status.charAt(0).toUpperCase() + vm.status.slice(1) : "Unknown";
+                statusEl.textContent = text;
+                statusEl.classList.remove("vm-status-running", "vm-status-stopped", "vm-status-unknown");
+                statusEl.classList.add("vm-status-" + vm.status);
+            }
+            if (ipEl) {
+                ipEl.textContent = vm.ip ? vm.ip : "Not available";
+            }
+            
+            // Update power buttons based on status
+            const stopBtn = card.querySelector('.btn-power[data-action="stop"]');
+            const startBtn = card.querySelector('.btn-power[data-action="start"]');
+            if (stopBtn) {
+                stopBtn.disabled = vm.status === 'stopped';
+            }
+            if (startBtn) {
+                startBtn.disabled = vm.status === 'running';
+            }
+            
+            // Update SSH buttons
+            const sshBtns = card.querySelectorAll('.btn-ssh, .btn-ssh-web');
+            sshBtns.forEach(btn => {
+                if (vm.ip) {
+                    btn.disabled = false;
+                    btn.setAttribute('data-ip', vm.ip);
+                } else {
+                    btn.disabled = true;
+                    btn.removeAttribute('data-ip');
+                }
+            });
+        });
+    } catch (e) {}
+}
+
+async function sendPowerAction(vmid, action, btn) {
+    try {
+        btn.disabled = true;
+        btn.classList.add("btn-disabled");
+        const resp = await fetch(`/api/vm/${vmid}/${action}`, { method: "POST" });
+        if (!resp.ok) {
+            console.error("Power action failed", await resp.text());
+        }
+        setTimeout(refreshVmStatus, 2000);
+    } catch (e) {
+        console.error(e);
+    } finally {
+        btn.disabled = false;
+        btn.classList.remove("btn-disabled");
+    }
+}
+
+window.addEventListener("load", function () {
+    // Delay initial refresh slightly to let page render first
+    setTimeout(refreshVmStatus, 500);
+    // Poll for updates every 15 seconds
+    setInterval(refreshVmStatus, 15000);
+
+    document.addEventListener("click", function (e) {
+        const btn = e.target.closest(".btn-power");
+        if (!btn) return;
+        const vmid = btn.getAttribute("data-vmid");
+        const action = btn.getAttribute("data-action");
+        if (!vmid || !action) return;
+        sendPowerAction(vmid, action, btn);
+    });
+
+    document.addEventListener("click", function (e) {
+        const btn = e.target.closest(".btn-ssh-copy");
+        if (!btn || btn.disabled) return;
+        const ip = btn.getAttribute("data-ip");
+        if (!ip) return;
+        
+        const sshCommand = `ssh root@${ip}`;
+        navigator.clipboard.writeText(sshCommand).then(() => {
+            const originalText = btn.textContent;
+            btn.textContent = "Copied!";
+            btn.classList.add("btn-success");
+            setTimeout(() => {
+                btn.textContent = originalText;
+                btn.classList.remove("btn-success");
+            }, 2000);
+        }).catch(() => {
+            alert(`SSH command:\n${sshCommand}`);
+        });
+    });
+
+    document.addEventListener("click", function (e) {
+        const btn = e.target.closest(".btn-ssh-web");
+        if (!btn || btn.disabled) return;
+        const vmid = btn.getAttribute("data-vmid");
+        const ip = btn.getAttribute("data-ip");
+        const name = btn.getAttribute("data-name");
+        if (!ip || !vmid) return;
+        
+        // Open web SSH in new window
+        const width = 1000;
+        const height = 600;
+        const left = (screen.width - width) / 2;
+        const top = (screen.height - height) / 2;
+        window.open(
+            `/ssh/${vmid}?ip=${encodeURIComponent(ip)}&name=${encodeURIComponent(name)}`,
+            `ssh-${vmid}`,
+            `width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=no,status=no,toolbar=no,menubar=no`
+        );
+    });
+});
+</script>
+{% endif %}
+<!-- Refresh Cache Button at bottom -->
+<div style="margin-top: 3rem; padding: 2rem 0; border-top: 1px solid #ddd; text-align: center;">
+    <button type="button" id="refresh-btn" class="btn-secondary" onclick="refreshVMs()" style="padding: 0.75rem 2rem; font-size: 14px;">
+        Refresh Cache
+    </button>
+    <p style="margin-top: 0.5rem; color: #666; font-size: 12px;">Click to force reload VM data from Proxmox server</p>
+</div>
+
+{% endblock %}
+
