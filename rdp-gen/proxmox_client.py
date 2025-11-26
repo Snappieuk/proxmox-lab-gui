@@ -209,11 +209,14 @@ def get_all_vms(skip_ips: bool = False) -> List[Dict[str, Any]]:
     
     Uses /cluster/resources endpoint for fast loading (single API call).
     Set skip_ips=True to avoid IP lookups for initial fast load.
+    
+    Note: When skip_ips=True, the result is NOT cached since it's incomplete.
     """
     global _vm_cache_data, _vm_cache_ts
 
     now = time.time()
-    if _vm_cache_data is not None and (now - _vm_cache_ts) < VM_CACHE_TTL:
+    # Only use cache if it exists and we're not skipping IPs (cache has full data)
+    if not skip_ips and _vm_cache_data is not None and (now - _vm_cache_ts) < VM_CACHE_TTL:
         return _vm_cache_data
 
     # Fast path: use cluster resources API (single call vs N node queries)
@@ -264,8 +267,11 @@ def get_all_vms(skip_ips: bool = False) -> List[Dict[str, Any]]:
 
     logger.info("get_all_vms: returning %d VM(s)", len(out))
 
-    _vm_cache_data = out
-    _vm_cache_ts = now
+    # Only cache if we have full data (IPs included)
+    if not skip_ips:
+        _vm_cache_data = out
+        _vm_cache_ts = now
+    
     return out
 
 
