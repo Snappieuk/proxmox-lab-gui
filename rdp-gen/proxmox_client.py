@@ -117,16 +117,25 @@ _cluster_cache_lock = threading.Lock()
 # Stored in JSON file for persistence across restarts
 _ip_cache: Dict[int, Dict[str, Any]] = {}
 _ip_cache_loaded = False
-IP_CACHE_TTL = 86400  # 24 hours (much longer since we validate on use)
+IP_CACHE_TTL = 3600  # 1 hour (much longer since we validate on use)
 
 # In-memory mappings cache (write-through to disk)
 _mappings_cache: Optional[Dict[str, List[int]]] = None
 _mappings_cache_loaded = False
 
-# ThreadPoolExecutor for parallel IP lookups (limited concurrency)
+# Auto-tuned ThreadPoolExecutor for parallel IP lookups
+# Uses CPU count - 1 for workers, bounded between 2 and 8
 # Note: Flask's threaded mode handles process lifecycle, so cleanup is automatic.
 # For explicit shutdown (e.g., in tests), call shutdown_executor().
-_ip_lookup_executor = ThreadPoolExecutor(max_workers=10)
+DEFAULT_IP_LOOKUP_WORKERS = max(2, min(8, (os.cpu_count() or 4) - 1))
+_ip_lookup_executor = ThreadPoolExecutor(max_workers=DEFAULT_IP_LOOKUP_WORKERS)
+
+# Admin group membership cache (avoids repeated Proxmox API calls)
+# Thread-safe with lock for concurrent access
+_admin_group_cache: Optional[List[str]] = None
+_admin_group_ts: float = 0.0
+_admin_group_lock = threading.Lock()
+ADMIN_GROUP_CACHE_TTL = 120  # 2 minutes
 
 
 def shutdown_executor() -> None:
@@ -199,9 +208,26 @@ def _load_vm_cache() -> None:
     _vm_cache_loaded = True
 
 def _save_vm_cache() -> None:
-    """Save VM cache to JSON file."""
+    """Save VM cache to JSON file.
+    
+    Skips writing if the on-disk cache timestamp matches the in-memory timestamp,
+    indicating no changes since last save.
+    """
     if _vm_cache_data is None:
         return
+    
+    # Check if on-disk cache is already up-to-date
+    if os.path.exists(VM_CACHE_FILE):
+        try:
+            with open(VM_CACHE_FILE, "r", encoding="utf-8") as f:
+                disk_data = json.load(f)
+            disk_ts = disk_data.get("timestamp", 0.0)
+            if disk_ts == _vm_cache_ts:
+                logger.debug("Skipping VM cache write: disk timestamp matches in-memory (%.1f)", _vm_cache_ts)
+                return
+        except Exception:
+            # If we can't read the file, proceed with write
+            pass
     
     try:
         data = {
@@ -530,60 +556,11 @@ def _lookup_vm_ip(node: str, vmid: int, vmtype: str) -> Optional[str]:
     """
     IP lookup for both QEMU VMs (via guest agent) and LXC containers (via network interfaces).
     Skipped entirely unless ENABLE_IP_LOOKUP is True.
-    """
-    if not ENABLE_IP_LOOKUP:
-        return None
-
-    # LXC containers - use network interfaces API (much more reliable)
-    if vmtype == "lxc":
-        try:
-            interfaces = get_proxmox_admin().nodes(node).lxc(vmid).interfaces.get()
-            if interfaces:
-                for iface in interfaces:
-                    if iface.get("name") in ("eth0", "veth0"):  # Primary interface
-                        inet = iface.get("inet")
-                        if inet:
-                            # inet format is usually "IP/CIDR"
-                            ip = inet.split("/")[0] if "/" in inet else inet
-                            if ip and not ip.startswith("127."):
-                                return ip
-                    # Fallback: check inet6 or any interface with an IP
-                    inet = iface.get("inet")
-                    if inet:
-                        ip = inet.split("/")[0] if "/" in inet else inet
-                        if ip and not ip.startswith("127."):
-                            return ip
-        except Exception as e:
-            logger.debug("lxc interface call failed for %s/%s: %s", node, vmid, e)
-            return None
-
-    # QEMU VMs - use guest agent
-    if vmtype == "qemu":
-        try:
-            data = get_proxmox_admin().nodes(node).qemu(vmid).agent.get(
-                "network-get-interfaces"
-            )
-        except Exception as e:
-            logger.debug("guest agent call failed for %s/%s: %s", node, vmid, e)
-            return None
-
-        if not data:
-            return None
-        try:
-            interfaces = data.get("result", [])
-        except AttributeError:
-            interfaces = []
-
-        for iface in interfaces:
-            addrs = iface.get("ip-addresses", []) or []
-            for addr in addrs:
-                if addr.get("ip-address-type") == "ipv4":
-                    ip = addr.get("ip-address")
-                    # Skip 127.0.0.1
-                    if ip and not ip.startswith("127."):
-                        return ip
     
-    return None
+    This is a convenience wrapper that delegates to _lookup_vm_ip_thread_safe
+    to ensure one canonical, thread-safe implementation.
+    """
+    return _lookup_vm_ip_thread_safe(node, vmid, vmtype)
 
 
 def _lookup_vm_ip_thread_safe(node: str, vmid: int, vmtype: str) -> Optional[str]:
@@ -1075,29 +1052,84 @@ def invalidate_mappings_cache() -> None:
         _mappings_cache_loaded = False
 
 
+def _get_admin_group_members_cached() -> List[str]:
+    """
+    Get admin group members from cache or fetch from Proxmox if cache expired.
+    Thread-safe with 120s TTL to avoid repeated Proxmox calls.
+    
+    Returns a list of member userids (strings).
+    """
+    global _admin_group_cache, _admin_group_ts
+    
+    if not ADMIN_GROUP:
+        return []
+    
+    now = time.time()
+    
+    # Check cache first (thread-safe read)
+    with _admin_group_lock:
+        if _admin_group_cache is not None and (now - _admin_group_ts) < ADMIN_GROUP_CACHE_TTL:
+            logger.debug("Using cached admin group members (age=%.1fs)", now - _admin_group_ts)
+            return list(_admin_group_cache)
+    
+    # Cache miss or expired - fetch from Proxmox
+    try:
+        grp = get_proxmox_admin().access.groups(ADMIN_GROUP).get()
+        raw_members = (grp.get("members", []) or []) if isinstance(grp, dict) else []
+        members = []
+        for m in raw_members:
+            if isinstance(m, str):
+                members.append(m)
+            elif isinstance(m, dict) and "userid" in m:
+                members.append(m["userid"])
+        
+        # Update cache (thread-safe write)
+        with _admin_group_lock:
+            _admin_group_cache = members
+            _admin_group_ts = now
+        logger.debug("Refreshed admin group cache: %d members", len(members))
+        return members
+        
+    except Exception as e:
+        logger.warning("Failed to get admin group members: %s", e)
+        # On error, return cached value if we have one (even if expired)
+        with _admin_group_lock:
+            if _admin_group_cache is not None:
+                logger.debug("Using stale admin group cache due to error")
+                return list(_admin_group_cache)
+        return []
+
+
 def _user_in_group(user: str, groupid: str) -> bool:
     """
     Handles both possible Proxmox group member formats:
     - members: ["user@pve", "other@pve"]
     - members: [{"userid": "user@pve"}, {"userid": "other@pve"}]
+    
+    Uses cached admin group members if groupid is the admin group.
     """
     if not groupid:
         return False
 
-    try:
-        data = get_proxmox_admin().access.groups(groupid).get()
-        if not data:
+    # Use cached admin group members for the admin group
+    if groupid == ADMIN_GROUP:
+        members = _get_admin_group_members_cached()
+    else:
+        # For other groups, fetch directly (no caching)
+        try:
+            data = get_proxmox_admin().access.groups(groupid).get()
+            if not data:
+                return False
+        except Exception:
             return False
-    except Exception:
-        return False
 
-    raw_members = data.get("members", []) or []
-    members = []
-    for m in raw_members:
-        if isinstance(m, str):
-            members.append(m)
-        elif isinstance(m, dict) and "userid" in m:
-            members.append(m["userid"])
+        raw_members = data.get("members", []) or []
+        members = []
+        for m in raw_members:
+            if isinstance(m, str):
+                members.append(m)
+            elif isinstance(m, dict) and "userid" in m:
+                members.append(m["userid"])
 
     # Accept both realm variants for matching: user (full), or username@pam, username@pve
     variants = {user}
@@ -1142,25 +1174,20 @@ def is_admin_user(user: str) -> bool:
 
 
 def get_admin_group_members() -> List[str]:
-    """Get list of users in the admin group."""
-    if not ADMIN_GROUP:
-        return []
+    """Get list of users in the admin group.
     
-    try:
-        grp = get_proxmox_admin().access.groups(ADMIN_GROUP).get()
-    except Exception as e:
-        logger.warning("Failed to get admin group members: %s", e)
-        return []
-    
-    raw_members = (grp.get("members", []) or []) if isinstance(grp, dict) else []
-    members = []
-    for m in raw_members:
-        if isinstance(m, str):
-            members.append(m)
-        elif isinstance(m, dict) and "userid" in m:
-            members.append(m["userid"])
-    
-    return members
+    Uses the in-memory cache to avoid repeated Proxmox API calls.
+    """
+    return _get_admin_group_members_cached()
+
+
+def _invalidate_admin_group_cache() -> None:
+    """Invalidate the admin group cache to force a refresh on next access."""
+    global _admin_group_cache, _admin_group_ts
+    with _admin_group_lock:
+        _admin_group_cache = None
+        _admin_group_ts = 0.0
+    logger.debug("Invalidated admin group cache")
 
 
 def add_user_to_admin_group(user: str) -> bool:
@@ -1194,6 +1221,8 @@ def add_user_to_admin_group(user: str) -> bool:
             comment=comment,
             members=",".join(current_members)
         )
+        # Invalidate cache after modification
+        _invalidate_admin_group_cache()
         logger.info("Added user %s to admin group %s", user, ADMIN_GROUP)
         return True
     except Exception as e:
@@ -1230,6 +1259,8 @@ def remove_user_from_admin_group(user: str) -> bool:
             comment=comment,
             members=",".join(current_members)
         )
+        # Invalidate cache after modification
+        _invalidate_admin_group_cache()
         logger.info("Removed user %s from admin group %s", user, ADMIN_GROUP)
         return True
     except Exception as e:
