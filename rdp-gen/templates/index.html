@@ -382,11 +382,13 @@ async function loadVMs() {
         const data = await resp.json();
         
         // Mark VMs without IPs for status indicator
-        data.vms.forEach(vm => {
-            if (!vm.ip || vm.ip === 'N/A') {
-                vm.ip = 'Fetching...';
-            }
-        });
+        if (Array.isArray(data)) {
+            data.forEach(vm => {
+                if (!vm.ip || vm.ip === 'N/A') {
+                    vm.ip = 'Fetching...';
+                }
+            });
+        }
         
         // If tables are empty, populate them
         if (document.querySelectorAll('.vm-table tbody tr').length === 0) {

@@ -171,10 +171,14 @@
                 console.error('WebSocket error:', error);
             };
             
-            ws.onclose = () => {
+            ws.onclose = (event) => {
                 status.textContent = 'Disconnected';
                 status.className = 'error';
+                console.log('WebSocket closed:', event.code, event.reason, event.wasClean);
                 term.write('\r\n\x1b[1;31mConnection closed\x1b[0m\r\n');
+                if (event.reason) {
+                    term.write(`\r\nReason: ${event.reason}\r\n`);
+                }
             };
             
             term.onData(data => {
