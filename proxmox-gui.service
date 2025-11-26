@@ -11,7 +11,10 @@ Environment="PATH=/root/rdp-gen/venv/bin:/usr/local/bin:/usr/bin:/bin"
 Environment="PVE_VERIFY=False"
 Environment="PYTHONUNBUFFERED=1"
 EnvironmentFile=-/root/rdp-gen/.env
-ExecStart=/root/rdp-gen/venv/bin/gunicorn -w 4 -b 0.0.0.0:8080 app:app
+# Run Flask directly with threaded mode (suitable for lab/internal use)
+ExecStart=/root/rdp-gen/venv/bin/python3 -c "from app import app; app.run(host='0.0.0.0', port=8080, threaded=True, debug=False)"
+# Alternative: use waitress for production WSGI server
+# ExecStart=/root/rdp-gen/venv/bin/waitress-serve --host=0.0.0.0 --port=8080 app:app
 ExecReload=/bin/kill -s HUP $MAINPID
 Restart=always
 RestartSec=3

@@ -19,6 +19,7 @@ from flask import (
     session,
     url_for,
 )
+from flask_caching import Cache
 
 # Optional WebSocket support for SSH terminal
 try:
@@ -29,7 +30,7 @@ except ImportError:
     logger = __import__('logging').getLogger(__name__)
     logger.warning("flask-sock not installed, WebSocket SSH terminal disabled")
 
-from config import SECRET_KEY, VM_CACHE_TTL
+from config import SECRET_KEY, VM_CACHE_TTL, PROXMOX_CACHE_TTL
 from auth import login_required, current_user, authenticate_proxmox_user
 from proxmox_client import (
     get_all_vms,
@@ -46,6 +47,7 @@ from proxmox_client import (
     probe_proxmox,
     create_pve_user,
     verify_vm_ip,
+    invalidate_cluster_cache,
 )
 
 import re
@@ -54,6 +56,13 @@ import json
 
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
+
+# Configure Flask-Caching with SimpleCache (in-memory, single-process)
+# PROXMOX_CACHE_TTL (default 10 seconds) controls short-lived cache for aggregated queries
+cache = Cache(app, config={
+    'CACHE_TYPE': 'SimpleCache',
+    'CACHE_DEFAULT_TIMEOUT': PROXMOX_CACHE_TTL,
+})
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -607,6 +616,9 @@ def api_vm_start(vmid: int):
 
     try:
         start_vm(vm)
+        # Invalidate caches after VM state change
+        cache.clear()
+        invalidate_cluster_cache()
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
@@ -623,6 +635,9 @@ def api_vm_stop(vmid: int):
 
     try:
         shutdown_vm(vm)
+        # Invalidate caches after VM state change
+        cache.clear()
+        invalidate_cluster_cache()
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 

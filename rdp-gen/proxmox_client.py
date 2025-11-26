@@ -3,6 +3,8 @@ import logging
 import os
 import re
 import time
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Any, Optional
 
 from proxmoxer import ProxmoxAPI
@@ -22,6 +24,7 @@ from config import (
     IP_CACHE_FILE,
     VM_CACHE_FILE,
     VM_CACHE_TTL,
+    PROXMOX_CACHE_TTL,
     ENABLE_IP_LOOKUP,
     ENABLE_IP_PERSISTENCE,
     ARP_SUBNETS,
@@ -39,40 +42,85 @@ except ImportError:
 # No additional SSL warning suppression needed - already done above
 
 # ---------------------------------------------------------------------------
-# Proxmox connection (admin account)
+# Proxmox connection (admin account) - thread-safe singleton
 # ---------------------------------------------------------------------------
 
+# Thread-safe lock for Proxmox connection
+_proxmox_lock = threading.Lock()
 # Lazy connection - only created when first accessed
 _proxmox_admin = None
 
 def get_proxmox_admin():
-    """Get or create Proxmox connection on first use (lazy initialization)."""
+    """Get or create Proxmox connection on first use (lazy initialization).
+    
+    Thread-safe: uses a lock to ensure only one connection is created.
+    The ProxmoxAPI client is reused for all subsequent calls.
+    """
     global _proxmox_admin
-    if _proxmox_admin is None:
-        _proxmox_admin = ProxmoxAPI(
-            PVE_HOST,
-            user=PVE_ADMIN_USER,
-            password=PVE_ADMIN_PASS,
-            verify_ssl=PVE_VERIFY,
-        )
-        logger.info("Connected to Proxmox at %s", PVE_HOST)
+    if _proxmox_admin is not None:
+        return _proxmox_admin
+    
+    with _proxmox_lock:
+        # Double-check inside lock
+        if _proxmox_admin is None:
+            _proxmox_admin = ProxmoxAPI(
+                PVE_HOST,
+                user=PVE_ADMIN_USER,
+                password=PVE_ADMIN_PASS,
+                verify_ssl=PVE_VERIFY,
+            )
+            logger.info("Connected to Proxmox at %s", PVE_HOST)
     return _proxmox_admin
+
+
+def _create_proxmox_client():
+    """Create a new Proxmox client for thread-local use.
+    
+    Used by ThreadPoolExecutor workers to avoid sharing the main client
+    across threads, since ProxmoxAPI may not be fully thread-safe.
+    """
+    return ProxmoxAPI(
+        PVE_HOST,
+        user=PVE_ADMIN_USER,
+        password=PVE_ADMIN_PASS,
+        verify_ssl=PVE_VERIFY,
+    )
+
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # VM cache: single cluster snapshot, reused everywhere
+# Thread-safe with locks for concurrent access
 # ---------------------------------------------------------------------------
+
+# Thread-safe locks for caches
+_vm_cache_lock = threading.Lock()
+_ip_cache_lock = threading.Lock()
+_mappings_cache_lock = threading.Lock()
 
 _vm_cache_data: Optional[List[Dict[str, Any]]] = None
 _vm_cache_ts: float = 0.0
 _vm_cache_loaded: bool = False
+
+# Short-lived cluster resources cache (PROXMOX_CACHE_TTL seconds, default 10)
+# This is for the raw cluster.resources data before processing
+_cluster_cache_data: Optional[List[Dict[str, Any]]] = None
+_cluster_cache_ts: float = 0.0
+_cluster_cache_lock = threading.Lock()
 
 # IP address cache: vmid -> {"ip": "x.x.x.x", "timestamp": unix_time}
 # Stored in JSON file for persistence across restarts
 _ip_cache: Dict[int, Dict[str, Any]] = {}
 _ip_cache_loaded = False
 IP_CACHE_TTL = 86400  # 24 hours (much longer since we validate on use)
+
+# In-memory mappings cache (write-through to disk)
+_mappings_cache: Optional[Dict[str, List[int]]] = None
+_mappings_cache_loaded = False
+
+# ThreadPoolExecutor for parallel IP lookups (limited concurrency)
+_ip_lookup_executor = ThreadPoolExecutor(max_workers=10)
 
 def _load_ip_cache() -> None:
     """Load IP cache from JSON file."""
@@ -150,30 +198,138 @@ def _save_vm_cache() -> None:
         logger.warning("Failed to save VM cache: %s", e)
 
 def _invalidate_vm_cache() -> None:
-    global _vm_cache_data, _vm_cache_ts
-    _vm_cache_data = None
-    _vm_cache_ts = 0.0
+    global _vm_cache_data, _vm_cache_ts, _cluster_cache_data, _cluster_cache_ts
+    with _vm_cache_lock:
+        _vm_cache_data = None
+        _vm_cache_ts = 0.0
+    with _cluster_cache_lock:
+        _cluster_cache_data = None
+        _cluster_cache_ts = 0.0
     # Note: Don't reset _vm_cache_loaded - we want to keep trying disk cache
 
+
+# ---------------------------------------------------------------------------
+# Cluster-wide resource queries (single API call for all VMs/containers)
+# ---------------------------------------------------------------------------
+
+def get_all_qemu_vms() -> List[Dict[str, Any]]:
+    """
+    Get all QEMU VMs across the cluster using cluster.resources API.
+    
+    Uses short-lived cache (PROXMOX_CACHE_TTL seconds) to avoid hammering
+    the Proxmox API. Thread-safe.
+    
+    Returns raw VM data from Proxmox API (not processed).
+    """
+    global _cluster_cache_data, _cluster_cache_ts
+    
+    now = time.time()
+    with _cluster_cache_lock:
+        if _cluster_cache_data is not None and (now - _cluster_cache_ts) < PROXMOX_CACHE_TTL:
+            # Return cached QEMU VMs
+            return [r for r in _cluster_cache_data if r.get("type") == "qemu"]
+    
+    # Fetch fresh data from Proxmox
+    try:
+        resources = get_proxmox_admin().cluster.resources.get(type="vm") or []
+        with _cluster_cache_lock:
+            _cluster_cache_data = resources
+            _cluster_cache_ts = now
+        logger.debug("get_all_qemu_vms: fetched %d resources from cluster API", len(resources))
+        return [r for r in resources if r.get("type") == "qemu"]
+    except Exception as e:
+        logger.warning("Failed to fetch cluster resources: %s", e)
+        return []
+
+
+def get_all_lxc_containers() -> List[Dict[str, Any]]:
+    """
+    Get all LXC containers across the cluster using cluster.resources API.
+    
+    Uses short-lived cache (PROXMOX_CACHE_TTL seconds) to avoid hammering
+    the Proxmox API. Thread-safe.
+    
+    Returns raw container data from Proxmox API (not processed).
+    """
+    global _cluster_cache_data, _cluster_cache_ts
+    
+    now = time.time()
+    with _cluster_cache_lock:
+        if _cluster_cache_data is not None and (now - _cluster_cache_ts) < PROXMOX_CACHE_TTL:
+            # Return cached LXC containers
+            return [r for r in _cluster_cache_data if r.get("type") == "lxc"]
+    
+    # Fetch fresh data from Proxmox
+    try:
+        resources = get_proxmox_admin().cluster.resources.get(type="vm") or []
+        with _cluster_cache_lock:
+            _cluster_cache_data = resources
+            _cluster_cache_ts = now
+        logger.debug("get_all_lxc_containers: fetched %d resources from cluster API", len(resources))
+        return [r for r in resources if r.get("type") == "lxc"]
+    except Exception as e:
+        logger.warning("Failed to fetch cluster resources: %s", e)
+        return []
+
+
+def _get_cluster_resources_cached() -> List[Dict[str, Any]]:
+    """
+    Get all VM/container resources from cluster API with caching.
+    
+    Uses PROXMOX_CACHE_TTL (default 10 seconds) for short-lived caching.
+    Thread-safe.
+    """
+    global _cluster_cache_data, _cluster_cache_ts
+    
+    now = time.time()
+    with _cluster_cache_lock:
+        if _cluster_cache_data is not None and (now - _cluster_cache_ts) < PROXMOX_CACHE_TTL:
+            return list(_cluster_cache_data)
+    
+    # Fetch fresh data from Proxmox
+    try:
+        resources = get_proxmox_admin().cluster.resources.get(type="vm") or []
+        with _cluster_cache_lock:
+            _cluster_cache_data = resources
+            _cluster_cache_ts = now
+        logger.debug("_get_cluster_resources_cached: fetched %d resources", len(resources))
+        return resources
+    except Exception as e:
+        logger.warning("Failed to fetch cluster resources: %s", e)
+        return []
+
+
+def invalidate_cluster_cache() -> None:
+    """Invalidate the short-lived cluster resources cache.
+    
+    Called after VM start/stop operations to ensure fresh data is fetched.
+    """
+    global _cluster_cache_data, _cluster_cache_ts
+    with _cluster_cache_lock:
+        _cluster_cache_data = None
+        _cluster_cache_ts = 0.0
+
 def _get_cached_ip(vmid: int) -> Optional[str]:
-    """Get IP from persistent cache if not expired."""
+    """Get IP from persistent cache if not expired. Thread-safe."""
     _load_ip_cache()
-    if vmid in _ip_cache:
-        entry = _ip_cache[vmid]
-        ip = entry.get("ip")
-        ts = entry.get("timestamp", 0)
-        if time.time() - ts < IP_CACHE_TTL:
-            return ip
+    with _ip_cache_lock:
+        if vmid in _ip_cache:
+            entry = _ip_cache[vmid]
+            ip = entry.get("ip")
+            ts = entry.get("timestamp", 0)
+            if time.time() - ts < IP_CACHE_TTL:
+                return ip
     return None
 
 def _cache_ip(vmid: int, ip: Optional[str]) -> None:
-    """Store IP in persistent cache."""
+    """Store IP in persistent cache. Thread-safe."""
     _load_ip_cache()
     if ip:
-        _ip_cache[vmid] = {
-            "ip": ip,
-            "timestamp": time.time()
-        }
+        with _ip_cache_lock:
+            _ip_cache[vmid] = {
+                "ip": ip,
+                "timestamp": time.time()
+            }
         _save_ip_cache()
 
 def verify_vm_ip(node: str, vmid: int, vmtype: str, cached_ip: str) -> Optional[str]:
@@ -385,6 +541,133 @@ def _lookup_vm_ip(node: str, vmid: int, vmtype: str) -> Optional[str]:
                         return ip
     
     return None
+
+
+def _lookup_vm_ip_thread_safe(node: str, vmid: int, vmtype: str) -> Optional[str]:
+    """
+    Thread-safe IP lookup using a new Proxmox client per call.
+    
+    Used by ThreadPoolExecutor workers for parallel IP lookups.
+    Creates a short-lived client to avoid thread-safety issues with ProxmoxAPI.
+    """
+    if not ENABLE_IP_LOOKUP:
+        return None
+    
+    try:
+        client = _create_proxmox_client()
+        
+        # LXC containers - use network interfaces API
+        if vmtype == "lxc":
+            try:
+                interfaces = client.nodes(node).lxc(vmid).interfaces.get()
+                if interfaces:
+                    for iface in interfaces:
+                        if iface.get("name") in ("eth0", "veth0"):
+                            inet = iface.get("inet")
+                            if inet:
+                                ip = inet.split("/")[0] if "/" in inet else inet
+                                if ip and not ip.startswith("127."):
+                                    return ip
+                        inet = iface.get("inet")
+                        if inet:
+                            ip = inet.split("/")[0] if "/" in inet else inet
+                            if ip and not ip.startswith("127."):
+                                return ip
+            except Exception as e:
+                logger.debug("lxc interface call failed for %s/%s: %s", node, vmid, e)
+                return None
+        
+        # QEMU VMs - use guest agent
+        if vmtype == "qemu":
+            try:
+                data = client.nodes(node).qemu(vmid).agent.get("network-get-interfaces")
+            except Exception as e:
+                logger.debug("guest agent call failed for %s/%s: %s", node, vmid, e)
+                return None
+            
+            if not data:
+                return None
+            try:
+                interfaces = data.get("result", [])
+            except AttributeError:
+                interfaces = []
+            
+            for iface in interfaces:
+                addrs = iface.get("ip-addresses", []) or []
+                for addr in addrs:
+                    if addr.get("ip-address-type") == "ipv4":
+                        ip = addr.get("ip-address")
+                        if ip and not ip.startswith("127."):
+                            return ip
+    except Exception as e:
+        logger.debug("Thread-safe IP lookup failed for %s/%s: %s", node, vmid, e)
+    
+    return None
+
+
+def lookup_ips_parallel(vms: List[Dict[str, Any]]) -> Dict[int, str]:
+    """
+    Parallel IP lookup for multiple VMs using ThreadPoolExecutor.
+    
+    Uses a limited concurrency pool (max_workers=10) to avoid overwhelming
+    the Proxmox API while still providing significant speedup.
+    
+    Each worker uses a new Proxmox client to ensure thread-safety.
+    
+    Args:
+        vms: List of VM dicts with 'vmid', 'node', 'type' keys
+        
+    Returns:
+        Dict mapping vmid to discovered IP address
+    """
+    # Filter VMs that need IP lookup (running QEMU VMs or all LXC containers)
+    vms_needing_lookup = []
+    for vm in vms:
+        vmid = vm.get("vmid")
+        if not vmid:
+            continue
+        # Skip if already has IP from cache
+        if _get_cached_ip(vmid):
+            continue
+        # LXC containers: always try (config readable even when stopped)
+        # QEMU VMs: only when running (guest agent required)
+        vmtype = vm.get("type", "qemu")
+        if vmtype == "lxc" or (vmtype == "qemu" and vm.get("status") == "running"):
+            vms_needing_lookup.append(vm)
+    
+    if not vms_needing_lookup:
+        return {}
+    
+    logger.info("Starting parallel IP lookup for %d VMs", len(vms_needing_lookup))
+    results: Dict[int, str] = {}
+    
+    def lookup_single_vm(vm: Dict[str, Any]) -> tuple:
+        """Lookup IP for a single VM, return (vmid, ip)."""
+        vmid = vm["vmid"]
+        node = vm["node"]
+        vmtype = vm.get("type", "qemu")
+        ip = _lookup_vm_ip_thread_safe(node, vmid, vmtype)
+        return (vmid, ip)
+    
+    # Submit all lookups to the executor
+    futures = {
+        _ip_lookup_executor.submit(lookup_single_vm, vm): vm
+        for vm in vms_needing_lookup
+    }
+    
+    # Collect results as they complete
+    for future in as_completed(futures):
+        try:
+            vmid, ip = future.result(timeout=30)
+            if ip:
+                results[vmid] = ip
+                _cache_ip(vmid, ip)
+        except Exception as e:
+            vm = futures[future]
+            logger.debug("Parallel IP lookup failed for VM %s: %s", vm.get("vmid"), e)
+    
+    logger.info("Parallel IP lookup completed: found %d IPs", len(results))
+    return results
 
 
 def _build_vm_dict(raw: Dict[str, Any], skip_ip: bool = False) -> Dict[str, Any]:
@@ -638,11 +921,23 @@ def get_all_vms(skip_ips: bool = False, force_refresh: bool = False) -> List[Dic
 
 
 # ---------------------------------------------------------------------------
-# User ↔ VM mappings (JSON file)
+# User ↔ VM mappings (JSON file with in-memory cache and write-through)
 # ---------------------------------------------------------------------------
 
 def _load_mapping() -> Dict[str, List[int]]:
+    """Load mappings from disk, using in-memory cache if available. Thread-safe."""
+    global _mappings_cache, _mappings_cache_loaded
+    
+    # Fast path: return cached data if loaded
+    with _mappings_cache_lock:
+        if _mappings_cache_loaded and _mappings_cache is not None:
+            return dict(_mappings_cache)  # Return a copy
+    
+    # Load from disk
     if not os.path.exists(MAPPINGS_FILE):
+        with _mappings_cache_lock:
+            _mappings_cache = {}
+            _mappings_cache_loaded = True
         return {}
 
     try:
@@ -650,6 +945,9 @@ def _load_mapping() -> Dict[str, List[int]]:
             data = json.load(f)
     except Exception as e:
         logger.debug("failed to load mappings file %s: %s", MAPPINGS_FILE, e)
+        with _mappings_cache_lock:
+            _mappings_cache = {}
+            _mappings_cache_loaded = True
         return {}
 
     out: Dict[str, List[int]] = {}
@@ -658,13 +956,28 @@ def _load_mapping() -> Dict[str, List[int]]:
             out[user] = sorted({int(v) for v in vmids})
         except Exception:
             continue
+    
+    # Cache the loaded data
+    with _mappings_cache_lock:
+        _mappings_cache = dict(out)
+        _mappings_cache_loaded = True
+    
     return out
 
 
 def _save_mapping(mapping: Dict[str, List[int]]) -> None:
+    """Save mappings to disk and update in-memory cache. Thread-safe."""
+    global _mappings_cache
+    
     tmp = {}
     for user, vmids in mapping.items():
         tmp[user] = sorted({int(v) for v in vmids})
+    
+    # Update in-memory cache first (write-through)
+    with _mappings_cache_lock:
+        _mappings_cache = dict(tmp)
+    
+    # Write to disk
     try:
         with open(MAPPINGS_FILE, "w", encoding="utf-8") as f:
             json.dump(tmp, f, indent=2)
@@ -675,6 +988,9 @@ def _save_mapping(mapping: Dict[str, List[int]]) -> None:
 def get_user_vm_map() -> Dict[str, List[int]]:
     """
     Returns { 'user@pve': [vmid, ...], ... }
+    
+    Uses in-memory cache with write-through to disk on updates.
+    Thread-safe.
     """
     return _load_mapping()
 
@@ -682,6 +998,9 @@ def get_user_vm_map() -> Dict[str, List[int]]:
 def set_user_vm_mapping(user: str, vmids: List[int]) -> None:
     """
     Update mapping for one user. Empty list removes mapping.
+    
+    Uses in-memory cache with write-through to disk.
+    Thread-safe.
     """
     user = (user or "").strip()
     mapping = _load_mapping()
@@ -696,6 +1015,17 @@ def set_user_vm_mapping(user: str, vmids: List[int]) -> None:
         mapping.pop(user, None)
 
     _save_mapping(mapping)
+
+
+def invalidate_mappings_cache() -> None:
+    """Invalidate the in-memory mappings cache.
+    
+    Call this to force a reload from disk on next access.
+    """
+    global _mappings_cache, _mappings_cache_loaded
+    with _mappings_cache_lock:
+        _mappings_cache = None
+        _mappings_cache_loaded = False
 
 
 def _user_in_group(user: str, groupid: str) -> bool:

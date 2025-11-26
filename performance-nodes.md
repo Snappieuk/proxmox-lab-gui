@@ -1,4 +1,4 @@
-Short version: you’ll get the biggest win by (a) batching Proxmox calls via `/cluster/resources`, (b) caching the results for a few seconds, and (c) not running `flask run` in production.
+Short version: you'll get the biggest win by (a) batching Proxmox calls via `/cluster/resources`, (b) caching the results for a few seconds, and (c) using a proper WSGI server for production.
 
 Below is how you can change your files to do that.
 
@@ -10,10 +10,9 @@ Add:
 
 ```text
 flask-caching
-gunicorn
 ```
 
-Flask-Caching gives you simple in-memory caching; Gunicorn gives you a real WSGI server. ([Flask-Caching][1])
+Flask-Caching gives you simple in-memory caching. For production, you can optionally use Waitress as a WSGI server. ([Flask-Caching][1])
 
 ---
 
@@ -86,7 +85,7 @@ def list_all_resources():
     Single call for all nodes/VMs/LXCs/storages.
     Use type filters in code rather than multiple API calls.
     """
-    return _get("/cluster/resources")  # supports ?type=qemu|lxc|node|storage etc. :contentReference[oaicite:2]{index=2}
+    return _get("/cluster/resources")  # supports ?type=qemu|lxc|node|storage etc.
 
 
 def list_vms():
@@ -136,12 +135,12 @@ cache = Cache(
 
 ### Cache the expensive list calls
 
-Example for your “Admin view” listing all VMs and LXCs:
+Example for your "Admin view" listing all VMs and LXCs:
 
 ```python
 @app.route("/admin")
 def admin_dashboard():
-    # 1) Use cached results for 5–10 seconds instead of hitting Proxmox on every page view
+    # 1) Use cached results for 5-10 seconds instead of hitting Proxmox on every page view
     vms = cache.get("all_vms")
     lxcs = cache.get("all_lxcs")
 
@@ -152,7 +151,7 @@ def admin_dashboard():
         cache.set("all_lxcs", lxcs, timeout=10)
 
     # 2) Split into your categories / assigned mappings as you already do
-    #    (pseudo-code – drop into your existing logic)
+    #    (pseudo-code - drop into your existing logic)
     # mapped_vms = filter_by_mapping(vms)
     # unmapped_vms = filter_unmapped(vms)
     # lxc_groups = group_lxcs_by_category(lxcs)
@@ -178,7 +177,7 @@ def admin_dashboard():
     return render_template("admin_dashboard.html", vms=vms, lxcs=lxcs)
 ```
 
-Flask-Caching’s `SimpleCache` and decorators are documented here. ([Flask-Caching][1])
+Flask-Caching's `SimpleCache` and decorators are documented here. ([Flask-Caching][1])
 
 ---
 
@@ -202,25 +201,29 @@ Do the same for stop, shutdown, reset, etc.
 
 ---
 
-## 5. Run with Gunicorn instead of `flask run`
+## 5. Run with a WSGI server
 
-On the VM/host where you run this, install Gunicorn and start it like:
+On the VM/host where you run this, you can use Flask's built-in threaded server for lab use, or Waitress for production:
 
 ```bash
 cd /path/to/proxmox-lab-gui
 source venv/bin/activate
 pip install -r requirements.txt
 
-# Example: 3 worker processes, bind to 0.0.0.0:8000
-gunicorn -w 3 -b 0.0.0.0:8000 rdp-gen.app:app
+# Option 1: Flask built-in server (suitable for lab/internal use)
+cd rdp-gen && python3 app.py
+
+# Option 2: Waitress WSGI server (for production)
+pip install waitress
+waitress-serve --host=0.0.0.0 --port=8080 app:app
 ```
 
 Then either:
 
 * Put Nginx/Apache in front if you want, or
-* Just use Gunicorn directly in your lab subnet.
+* Just use the server directly in your lab subnet.
 
-Gunicorn + multiple workers gives you parallel handling of requests; combined with caching and the cluster-wide endpoint, that’s where the “way faster” comes from. ([Flask Documentation][3])
+Using Flask with `threaded=True` or Waitress gives you parallel handling of requests; combined with caching and the cluster-wide endpoint, that's where the "way faster" comes from. ([Flask Documentation][3])
 
 ---
 
@@ -228,13 +231,13 @@ Gunicorn + multiple workers gives you parallel handling of requests; combined wi
 
 * One cluster call (`/cluster/resources`) instead of N calls per page. ([Proxmox Support Forum][2])
 * Reuse an authenticated `requests.Session` instead of logging in every time.
-* In-memory cache avoids hitting Proxmox at all for hot pages within a 5–10s window.
-* Gunicorn lets multiple requests run at once.
+* In-memory cache avoids hitting Proxmox at all for hot pages within a 5-10s window.
+* Threaded server or Waitress lets multiple requests run at once.
 
-If you want, next step I can sketch your `admin` / `my vms` routes more precisely once I know how you’re currently querying Proxmox (per-VM vs per-node vs cluster).
+If you want, next step I can sketch your `admin` / `my vms` routes more precisely once I know how you're currently querying Proxmox (per-VM vs per-node vs cluster).
 
 Question: how are you hosting this right now (plain `flask run`, or something else)?
 
-[1]: https://flask-caching.readthedocs.io/?utm_source=chatgpt.com "Flask-Caching — Flask-Caching 1.0.0 documentation"
-[2]: https://forum.proxmox.com/threads/proxmox-api-resources.161087/?utm_source=chatgpt.com "Proxmox api \"Resources\""
-[3]: https://flask.palletsprojects.com/en/stable/deploying/gunicorn/?utm_source=chatgpt.com "Gunicorn — Flask Documentation (3.1.x)"
+[1]: https://flask-caching.readthedocs.io/?utm_source=chatgpt.com "Flask-Caching - Flask-Caching 1.0.0 documentation"
+[2]: https://forum.proxmox.com/threads/proxmox-api-resources.161087/?utm_source=chatgpt.com "Proxmox api Resources"
+[3]: https://flask.palletsprojects.com/en/stable/deploying/?utm_source=chatgpt.com "Deploying to Production - Flask Documentation (3.1.x)"
