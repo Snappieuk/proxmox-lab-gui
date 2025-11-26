@@ -37,7 +37,7 @@
 <div class="mapping-layout">
 
     <div class="mapping-form-card">
-        <h2>Edit mapping</h2>
+        <h2>Manage User Access</h2>
 
         {% if message %}
             <div class="mapping-message">{{ message }}</div>
@@ -47,61 +47,79 @@
         {% endif %}
 
         <form method="post">
-            <label for="user">User</label>
-            <select id="user" name="user" required>
+            <label for="user">Select User</label>
+            <select id="user" name="user" onchange="this.form.submit()" required>
                 <option value="">Select a user…</option>
                 {% if not progressive_load %}
                 {% for u in users %}
-                    <option value="{{ u.userid }}">{{ u.userid }}</option>
+                    <option value="{{ u.userid }}" {% if selected_user == u.userid %}selected{% endif %}>{{ u.userid }}</option>
                 {% endfor %}
                 {% endif %}
             </select>
-
-            <label for="vmids">VM IDs (comma separated)</label>
-            <input type="text" id="vmids" name="vmids"
-                   placeholder="e.g. 101,102,103">
-
-            <p class="help-text">
-                Leave empty and save to remove mapping for that user.
-            </p>
-
-            <button type="submit" class="btn-primary mapping-btn">Save</button>
         </form>
-    </div>
 
-    <div class="mapping-form-card" style="margin-top: 2rem;">
-        <h2>Admin Group Management</h2>
-        
-        <p class="help-text">
-            Add users to the "{{ admin_group }}" group to grant admin access (see all VMs).
-        </p>
-
-        <form method="post" action="/admin/mappings/add-admin">
-            <label for="admin-user">User to make admin</label>
-            <select id="admin-user" name="user" required>
-                <option value="">Select a user…</option>
-                {% if not progressive_load %}
-                {% for u in users %}
-                    <option value="{{ u.userid }}">{{ u.userid }}</option>
-                {% endfor %}
+        {% if selected_user and not progressive_load %}
+        <div style="margin-top: 2rem; padding-top: 2rem; border-top: 1px solid #ddd;">
+            <h3 style="font-size: 16px; margin-bottom: 1rem;">{{ selected_user }}</h3>
+            
+            <!-- Admin Status -->
+            <div style="margin-bottom: 1.5rem;">
+                <label style="display: block; font-weight: 600; margin-bottom: 0.5rem;">Admin Access</label>
+                {% if selected_user in current_admins %}
+                    <div style="display: flex; align-items: center; gap: 0.5rem;">
+                        <span class="admin-badge">Admin User</span>
+                        {% if selected_user not in protected_admins %}
+                        <form method="post" action="/admin/mappings/remove-admin-form" style="margin: 0;">
+                            <input type="hidden" name="user" value="{{ selected_user }}">
+                            <button type="submit" class="btn-secondary" style="padding: 0.35rem 0.75rem; font-size: 13px;" onclick="return confirm('Remove admin access from {{ selected_user }}?')">Remove Admin Access</button>
+                        </form>
+                        {% else %}
+                        <span style="color: #666; font-size: 13px;">(Protected - defined in config)</span>
+                        {% endif %}
+                    </div>
+                {% else %}
+                    <form method="post" action="/admin/mappings/grant-admin-form" style="margin: 0;">
+                        <input type="hidden" name="user" value="{{ selected_user }}">
+                        <button type="submit" class="btn-primary" style="padding: 0.5rem 1rem;">Grant Admin Access</button>
+                        <p class="help-text" style="margin-top: 0.5rem;">Admin users can see and control all VMs</p>
+                    </form>
                 {% endif %}
-            </select>
+            </div>
 
-            <button type="submit" class="btn-primary mapping-btn">Add to Admin Group</button>
-        </form>
+            <!-- VM Mappings -->
+            <div>
+                <label style="display: block; font-weight: 600; margin-bottom: 0.5rem;">Assigned VMs</label>
+                {% if selected_user in current_admins %}
+                    <p style="color: #666; font-size: 13px; margin-bottom: 1rem;">Admin users have access to all VMs. Specific VM assignments are not needed.</p>
+                {% endif %}
+                
+                <form method="post" action="/admin/mappings/update-vms">
+                    <input type="hidden" name="user" value="{{ selected_user }}">
+                    <input type="text" id="vmids" name="vmids"
+                           placeholder="e.g. 101,102,103"
+                           value="{% if mapping.get(selected_user) %}{{ mapping.get(selected_user)|join(',') }}{% endif %}"
+                           style="width: 100%; padding: 0.5rem; border: 1px solid #ddd; border-radius: 4px; margin-bottom: 0.5rem;">
+                    <p class="help-text">Enter VM IDs separated by commas. Leave empty to remove all mappings.</p>
+                    <button type="submit" class="btn-primary mapping-btn">Update VM Assignments</button>
+                </form>
 
-        {% if not progressive_load and current_admins %}
-        <div style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid #ddd;">
-            <h3 style="font-size: 14px; margin-bottom: 0.5rem; color: #666;">Current Admins:</h3>
-            <div style="display: flex; flex-wrap: wrap; gap: 0.5rem;">
-            {% for admin in current_admins %}
-                <span class="admin-badge">
-                    {{ admin }}
-                    {% if admin not in protected_admins %}
-                    <button class="admin-remove-btn" onclick="removeAdmin('{{ admin }}')" title="Remove admin access">&times;</button>
-                    {% endif %}
-                </span>
-            {% endfor %}
+                {% if mapping.get(selected_user) %}
+                <div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid #eee;">
+                    <p style="font-size: 13px; color: #666; margin-bottom: 0.5rem;">Currently assigned VMs:</p>
+                    <div style="display: flex; flex-wrap: wrap; gap: 0.5rem;">
+                    {% for vmid in mapping.get(selected_user) %}
+                        <span class="vm-mapping-item">
+                            {{ vmid }} ({{ vm_id_to_name.get(vmid, 'unknown') }})
+                            <form method="post" action="/admin/mappings/unassign-form" style="display: inline; margin: 0;">
+                                <input type="hidden" name="user" value="{{ selected_user }}">
+                                <input type="hidden" name="vmid" value="{{ vmid }}">
+                                <button type="submit" class="vm-remove-btn" title="Remove this VM" onclick="return confirm('Remove VM {{ vmid }} from {{ selected_user }}?')">&times;</button>
+                            </form>
+                        </span>
+                    {% endfor %}
+                    </div>
+                </div>
+                {% endif %}
             </div>
         </div>
         {% endif %}

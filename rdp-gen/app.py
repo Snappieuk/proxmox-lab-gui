@@ -185,31 +185,16 @@ def health():
 @admin_required
 def admin_mappings():
     user = require_user()
-    message = None
-    error = None
+    message = request.args.get('message')
+    error = request.args.get('error')
     selected_user = None
 
     if request.method == "POST":
-        # selected_user is the user being edited, not the logged-in user
+        # Just selecting a user to view/edit
         selected_user = (request.form.get("user") or "").strip()
-        vmids_str = (request.form.get("vmids") or "").strip()
-
-        if not selected_user:
-            error = "User is required."
-        else:
-            try:
-                if vmids_str:
-                    parts = re.split(r"[,\s]+", vmids_str)
-                    vmids = [int(p) for p in parts if p]
-                else:
-                    vmids = []
-                set_user_vm_mapping(selected_user, vmids)
-                message = "Mapping updated."
-            except ValueError:
-                error = "VM IDs must be integers."
 
     # Progressive loading - return minimal data on GET
-    if request.method == "GET":
+    if request.method == "GET" and not request.args.get('user'):
         return render_template(
             "mappings.html",
             user=user,
@@ -218,7 +203,11 @@ def admin_mappings():
             error=error,
         )
     
-    # POST request - load full data for form submission
+    # If user is selected via query param (from redirect), use that
+    if request.args.get('user'):
+        selected_user = request.args.get('user')
+    
+    # POST request or user selected - load full data
     mapping = get_user_vm_map()
     users = get_pve_users()
     all_vms = get_all_vms()
@@ -247,6 +236,110 @@ def admin_mappings():
         current_admins=current_admins,
         protected_admins=protected_admins,
     )
+
+
+@app.route("/admin/mappings/update-vms", methods=["POST"])
+@admin_required
+def admin_mappings_update_vms():
+    """Update VM assignments for selected user."""
+    user = require_user()
+    selected_user = (request.form.get("user") or "").strip()
+    vmids_str = (request.form.get("vmids") or "").strip()
+    
+    if not selected_user:
+        return redirect(url_for("admin_mappings", error="User is required"))
+    
+    try:
+        if vmids_str:
+            parts = re.split(r"[,\s]+", vmids_str)
+            vmids = [int(p) for p in parts if p]
+        else:
+            vmids = []
+        set_user_vm_mapping(selected_user, vmids)
+        return redirect(url_for("admin_mappings", user=selected_user, message=f"Updated VM assignments for {selected_user}"))
+    except ValueError:
+        return redirect(url_for("admin_mappings", user=selected_user, error="VM IDs must be integers"))
+    except Exception as e:
+        app.logger.exception("Failed to update VM mappings for %s", selected_user)
+        return redirect(url_for("admin_mappings", user=selected_user, error=f"Failed to update: {str(e)}"))
+
+
+@app.route("/admin/mappings/unassign-form", methods=["POST"])
+@admin_required
+def admin_mappings_unassign_form():
+    """Unassign a specific VM from selected user (form-based)."""
+    user = require_user()
+    selected_user = (request.form.get("user") or "").strip()
+    vmid_str = (request.form.get("vmid") or "").strip()
+    
+    if not selected_user or not vmid_str:
+        return redirect(url_for("admin_mappings", user=selected_user, error="User and VM ID are required"))
+    
+    try:
+        vmid = int(vmid_str)
+        mapping = get_user_vm_map()
+        current_vms = mapping.get(selected_user, [])
+        
+        if vmid in current_vms:
+            current_vms.remove(vmid)
+            set_user_vm_mapping(selected_user, current_vms)
+            return redirect(url_for("admin_mappings", user=selected_user, message=f"Removed VM {vmid} from {selected_user}"))
+        else:
+            return redirect(url_for("admin_mappings", user=selected_user, error=f"VM {vmid} not assigned to {selected_user}"))
+    except ValueError:
+        return redirect(url_for("admin_mappings", user=selected_user, error="Invalid VM ID"))
+    except Exception as e:
+        app.logger.exception("Failed to unassign VM %s from %s", vmid_str, selected_user)
+        return redirect(url_for("admin_mappings", user=selected_user, error=f"Failed to unassign: {str(e)}"))
+
+
+@app.route("/admin/mappings/grant-admin-form", methods=["POST"])
+@admin_required
+def admin_mappings_grant_admin_form():
+    """Grant admin privileges to selected user (form-based)."""
+    user = require_user()
+    selected_user = (request.form.get("user") or "").strip()
+    
+    if not selected_user:
+        return redirect(url_for("admin_mappings", error="User is required"))
+    
+    try:
+        from proxmox_client import add_user_to_admin_group, ADMIN_GROUP
+        if not ADMIN_GROUP:
+            return redirect(url_for("admin_mappings", user=selected_user, error="ADMIN_GROUP not configured"))
+        
+        add_user_to_admin_group(selected_user)
+        return redirect(url_for("admin_mappings", user=selected_user, message=f"Added {selected_user} to admin group"))
+    except Exception as e:
+        app.logger.exception("Failed to add %s to admin group", selected_user)
+        return redirect(url_for("admin_mappings", user=selected_user, error=f"Failed to grant admin: {str(e)}"))
+
+
+@app.route("/admin/mappings/remove-admin-form", methods=["POST"])
+@admin_required
+def admin_mappings_remove_admin_form():
+    """Remove admin privileges from selected user (form-based)."""
+    user = require_user()
+    selected_user = (request.form.get("user") or "").strip()
+    
+    if not selected_user:
+        return redirect(url_for("admin_mappings", error="User is required"))
+    
+    try:
+        from proxmox_client import remove_user_from_admin_group, ADMIN_GROUP, ADMIN_USERS
+        
+        # Check if user is in protected list
+        if selected_user in ADMIN_USERS:
+            return redirect(url_for("admin_mappings", user=selected_user, error=f"{selected_user} is a protected admin (in ADMIN_USERS config)"))
+        
+        if not ADMIN_GROUP:
+            return redirect(url_for("admin_mappings", user=selected_user, error="ADMIN_GROUP not configured"))
+        
+        remove_user_from_admin_group(selected_user)
+        return redirect(url_for("admin_mappings", user=selected_user, message=f"Removed {selected_user} from admin group"))
+    except Exception as e:
+        app.logger.exception("Failed to remove %s from admin group", selected_user)
+        return redirect(url_for("admin_mappings", user=selected_user, error=f"Failed to remove admin: {str(e)}"))
 
 
 @app.route("/admin/mappings/unassign", methods=["POST"])
