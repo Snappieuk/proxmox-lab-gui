@@ -69,6 +69,44 @@
         </form>
     </div>
 
+    <div class="mapping-form-card" style="margin-top: 2rem;">
+        <h2>Admin Group Management</h2>
+        
+        <p class="help-text">
+            Add users to the "{{ admin_group }}" group to grant admin access (see all VMs).
+        </p>
+
+        <form method="post" action="/admin/mappings/add-admin">
+            <label for="admin-user">User to make admin</label>
+            <select id="admin-user" name="user" required>
+                <option value="">Select a user…</option>
+                {% if not progressive_load %}
+                {% for u in users %}
+                    <option value="{{ u.userid }}">{{ u.userid }}</option>
+                {% endfor %}
+                {% endif %}
+            </select>
+
+            <button type="submit" class="btn-primary mapping-btn">Add to Admin Group</button>
+        </form>
+
+        {% if not progressive_load and current_admins %}
+        <div style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid #ddd;">
+            <h3 style="font-size: 14px; margin-bottom: 0.5rem; color: #666;">Current Admins:</h3>
+            <div style="display: flex; flex-wrap: wrap; gap: 0.5rem;">
+            {% for admin in current_admins %}
+                <span class="admin-badge">
+                    {{ admin }}
+                    {% if admin not in protected_admins %}
+                    <button class="admin-remove-btn" onclick="removeAdmin('{{ admin }}')" title="Remove admin access">&times;</button>
+                    {% endif %}
+                </span>
+            {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
     <div class="mapping-table-card">
         <h2>Current mappings</h2>
         <table class="mapping-table">
@@ -86,7 +124,10 @@
                         <td>{{ user_id }}</td>
                         <td>
                             {% for vmid in vmids %}
-                                {{ vmid }} ({{ vm_id_to_name.get(vmid, 'unknown') }}){% if not loop.last %}, {% endif %}
+                                <span class="vm-mapping-item">
+                                    {{ vmid }} ({{ vm_id_to_name.get(vmid, 'unknown') }})
+                                    <button class="vm-remove-btn" onclick="unassignVM('{{ user_id }}', {{ vmid }})" title="Remove this VM">&times;</button>
+                                </span>{% if not loop.last %}, {% endif %}
                             {% endfor %}
                         </td>
                     </tr>
@@ -185,5 +226,82 @@ function showError(message) {
 window.addEventListener('load', loadMappingsData);
 </script>
 {% endif %}
+<script>
+function unassignVM(user, vmid) {
+    if (!confirm(`Remove VM ${vmid} from ${user}?`)) {
+        return;
+    }
+    
+    fetch('/admin/mappings/unassign', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ user: user, vmid: vmid })
+    })
+    .then(resp => resp.json())
+    .then(data => {
+        if (data.ok) {
+            location.reload();
+        } else {
+            alert('Failed to unassign VM: ' + (data.error || 'Unknown error'));
+        }
+    })
+    .catch(err => {
+        alert('Failed to unassign VM: ' + err);
+    });
+}
+
+function unassignVM(user, vmid) {
+    if (!confirm(`Remove VM ${vmid} from ${user}?`)) {
+        return;
+    }
+    
+    fetch('/admin/mappings/unassign', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ user: user, vmid: vmid })
+    })
+    .then(resp => resp.json())
+    .then(data => {
+        if (data.ok) {
+            location.reload();
+        } else {
+            alert('Failed to unassign VM: ' + (data.error || 'Unknown error'));
+        }
+    })
+    .catch(err => {
+        alert('Failed to unassign VM: ' + err);
+    });
+}
+
+function removeAdmin(user) {
+    if (!confirm(`Remove admin access from ${user}?`)) {
+        return;
+    }
+    
+    fetch('/admin/mappings/remove-admin', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ user: user })
+    })
+    .then(resp => resp.json())
+    .then(data => {
+        if (data.ok) {
+            location.reload();
+        } else {
+            alert('Failed to remove admin: ' + (data.error || 'Unknown error'));
+        }
+    })
+    .catch(err => {
+        alert('Failed to remove admin: ' + err);
+    });
+}
+</script>
+
 {% endblock %}
 

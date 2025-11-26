@@ -556,6 +556,83 @@ def is_admin_user(user: str) -> bool:
     return False
 
 
+def get_admin_group_members() -> List[str]:
+    """Get list of users in the admin group."""
+    if not ADMIN_GROUP:
+        return []
+    
+    try:
+        grp = get_proxmox_admin().access.groups(ADMIN_GROUP).get()
+    except Exception as e:
+        logger.warning("Failed to get admin group members: %s", e)
+        return []
+    
+    raw_members = (grp.get("members", []) or []) if isinstance(grp, dict) else []
+    members = []
+    for m in raw_members:
+        if isinstance(m, str):
+            members.append(m)
+        elif isinstance(m, dict) and "userid" in m:
+            members.append(m["userid"])
+    
+    return members
+
+
+def add_user_to_admin_group(user: str) -> bool:
+    """
+    Add a user to the admin group in Proxmox.
+    Returns True if successful, False otherwise.
+    """
+    if not ADMIN_GROUP:
+        logger.warning("ADMIN_GROUP not configured, cannot add user")
+        return False
+    
+    try:
+        # Proxmox API: PUT /access/groups/{groupid} with members array
+        current_members = get_admin_group_members()
+        if user in current_members:
+            logger.info("User %s already in admin group", user)
+            return True
+        
+        # Add user to group by updating the group
+        current_members.append(user)
+        get_proxmox_admin().access.groups(ADMIN_GROUP).put(
+            members=",".join(current_members)
+        )
+        logger.info("Added user %s to admin group %s", user, ADMIN_GROUP)
+        return True
+    except Exception as e:
+        logger.exception("Failed to add user %s to admin group: %s", user, e)
+        return False
+
+
+def remove_user_from_admin_group(user: str) -> bool:
+    """
+    Remove a user from the admin group in Proxmox.
+    Returns True if successful, False otherwise.
+    """
+    if not ADMIN_GROUP:
+        logger.warning("ADMIN_GROUP not configured, cannot remove user")
+        return False
+    
+    try:
+        current_members = get_admin_group_members()
+        if user not in current_members:
+            logger.info("User %s not in admin group", user)
+            return True
+        
+        # Remove user from group by updating the group
+        current_members.remove(user)
+        get_proxmox_admin().access.groups(ADMIN_GROUP).put(
+            members=",".join(current_members)
+        )
+        logger.info("Removed user %s from admin group %s", user, ADMIN_GROUP)
+        return True
+    except Exception as e:
+        logger.exception("Failed to remove user %s from admin group: %s", user, e)
+        return False
+
+
 def get_vm_ip(vmid: int, node: str, vmtype: str) -> Optional[str]:
     """
     Get IP address for a specific VM (for lazy loading).

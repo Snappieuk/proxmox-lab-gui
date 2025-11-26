@@ -223,6 +223,11 @@ def admin_mappings():
     users = get_pve_users()
     all_vms = get_all_vms()
     
+    # Get admin group info
+    from proxmox_client import get_admin_group_members, ADMIN_GROUP, ADMIN_USERS
+    current_admins = list(set(ADMIN_USERS + get_admin_group_members()))
+    protected_admins = ADMIN_USERS  # Users in ADMIN_USERS config can't be removed via UI
+    
     # Create vmid to name mapping for display
     vm_id_to_name = {v["vmid"]: v.get("name", f"vm-{v['vmid']}") for v in all_vms}
     all_vm_ids = sorted({v["vmid"] for v in all_vms})
@@ -238,7 +243,102 @@ def admin_mappings():
         message=message,
         error=error,
         selected_user=selected_user,
+        admin_group=ADMIN_GROUP,
+        current_admins=current_admins,
+        protected_admins=protected_admins,
     )
+
+
+@app.route("/admin/mappings/unassign", methods=["POST"])
+@admin_required
+def api_unassign_vm():
+    """Remove a single VM from a user's mapping."""
+    try:
+        data = request.get_json()
+        user = data.get("user")
+        vmid = int(data.get("vmid"))
+        
+        if not user or not vmid:
+            return jsonify({"ok": False, "error": "Missing user or vmid"}), 400
+        
+        # Get current mapping
+        mapping = get_user_vm_map()
+        
+        if user not in mapping:
+            return jsonify({"ok": False, "error": "User has no mappings"}), 404
+        
+        # Remove the vmid from user's list
+        if vmid in mapping[user]:
+            mapping[user].remove(vmid)
+            
+            # If user has no more VMs, remove the user entry entirely
+            if not mapping[user]:
+                del mapping[user]
+            
+            # Save updated mapping
+            set_user_vm_mapping(user, mapping.get(user, []))
+            
+            app.logger.info("Admin %s removed VM %d from user %s", require_user(), vmid, user)
+            return jsonify({"ok": True})
+        else:
+            return jsonify({"ok": False, "error": "VM not in user's mappings"}), 404
+            
+    except Exception as e:
+        app.logger.exception("Failed to unassign VM")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/admin/mappings/add-admin", methods=["POST"])
+@admin_required
+def add_admin():
+    """Add a user to the admin group."""
+    try:
+        user_to_add = request.form.get("user", "").strip()
+        
+        if not user_to_add:
+            return redirect(url_for("admin_mappings"))
+        
+        from proxmox_client import add_user_to_admin_group
+        success = add_user_to_admin_group(user_to_add)
+        
+        if success:
+            app.logger.info("Admin %s added %s to admin group", require_user(), user_to_add)
+        else:
+            app.logger.error("Failed to add %s to admin group", user_to_add)
+        
+        return redirect(url_for("admin_mappings"))
+    except Exception as e:
+        app.logger.exception("Failed to add admin")
+        return redirect(url_for("admin_mappings"))
+
+
+@app.route("/admin/mappings/remove-admin", methods=["POST"])
+@admin_required
+def remove_admin():
+    """Remove a user from the admin group."""
+    try:
+        data = request.get_json()
+        user_to_remove = data.get("user", "").strip()
+        
+        if not user_to_remove:
+            return jsonify({"ok": False, "error": "Missing user"}), 400
+        
+        # Don't allow removing users from ADMIN_USERS config
+        from proxmox_client import ADMIN_USERS, remove_user_from_admin_group
+        if user_to_remove in ADMIN_USERS:
+            return jsonify({"ok": False, "error": "Cannot remove users defined in ADMIN_USERS config"}), 400
+        
+        success = remove_user_from_admin_group(user_to_remove)
+        
+        if success:
+            app.logger.info("Admin %s removed %s from admin group", require_user(), user_to_remove)
+            return jsonify({"ok": True})
+        else:
+            return jsonify({"ok": False, "error": "Failed to remove user from admin group"}), 500
+            
+    except Exception as e:
+        app.logger.exception("Failed to remove admin")
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 
 @app.route("/admin")
@@ -329,21 +429,25 @@ def api_vm_ip(vmid: int):
                     "ip": scan_status,
                     "status": "complete"
                 })
-            else:
-                # Otherwise it's a status message
-                return jsonify({
-                    "vmid": vmid,
-                    "ip": None,
-                    "status": scan_status
-                })
+            # If scan failed or not found, fall through to direct lookup below
         
-        # Fallback to direct IP lookup (guest agent/interfaces)
+        # Direct IP lookup (guest agent/interfaces)
+        # This is the fallback if ARP scan hasn't found it yet or failed
         ip = get_vm_ip(vmid, vm["node"], vm["type"])
         
+        # If we found an IP via direct lookup, return it
+        if ip:
+            return jsonify({
+                "vmid": vmid,
+                "ip": ip,
+                "status": "complete"
+            })
+        
+        # No IP found - return the scan status if we have one, otherwise generic message
         return jsonify({
             "vmid": vmid,
-            "ip": ip,
-            "status": "complete" if ip else "not_found"
+            "ip": None,
+            "status": scan_status if scan_status else "not_found"
         })
     except Exception as e:
         app.logger.exception("Failed to get IP for VM %d", vmid)

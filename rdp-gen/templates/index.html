@@ -22,9 +22,6 @@
         {% if request.args.get('search') %}
         <a href="{{ request.path }}" class="btn-secondary" style="padding: 0.5rem 1rem;">Clear</a>
         {% endif %}
-        <button type="button" id="refresh-btn" class="btn-secondary" onclick="refreshVMs()" title="Refresh VM list from Proxmox" style="padding: 0.5rem 1rem;">
-            🔄 Refresh
-        </button>
     </form>
 </div>
 
@@ -230,7 +227,7 @@ async function refreshVMs() {
     const btn = document.getElementById('refresh-btn');
     if (btn) {
         btn.disabled = true;
-        btn.textContent = '⏳ Refreshing...';
+        btn.textContent = 'Refreshing...';
     }
     
     updateLoadingStatus('Refreshing from Proxmox...', 'Fetching latest VM data');
@@ -267,7 +264,7 @@ async function refreshVMs() {
     } finally {
         if (btn) {
             btn.disabled = false;
-            btn.textContent = '🔄 Refresh';
+            btn.textContent = 'Refresh Cache';
         }
     }
 }
@@ -685,5 +682,13 @@ window.addEventListener("load", function () {
 });
 </script>
 {% endif %}
+<!-- Refresh Cache Button at bottom -->
+<div style="margin-top: 3rem; padding: 2rem 0; border-top: 1px solid #ddd; text-align: center;">
+    <button type="button" id="refresh-btn" class="btn-secondary" onclick="refreshVMs()" style="padding: 0.75rem 2rem; font-size: 14px;">
+        Refresh Cache
+    </button>
+    <p style="margin-top: 0.5rem; color: #666; font-size: 12px;">Click to force reload VM data from Proxmox server</p>
+</div>
+
 {% endblock %}
 
