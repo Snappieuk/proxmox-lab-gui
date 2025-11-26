@@ -127,40 +127,61 @@ def _guess_category(vm: Dict[str, Any]) -> str:
 
 def _lookup_vm_ip(node: str, vmid: int, vmtype: str) -> Optional[str]:
     """
-    Optional IP lookup via guest agent for QEMU VMs only.
+    IP lookup for both QEMU VMs (via guest agent) and LXC containers (via network interfaces).
     Skipped entirely unless ENABLE_IP_LOOKUP is True.
-
-    For containers you'd typically use static IP assignment or DNS instead.
     """
     if not ENABLE_IP_LOOKUP:
         return None
 
-    if vmtype != "qemu":
-        return None
+    # LXC containers - use network interfaces API (much more reliable)
+    if vmtype == "lxc":
+        try:
+            interfaces = proxmox_admin.nodes(node).lxc(vmid).interfaces.get()
+            if interfaces:
+                for iface in interfaces:
+                    if iface.get("name") in ("eth0", "veth0"):  # Primary interface
+                        inet = iface.get("inet")
+                        if inet:
+                            # inet format is usually "IP/CIDR"
+                            ip = inet.split("/")[0] if "/" in inet else inet
+                            if ip and not ip.startswith("127."):
+                                return ip
+                    # Fallback: check inet6 or any interface with an IP
+                    inet = iface.get("inet")
+                    if inet:
+                        ip = inet.split("/")[0] if "/" in inet else inet
+                        if ip and not ip.startswith("127."):
+                            return ip
+        except Exception as e:
+            logger.debug("lxc interface call failed for %s/%s: %s", node, vmid, e)
+            return None
 
-    try:
-        data = proxmox_admin.nodes(node).qemu(vmid).agent.get(
-            "network-get-interfaces"
-        )
-    except Exception as e:
-        logger.debug("guest agent call failed for %s/%s: %s", node, vmid, e)
-        return None
+    # QEMU VMs - use guest agent
+    if vmtype == "qemu":
+        try:
+            data = proxmox_admin.nodes(node).qemu(vmid).agent.get(
+                "network-get-interfaces"
+            )
+        except Exception as e:
+            logger.debug("guest agent call failed for %s/%s: %s", node, vmid, e)
+            return None
 
-    if not data:
-        return None
-    try:
-        interfaces = data.get("result", [])
-    except AttributeError:
-        interfaces = []
+        if not data:
+            return None
+        try:
+            interfaces = data.get("result", [])
+        except AttributeError:
+            interfaces = []
 
-    for iface in interfaces:
-        addrs = iface.get("ip-addresses", []) or []
-        for addr in addrs:
-            if addr.get("ip-address-type") == "ipv4":
-                ip = addr.get("ip-address")
-                # Skip 127.0.0.1
-                if ip and not ip.startswith("127."):
-                    return ip
+        for iface in interfaces:
+            addrs = iface.get("ip-addresses", []) or []
+            for addr in addrs:
+                if addr.get("ip-address-type") == "ipv4":
+                    ip = addr.get("ip-address")
+                    # Skip 127.0.0.1
+                    if ip and not ip.startswith("127."):
+                        return ip
+    
     return None
 
 
@@ -410,9 +431,9 @@ def get_vms_for_user(user: str, search: Optional[str] = None) -> List[Dict[str, 
         search_lower = search.lower()
         vms = [
             vm for vm in vms
-            if search_lower in vm.get("name", "").lower()
+            if search_lower in (vm.get("name") or "").lower()
             or search_lower in str(vm.get("vmid", ""))
-            or search_lower in vm.get("ip", "").lower()
+            or search_lower in (vm.get("ip") or "").lower()
         ]
         logger.debug("get_vms_for_user: search=%s filtered_vms=%d", search, len(vms))
     

@@ -219,9 +219,9 @@ def admin_view():
         search_lower = search.lower()
         vms = [
             vm for vm in all_vms
-            if search_lower in vm.get("name", "").lower()
+            if search_lower in (vm.get("name") or "").lower()
             or search_lower in str(vm.get("vmid", ""))
-            or search_lower in vm.get("ip", "").lower()
+            or search_lower in (vm.get("ip") or "").lower()
         ]
     else:
         vms = all_vms
