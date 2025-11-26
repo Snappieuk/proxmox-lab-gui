@@ -1,4 +1,11 @@
 #!/usr/bin/env python3
+
+# Disable SSL warnings before any imports that might trigger them
+import os
+if os.getenv("PVE_VERIFY", "False").lower() not in ("true", "1", "yes"):
+    import urllib3
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
 from functools import wraps
 
 from flask import (
