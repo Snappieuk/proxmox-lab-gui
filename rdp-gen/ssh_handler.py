@@ -52,14 +52,21 @@ class SSHWebSocketHandler:
             # Flags:
             # -o StrictHostKeyChecking=no: Auto-accept host keys
             # -o UserKnownHostsFile=/dev/null: Don't save host keys
+            # -o PreferredAuthentications=keyboard-interactive,password: Try interactive/password auth
+            # -o PubkeyAuthentication=no: Disable SSH key auth attempts
+            # -o IdentitiesOnly=yes: Don't use SSH agent
             # -o ServerAliveInterval=30: Keep connection alive
             # -o ServerAliveCountMax=3: Disconnect after 3 failed keepalives
+            # Note: If target requires publickey only, connection will fail with "Permission denied"
             self.process = subprocess.Popen(
                 [
                     'ssh',
                     '-p', str(self.port),
                     '-o', 'StrictHostKeyChecking=no',
                     '-o', 'UserKnownHostsFile=/dev/null',
+                    '-o', 'PreferredAuthentications=keyboard-interactive,password',
+                    '-o', 'PubkeyAuthentication=no',
+                    '-o', 'IdentitiesOnly=yes',
                     '-o', 'ServerAliveInterval=30',
                     '-o', 'ServerAliveCountMax=3',
                     self.ip
