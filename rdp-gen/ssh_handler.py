@@ -49,28 +49,11 @@ class SSHWebSocketHandler:
             # Create a pseudo-terminal
             self.master_fd, self.slave_fd = pty.openpty()
             
-            # Start SSH process with PTY
-            # Flags:
-            # -o StrictHostKeyChecking=no: Auto-accept host keys
-            # -o UserKnownHostsFile=/dev/null: Don't save host keys
-            # -o IdentitiesOnly=yes: Don't try SSH keys from agent
-            # -o PubkeyAuthentication=no: Disable SSH key auth completely
-            # -o PreferredAuthentications=password: Force password only
-            # -o ServerAliveInterval=30: Keep connection alive
-            # -o ServerAliveCountMax=3: Disconnect after 3 failed keepalives
+            # Start SSH process with PTY - bare SSH command, no flags
             self.process = subprocess.Popen(
                 [
                     'ssh',
-                    '-p', str(self.port),
-                    '-o', 'StrictHostKeyChecking=no',
-                    '-o', 'UserKnownHostsFile=/dev/null',
-                    '-o', 'IdentitiesOnly=yes',
-                    '-o', 'PubkeyAuthentication=no',
-                    '-o', 'PreferredAuthentications=password',
-                    '-o', 'ServerAliveInterval=30',
-                    '-o', 'ServerAliveCountMax=3',
-                    '-l', self.username,
-                    self.ip
+                    f'{self.username}@{self.ip}'
                 ],
                 stdin=self.slave_fd,
                 stdout=self.slave_fd,
