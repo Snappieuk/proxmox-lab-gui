@@ -373,7 +373,8 @@ function applyFilters() {
 async function loadVMs() {
     const loadingIndicator = document.getElementById('loading-indicator');
     try {
-        const resp = await fetch("/api/vms");
+        // Fast initial load: skip IPs to populate VMs immediately
+        const resp = await fetch("/api/vms?skip_ips=true");
         if (!resp.ok) {
             if (loadingIndicator) loadingIndicator.remove();
             return;
@@ -386,10 +387,24 @@ async function loadVMs() {
         }
         
         if (loadingIndicator) loadingIndicator.remove();
-        updateVMsFromData(data);
+        
+        // Now fetch with IPs in the background
+        fetchIPsInBackground();
     } catch (e) {
         console.error('Failed to load VMs:', e);
         if (loadingIndicator) loadingIndicator.remove();
+    }
+}
+
+async function fetchIPsInBackground() {
+    try {
+        // Fetch VMs with IPs (slow but runs in background after page loads)
+        const resp = await fetch("/api/vms");
+        if (!resp.ok) return;
+        const data = await resp.json();
+        updateVMsFromData(data);
+    } catch (e) {
+        console.error('Failed to fetch IPs:', e);
     }
 }
 

@@ -21,6 +21,7 @@ from config import (
     MAPPINGS_FILE,
     VM_CACHE_TTL,
     ENABLE_IP_LOOKUP,
+    ENABLE_IP_PERSISTENCE,
     ARP_SUBNETS,
 )
 
@@ -91,8 +92,11 @@ def _save_ip_to_proxmox(node: str, vmid: int, vmtype: str, ip: Optional[str]) ->
     Save discovered IP to Proxmox VM/LXC notes field for persistence.
     Stores in format: [CACHED_IP:192.168.1.100]
     This survives cache expiration and doesn't require re-scanning.
+    
+    WARNING: This is SLOW - requires reading AND writing VM config (2 API calls per VM).
+    Only enable via ENABLE_IP_PERSISTENCE=true if you really need it.
     """
-    if not ip:
+    if not ENABLE_IP_PERSISTENCE or not ip:
         return
     
     try:
@@ -126,7 +130,12 @@ def _get_ip_from_proxmox_notes(raw: Dict[str, Any]) -> Optional[str]:
     Extract cached IP from Proxmox VM notes field.
     Looks for pattern: [CACHED_IP:192.168.1.100]
     Returns None if not found or invalid.
+    
+    WARNING: Only used if ENABLE_IP_PERSISTENCE=true (disabled by default for performance).
     """
+    if not ENABLE_IP_PERSISTENCE:
+        return None
+    
     description = raw.get('description', '')
     if not description:
         return None

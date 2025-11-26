@@ -39,6 +39,11 @@ VM_CACHE_TTL = int(os.getenv("VM_CACHE_TTL", "120"))
 # This can be slow on large numbers of VMs.
 ENABLE_IP_LOOKUP = True
 
+# If True, save discovered IPs to VM description/notes in Proxmox
+# WARNING: This is VERY SLOW - adds 2 API calls per VM (read config + write config)
+# Disabled by default for better performance - IPs cached in memory instead
+ENABLE_IP_PERSISTENCE = os.getenv("ENABLE_IP_PERSISTENCE", "false").lower() in ("true", "1", "yes")
+
 # ARP scanner: broadcast addresses to ping for IP discovery
 # Set to subnet broadcast addresses on your network
 # Example: ["192.168.1.255", "10.0.0.255"]
