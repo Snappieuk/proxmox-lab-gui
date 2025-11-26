@@ -50,14 +50,12 @@ class SSHWebSocketHandler:
             self.master_fd, self.slave_fd = pty.openpty()
             
             # Start SSH process with PTY
-            # Flags to disable key auth and force password-only
+            # Minimal flags - let SSH try all authentication methods
             ssh_cmd = [
                 'ssh',
                 '-o', 'StrictHostKeyChecking=no',
                 '-o', 'UserKnownHostsFile=/dev/null',
-                '-o', 'PubkeyAuthentication=no',
-                '-o', 'PreferredAuthentications=password',
-                '-o', 'NumberOfPasswordPrompts=1',
+                '-o', 'NumberOfPasswordPrompts=3',
                 f'{self.username}@{self.ip}'
             ]
             logger.info("Starting SSH with command: %s", ' '.join(ssh_cmd))
