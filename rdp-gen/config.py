@@ -38,3 +38,13 @@ VM_CACHE_TTL = int(os.getenv("VM_CACHE_TTL", "120"))
 # If True, try to query the guest agent for IP addresses.
 # This can be slow on large numbers of VMs.
 ENABLE_IP_LOOKUP = True
+
+# ARP scanner: broadcast addresses to ping for IP discovery
+# Set to subnet broadcast addresses on your network
+# Example: ["192.168.1.255", "10.0.0.255"]
+ARP_SUBNETS = os.getenv("ARP_SUBNETS")
+if ARP_SUBNETS:
+    ARP_SUBNETS = [s.strip() for s in ARP_SUBNETS.split(",") if s.strip()]
+else:
+    # Default: common lab subnets
+    ARP_SUBNETS = ["10.220.15.255", "192.168.1.255"]

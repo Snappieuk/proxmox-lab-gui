@@ -21,7 +21,17 @@ from config import (
     MAPPINGS_FILE,
     VM_CACHE_TTL,
     ENABLE_IP_LOOKUP,
+    ARP_SUBNETS,
 )
+
+# Import ARP scanner for fast IP discovery
+try:
+    from arp_scanner import discover_ips_via_arp, normalize_mac
+    ARP_SCANNER_AVAILABLE = True
+except ImportError:
+    ARP_SCANNER_AVAILABLE = False
+    logger = logging.getLogger(__name__)
+    logger.warning("ARP scanner not available, falling back to guest agent only")
 
 # No additional SSL warning suppression needed - already done above
 
@@ -75,6 +85,41 @@ def _get_cached_ip(vmid: int) -> Optional[str]:
 def _cache_ip(vmid: int, ip: Optional[str]) -> None:
     """Store IP in cache."""
     _ip_cache[vmid] = (ip, time.time())
+
+
+def _get_vm_mac(node: str, vmid: int, vmtype: str) -> Optional[str]:
+    """
+    Get MAC address for a VM.
+    
+    Returns normalized MAC (lowercase, no separators) or None.
+    """
+    try:
+        if vmtype == "lxc":
+            # LXC: get config to find MAC
+            config = get_proxmox_admin().nodes(node).lxc(vmid).config.get()
+            if not config:
+                return None
+            # LXC net0 format: "name=eth0,bridge=vmbr0,hwaddr=XX:XX:XX:XX:XX:XX,ip=dhcp"
+            net0 = config.get("net0", "")
+            mac_match = re.search(r'hwaddr=([0-9a-fA-F:]+)', net0)
+            if mac_match and ARP_SCANNER_AVAILABLE:
+                return normalize_mac(mac_match.group(1))
+        
+        elif vmtype == "qemu":
+            # QEMU: get config to find MAC from net0
+            config = get_proxmox_admin().nodes(node).qemu(vmid).config.get()
+            if not config:
+                return None
+            # net0 format: "virtio=XX:XX:XX:XX:XX:XX,bridge=vmbr0"
+            net0 = config.get("net0", "")
+            mac_match = re.search(r'=([0-9a-fA-F:]+)', net0)
+            if mac_match and ARP_SCANNER_AVAILABLE:
+                return normalize_mac(mac_match.group(1))
+    
+    except Exception as e:
+        logger.debug("Failed to get MAC for %s/%s: %s", node, vmid, e)
+    
+    return None
 
 
 def _guess_category(vm: Dict[str, Any]) -> str:
@@ -201,6 +246,42 @@ def _build_vm_dict(raw: Dict[str, Any], skip_ip: bool = False) -> Dict[str, Any]
     }
 
 
+def _enrich_vms_with_arp_ips(vms: List[Dict[str, Any]]) -> None:
+    """
+    Enrich VM list with IPs discovered via ARP scanning (fast, in-place).
+    
+    This is much faster than querying guest agents individually.
+    """
+    if not ARP_SCANNER_AVAILABLE:
+        return
+    
+    # Build map of vmid -> MAC for VMs that don't have IPs yet
+    vm_mac_map = {}
+    for vm in vms:
+        if vm.get("ip"):
+            continue  # Already has IP
+        
+        mac = _get_vm_mac(vm["node"], vm["vmid"], vm["type"])
+        if mac:
+            vm_mac_map[vm["vmid"]] = mac
+    
+    if not vm_mac_map:
+        return
+    
+    logger.info("Attempting ARP discovery for %d VMs", len(vm_mac_map))
+    
+    # Discover IPs via ARP (broadcast ping + ARP table)
+    discovered_ips = discover_ips_via_arp(vm_mac_map, subnets=ARP_SUBNETS)
+    
+    # Update VMs with discovered IPs
+    for vm in vms:
+        if vm["vmid"] in discovered_ips:
+            vm["ip"] = discovered_ips[vm["vmid"]]
+            _cache_ip(vm["vmid"], vm["ip"])
+    
+    logger.info("ARP discovery found IPs for %d VMs", len(discovered_ips))
+
+
 def get_all_vms(skip_ips: bool = False) -> List[Dict[str, Any]]:
     """
     Cached list of all VMs/containers visible to the admin user.
@@ -266,6 +347,10 @@ def get_all_vms(skip_ips: bool = False) -> List[Dict[str, Any]]:
     out.sort(key=lambda vm: (vm.get("name") or "").lower())
 
     logger.info("get_all_vms: returning %d VM(s)", len(out))
+
+    # Try ARP-based IP discovery for VMs without IPs (fast batch operation)
+    if not skip_ips and ARP_SCANNER_AVAILABLE:
+        _enrich_vms_with_arp_ips(out)
 
     # Only cache if we have full data (IPs included)
     if not skip_ips:
