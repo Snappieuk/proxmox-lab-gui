@@ -36,6 +36,41 @@
     </div>
     {% endif %}
 
+{% if progressive_load %}
+<!-- Loading skeleton -->
+<div id="loading-skeleton" style="padding: 2rem 0;">
+    <div style="background: #f0f0f0; height: 120px; border-radius: 8px; margin-bottom: 1rem; animation: pulse 1.5s ease-in-out infinite;"></div>
+    <div style="background: #f0f0f0; height: 120px; border-radius: 8px; margin-bottom: 1rem; animation: pulse 1.5s ease-in-out infinite; animation-delay: 0.2s;"></div>
+    <div style="background: #f0f0f0; height: 120px; border-radius: 8px; animation: pulse 1.5s ease-in-out infinite; animation-delay: 0.4s;"></div>
+</div>
+<style>
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+</style>
+
+<!-- Containers for dynamically loaded VMs -->
+<div id="windows-vms-container" style="display: none;">
+    <h2 class="section-title">Windows VMs</h2>
+    <div class="cards-grid"></div>
+</div>
+
+<div id="linux-vms-container" style="display: none;">
+    <h2 class="section-title">Linux VMs</h2>
+    <div class="cards-grid"></div>
+</div>
+
+<div id="lxc-containers-container" style="display: none;">
+    <h2 class="section-title">LXC Containers</h2>
+    <div class="cards-grid"></div>
+</div>
+
+<div id="other-vms-container" style="display: none;">
+    <h2 class="section-title">Other / unknown</h2>
+    <div class="cards-grid"></div>
+</div>
+{% else %}
 {% macro vm_cards(vms) %}
 <div class="cards-grid">
     {% for vm in vms %}
@@ -128,6 +163,122 @@
 {% endif %}
 
 <script>
+{% if progressive_load %}
+// Progressive loading: fetch VMs and populate page dynamically
+let isInitialLoad = true;
+
+async function loadVMs() {
+    const searchParams = new URLSearchParams(window.location.search);
+    const search = searchParams.get('search') || '';
+    
+    try {
+        const resp = await fetch("/api/vms" + (search ? "?search=" + encodeURIComponent(search) : ""));
+        if (!resp.ok) {
+            showMessage("Failed to load VMs");
+            return;
+        }
+        const vms = await resp.json();
+        
+        // Categorize VMs
+        const windows_vms = vms.filter(v => v.type === "qemu" && v.category === "windows");
+        const linux_vms = vms.filter(v => v.type === "qemu" && v.category === "linux");
+        const lxc_containers = vms.filter(v => v.type === "lxc");
+        const other_vms = vms.filter(v => v.type === "qemu" && !["windows", "linux"].includes(v.category));
+        
+        // Render sections
+        renderVMSection("windows-vms-container", "Windows VMs", windows_vms);
+        renderVMSection("linux-vms-container", "Linux VMs", linux_vms);
+        renderVMSection("lxc-containers-container", "LXC Containers", lxc_containers);
+        renderVMSection("other-vms-container", "Other / unknown", other_vms);
+        
+        // Hide loading skeleton
+        document.getElementById('loading-skeleton')?.remove();
+        
+        if (vms.length === 0) {
+            showMessage(search ? `No VMs found matching '${search}'` : "No VMs available");
+        }
+        
+        isInitialLoad = false;
+    } catch (e) {
+        console.error("Failed to load VMs:", e);
+        showMessage("Error loading VMs");
+    }
+}
+
+function showMessage(text) {
+    const existing = document.querySelector('.page-banner');
+    if (existing) existing.textContent = text;
+    else {
+        const banner = document.createElement('div');
+        banner.className = 'page-banner';
+        banner.textContent = text;
+        document.querySelector('.page-header').after(banner);
+    }
+}
+
+function renderVMSection(containerId, title, vms) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    
+    if (vms.length === 0) {
+        container.style.display = 'none';
+        return;
+    }
+    
+    container.style.display = 'block';
+    const titleEl = container.querySelector('h2');
+    if (titleEl) titleEl.textContent = title;
+    
+    const grid = container.querySelector('.cards-grid');
+    grid.innerHTML = vms.map(vm => createVMCard(vm)).join('');
+}
+
+function createVMCard(vm) {
+    const isWindows = vm.category === 'windows';
+    const isLinux = vm.category === 'linux';
+    const sshCommand = vm.ip ? `ssh &lt;user&gt;@${vm.ip}` : 'ssh &lt;user&gt;@&lt;ip&gt;';
+    
+    return `
+        <div class="vm-card" data-vmid="${vm.vmid}">
+            <div class="vm-card-header">
+                <div>
+                    <div class="vm-name">${vm.name}</div>
+                    <div class="vm-meta">VMID ${vm.vmid} · ${vm.node}</div>
+                </div>
+                <div class="vm-status vm-status-${vm.status}">${vm.status.charAt(0).toUpperCase() + vm.status.slice(1)}</div>
+            </div>
+            <div class="vm-body">
+                <div class="vm-row">
+                    <span class="vm-label">IP address</span>
+                    <span class="vm-value vm-ip">${vm.ip || 'Not available'}</span>
+                </div>
+                ${isWindows ? `
+                <div class="vm-row">
+                    <span class="vm-label">Connection</span>
+                    <span class="vm-value">RDP (3389)</span>
+                </div>
+                ` : ''}
+                ${isLinux ? `
+                <div class="vm-row">
+                    <span class="vm-label">Connection</span>
+                    <span class="vm-value">SSH (22)</span>
+                </div>
+                <div class="vm-row">
+                    <span class="vm-label">SSH command</span>
+                    <span class="vm-value vm-ssh">${sshCommand}</span>
+                </div>
+                ` : ''}
+            </div>
+            <div class="vm-footer">
+                <button class="btn-secondary btn-power" data-vmid="${vm.vmid}" data-action="stop">Stop</button>
+                <button class="btn-primary btn-power" data-vmid="${vm.vmid}" data-action="start">Start</button>
+                ${isWindows ? `<a class="btn-link" href="/rdp/${vm.vmid}.rdp">RDP file</a>` : ''}
+            </div>
+        </div>
+    `;
+}
+{% endif %}
+
 async function refreshVmStatus() {
     try {
         const resp = await fetch("/api/vms");
@@ -180,9 +331,17 @@ async function sendPowerAction(vmid, action, btn) {
 }
 
 window.addEventListener("load", function () {
-    refreshVmStatus();
-    // slow polling (20s) to avoid hammering Proxmox
-    setInterval(refreshVmStatus, 20000);
+    {% if progressive_load %}
+    // Load VMs immediately on page load
+    loadVMs();
+    // Then poll for updates every 15 seconds
+    setInterval(refreshVmStatus, 15000);
+    {% else %}
+    // Delay initial refresh slightly to let page render first
+    setTimeout(refreshVmStatus, 500);
+    // Poll for updates every 15 seconds
+    setInterval(refreshVmStatus, 15000);
+    {% endif %}
 
     document.addEventListener("click", function (e) {
         const btn = e.target.closest(".btn-power");

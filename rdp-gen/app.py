@@ -155,31 +155,17 @@ def root():
 @login_required
 def portal():
     user = require_user()
-    search = request.args.get('search', '').strip()
-    vms = get_vms_for_user(user, search=search if search else None)
-    app.logger.info("portal: user=%s vms=%d search=%s", user, len(vms), search or 'none')
-
-    # Separate by type (QEMU vs LXC) and category (Windows vs Linux)
-    windows_vms = [v for v in vms if v.get("type") == "qemu" and v.get("category") == "windows"]
-    linux_vms = [v for v in vms if v.get("type") == "qemu" and v.get("category") == "linux"]
-    lxc_containers = [v for v in vms if v.get("type") == "lxc"]
-    other_vms = [v for v in vms if v.get("type") == "qemu" and v.get("category") not in ("windows", "linux")]
-
-    message = None
-    if not vms:
-        if search:
-            message = f"No VMs found matching '{search}'."
-        elif is_admin_user(user):
-            message = "No VMs discovered — check Proxmox connection or cluster resources."
-        else:
-            message = "No VMs assigned to you — ask an admin to map VMs."
+    
+    # Fast path: render empty page immediately for progressive loading
+    # VMs will be loaded via /api/vms after page renders
     return render_template(
         "index.html",
-        windows_vms=windows_vms,
-        linux_vms=linux_vms,
-        lxc_containers=lxc_containers,
-        other_vms=other_vms,
-        message=message,
+        progressive_load=True,
+        windows_vms=[],
+        linux_vms=[],
+        lxc_containers=[],
+        other_vms=[],
+        message=None,
     )
 
 
@@ -244,44 +230,19 @@ def admin_mappings():
 @admin_required
 def admin_view():
     user = require_user()
-    search = request.args.get('search', '').strip()
     
-    # For admin view, get all VMs then apply search filter manually
-    all_vms = get_all_vms()
-    if search:
-        search_lower = search.lower()
-        vms = [
-            vm for vm in all_vms
-            if search_lower in (vm.get("name") or "").lower()
-            or search_lower in str(vm.get("vmid", ""))
-            or search_lower in (vm.get("ip") or "").lower()
-        ]
-    else:
-        vms = all_vms
-    
-    app.logger.info("admin_view: user=%s vms=%d search=%s", user, len(vms), search or 'none')
-    
-    # Separate by type (QEMU vs LXC) and category (Windows vs Linux)
-    windows_vms = [v for v in vms if v.get("type") == "qemu" and v.get("category") == "windows"]
-    linux_vms = [v for v in vms if v.get("type") == "qemu" and v.get("category") == "linux"]
-    lxc_containers = [v for v in vms if v.get("type") == "lxc"]
-    other_vms = [v for v in vms if v.get("type") == "qemu" and v.get("category") not in ("windows", "linux")]
-    
-    message = None
+    # Fast path: render empty page immediately for progressive loading
+    # VMs will be loaded via /api/vms after page renders
     probe = probe_proxmox()
-    if not vms:
-        if search:
-            message = f"No VMs found matching '{search}'."
-        else:
-            message = "No VMs discovered — check Proxmox connection or credentials."
     return render_template(
         "index.html",
-        windows_vms=windows_vms,
-        linux_vms=linux_vms,
-        lxc_containers=lxc_containers,
-        other_vms=other_vms,
+        progressive_load=True,
+        windows_vms=[],
+        linux_vms=[],
+        lxc_containers=[],
+        other_vms=[],
         user=user,
-        message=message,
+        message=None,
         probe=probe,
     )
 
