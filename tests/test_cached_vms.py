@@ -294,6 +294,79 @@ def test_rdp_content_in_memory():
     print("✓ RDP content is built in-memory")
 
 
+def test_ip_cache_ttl():
+    """Test that IP_CACHE_TTL is set to 3600 (1 hour)."""
+    from proxmox_client import IP_CACHE_TTL
+    
+    assert IP_CACHE_TTL == 3600, f"IP_CACHE_TTL should be 3600, got {IP_CACHE_TTL}"
+    print(f"✓ IP_CACHE_TTL = {IP_CACHE_TTL} seconds (1 hour)")
+
+
+def test_ip_lookup_workers_auto_tuned():
+    """Test that IP lookup workers are auto-tuned based on CPU count."""
+    from proxmox_client import DEFAULT_IP_LOOKUP_WORKERS
+    import os
+    
+    expected = max(2, min(8, (os.cpu_count() or 4) - 1))
+    assert DEFAULT_IP_LOOKUP_WORKERS == expected, \
+        f"DEFAULT_IP_LOOKUP_WORKERS should be {expected}, got {DEFAULT_IP_LOOKUP_WORKERS}"
+    assert 2 <= DEFAULT_IP_LOOKUP_WORKERS <= 8, "Workers should be between 2 and 8"
+    print(f"✓ DEFAULT_IP_LOOKUP_WORKERS = {DEFAULT_IP_LOOKUP_WORKERS} (auto-tuned)")
+
+
+def test_admin_group_cache_exists():
+    """Test that admin group cache variables and functions exist."""
+    from proxmox_client import (
+        ADMIN_GROUP_CACHE_TTL,
+        _admin_group_cache,
+        _admin_group_ts,
+        _admin_group_lock,
+        _get_admin_group_members_cached,
+        _invalidate_admin_group_cache,
+    )
+    
+    assert ADMIN_GROUP_CACHE_TTL == 120, f"ADMIN_GROUP_CACHE_TTL should be 120, got {ADMIN_GROUP_CACHE_TTL}"
+    assert callable(_get_admin_group_members_cached), "_get_admin_group_members_cached should be callable"
+    assert callable(_invalidate_admin_group_cache), "_invalidate_admin_group_cache should be callable"
+    print("✓ Admin group cache infrastructure exists")
+
+
+def test_admin_group_cache_invalidation():
+    """Test that admin group cache can be invalidated."""
+    from proxmox_client import (
+        _admin_group_cache,
+        _admin_group_ts,
+        _invalidate_admin_group_cache,
+    )
+    import proxmox_client
+    
+    # Set some test values manually
+    with proxmox_client._admin_group_lock:
+        proxmox_client._admin_group_cache = ["test@pve"]
+        proxmox_client._admin_group_ts = 12345.0
+    
+    # Invalidate
+    _invalidate_admin_group_cache()
+    
+    # Verify cleared
+    with proxmox_client._admin_group_lock:
+        assert proxmox_client._admin_group_cache is None, "Cache should be None after invalidation"
+        assert proxmox_client._admin_group_ts == 0.0, "Timestamp should be 0 after invalidation"
+    
+    print("✓ Admin group cache invalidation works")
+
+
+def test_lookup_vm_ip_delegates_to_thread_safe():
+    """Test that _lookup_vm_ip delegates to _lookup_vm_ip_thread_safe."""
+    import inspect
+    from proxmox_client import _lookup_vm_ip
+    
+    source = inspect.getsource(_lookup_vm_ip)
+    assert "_lookup_vm_ip_thread_safe" in source, \
+        "_lookup_vm_ip should delegate to _lookup_vm_ip_thread_safe"
+    print("✓ _lookup_vm_ip delegates to _lookup_vm_ip_thread_safe")
+
+
 def test_flask_app_creates():
     """Test that Flask app can be created without errors."""
     # This test runs in the test process, not connected to Proxmox
@@ -302,10 +375,9 @@ def test_flask_app_creates():
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'rdp-gen'))
     
     # Import should not raise
-    from app import app, cache
+    from app import app
     
     assert app is not None
-    assert cache is not None
     assert app.secret_key is not None
     
     print("✓ Flask app creates successfully")
@@ -326,6 +398,11 @@ def run_all_tests():
         test_ip_cache_thread_safety,
         test_mappings_cache_thread_safety,
         test_mappings_write_through_cache,
+        test_ip_cache_ttl,
+        test_ip_lookup_workers_auto_tuned,
+        test_admin_group_cache_exists,
+        test_admin_group_cache_invalidation,
+        test_lookup_vm_ip_delegates_to_thread_safe,
     ]
     
     passed = 0
