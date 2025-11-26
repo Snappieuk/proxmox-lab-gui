@@ -666,24 +666,32 @@ if WEBSOCKET_AVAILABLE:
     @sock.route("/ws/ssh/<int:vmid>")
     def ssh_websocket(ws, vmid: int):
         """WebSocket endpoint for SSH connection."""
+        app.logger.info("WebSocket SSH connection attempt for VM %d", vmid)
         from ssh_handler import SSHWebSocketHandler
         
         # Get IP and username from query parameters
         ip = request.args.get('ip')
         username = request.args.get('username', 'root')
         
+        app.logger.info("SSH WebSocket: vmid=%d, ip=%s, username=%s", vmid, ip, username)
+        
         if not ip:
+            app.logger.error("SSH WebSocket: No IP provided")
             ws.send("Error: No IP address provided")
             return
         
         # Create SSH handler with username
+        app.logger.info("Creating SSH handler for %s@%s", username, ip)
         handler = SSHWebSocketHandler(ws, ip, username=username)
         
         # Connect to SSH
+        app.logger.info("Attempting SSH connection...")
         if not handler.connect():
+            app.logger.error("SSH connection failed")
             ws.send("\r\n\x1b[1;31mFailed to establish SSH connection.\x1b[0m\r\n")
             return
         
+        app.logger.info("SSH connection established, entering message loop")
         # Main message loop
         try:
             while handler.running:
