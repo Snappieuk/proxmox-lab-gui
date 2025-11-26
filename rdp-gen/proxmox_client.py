@@ -6,6 +6,9 @@ import time
 from typing import Dict, List, Any, Optional
 
 from proxmoxer import ProxmoxAPI
+import urllib3
+# Completely disable SSL warnings and verification
+urllib3.disable_warnings()
 
 from config import (
     PVE_HOST,
@@ -20,13 +23,7 @@ from config import (
     ENABLE_IP_LOOKUP,
 )
 
-# Disable SSL warnings when certificate verification is disabled
-if not PVE_VERIFY:
-    try:
-        import urllib3
-        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-    except ImportError:
-        pass  # urllib3 not available, warnings will show but won't crash
+# No additional SSL warning suppression needed - already done above
 
 # ---------------------------------------------------------------------------
 # Proxmox connection (admin account)
