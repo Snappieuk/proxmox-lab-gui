@@ -535,6 +535,7 @@ function createVMCard(vm) {
                 <button class="btn-secondary btn-power" data-vmid="${vm.vmid}" data-action="stop">Stop</button>
                 <button class="btn-primary btn-power" data-vmid="${vm.vmid}" data-action="start">Start</button>
                 ${isWindows ? `<a class="btn-link" href="/rdp/${vm.vmid}.rdp">RDP file</a>` : ''}
+                ${isLinux ? `<button class="btn-link btn-ssh" data-vmid="${vm.vmid}" data-ip="${vm.ip || ''}" ${!vm.ip ? 'disabled' : ''}>Copy SSH</button>` : ''}
             </div>
         </div>
     `;
