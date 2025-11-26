@@ -19,6 +19,7 @@ from config import (
     ADMIN_USERS,
     ADMIN_GROUP,
     MAPPINGS_FILE,
+    IP_CACHE_FILE,
     VM_CACHE_TTL,
     ENABLE_IP_LOOKUP,
     ENABLE_IP_PERSISTENCE,
@@ -65,10 +66,45 @@ logger = logging.getLogger(__name__)
 _vm_cache_data: Optional[List[Dict[str, Any]]] = None
 _vm_cache_ts: float = 0.0
 
-# IP address cache: vmid -> (ip, timestamp)
-# Separate cache with longer TTL to avoid hammering guest agent
-_ip_cache: Dict[int, tuple[Optional[str], float]] = {}
-IP_CACHE_TTL = 300  # 5 minutes
+# IP address cache: vmid -> {"ip": "x.x.x.x", "timestamp": unix_time}
+# Stored in JSON file for persistence across restarts
+_ip_cache: Dict[int, Dict[str, Any]] = {}
+_ip_cache_loaded = False
+IP_CACHE_TTL = 86400  # 24 hours (much longer since we validate on use)
+
+def _load_ip_cache() -> None:
+    """Load IP cache from JSON file."""
+    global _ip_cache, _ip_cache_loaded
+    if _ip_cache_loaded:
+        return
+    
+    if not os.path.exists(IP_CACHE_FILE):
+        _ip_cache = {}
+        _ip_cache_loaded = True
+        return
+    
+    try:
+        with open(IP_CACHE_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            # Convert string keys back to int
+            _ip_cache = {int(k): v for k, v in data.items()}
+        logger.info("Loaded IP cache with %d entries", len(_ip_cache))
+    except Exception as e:
+        logger.warning("Failed to load IP cache: %s", e)
+        _ip_cache = {}
+    
+    _ip_cache_loaded = True
+
+def _save_ip_cache() -> None:
+    """Save IP cache to JSON file."""
+    try:
+        # Convert int keys to strings for JSON
+        data = {str(k): v for k, v in _ip_cache.items()}
+        with open(IP_CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        logger.debug("Saved IP cache with %d entries", len(_ip_cache))
+    except Exception as e:
+        logger.warning("Failed to save IP cache: %s", e)
 
 def _invalidate_vm_cache() -> None:
     global _vm_cache_data, _vm_cache_ts
@@ -76,16 +112,44 @@ def _invalidate_vm_cache() -> None:
     _vm_cache_ts = 0.0
 
 def _get_cached_ip(vmid: int) -> Optional[str]:
-    """Get IP from cache if not expired."""
+    """Get IP from persistent cache if not expired."""
+    _load_ip_cache()
     if vmid in _ip_cache:
-        ip, ts = _ip_cache[vmid]
+        entry = _ip_cache[vmid]
+        ip = entry.get("ip")
+        ts = entry.get("timestamp", 0)
         if time.time() - ts < IP_CACHE_TTL:
             return ip
     return None
 
 def _cache_ip(vmid: int, ip: Optional[str]) -> None:
-    """Store IP in cache."""
-    _ip_cache[vmid] = (ip, time.time())
+    """Store IP in persistent cache."""
+    _load_ip_cache()
+    if ip:
+        _ip_cache[vmid] = {
+            "ip": ip,
+            "timestamp": time.time()
+        }
+        _save_ip_cache()
+
+def verify_vm_ip(node: str, vmid: int, vmtype: str, cached_ip: str) -> Optional[str]:
+    """Verify cached IP is still correct, return updated IP if different.
+    
+    This does a quick check without blocking. Returns:
+    - cached_ip if still valid
+    - new IP if different
+    - None if VM is offline or unreachable
+    """
+    try:
+        current_ip = _lookup_vm_ip(node, vmid, vmtype)
+        if current_ip and current_ip != cached_ip:
+            logger.info("VM %d IP changed: %s -> %s", vmid, cached_ip, current_ip)
+            _cache_ip(vmid, current_ip)
+            return current_ip
+        return cached_ip
+    except Exception as e:
+        logger.debug("Failed to verify IP for VM %d: %s", vmid, e)
+        return cached_ip  # Return cached IP if verification fails
 
 def _save_ip_to_proxmox(node: str, vmid: int, vmtype: str, ip: Optional[str]) -> None:
     """
@@ -310,13 +374,11 @@ def _build_vm_dict(raw: Dict[str, Any], skip_ip: bool = False) -> Dict[str, Any]
                 ip = _lookup_vm_ip(node, vmid, vmtype)
                 if ip:
                     _cache_ip(vmid, ip)
-                    _save_ip_to_proxmox(node, vmid, vmtype, ip)
             elif vmtype == "qemu" and status == "running":
                 # QEMU VMs: only query when running (guest agent required)
                 ip = _lookup_vm_ip(node, vmid, vmtype)
                 if ip:
                     _cache_ip(vmid, ip)
-                    _save_ip_to_proxmox(node, vmid, vmtype, ip)
 
     return {
         "vmid": vmid,
@@ -408,8 +470,6 @@ def _enrich_vms_with_arp_ips(vms: List[Dict[str, Any]]) -> None:
         if vm["vmid"] in discovered_ips:
             vm["ip"] = discovered_ips[vm["vmid"]]
             _cache_ip(vm["vmid"], vm["ip"])
-            # Save ARP-discovered IPs to Proxmox for persistence
-            _save_ip_to_proxmox(vm["node"], vm["vmid"], vm["type"], vm["ip"])
     
     logger.info("ARP discovery returned %d cached IPs (scan running in background)", len(discovered_ips))
 

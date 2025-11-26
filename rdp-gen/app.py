@@ -45,6 +45,7 @@ from proxmox_client import (
     get_pve_users,
     probe_proxmox,
     create_pve_user,
+    verify_vm_ip,
 )
 
 import re
@@ -638,6 +639,13 @@ def ssh_terminal(vmid: int):
     ip = request.args.get('ip') or vm.get('ip')
     name = request.args.get('name') or vm.get('name', f'VM {vmid}')
     
+    # Verify cached IP is still correct
+    if ip:
+        verified_ip = verify_vm_ip(vm['node'], vmid, vm['type'], ip)
+        if verified_ip and verified_ip != ip:
+            ip = verified_ip
+            app.logger.info("Updated IP for VM %d: %s", vmid, ip)
+    
     if not ip:
         return render_template(
             "error.html",
@@ -726,6 +734,17 @@ def rdp_file(vmid: int):
     if vm.get("category") != "windows":
         app.logger.warning("rdp_file: VM %s is not Windows (category=%s)", vmid, vm.get("category"))
         abort(404)
+
+    # Verify cached IP before generating RDP
+    cached_ip = vm.get('ip')
+    if cached_ip and cached_ip != "Checking...":
+        try:
+            verified_ip = verify_vm_ip(vm['node'], vmid, vm.get('type', 'qemu'), cached_ip)
+            if verified_ip != cached_ip:
+                app.logger.info("rdp_file: IP changed for VM %s from %s to %s", vmid, cached_ip, verified_ip)
+                vm['ip'] = verified_ip
+        except Exception as e:
+            app.logger.warning("rdp_file: IP verification failed for VM %s: %s", vmid, e)
 
     try:
         content = build_rdp(vm)

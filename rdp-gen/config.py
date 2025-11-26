@@ -29,6 +29,9 @@ ADMIN_GROUP = os.getenv("ADMIN_GROUP", "adminers")   # set to None to disable gr
 # Where per-user VM mappings are stored (JSON file on disk)
 MAPPINGS_FILE = os.getenv("MAPPINGS_FILE") or os.path.join(os.path.dirname(__file__), "mappings.json")
 
+# IP address cache file (persistent storage)
+IP_CACHE_FILE = os.getenv("IP_CACHE_FILE") or os.path.join(os.path.dirname(__file__), "ip_cache.json")
+
 # Flask secret
 SECRET_KEY = os.getenv("SECRET_KEY", "change-me-session-key")
 
