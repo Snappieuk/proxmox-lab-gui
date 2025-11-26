@@ -356,14 +356,23 @@ def get_all_vms(skip_ips: bool = False, force_refresh: bool = False) -> List[Dic
     Set skip_ips=True to avoid IP lookups for initial fast load.
     Set force_refresh=True to bypass cache and fetch fresh data from Proxmox.
     
-    Note: When skip_ips=True, the result is NOT cached since it's incomplete.
+    Note: Cache stores VM structure. When skip_ips=True, returns cached VMs without IP lookup.
     """
     global _vm_cache_data, _vm_cache_ts
 
     now = time.time()
-    # Only use cache if it exists, we're not skipping IPs, not forcing refresh, and cache is valid
-    if not skip_ips and not force_refresh and _vm_cache_data is not None and (now - _vm_cache_ts) < VM_CACHE_TTL:
-        return _vm_cache_data
+    # Check if we have valid cached data
+    cache_valid = _vm_cache_data is not None and (now - _vm_cache_ts) < VM_CACHE_TTL
+    
+    # If cache is valid and not forcing refresh, return cached data
+    # When skip_ips=True, return without re-enriching IPs
+    if not force_refresh and cache_valid and _vm_cache_data is not None:
+        if skip_ips:
+            # Return cached VMs without IP data (clear IPs for fast load)
+            return [{**vm, "ip": None} for vm in _vm_cache_data]
+        else:
+            # Return full cached data
+            return list(_vm_cache_data)
 
     # Fast path: use cluster resources API (single call vs N node queries)
     out: List[Dict[str, Any]] = []
@@ -417,14 +426,13 @@ def get_all_vms(skip_ips: bool = False, force_refresh: bool = False) -> List[Dic
     _enrich_with_user_mappings(out)
 
     # Try ARP-based IP discovery for VMs without IPs (fast batch operation)
-    # Run this even with skip_ips since ARP is fast and non-blocking
-    if ARP_SCANNER_AVAILABLE:
+    # Only run when not skipping IPs
+    if not skip_ips and ARP_SCANNER_AVAILABLE:
         _enrich_vms_with_arp_ips(out)
 
-    # Only cache if we have full data (IPs included)
-    if not skip_ips:
-        _vm_cache_data = out
-        _vm_cache_ts = now
+    # Cache the VM structure (always cache, even with skip_ips)
+    _vm_cache_data = out
+    _vm_cache_ts = now
     
     return out
 

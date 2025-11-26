@@ -134,16 +134,6 @@
                 <span class="vm-label">Connection</span>
                 <span class="vm-value">SSH (22)</span>
             </div>
-            <div class="vm-row">
-                <span class="vm-label">SSH command</span>
-                <span class="vm-value vm-ssh">
-                    {% if vm.ip %}
-                        ssh &lt;user&gt;@{{ vm.ip }}
-                    {% else %}
-                        ssh &lt;user&gt;@&lt;ip&gt;
-                    {% endif %}
-                </span>
-            </div>
             {% endif %}
         </div>
 
@@ -159,6 +149,13 @@
 
             {% if vm.category == "windows" %}
             <a class="btn-link" href="/rdp/{{ vm.vmid }}.rdp">RDP file</a>
+            {% elif vm.category == "linux" %}
+            <button class="btn-link btn-ssh" 
+                    data-vmid="{{ vm.vmid }}"
+                    data-ip="{{ vm.ip or '' }}"
+                    {% if not vm.ip %}disabled{% endif %}>
+                Copy SSH
+            </button>
             {% endif %}
         </div>
     </div>
@@ -461,6 +458,13 @@ function updateVMIP(vmid, ip) {
         rdpBtn.disabled = false;
         rdpBtn.title = 'Download RDP file';
     }
+    
+    // Enable SSH button if this is a Linux VM/container
+    const sshBtn = card.querySelector('.btn-ssh');
+    if (sshBtn && sshBtn.disabled) {
+        sshBtn.disabled = false;
+        sshBtn.setAttribute('data-ip', ip);
+    }
 }
 
 function showMessage(text) {
@@ -548,7 +552,6 @@ async function refreshVmStatus() {
 
             const statusEl = card.querySelector('.vm-status');
             const ipEl = card.querySelector('.vm-ip');
-            const sshEl = card.querySelector('.vm-ssh');
 
             if (statusEl) {
                 const text = vm.status ? vm.status.charAt(0).toUpperCase() + vm.status.slice(1) : "Unknown";
@@ -559,11 +562,16 @@ async function refreshVmStatus() {
             if (ipEl) {
                 ipEl.textContent = vm.ip ? vm.ip : "Not available";
             }
-            if (sshEl) {
+            
+            // Update SSH button
+            const sshBtn = card.querySelector('.btn-ssh');
+            if (sshBtn) {
                 if (vm.ip) {
-                    sshEl.textContent = "ssh <user>@" + vm.ip;
+                    sshBtn.disabled = false;
+                    sshBtn.setAttribute('data-ip', vm.ip);
                 } else {
-                    sshEl.textContent = "ssh <user>@<ip>";
+                    sshBtn.disabled = true;
+                    sshBtn.removeAttribute('data-ip');
                 }
             }
         });
@@ -610,6 +618,26 @@ window.addEventListener("load", function () {
         if (!vmid || !action) return;
         sendPowerAction(vmid, action, btn);
     });
+
+    document.addEventListener("click", function (e) {
+        const btn = e.target.closest(".btn-ssh");
+        if (!btn || btn.disabled) return;
+        const ip = btn.getAttribute("data-ip");
+        if (!ip) return;
+        
+        const sshCommand = `ssh root@${ip}`;
+        navigator.clipboard.writeText(sshCommand).then(() => {
+            const originalText = btn.textContent;
+            btn.textContent = "Copied!";
+            btn.style.background = "#28a745";
+            setTimeout(() => {
+                btn.textContent = originalText;
+                btn.style.background = "";
+            }, 2000);
+        }).catch(() => {
+            alert(`SSH command:\n${sshCommand}`);
+        });
+    });
 });
 </script>
 {% else %}
@@ -626,7 +654,6 @@ async function refreshVmStatus() {
 
             const statusEl = card.querySelector('.vm-status');
             const ipEl = card.querySelector('.vm-ip');
-            const sshEl = card.querySelector('.vm-ssh');
 
             if (statusEl) {
                 const text = vm.status ? vm.status.charAt(0).toUpperCase() + vm.status.slice(1) : "Unknown";
@@ -637,11 +664,16 @@ async function refreshVmStatus() {
             if (ipEl) {
                 ipEl.textContent = vm.ip ? vm.ip : "Not available";
             }
-            if (sshEl) {
+            
+            // Update SSH button
+            const sshBtn = card.querySelector('.btn-ssh');
+            if (sshBtn) {
                 if (vm.ip) {
-                    sshEl.textContent = "ssh <user>@" + vm.ip;
+                    sshBtn.disabled = false;
+                    sshBtn.setAttribute('data-ip', vm.ip);
                 } else {
-                    sshEl.textContent = "ssh <user>@<ip>";
+                    sshBtn.disabled = true;
+                    sshBtn.removeAttribute('data-ip');
                 }
             }
         });
@@ -678,6 +710,26 @@ window.addEventListener("load", function () {
         const action = btn.getAttribute("data-action");
         if (!vmid || !action) return;
         sendPowerAction(vmid, action, btn);
+    });
+
+    document.addEventListener("click", function (e) {
+        const btn = e.target.closest(".btn-ssh");
+        if (!btn || btn.disabled) return;
+        const ip = btn.getAttribute("data-ip");
+        if (!ip) return;
+        
+        const sshCommand = `ssh root@${ip}`;
+        navigator.clipboard.writeText(sshCommand).then(() => {
+            const originalText = btn.textContent;
+            btn.textContent = "Copied!";
+            btn.style.background = "#28a745";
+            setTimeout(() => {
+                btn.textContent = originalText;
+                btn.style.background = "";
+            }, 2000);
+        }).catch(() => {
+            alert(`SSH command:\n${sshCommand}`);
+        });
     });
 });
 </script>
