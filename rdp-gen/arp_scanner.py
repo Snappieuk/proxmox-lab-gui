@@ -128,7 +128,7 @@ def get_arp_table() -> Dict[str, str]:
     return arp_map
 
 
-def broadcast_ping(subnet: str = "192.168.1.255", count: int = 2) -> bool:
+def broadcast_ping(subnet: str = "192.168.1.255", count: int = 1) -> bool:
     """
     Send broadcast ping to populate ARP table.
     
@@ -187,20 +187,37 @@ def discover_ips_via_arp(vm_mac_map: Dict[int, str], subnets: Optional[list] = N
     
     # Default subnets if none provided
     if subnets is None:
-        subnets = ["192.168.1.255", "10.220.15.255"]  # Common defaults
+        subnets = ["10.220.15.255"]  # Default to 10.220.8.0/21 network
     
-    # Broadcast ping to populate ARP tables
-    for subnet in subnets:
-        logger.info("Broadcasting ping to %s", subnet)
-        broadcast_ping(subnet)
-    
-    # Get ARP table
+    # Get existing ARP table first (might already have entries)
     arp_table = get_arp_table()
-    logger.info("ARP table has %d entries, looking for %d VM MACs", len(arp_table), len(vm_mac_map))
+    logger.info("Pre-ping ARP table has %d entries", len(arp_table))
     
-    # Map VM MACs to IPs
+    # Check if we already have matches before pinging
     vm_ips = {}
     for vmid, mac in vm_mac_map.items():
+        if mac in arp_table:
+            vm_ips[vmid] = arp_table[mac]
+            logger.info("VM %d (MAC %s) -> IP %s (cached)", vmid, mac, arp_table[mac])
+    
+    # If we found all IPs, no need to ping
+    if len(vm_ips) == len(vm_mac_map):
+        logger.info("All IPs found in existing ARP cache, skipping broadcast ping")
+        return vm_ips
+    
+    # Broadcast ping to populate ARP tables (only if needed)
+    logger.info("Broadcasting ping to %d subnets", len(subnets))
+    for subnet in subnets:
+        broadcast_ping(subnet)
+    
+    # Get updated ARP table
+    arp_table = get_arp_table()
+    logger.info("Post-ping ARP table has %d entries, looking for %d VM MACs", len(arp_table), len(vm_mac_map))
+    
+    # Map remaining VM MACs to IPs
+    for vmid, mac in vm_mac_map.items():
+        if vmid in vm_ips:
+            continue  # Already found
         if mac in arp_table:
             vm_ips[vmid] = arp_table[mac]
             logger.info("VM %d (MAC %s) -> IP %s", vmid, mac, arp_table[mac])

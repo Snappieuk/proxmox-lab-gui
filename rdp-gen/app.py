@@ -322,7 +322,8 @@ def api_mappings():
     try:
         mapping = get_user_vm_map()
         users = get_pve_users()
-        all_vms = get_all_vms()
+        # Skip IPs for mappings - we only need vmid and name
+        all_vms = get_all_vms(skip_ips=True)
         
         # Create vmid to name mapping for display
         vm_id_to_name = {v["vmid"]: v.get("name", f"vm-{v['vmid']}") for v in all_vms}

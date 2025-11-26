@@ -354,7 +354,8 @@ def get_all_vms(skip_ips: bool = False) -> List[Dict[str, Any]]:
     logger.info("get_all_vms: returning %d VM(s)", len(out))
 
     # Try ARP-based IP discovery for VMs without IPs (fast batch operation)
-    if not skip_ips and ARP_SCANNER_AVAILABLE:
+    # Run this even with skip_ips since ARP is fast and non-blocking
+    if ARP_SCANNER_AVAILABLE:
         _enrich_vms_with_arp_ips(out)
 
     # Only cache if we have full data (IPs included)
