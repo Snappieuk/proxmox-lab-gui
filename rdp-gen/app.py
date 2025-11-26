@@ -33,7 +33,6 @@ from proxmox_client import (
     get_user_vm_map,
     set_user_vm_mapping,
     get_pve_users,
-    get_proxmox_admin_wrapper,
     probe_proxmox,
     create_pve_user,
 )
@@ -43,17 +42,6 @@ import logging
 
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
-
-# Optional cache (uses wrapper or real client) - defer initialization
-from cache import ProxmoxCache
-cache = None
-
-def get_cache():
-    """Lazy-load cache to avoid SSL issues on module import."""
-    global cache
-    if cache is None:
-        cache = ProxmoxCache(get_proxmox_admin_wrapper(), ttl=VM_CACHE_TTL)
-    return cache
 
 
 def require_user() -> str:

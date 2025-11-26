@@ -6,9 +6,10 @@ import os
 bind = "0.0.0.0:8080"
 backlog = 2048
 
-# Worker processes
-workers = multiprocessing.cpu_count() * 2 + 1
-worker_class = "sync"
+# Worker processes - use single worker with threads to avoid fork issues entirely
+workers = 1
+worker_class = "gthread"
+threads = multiprocessing.cpu_count() * 4  # Compensate with more threads per worker
 worker_connections = 1000
 timeout = 30
 keepalive = 2

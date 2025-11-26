@@ -31,126 +31,16 @@ if not PVE_VERIFY:
 # ---------------------------------------------------------------------------
 # Proxmox connection (admin account)
 # ---------------------------------------------------------------------------
-class ProxmoxAdminWrapper:
-    def __init__(self, admin: ProxmoxAPI):
-        self._admin = admin
 
-    def get_nodes(self):
-        return self._admin.nodes.get()
+# Simple module-level connection (safe with single worker, no fork)
+proxmox_admin = ProxmoxAPI(
+    PVE_HOST,
+    user=PVE_ADMIN_USER,
+    password=PVE_ADMIN_PASS,
+    verify_ssl=PVE_VERIFY,
+)
 
-    def list_qemu(self, node: str):
-        # returns list of QEMU VMs + LXC containers for a node
-        # Combine both qemu and lxc to get all VMs/containers
-        vms = []
-        try:
-            qemu_vms = self._admin.nodes(node).qemu.get() or []
-            for vm in qemu_vms:
-                vm['node'] = node
-            vms.extend(qemu_vms)
-            logger.debug(vms)
-        except Exception as e:
-            logger.debug("failed to list qemu on %s: %s", node, e)
-        
-        try:
-            lxc_vms = self._admin.nodes(node).lxc.get() or []
-            for vm in lxc_vms:
-                vm['node'] = node
-            vms.extend(lxc_vms)
-            logger.debug(lxc_vms)
-        except Exception as e:
-            logger.debug("failed to list lxc on %s: %s", node, e)
-        
-        return vms
-
-    def status_qemu(self, node: str, vmid: int):
-        return self._admin.nodes(node).qemu(vmid).status.get()
-
-
-# logger
 logger = logging.getLogger(__name__)
-
-# Proxmox connection per-worker (recreated after fork to avoid SSL context issues)
-_proxmox_admin = None
-_proxmox_admin_wrapper = None
-_proxmox_pid = None  # Track which process created the connection
-_connection_lock = None  # Thread lock for connection creation
-
-def _get_connection_lock():
-    """Get or create a threading lock for connection creation."""
-    global _connection_lock
-    if _connection_lock is None:
-        import threading
-        _connection_lock = threading.Lock()
-    return _connection_lock
-
-def _create_proxmox_connection():
-    """Create a fresh ProxmoxAPI connection with retry on SSL errors."""
-    import ssl  # Import here to avoid loading SSL context on module import
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            conn = ProxmoxAPI(
-                PVE_HOST,
-                user=PVE_ADMIN_USER,
-                password=PVE_ADMIN_PASS,
-                verify_ssl=PVE_VERIFY,
-            )
-            # Test the connection
-            conn.version.get()
-            return conn
-        except (ssl.SSLError, OSError) as e:
-            if attempt < max_retries - 1:
-                logger.warning("SSL error creating connection (attempt %d/%d): %s", attempt + 1, max_retries, e)
-                time.sleep(0.5)  # Brief delay before retry
-            else:
-                logger.error("Failed to create Proxmox connection after %d attempts: %s", max_retries, e)
-                raise
-
-def get_proxmox_admin(force_reconnect=False):
-    """
-    Get or create the Proxmox API connection.
-    Recreates connection if process has forked (Gunicorn workers) or on SSL errors.
-    Thread-safe with locking.
-    """
-    global _proxmox_admin, _proxmox_pid
-    current_pid = os.getpid()
-    
-    # Recreate connection if we're in a new process (post-fork) or forced
-    if force_reconnect or _proxmox_admin is None or _proxmox_pid != current_pid:
-        with _get_connection_lock():
-            # Double-check after acquiring lock
-            if force_reconnect or _proxmox_admin is None or _proxmox_pid != current_pid:
-                _proxmox_admin = _create_proxmox_connection()
-                _proxmox_pid = current_pid
-                logger.info("Connected to Proxmox at %s (PID: %s)", PVE_HOST, current_pid)
-    
-    if _proxmox_admin is None:
-        raise RuntimeError("Failed to establish Proxmox connection")
-    return _proxmox_admin
-
-def get_proxmox_admin_wrapper(force_reconnect=False):
-    """Get or create the Proxmox admin wrapper (recreated per worker)."""
-    global _proxmox_admin_wrapper, _proxmox_pid
-    current_pid = os.getpid()
-    
-    # Recreate wrapper if we're in a new process or forced
-    if force_reconnect or _proxmox_admin_wrapper is None or _proxmox_pid != current_pid:
-        _proxmox_admin_wrapper = ProxmoxAdminWrapper(get_proxmox_admin(force_reconnect))
-    return _proxmox_admin_wrapper
-
-def _api_call_with_retry(func, *args, **kwargs):
-    """
-    Execute an API call with automatic retry on SSL errors.
-    Recreates connection once on SSL/connection errors.
-    """
-    import ssl  # Import here to avoid loading SSL context on module import
-    try:
-        return func(*args, **kwargs)
-    except (ssl.SSLError, ConnectionError, BrokenPipeError, OSError) as e:
-        logger.warning("API call failed with connection error, reconnecting: %s", e)
-        # Force reconnection and retry once
-        get_proxmox_admin(force_reconnect=True)
-        return func(*args, **kwargs)
 
 # ---------------------------------------------------------------------------
 # VM cache: single cluster snapshot, reused everywhere
@@ -216,7 +106,7 @@ def _lookup_vm_ip(node: str, vmid: int, vmtype: str) -> Optional[str]:
     # LXC containers - use network interfaces API (much more reliable)
     if vmtype == "lxc":
         try:
-            interfaces = _api_call_with_retry(lambda: get_proxmox_admin().nodes(node).lxc(vmid).interfaces.get())
+            interfaces = proxmox_admin.nodes(node).lxc(vmid).interfaces.get()
             if interfaces:
                 for iface in interfaces:
                     if iface.get("name") in ("eth0", "veth0"):  # Primary interface
@@ -239,9 +129,9 @@ def _lookup_vm_ip(node: str, vmid: int, vmtype: str) -> Optional[str]:
     # QEMU VMs - use guest agent
     if vmtype == "qemu":
         try:
-            data = _api_call_with_retry(lambda: get_proxmox_admin().nodes(node).qemu(vmid).agent.get(
+            data = proxmox_admin.nodes(node).qemu(vmid).agent.get(
                 "network-get-interfaces"
-            ))
+            )
         except Exception as e:
             logger.debug("guest agent call failed for %s/%s: %s", node, vmid, e)
             return None
@@ -315,18 +205,15 @@ def get_all_vms() -> List[Dict[str, Any]]:
     if _vm_cache_data is not None and (now - _vm_cache_ts) < VM_CACHE_TTL:
         return _vm_cache_data
 
-    # Using the wrapper to keep per-node listing consistent.
+    # Using cluster resources to get all VMs
     out: List[Dict[str, Any]] = []
     nodes = []
-    wrapper = get_proxmox_admin_wrapper()
-    if wrapper:
+    try:
+        nodes = proxmox_admin.nodes.get() or []
+    except Exception as e:
+        logger.debug("failed to list nodes: %s", e)
         try:
-            nodes = _api_call_with_retry(lambda: wrapper.get_nodes())
-        except Exception as e:
-            logger.debug("failed to list nodes via wrapper: %s", e)
-    else:
-        try:
-            resources = _api_call_with_retry(lambda: get_proxmox_admin().cluster.resources.get(type="vm")) or []
+            resources = proxmox_admin.cluster.resources.get(type="vm") or []
             # convert to node list in the format expected by wrapper
             nodes = sorted({r["node"] for r in resources})
             nodes = [{"node": n} for n in nodes]
@@ -337,23 +224,21 @@ def get_all_vms() -> List[Dict[str, Any]]:
         node = n["node"]
         if VALID_NODES and node not in VALID_NODES:
             continue
-        # list per-node VMs via wrapper if available
+        # list per-node VMs
         vmlist = []
-        if wrapper:
-            try:
-                vmlist = _api_call_with_retry(lambda: wrapper.list_qemu(node))
-            except Exception as e:
-                logger.debug("failed to list qemu on %s via wrapper: %s", node, e)
-                vmlist = []
-        else:
-            try:
-                qemu_vms = _api_call_with_retry(lambda: get_proxmox_admin().nodes(node).qemu.get()) or []
-                for vm in qemu_vms:
-                    vm['node'] = node
-                vmlist = qemu_vms
-            except Exception as e:
-                logger.debug("failed to list qemu on %s: %s", node, e)
-                vmlist = []
+        try:
+            # Get QEMU VMs
+            qemu_vms = proxmox_admin.nodes(node).qemu.get() or []
+            for vm in qemu_vms:
+                vm['node'] = node
+            vmlist.extend(qemu_vms)
+            # Get LXC containers
+            lxc_vms = proxmox_admin.nodes(node).lxc.get() or []
+            for vm in lxc_vms:
+                vm['node'] = node
+            vmlist.extend(lxc_vms)
+        except Exception as e:
+            logger.debug("failed to list VMs on %s: %s", node, e)
 
         for vm in (vmlist or []):
             out.append(_build_vm_dict(vm))
@@ -439,7 +324,7 @@ def _user_in_group(user: str, groupid: str) -> bool:
         return False
 
     try:
-        data = get_proxmox_admin().access.groups(groupid).get()
+        data = proxmox_admin.access.groups(groupid).get()
         if not data:
             return False
     except Exception:
@@ -464,7 +349,7 @@ def _user_in_group(user: str, groupid: str) -> bool:
 
 def _debug_is_admin_user(user: str) -> bool:
     try:
-        grp = get_proxmox_admin().access.groups(ADMIN_GROUP).get()
+        grp = proxmox_admin.access.groups(ADMIN_GROUP).get()
     except Exception:
         grp = {}
     raw_members = (grp.get("members", []) or []) if isinstance(grp, dict) else []
@@ -627,9 +512,9 @@ def start_vm(vm: Dict[str, Any]) -> None:
 
     try:
         if vmtype == "lxc":
-            get_proxmox_admin().nodes(node).lxc(vmid).status.start.post()
+            proxmox_admin.nodes(node).lxc(vmid).status.start.post()
         else:
-            get_proxmox_admin().nodes(node).qemu(vmid).status.start.post()
+            proxmox_admin.nodes(node).qemu(vmid).status.start.post()
     except Exception as e:
         logger.exception("failed to start vm %s/%s: %s", node, vmid, e)
 
@@ -644,10 +529,10 @@ def shutdown_vm(vm: Dict[str, Any]) -> None:
     try:
         if vmtype == "lxc":
             # Graceful stop for containers
-            get_proxmox_admin().nodes(node).lxc(vmid).status.shutdown.post()
+            proxmox_admin.nodes(node).lxc(vmid).status.shutdown.post()
         else:
             # Graceful shutdown for QEMU; use .stop() if you want hard power-off
-            get_proxmox_admin().nodes(node).qemu(vmid).status.shutdown.post()
+            proxmox_admin.nodes(node).qemu(vmid).status.shutdown.post()
     except Exception as e:
         logger.exception("failed to shutdown vm %s/%s: %s", node, vmid, e)
 
@@ -663,7 +548,7 @@ def get_pve_users() -> List[Dict[str, str]]:
     Return list of enabled PVE-realm users: [{ 'userid': 'user@pve' }, ...]
     """
     try:
-        users = get_proxmox_admin().access.users.get()
+        users = proxmox_admin.access.users.get()
     except Exception as e:
         logger.debug("failed to list pve users: %s", e)
         return []
@@ -706,7 +591,7 @@ def probe_proxmox() -> Dict[str, Any]:
         "error": None,
     }
     try:
-        nodes = get_proxmox_admin().nodes.get() or []
+        nodes = proxmox_admin.nodes.get() or []
         info["nodes"] = [n.get("node") for n in nodes if isinstance(n, dict) and "node" in n]
         info["nodes_count"] = len(info["nodes"])
     except Exception as e:
@@ -716,7 +601,7 @@ def probe_proxmox() -> Dict[str, Any]:
         return info
 
     try:
-        resources = get_proxmox_admin().cluster.resources.get(type="vm") or []
+        resources = proxmox_admin.cluster.resources.get(type="vm") or []
         info["resources_count"] = len(resources)
         info["resources_sample"] = [
             {"vmid": r.get("vmid"), "node": r.get("node"), "name": r.get("name")} for r in resources[:10]
@@ -750,7 +635,7 @@ def create_pve_user(username: str, password: str) -> tuple[bool, Optional[str]]:
     
     try:
         userid = f"{username}@pve"
-        get_proxmox_admin().access.users.post(
+        proxmox_admin.access.users.post(
             userid=userid,
             password=password,
             enable=1,
