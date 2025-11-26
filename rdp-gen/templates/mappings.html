@@ -57,7 +57,11 @@
                 {% for user_id, vmids in mapping.items() %}
                     <tr>
                         <td>{{ user_id }}</td>
-                        <td>{{ vmids|join(', ') }}</td>
+                        <td>
+                            {% for vmid in vmids %}
+                                {{ vmid }} ({{ vm_id_to_name.get(vmid, 'unknown') }}){% if not loop.last %}, {% endif %}
+                            {% endfor %}
+                        </td>
                     </tr>
                 {% endfor %}
             {% else %}
@@ -67,7 +71,10 @@
         </table>
 
         <p class="help-text">
-            Existing VM IDs: {{ all_vm_ids|join(', ') }}
+            Existing VMs:
+            {% for vmid in all_vm_ids %}
+                {{ vmid }} ({{ vm_id_to_name.get(vmid, 'unknown') }}){% if not loop.last %}, {% endif %}
+            {% endfor %}
         </p>
     </div>
 

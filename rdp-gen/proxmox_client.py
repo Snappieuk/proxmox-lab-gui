@@ -201,11 +201,14 @@ def _build_vm_dict(raw: Dict[str, Any]) -> Dict[str, Any]:
     if not ip:
         ip = _get_cached_ip(vmid)
     
-    # Only do guest agent lookup if no cached IP and VM is running
-    if not ip and status == "running":
-        ip = _lookup_vm_ip(node, vmid, vmtype)
-        # Cache the result (even if None) to avoid repeated failed lookups
-        _cache_ip(vmid, ip)
+    # Lookup IPs:
+    # - LXC: Always try (config available even when stopped)
+    # - QEMU: Only when running (guest agent required)
+    if not ip:
+        if vmtype == "lxc" or status == "running":
+            ip = _lookup_vm_ip(node, vmid, vmtype)
+            # Cache the result (even if None) to avoid repeated failed lookups
+            _cache_ip(vmid, ip)
 
     return {
         "vmid": vmid,
@@ -638,3 +641,39 @@ def probe_proxmox() -> Dict[str, Any]:
         return info
 
     return info
+
+
+def create_pve_user(username: str, password: str) -> tuple[bool, Optional[str]]:
+    """Create a new user in Proxmox pve realm.
+    
+    Returns: (success: bool, error_message: Optional[str])
+    """
+    if not username or not password:
+        return False, "Username and password are required"
+    
+    # Validate username (alphanumeric, underscore, dash)
+    if not re.match(r'^[a-zA-Z0-9_-]+$', username):
+        return False, "Username can only contain letters, numbers, underscore, and dash"
+    
+    if len(username) < 3:
+        return False, "Username must be at least 3 characters"
+    
+    if len(password) < 8:
+        return False, "Password must be at least 8 characters"
+    
+    try:
+        userid = f"{username}@pve"
+        proxmox_admin.access.users.post(
+            userid=userid,
+            password=password,
+            enable=1,
+            comment="Self-registered user"
+        )
+        logger.info("Created pve user: %s", userid)
+        return True, None
+    except Exception as e:
+        error_msg = str(e)
+        if "already exists" in error_msg.lower():
+            return False, "Username already exists"
+        logger.exception("Failed to create user %s: %s", username, e)
+        return False, f"Failed to create user: {error_msg}"

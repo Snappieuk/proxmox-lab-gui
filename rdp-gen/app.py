@@ -28,6 +28,7 @@ from proxmox_client import (
     get_pve_users,
     proxmox_admin_wrapper,
     probe_proxmox,
+    create_pve_user,
 )
 
 import re
@@ -103,6 +104,33 @@ def login():
             return redirect(next_url)
 
     return render_template("login.html", error=error)
+
+
+@app.route("/register", methods=["GET", "POST"])
+def register():
+    if session.get("user"):
+        # Already logged in — redirect to portal
+        return redirect(url_for("portal"))
+
+    error = None
+    success = None
+
+    if request.method == "POST":
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "")
+        password_confirm = request.form.get("password_confirm", "")
+
+        if password != password_confirm:
+            error = "Passwords do not match."
+        else:
+            success_flag, error_msg = create_pve_user(username, password)
+            if success_flag:
+                success = f"Account created successfully! You can now sign in as {username}@pve"
+                app.logger.info("New user registered: %s@pve", username)
+            else:
+                error = error_msg
+
+    return render_template("register.html", error=error, success=success)
 
 
 @app.route("/logout")
@@ -193,7 +221,11 @@ def admin_mappings():
 
     mapping = get_user_vm_map()
     users = get_pve_users()
-    all_vm_ids = sorted({v["vmid"] for v in get_all_vms()})
+    all_vms = get_all_vms()
+    
+    # Create vmid to name mapping for display
+    vm_id_to_name = {v["vmid"]: v.get("name", f"vm-{v['vmid']}") for v in all_vms}
+    all_vm_ids = sorted({v["vmid"] for v in all_vms})
 
     return render_template(
         "mappings.html",
@@ -201,6 +233,7 @@ def admin_mappings():
         mapping=mapping,
         users=users,
         all_vm_ids=all_vm_ids,
+        vm_id_to_name=vm_id_to_name,
         message=message,
         error=error,
         selected_user=selected_user,
