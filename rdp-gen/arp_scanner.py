@@ -7,7 +7,7 @@ Maps MAC addresses from Proxmox VMs to IPs discovered on the network.
 import subprocess
 import re
 import logging
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 from collections import defaultdict
 
 logger = logging.getLogger(__name__)
@@ -153,7 +153,14 @@ def broadcast_ping(subnet: str = "192.168.1.255", count: int = 1) -> bool:
                 timeout=5
             )
             
-            logger.debug("Broadcast ping to %s completed with code %d", subnet, result.returncode)
+            logger.info("Broadcast ping to %s: returncode=%d", subnet, result.returncode)
+            if result.stdout:
+                logger.debug("Ping stdout: %s", result.stdout[:200])
+            if result.stderr:
+                logger.debug("Ping stderr: %s", result.stderr[:200])
+            
+            # Return true even if ping fails - the attempt might still populate ARP
+            # Some systems don't allow broadcast ping but it still triggers ARP
             return True
             
         except FileNotFoundError:
@@ -162,20 +169,78 @@ def broadcast_ping(subnet: str = "192.168.1.255", count: int = 1) -> bool:
             logger.warning("Broadcast ping timed out")
             return False
         except Exception as e:
-            logger.debug("Broadcast ping with %s failed: %s", ping_cmd, e)
+            logger.warning("Broadcast ping with %s failed: %s", ping_cmd, e)
             continue
     
     logger.warning("All ping commands failed or not found")
     return False
 
 
-def discover_ips_via_arp(vm_mac_map: Dict[int, str], subnets: Optional[list] = None) -> Dict[int, str]:
+def scan_network_range(subnet_cidr: str = "10.220.8.0/21", timeout: int = 2) -> bool:
     """
-    Discover VM IPs using broadcast ping + ARP lookup.
+    Scan network range to populate ARP table.
+    More reliable than broadcast ping - scans specific network range.
+    
+    Args:
+        subnet_cidr: Network in CIDR notation (e.g., "10.220.8.0/21")
+        timeout: Scan timeout in seconds
+    
+    Returns:
+        True if scan succeeded
+    """
+    # Try nmap first (fast and reliable)
+    for nmap_cmd in ['/usr/bin/nmap', '/usr/local/bin/nmap', 'nmap']:
+        try:
+            result = subprocess.run(
+                [nmap_cmd, '-sn', '-T4', '--max-retries', '1', subnet_cidr],
+                capture_output=True,
+                text=True,
+                timeout=timeout + 5
+            )
+            logger.info("Network scan with nmap completed: returncode=%d", result.returncode)
+            if result.stdout:
+                # Count how many hosts were found
+                host_count = result.stdout.count("Host is up")
+                logger.info("nmap found %d hosts up", host_count)
+            return True
+        except FileNotFoundError:
+            continue
+        except Exception as e:
+            logger.debug("nmap scan failed: %s", e)
+            continue
+    
+    # Fallback: use fping if available
+    for fping_cmd in ['/usr/bin/fping', '/usr/sbin/fping', 'fping']:
+        try:
+            result = subprocess.run(
+                [fping_cmd, '-a', '-g', '-r', '1', subnet_cidr],
+                capture_output=True,
+                text=True,
+                timeout=timeout + 5
+            )
+            logger.info("Network scan with fping completed: returncode=%d", result.returncode)
+            if result.stdout:
+                alive_hosts = len(result.stdout.strip().split('\n'))
+                logger.info("fping found %d alive hosts", alive_hosts)
+            return True
+        except FileNotFoundError:
+            continue
+        except Exception as e:
+            logger.debug("fping scan failed: %s", e)
+            continue
+    
+    logger.warning("No network scanner available (nmap/fping not found), falling back to broadcast ping")
+    return False
+
+
+def discover_ips_via_arp(vm_mac_map: Dict[int, str], subnets: Optional[List[str]] = None) -> Dict[int, str]:
+    """
+    Discover VM IPs using network scan + ARP lookup.
     
     Args:
         vm_mac_map: Dict mapping vmid to MAC address (lowercase, no separators)
         subnets: List of broadcast addresses to ping (e.g., ["192.168.1.255", "10.0.0.255"])
+                 Note: Now used as fallback; primary method is network range scan
     
     Returns:
         Dict mapping vmid to discovered IP address
@@ -185,30 +250,32 @@ def discover_ips_via_arp(vm_mac_map: Dict[int, str], subnets: Optional[list] = N
     
     logger.info("VM MAC map: %s", vm_mac_map)
     
-    # Default subnets if none provided
-    if subnets is None:
-        subnets = ["10.220.15.255"]  # Default to 10.220.8.0/21 network
-    
     # Get existing ARP table first (might already have entries)
     arp_table = get_arp_table()
-    logger.info("Pre-ping ARP table has %d entries", len(arp_table))
+    logger.info("Pre-scan ARP table has %d entries", len(arp_table))
     
-    # Check if we already have matches before pinging
+    # Check if we already have matches before scanning
     vm_ips = {}
     for vmid, mac in vm_mac_map.items():
         if mac in arp_table:
             vm_ips[vmid] = arp_table[mac]
             logger.info("VM %d (MAC %s) -> IP %s (cached)", vmid, mac, arp_table[mac])
     
-    # If we found all IPs, no need to ping
+    # If we found all IPs, no need to scan
     if len(vm_ips) == len(vm_mac_map):
-        logger.info("All IPs found in existing ARP cache, skipping broadcast ping")
+        logger.info("All IPs found in existing ARP cache, skipping network scan")
         return vm_ips
     
-    # Broadcast ping to populate ARP tables (only if needed)
-    logger.info("Broadcasting ping to %d subnets", len(subnets))
-    for subnet in subnets:
-        broadcast_ping(subnet)
+    # Try network range scan first (more reliable than broadcast ping)
+    logger.info("Scanning network range 10.220.8.0/21 to populate ARP")
+    scan_success = scan_network_range("10.220.8.0/21", timeout=3)
+    
+    # If scan failed, try broadcast ping as fallback
+    if not scan_success:
+        subnets = subnets or ["10.220.15.255"]  # Default to 10.220.8.0/21 broadcast
+        logger.info("Falling back to broadcast ping to %d subnets", len(subnets))
+        for subnet in subnets:
+            broadcast_ping(subnet)
     
     # Get updated ARP table
     arp_table = get_arp_table()
