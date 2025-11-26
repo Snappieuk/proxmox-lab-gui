@@ -4,12 +4,12 @@ After=network.target
 
 [Service]
 Type=notify
-User=your-user
-Group=your-group
-WorkingDirectory=/path/to/proxmox-lab-gui
-Environment="PATH=/path/to/proxmox-lab-gui/venv/bin"
-EnvironmentFile=/path/to/proxmox-lab-gui/.env
-ExecStart=/path/to/proxmox-lab-gui/venv/bin/gunicorn --config gunicorn.conf.py --chdir rdp-gen app:app
+User=root
+Group=root
+WorkingDirectory=/root/rdp-gen
+Environment="PATH=/root/rdp-gen/venv/bin"
+EnvironmentFile=-/root/rdp-gen/.env
+ExecStart=/root/rdp-gen/venv/bin/gunicorn --config /root/rdp-gen/gunicorn.conf.py --chdir /root/rdp-gen app:app
 ExecReload=/bin/kill -s HUP $MAINPID
 Restart=always
 RestartSec=3
