@@ -6,10 +6,10 @@ After=network.target
 Type=exec
 User=root
 Group=root
-WorkingDirectory=/root/proxmox-lab-gui/rdp-gen
-Environment="PATH=/root/proxmox-lab-gui/venv/bin:/usr/local/bin:/usr/bin:/bin"
-EnvironmentFile=-/root/proxmox-lab-gui/.env
-ExecStart=/root/proxmox-lab-gui/venv/bin/gunicorn -w 4 -b 0.0.0.0:8080 app:app
+WorkingDirectory=/root/rdp-gen
+Environment="PATH=/root/rdp-gen/venv/bin:/usr/local/bin:/usr/bin:/bin"
+EnvironmentFile=-/root/rdp-gen/.env
+ExecStart=/root/rdp-gen/venv/bin/gunicorn -w 4 -b 0.0.0.0:8080 app:app
 ExecReload=/bin/kill -s HUP $MAINPID
 Restart=always
 RestartSec=3
