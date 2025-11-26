@@ -150,6 +150,10 @@
             {% if vm.category == "windows" %}
             <a class="btn-link" href="/rdp/{{ vm.vmid }}.rdp">RDP file</a>
             {% elif vm.category == "linux" %}
+            <a class="btn-link" href="ssh://root@{{ vm.ip or '' }}"
+               {% if not vm.ip %}style="pointer-events:none;opacity:0.5;"{% endif %}>
+                Launch SSH
+            </a>
             <button class="btn-link btn-ssh" 
                     data-vmid="{{ vm.vmid }}"
                     data-ip="{{ vm.ip or '' }}"
@@ -459,12 +463,20 @@ function updateVMIP(vmid, ip) {
         rdpBtn.title = 'Download RDP file';
     }
     
-    // Enable SSH button if this is a Linux VM/container
+    // Enable SSH buttons if this is a Linux VM/container
     const sshBtn = card.querySelector('.btn-ssh');
     if (sshBtn && sshBtn.disabled) {
         sshBtn.disabled = false;
         sshBtn.setAttribute('data-ip', ip);
     }
+    
+    // Enable Launch SSH link
+    const sshLinks = card.querySelectorAll('a[href^="ssh://"]');
+    sshLinks.forEach(link => {
+        link.href = `ssh://root@${ip}`;
+        link.style.pointerEvents = '';
+        link.style.opacity = '';
+    });
 }
 
 function showMessage(text) {
@@ -535,7 +547,10 @@ function createVMCard(vm) {
                 <button class="btn-secondary btn-power" data-vmid="${vm.vmid}" data-action="stop">Stop</button>
                 <button class="btn-primary btn-power" data-vmid="${vm.vmid}" data-action="start">Start</button>
                 ${isWindows ? `<a class="btn-link" href="/rdp/${vm.vmid}.rdp">RDP file</a>` : ''}
-                ${isLinux ? `<button class="btn-link btn-ssh" data-vmid="${vm.vmid}" data-ip="${vm.ip || ''}" ${!vm.ip ? 'disabled' : ''}>Copy SSH</button>` : ''}
+                ${isLinux ? `
+                    <a class="btn-link" href="ssh://root@${vm.ip || ''}" ${!vm.ip ? 'style="pointer-events:none;opacity:0.5;"' : ''}>Launch SSH</a>
+                    <button class="btn-link btn-ssh" data-vmid="${vm.vmid}" data-ip="${vm.ip || ''}" ${!vm.ip ? 'disabled' : ''}>Copy SSH</button>
+                ` : ''}
             </div>
         </div>
     `;
@@ -677,6 +692,20 @@ async function refreshVmStatus() {
                     sshBtn.removeAttribute('data-ip');
                 }
             }
+            
+            // Update Launch SSH link
+            const sshLinks = card.querySelectorAll('a[href^="ssh://"]');
+            sshLinks.forEach(link => {
+                if (vm.ip) {
+                    link.href = `ssh://root@${vm.ip}`;
+                    link.style.pointerEvents = '';
+                    link.style.opacity = '';
+                } else {
+                    link.href = 'ssh://root@';
+                    link.style.pointerEvents = 'none';
+                    link.style.opacity = '0.5';
+                }
+            });
         });
     } catch (e) {}
 }
