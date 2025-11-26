@@ -50,22 +50,28 @@ class SSHWebSocketHandler:
             self.master_fd, self.slave_fd = pty.openpty()
             
             # Start SSH process with PTY
-            # Minimal flags - let SSH try all authentication methods
+            # Use SSH_ASKPASS to force password prompts through stdin/stdout instead of /dev/tty
             ssh_cmd = [
                 'ssh',
-                '-vvv',  # Verbose logging to see what's happening
                 '-o', 'StrictHostKeyChecking=no',
                 '-o', 'UserKnownHostsFile=/dev/null',
                 '-o', 'NumberOfPasswordPrompts=3',
+                '-o', 'PubkeyAuthentication=no',  # Disable key auth to force password
+                '-T',  # Disable pseudo-terminal allocation (we already have one)
                 f'{self.username}@{self.ip}'
             ]
             logger.info("Starting SSH with command: %s", ' '.join(ssh_cmd))
+            
+            # Set environment to force SSH to use our PTY
+            env = os.environ.copy()
+            env['SSH_ASKPASS_REQUIRE'] = 'never'
             
             self.process = subprocess.Popen(
                 ssh_cmd,
                 stdin=self.slave_fd,
                 stdout=self.slave_fd,
                 stderr=self.slave_fd,
+                env=env,
                 preexec_fn=os.setsid
             )
             logger.info("SSH process started with PID: %d", self.process.pid)
