@@ -23,9 +23,10 @@ class SSHWebSocketHandler:
     Uses system SSH client for interactive authentication (user types username/password).
     """
     
-    def __init__(self, ws, ip: str, port: int = 22):
+    def __init__(self, ws, ip: str, username: str = 'root', port: int = 22):
         self.ws = ws
         self.ip = ip
+        self.username = username
         self.port = port
         
         self.master_fd: Optional[int] = None
@@ -57,7 +58,6 @@ class SSHWebSocketHandler:
             # -o PreferredAuthentications=password: Force password only
             # -o ServerAliveInterval=30: Keep connection alive
             # -o ServerAliveCountMax=3: Disconnect after 3 failed keepalives
-            # Note: Connects as current user (root). Target must allow password auth for root.
             self.process = subprocess.Popen(
                 [
                     'ssh',
@@ -69,6 +69,7 @@ class SSHWebSocketHandler:
                     '-o', 'PreferredAuthentications=password',
                     '-o', 'ServerAliveInterval=30',
                     '-o', 'ServerAliveCountMax=3',
+                    '-l', self.username,
                     self.ip
                 ],
                 stdin=self.slave_fd,

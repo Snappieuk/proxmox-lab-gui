@@ -668,14 +668,16 @@ if WEBSOCKET_AVAILABLE:
         """WebSocket endpoint for SSH connection."""
         from ssh_handler import SSHWebSocketHandler
         
-        # Get IP from query parameter
+        # Get IP and username from query parameters
         ip = request.args.get('ip')
+        username = request.args.get('username', 'root')
+        
         if not ip:
             ws.send("Error: No IP address provided")
             return
         
-        # Create SSH handler (no username - SSH will prompt interactively)
-        handler = SSHWebSocketHandler(ws, ip)
+        # Create SSH handler with username
+        handler = SSHWebSocketHandler(ws, ip, username=username)
         
         # Connect to SSH
         if not handler.connect():

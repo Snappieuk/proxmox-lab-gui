@@ -127,12 +127,20 @@
         const vmid = {{ vmid }};
         const ip = '{{ ip }}';
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const wsUrl = `${protocol}//${window.location.host}/ws/ssh/${vmid}?ip=${encodeURIComponent(ip)}`;
         
         const status = document.getElementById('status');
         let ws = null;
 
         function connect() {
+            // Prompt for username
+            const username = prompt('Enter SSH username:', 'root');
+            if (!username) {
+                term.write('\r\n\x1b[1;33mConnection cancelled\x1b[0m\r\n');
+                return;
+            }
+            
+            const wsUrl = `${protocol}//${window.location.host}/ws/ssh/${vmid}?ip=${encodeURIComponent(ip)}&username=${encodeURIComponent(username)}`;
+            
             status.textContent = 'Connecting...';
             status.className = '';
             
