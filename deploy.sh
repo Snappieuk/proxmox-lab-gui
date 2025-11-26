@@ -14,16 +14,19 @@ cd "$PROJECT_ROOT"
 echo "Pulling latest code..."
 git pull
 
-# Activate virtual environment
-if [ -d "venv" ]; then
-    echo "Activating virtual environment..."
-    source venv/bin/activate
-else
-    echo "WARNING: Virtual environment not found"
+# Ensure virtual environment exists
+if [ ! -d "venv" ]; then
+    echo "Creating virtual environment..."
+    python3 -m venv venv
 fi
 
-# Install/update dependencies
+# Activate virtual environment
+echo "Activating virtual environment..."
+source venv/bin/activate
+
+# Install/update dependencies in venv
 echo "Installing dependencies..."
+pip install -q --upgrade pip
 pip install -q -r requirements.txt
 
 # Check if running as systemd service
