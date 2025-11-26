@@ -10,5 +10,5 @@ jobs:
     steps:
       - name: Pull and restart with Gunicorn
         run: |
-          cd /root/actions-runner/_work/proxmox-lab-gui/proxmox-lab-gui
+          cd /root/
           ./deploy.sh
