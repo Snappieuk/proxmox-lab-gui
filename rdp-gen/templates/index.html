@@ -139,22 +139,27 @@
 
         <div class="vm-footer">
             <button class="btn-secondary btn-power"
-                    data-vmid="{{ vm.vmid }}" data-action="stop">
+                    data-vmid="{{ vm.vmid }}" data-action="stop"
+                    {% if vm.status == 'stopped' %}disabled{% endif %}>
                 Stop
             </button>
             <button class="btn-primary btn-power"
-                    data-vmid="{{ vm.vmid }}" data-action="start">
+                    data-vmid="{{ vm.vmid }}" data-action="start"
+                    {% if vm.status == 'running' %}disabled{% endif %}>
                 Start
             </button>
 
             {% if vm.category == "windows" %}
-            <a class="btn-link" href="/rdp/{{ vm.vmid }}.rdp">RDP file</a>
+            <a class="btn-link" href="/rdp/{{ vm.vmid }}.rdp">Download RDP</a>
             {% elif vm.category == "linux" %}
-            <a class="btn-link" href="ssh://root@{{ vm.ip or '' }}"
-               {% if not vm.ip %}style="pointer-events:none;opacity:0.5;"{% endif %}>
-                Launch SSH
-            </a>
-            <button class="btn-link btn-ssh" 
+            <button class="btn-primary btn-ssh-launch btn-ssh-web" 
+                    data-vmid="{{ vm.vmid }}"
+                    data-ip="{{ vm.ip or '' }}"
+                    data-name="{{ vm.name }}"
+                    {% if not vm.ip %}disabled{% endif %}>
+                Web SSH
+            </button>
+            <button class="btn-secondary btn-ssh-copy btn-ssh" 
                     data-vmid="{{ vm.vmid }}"
                     data-ip="{{ vm.ip or '' }}"
                     {% if not vm.ip %}disabled{% endif %}>
@@ -464,18 +469,12 @@ function updateVMIP(vmid, ip) {
     }
     
     // Enable SSH buttons if this is a Linux VM/container
-    const sshBtn = card.querySelector('.btn-ssh');
-    if (sshBtn && sshBtn.disabled) {
-        sshBtn.disabled = false;
-        sshBtn.setAttribute('data-ip', ip);
-    }
-    
-    // Enable Launch SSH link
-    const sshLinks = card.querySelectorAll('a[href^="ssh://"]');
-    sshLinks.forEach(link => {
-        link.href = `ssh://root@${ip}`;
-        link.style.pointerEvents = '';
-        link.style.opacity = '';
+    const sshBtns = card.querySelectorAll('.btn-ssh, .btn-ssh-web');
+    sshBtns.forEach(btn => {
+        if (btn.disabled) {
+            btn.disabled = false;
+            btn.setAttribute('data-ip', ip);
+        }
     });
 }
 
@@ -544,12 +543,12 @@ function createVMCard(vm) {
                 ` : ''}
             </div>
             <div class="vm-footer">
-                <button class="btn-secondary btn-power" data-vmid="${vm.vmid}" data-action="stop">Stop</button>
-                <button class="btn-primary btn-power" data-vmid="${vm.vmid}" data-action="start">Start</button>
-                ${isWindows ? `<a class="btn-link" href="/rdp/${vm.vmid}.rdp">RDP file</a>` : ''}
+                <button class="btn-secondary btn-power" data-vmid="${vm.vmid}" data-action="stop" ${vm.status === 'stopped' ? 'disabled' : ''}>Stop</button>
+                <button class="btn-primary btn-power" data-vmid="${vm.vmid}" data-action="start" ${vm.status === 'running' ? 'disabled' : ''}>Start</button>
+                ${isWindows ? `<a class="btn-link" href="/rdp/${vm.vmid}.rdp">Download RDP</a>` : ''}
                 ${isLinux ? `
-                    <a class="btn-link" href="ssh://root@${vm.ip || ''}" ${!vm.ip ? 'style="pointer-events:none;opacity:0.5;"' : ''}>Launch SSH</a>
-                    <button class="btn-link btn-ssh" data-vmid="${vm.vmid}" data-ip="${vm.ip || ''}" ${!vm.ip ? 'disabled' : ''}>Copy SSH</button>
+                    <button class="btn-primary btn-ssh-launch btn-ssh-web" data-vmid="${vm.vmid}" data-ip="${vm.ip || ''}" data-name="${vm.name}" ${!vm.ip ? 'disabled' : ''}>Web SSH</button>
+                    <button class="btn-secondary btn-ssh-copy btn-ssh" data-vmid="${vm.vmid}" data-ip="${vm.ip || ''}" ${!vm.ip ? 'disabled' : ''}>Copy SSH</button>
                 ` : ''}
             </div>
         </div>
@@ -636,7 +635,7 @@ window.addEventListener("load", function () {
     });
 
     document.addEventListener("click", function (e) {
-        const btn = e.target.closest(".btn-ssh");
+        const btn = e.target.closest(".btn-ssh-copy");
         if (!btn || btn.disabled) return;
         const ip = btn.getAttribute("data-ip");
         if (!ip) return;
@@ -645,14 +644,34 @@ window.addEventListener("load", function () {
         navigator.clipboard.writeText(sshCommand).then(() => {
             const originalText = btn.textContent;
             btn.textContent = "Copied!";
-            btn.style.background = "#28a745";
+            btn.classList.add("btn-success");
             setTimeout(() => {
                 btn.textContent = originalText;
-                btn.style.background = "";
+                btn.classList.remove("btn-success");
             }, 2000);
         }).catch(() => {
             alert(`SSH command:\n${sshCommand}`);
         });
+    });
+
+    document.addEventListener("click", function (e) {
+        const btn = e.target.closest(".btn-ssh-web");
+        if (!btn || btn.disabled) return;
+        const vmid = btn.getAttribute("data-vmid");
+        const ip = btn.getAttribute("data-ip");
+        const name = btn.getAttribute("data-name");
+        if (!ip || !vmid) return;
+        
+        // Open web SSH in new window
+        const width = 1000;
+        const height = 600;
+        const left = (screen.width - width) / 2;
+        const top = (screen.height - height) / 2;
+        window.open(
+            `/ssh/${vmid}?ip=${encodeURIComponent(ip)}&name=${encodeURIComponent(name)}`,
+            `ssh-${vmid}`,
+            `width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=no,status=no,toolbar=no,menubar=no`
+        );
     });
 });
 </script>
@@ -681,29 +700,25 @@ async function refreshVmStatus() {
                 ipEl.textContent = vm.ip ? vm.ip : "Not available";
             }
             
-            // Update SSH button
-            const sshBtn = card.querySelector('.btn-ssh');
-            if (sshBtn) {
-                if (vm.ip) {
-                    sshBtn.disabled = false;
-                    sshBtn.setAttribute('data-ip', vm.ip);
-                } else {
-                    sshBtn.disabled = true;
-                    sshBtn.removeAttribute('data-ip');
-                }
+            // Update power buttons based on status
+            const stopBtn = card.querySelector('.btn-power[data-action="stop"]');
+            const startBtn = card.querySelector('.btn-power[data-action="start"]');
+            if (stopBtn) {
+                stopBtn.disabled = vm.status === 'stopped';
+            }
+            if (startBtn) {
+                startBtn.disabled = vm.status === 'running';
             }
             
-            // Update Launch SSH link
-            const sshLinks = card.querySelectorAll('a[href^="ssh://"]');
-            sshLinks.forEach(link => {
+            // Update SSH buttons
+            const sshBtns = card.querySelectorAll('.btn-ssh, .btn-ssh-web');
+            sshBtns.forEach(btn => {
                 if (vm.ip) {
-                    link.href = `ssh://root@${vm.ip}`;
-                    link.style.pointerEvents = '';
-                    link.style.opacity = '';
+                    btn.disabled = false;
+                    btn.setAttribute('data-ip', vm.ip);
                 } else {
-                    link.href = 'ssh://root@';
-                    link.style.pointerEvents = 'none';
-                    link.style.opacity = '0.5';
+                    btn.disabled = true;
+                    btn.removeAttribute('data-ip');
                 }
             });
         });
@@ -743,7 +758,7 @@ window.addEventListener("load", function () {
     });
 
     document.addEventListener("click", function (e) {
-        const btn = e.target.closest(".btn-ssh");
+        const btn = e.target.closest(".btn-ssh-copy");
         if (!btn || btn.disabled) return;
         const ip = btn.getAttribute("data-ip");
         if (!ip) return;
@@ -752,14 +767,34 @@ window.addEventListener("load", function () {
         navigator.clipboard.writeText(sshCommand).then(() => {
             const originalText = btn.textContent;
             btn.textContent = "Copied!";
-            btn.style.background = "#28a745";
+            btn.classList.add("btn-success");
             setTimeout(() => {
                 btn.textContent = originalText;
-                btn.style.background = "";
+                btn.classList.remove("btn-success");
             }, 2000);
         }).catch(() => {
             alert(`SSH command:\n${sshCommand}`);
         });
+    });
+
+    document.addEventListener("click", function (e) {
+        const btn = e.target.closest(".btn-ssh-web");
+        if (!btn || btn.disabled) return;
+        const vmid = btn.getAttribute("data-vmid");
+        const ip = btn.getAttribute("data-ip");
+        const name = btn.getAttribute("data-name");
+        if (!ip || !vmid) return;
+        
+        // Open web SSH in new window
+        const width = 1000;
+        const height = 600;
+        const left = (screen.width - width) / 2;
+        const top = (screen.height - height) / 2;
+        window.open(
+            `/ssh/${vmid}?ip=${encodeURIComponent(ip)}&name=${encodeURIComponent(name)}`,
+            `ssh-${vmid}`,
+            `width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=no,status=no,toolbar=no,menubar=no`
+        );
     });
 });
 </script>

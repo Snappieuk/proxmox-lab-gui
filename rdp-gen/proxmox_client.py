@@ -86,6 +86,59 @@ def _cache_ip(vmid: int, ip: Optional[str]) -> None:
     """Store IP in cache."""
     _ip_cache[vmid] = (ip, time.time())
 
+def _save_ip_to_proxmox(node: str, vmid: int, vmtype: str, ip: Optional[str]) -> None:
+    """
+    Save discovered IP to Proxmox VM/LXC notes field for persistence.
+    Stores in format: [CACHED_IP:192.168.1.100]
+    This survives cache expiration and doesn't require re-scanning.
+    """
+    if not ip:
+        return
+    
+    try:
+        # Get current config
+        if vmtype == "lxc":
+            config = get_proxmox_admin().nodes(node).lxc(vmid).config.get()
+        else:
+            config = get_proxmox_admin().nodes(node).qemu(vmid).config.get()
+        
+        current_notes = config.get('description', '')
+        
+        # Remove old cached IP tag if present
+        import re
+        notes = re.sub(r'\[CACHED_IP:[^\]]+\]\s*', '', current_notes)
+        
+        # Add new IP tag
+        new_notes = f"{notes.strip()}\n[CACHED_IP:{ip}]".strip()
+        
+        # Only update if changed
+        if new_notes != current_notes:
+            if vmtype == "lxc":
+                get_proxmox_admin().nodes(node).lxc(vmid).config.put(description=new_notes)
+            else:
+                get_proxmox_admin().nodes(node).qemu(vmid).config.put(description=new_notes)
+            logger.debug("Saved IP %s to VM %d notes", ip, vmid)
+    except Exception as e:
+        logger.debug("Failed to save IP to Proxmox notes for VM %d: %s", vmid, e)
+
+def _get_ip_from_proxmox_notes(raw: Dict[str, Any]) -> Optional[str]:
+    """
+    Extract cached IP from Proxmox VM notes field.
+    Looks for pattern: [CACHED_IP:192.168.1.100]
+    Returns None if not found or invalid.
+    """
+    description = raw.get('description', '')
+    if not description:
+        return None
+    
+    import re
+    match = re.search(r'\[CACHED_IP:([^\]]+)\]', description)
+    if match:
+        ip = match.group(1).strip()
+        logger.debug("Found cached IP %s in VM %d notes", ip, raw.get('vmid'))
+        return ip
+    return None
+
 
 def _get_vm_mac(node: str, vmid: int, vmtype: str) -> Optional[str]:
     """
@@ -226,30 +279,35 @@ def _build_vm_dict(raw: Dict[str, Any], skip_ip: bool = False) -> Dict[str, Any]
 
     category = _guess_category(raw)
     
-    # IP lookup strategy:
-    # - skip_ip=True: Return None immediately (fast initial load)
-    # - Otherwise: Check cache first, then API if needed
+    # IP lookup strategy (prioritized):
+    # 1. Proxmox notes field (persistent across cache expiration)
+    # 2. Memory cache (5-minute TTL)
+    # 3. API lookup (slow, only if needed)
     ip = None
     if not skip_ip:
-        # Prefer any IP info embedded in the API response (e.g. cloud-init or cache)
-        ip = raw.get("ip")
+        # First: Check Proxmox notes for persisted IP
+        ip = _get_ip_from_proxmox_notes(raw)
         
-        # Check IP cache to avoid slow guest agent calls
+        # Second: Check memory cache if not in notes
         if not ip:
             ip = _get_cached_ip(vmid)
         
-        # Lookup IPs from API:
+        # Third: Lookup IPs from API only if not found in notes or cache
         # - LXC: Network interfaces (config readable even when stopped, so always try)
         # - QEMU: Guest agent (only available when running)
         if not ip:
             if vmtype == "lxc":
                 # LXC containers: config is always readable, cache it
                 ip = _lookup_vm_ip(node, vmid, vmtype)
-                _cache_ip(vmid, ip)
+                if ip:
+                    _cache_ip(vmid, ip)
+                    _save_ip_to_proxmox(node, vmid, vmtype, ip)
             elif vmtype == "qemu" and status == "running":
                 # QEMU VMs: only query when running (guest agent required)
                 ip = _lookup_vm_ip(node, vmid, vmtype)
-                _cache_ip(vmid, ip)
+                if ip:
+                    _cache_ip(vmid, ip)
+                    _save_ip_to_proxmox(node, vmid, vmtype, ip)
 
     return {
         "vmid": vmid,
@@ -341,6 +399,8 @@ def _enrich_vms_with_arp_ips(vms: List[Dict[str, Any]]) -> None:
         if vm["vmid"] in discovered_ips:
             vm["ip"] = discovered_ips[vm["vmid"]]
             _cache_ip(vm["vmid"], vm["ip"])
+            # Save ARP-discovered IPs to Proxmox for persistence
+            _save_ip_to_proxmox(vm["node"], vm["vmid"], vm["type"], vm["ip"])
     
     logger.info("ARP discovery returned %d cached IPs (scan running in background)", len(discovered_ips))
 
@@ -596,15 +656,25 @@ def add_user_to_admin_group(user: str) -> bool:
         return False
     
     try:
-        # Proxmox API: PUT /access/groups/{groupid} with members array
+        # Get current group info
         current_members = get_admin_group_members()
         if user in current_members:
             logger.info("User %s already in admin group", user)
             return True
         
         # Add user to group by updating the group
+        # Proxmox API requires comment parameter even if empty
         current_members.append(user)
+        
+        # Get current group to fetch comment
+        try:
+            group_info = get_proxmox_admin().access.groups(ADMIN_GROUP).get()
+            comment = group_info.get('comment', '')
+        except:
+            comment = ''
+        
         get_proxmox_admin().access.groups(ADMIN_GROUP).put(
+            comment=comment,
             members=",".join(current_members)
         )
         logger.info("Added user %s to admin group %s", user, ADMIN_GROUP)
@@ -631,7 +701,16 @@ def remove_user_from_admin_group(user: str) -> bool:
         
         # Remove user from group by updating the group
         current_members.remove(user)
+        
+        # Get current group to fetch comment
+        try:
+            group_info = get_proxmox_admin().access.groups(ADMIN_GROUP).get()
+            comment = group_info.get('comment', '')
+        except:
+            comment = ''
+        
         get_proxmox_admin().access.groups(ADMIN_GROUP).put(
+            comment=comment,
             members=",".join(current_members)
         )
         logger.info("Removed user %s from admin group %s", user, ADMIN_GROUP)

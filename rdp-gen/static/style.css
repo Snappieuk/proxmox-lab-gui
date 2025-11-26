@@ -229,8 +229,16 @@ body {
     border-color: #106ebe;
 }
 
-.btn-primary:hover {
+.btn-primary:hover:not(:disabled) {
     background: #106ebe;
+}
+
+.btn-primary:disabled {
+    background: #c8c8c8;
+    color: #8a8886;
+    border-color: #c8c8c8;
+    cursor: not-allowed;
+    opacity: 0.6;
 }
 
 .btn-secondary {
@@ -239,14 +247,61 @@ body {
     border-color: #8a8886;
 }
 
-.btn-secondary:hover {
+.btn-secondary:hover:not(:disabled) {
     background: #f3f2f1;
+}
+
+.btn-secondary:disabled {
+    background: #f3f2f1;
+    color: #a19f9d;
+    border-color: #c8c8c8;
+    cursor: not-allowed;
+    opacity: 0.6;
 }
 
 .btn-link {
     background: transparent;
     color: #0078d4;
     border: none;
+}
+
+.btn-ssh-launch {
+    background: #107c10;
+    color: white;
+    border-color: #0b5a08;
+}
+
+.btn-ssh-launch:hover:not(:disabled) {
+    background: #0b5a08;
+}
+
+.btn-ssh-launch:disabled {
+    background: #c8c8c8;
+    color: #8a8886;
+    border-color: #c8c8c8;
+    cursor: not-allowed;
+}
+
+.btn-ssh-copy {
+    background: #ffffff;
+    color: #323130;
+    border-color: #8a8886;
+}
+
+.btn-ssh-copy:hover:not(:disabled) {
+    background: #f3f2f1;
+}
+
+.btn-ssh-copy:disabled {
+    background: #f3f2f1;
+    color: #a19f9d;
+    border-color: #c8c8c8;
+    cursor: not-allowed;
+}
+
+.btn-success {
+    background: #107c10 !important;
+    border-color: #0b5a08 !important;
 }
 
 .btn-link:hover {

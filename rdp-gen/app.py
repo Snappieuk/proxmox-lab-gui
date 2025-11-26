@@ -19,6 +19,7 @@ from flask import (
     session,
     url_for,
 )
+from flask_sock import Sock
 
 from config import SECRET_KEY, VM_CACHE_TTL
 from auth import login_required, current_user, authenticate_proxmox_user
@@ -40,9 +41,11 @@ from proxmox_client import (
 
 import re
 import logging
+import json
 
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
+sock = Sock(app)
 
 
 def require_user() -> str:
@@ -606,6 +609,89 @@ def api_vm_stop(vmid: int):
         return jsonify({"ok": False, "error": str(e)}), 500
 
     return jsonify({"ok": True})
+
+
+# ---------------------------------------------------------------------------
+# SSH Web Terminal
+# ---------------------------------------------------------------------------
+
+@app.route("/ssh/<int:vmid>")
+@login_required
+def ssh_terminal(vmid: int):
+    """Render SSH terminal page for a VM."""
+    user = require_user()
+    vm = find_vm_for_user(user, vmid)
+    
+    if not vm:
+        abort(404)
+    
+    ip = request.args.get('ip') or vm.get('ip')
+    name = request.args.get('name') or vm.get('name', f'VM {vmid}')
+    
+    if not ip:
+        return render_template(
+            "error.html",
+            error_title="SSH Terminal Not Available",
+            error_message="VM does not have an IP address. Please start the VM and wait for network configuration.",
+            back_url=url_for("portal")
+        ), 503
+    
+    return render_template(
+        "ssh_terminal.html",
+        vmid=vmid,
+        vm_name=name,
+        ip=ip
+    )
+
+
+@sock.route("/ws/ssh/<int:vmid>")
+def ssh_websocket(ws, vmid: int):
+    """WebSocket endpoint for SSH connection."""
+    from ssh_handler import SSHWebSocketHandler
+    
+    # Get IP from query parameter
+    ip = request.args.get('ip')
+    if not ip:
+        ws.send("Error: No IP address provided")
+        return
+    
+    # Create SSH handler
+    handler = SSHWebSocketHandler(ws, ip, username='root')
+    
+    # Connect to SSH
+    if not handler.connect():
+        ws.send("\r\n\x1b[1;31mFailed to establish SSH connection.\x1b[0m\r\n")
+        return
+    
+    # Main message loop
+    try:
+        while handler.running:
+            try:
+                message = ws.receive(timeout=1.0)
+                if message is None:
+                    break
+                
+                # Parse message (expecting JSON with type and data)
+                try:
+                    msg = json.loads(message)
+                    msg_type = msg.get('type')
+                    
+                    if msg_type == 'input':
+                        data = msg.get('data', '')
+                        handler.handle_client_input(data)
+                    elif msg_type == 'resize':
+                        width = msg.get('width', 80)
+                        height = msg.get('height', 24)
+                        handler.resize_terminal(width, height)
+                except json.JSONDecodeError:
+                    # If not JSON, treat as raw input
+                    handler.handle_client_input(message)
+                    
+            except Exception as e:
+                app.logger.debug("WebSocket error: %s", e)
+                break
+    finally:
+        handler.close()
 
 
 # ---------------------------------------------------------------------------
