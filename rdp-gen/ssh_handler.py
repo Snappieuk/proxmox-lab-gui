@@ -76,19 +76,20 @@ class SSHWebSocketHandler:
             flag = fcntl.fcntl(self.master_fd, fcntl.F_GETFL)
             fcntl.fcntl(self.master_fd, fcntl.F_SETFL, flag | os.O_NONBLOCK)
             
-            # Give SSH a moment to initialize before checking if it's alive
-            time.sleep(0.1)
+            self.running = True
+            
+            # Start background thread immediately to capture any output
+            self.read_thread = threading.Thread(target=self._read_from_ssh, daemon=True)
+            self.read_thread.start()
+            
+            # Give SSH time to initialize and display prompts
+            time.sleep(0.3)
             
             # Check if process is still running
             if self.process.poll() is not None:
-                logger.error("SSH process exited immediately with code %d", self.process.returncode)
+                logger.error("SSH process exited with code %d", self.process.returncode)
+                self.running = False
                 return False
-            
-            self.running = True
-            
-            # Start background thread to read from SSH and send to WebSocket
-            self.read_thread = threading.Thread(target=self._read_from_ssh, daemon=True)
-            self.read_thread.start()
             
             logger.info("SSH session established")
             return True

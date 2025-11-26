@@ -541,11 +541,16 @@ def get_all_vms(skip_ips: bool = False, force_refresh: bool = False) -> List[Dic
     cache_valid = _vm_cache_data is not None and (now - _vm_cache_ts) < VM_CACHE_TTL
     
     # If cache is valid and not forcing refresh, return cached data
-    # When skip_ips=True, return without re-enriching IPs
+    # When skip_ips=True, return cached data including any IPs from persistent cache
     if not force_refresh and cache_valid and _vm_cache_data is not None:
         if skip_ips:
-            # Return cached VMs without IP data (clear IPs for fast load)
-            return [{**vm, "ip": None} for vm in _vm_cache_data]
+            # Return cached VMs with persistent IPs (don't query new IPs)
+            # Enrich with cached IPs from ip_cache.json
+            result = []
+            for vm in _vm_cache_data:
+                cached_ip = _get_cached_ip(vm['vmid'])
+                result.append({**vm, "ip": cached_ip or vm.get('ip')})
+            return result
         else:
             # Return full cached data
             return list(_vm_cache_data)
