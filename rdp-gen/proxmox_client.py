@@ -20,6 +20,11 @@ from config import (
     ENABLE_IP_LOOKUP,
 )
 
+# Disable SSL warnings when certificate verification is disabled
+if not PVE_VERIFY:
+    import urllib3
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
 # ---------------------------------------------------------------------------
 # Proxmox connection (admin account)
 # ---------------------------------------------------------------------------
