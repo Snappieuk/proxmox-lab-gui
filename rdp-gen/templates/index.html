@@ -194,6 +194,7 @@ async function loadVMs() {
         if (!resp.ok) {
             console.error("API returned non-ok status:", resp.status, resp.statusText);
             showMessage("Failed to load VMs");
+            document.getElementById('loading-indicator')?.remove();
             return;
         }
         const data = await resp.json();
@@ -204,7 +205,16 @@ async function loadVMs() {
         
         // Check if response is an error object (not an array)
         if (data && typeof data === 'object' && !Array.isArray(data) && data.error) {
+            console.error("API returned error:", data);
             showMessage(data.message || "Failed to load VMs");
+            document.getElementById('loading-indicator')?.remove();
+            return;
+        }
+        
+        // Ensure data is an array
+        if (!Array.isArray(data)) {
+            console.error("API did not return an array:", data);
+            showMessage("Error: Invalid response from server");
             document.getElementById('loading-indicator')?.remove();
             return;
         }

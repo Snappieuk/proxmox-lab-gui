@@ -23,7 +23,8 @@ elif pgrep -f "python.*rdp-gen/app.py" > /dev/null; then
     pkill -f "python.*rdp-gen/app.py"
     sleep 2
     echo "Starting Flask app..."
-    ./start.sh &
+    cd "$REPO_DIR/rdp-gen"
+    nohup python3 app.py > /tmp/flask.log 2>&1 &
     echo "✓ Flask app restarted successfully"
     
 else
