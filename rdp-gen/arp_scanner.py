@@ -21,43 +21,110 @@ def get_arp_table() -> Dict[str, str]:
         Dict[mac_address, ip_address] - lowercase MAC addresses without colons
     """
     arp_map = {}
+    
+    # Try multiple methods to get ARP table
+    # Method 1: ip neigh (modern Linux)
     try:
-        # Run arp -a to get the ARP table
         result = subprocess.run(
-            ['arp', '-a'],
+            ['ip', 'neigh', 'show'],
             capture_output=True,
             text=True,
             timeout=2
         )
         
-        if result.returncode != 0:
-            logger.warning("arp command failed: %s", result.stderr)
+        if result.returncode == 0 and result.stdout:
+            logger.debug("ip neigh output:\n%s", result.stdout)
+            
+            # Parse output like:
+            # 10.220.15.100 dev eth0 lladdr 52:54:00:12:34:56 REACHABLE
+            # 192.168.1.1 dev eth0 lladdr aa:bb:cc:dd:ee:ff STALE
+            for line in result.stdout.splitlines():
+                parts = line.split()
+                if len(parts) >= 5:
+                    ip = parts[0]
+                    # Find lladdr index
+                    try:
+                        lladdr_idx = parts.index('lladdr')
+                        mac = parts[lladdr_idx + 1]
+                        mac_normalized = mac.lower().replace(':', '').replace('-', '')
+                        if len(mac_normalized) == 12:
+                            arp_map[mac_normalized] = ip
+                            logger.debug("ARP entry: %s -> %s", mac_normalized, ip)
+                    except (ValueError, IndexError):
+                        continue
+            
+            logger.info("ARP table (via ip neigh) contains %d entries", len(arp_map))
+            return arp_map
+    
+    except FileNotFoundError:
+        logger.debug("ip command not found, trying arp")
+    except subprocess.TimeoutExpired:
+        logger.warning("ip neigh command timed out")
+    except Exception as e:
+        logger.debug("ip neigh failed: %s", e)
+    
+    # Method 2: arp -a (traditional)
+    for arp_cmd in ['/usr/sbin/arp', '/sbin/arp', 'arp']:
+        try:
+            result = subprocess.run(
+                [arp_cmd, '-a'],
+                capture_output=True,
+                text=True,
+                timeout=2
+            )
+            
+            if result.returncode != 0:
+                continue
+            
+            logger.debug("arp -a output:\n%s", result.stdout)
+            
+            # Parse output like:
+            # ? (192.168.1.100) at 52:54:00:12:34:56 [ether] on eth0
+            for line in result.stdout.splitlines():
+                ip_match = re.search(r'\((\d+\.\d+\.\d+\.\d+)\)', line)
+                mac_match = re.search(r'([0-9a-fA-F]{2}[:-]){5}([0-9a-fA-F]{2})', line)
+                
+                if ip_match and mac_match:
+                    ip = ip_match.group(1)
+                    mac = mac_match.group(0).lower().replace(':', '').replace('-', '')
+                    arp_map[mac] = ip
+                    logger.debug("ARP entry: %s -> %s", mac, ip)
+            
+            logger.info("ARP table (via %s) contains %d entries", arp_cmd, len(arp_map))
             return arp_map
         
-        logger.debug("ARP table output:\n%s", result.stdout)
-        
-        # Parse output like:
-        # ? (192.168.1.100) at 52:54:00:12:34:56 [ether] on eth0
-        # or on some systems:
-        # hostname (192.168.1.100) at 52:54:00:12:34:56 on en0 ifscope [ethernet]
-        for line in result.stdout.splitlines():
-            # Look for IP address and MAC address patterns
-            ip_match = re.search(r'\((\d+\.\d+\.\d+\.\d+)\)', line)
-            mac_match = re.search(r'([0-9a-fA-F]{2}[:-]){5}([0-9a-fA-F]{2})', line)
-            
-            if ip_match and mac_match:
-                ip = ip_match.group(1)
-                mac = mac_match.group(0).lower().replace(':', '').replace('-', '')
-                arp_map[mac] = ip
-                logger.debug("ARP entry: %s -> %s", mac, ip)
-        
-        logger.info("ARP table contains %d entries", len(arp_map))
-        
-    except subprocess.TimeoutExpired:
-        logger.warning("arp command timed out")
-    except Exception as e:
-        logger.error("Failed to get ARP table: %s", e)
+        except FileNotFoundError:
+            continue
+        except subprocess.TimeoutExpired:
+            logger.warning("%s command timed out", arp_cmd)
+        except Exception as e:
+            logger.debug("%s failed: %s", arp_cmd, e)
     
+    # Method 3: /proc/net/arp (Linux fallback)
+    try:
+        with open('/proc/net/arp', 'r') as f:
+            lines = f.readlines()
+            logger.debug("/proc/net/arp output:\n%s", ''.join(lines))
+            
+            # Skip header line
+            for line in lines[1:]:
+                parts = line.split()
+                if len(parts) >= 4:
+                    ip = parts[0]
+                    mac = parts[3].lower().replace(':', '').replace('-', '')
+                    if len(mac) == 12 and mac != '000000000000':
+                        arp_map[mac] = ip
+                        logger.debug("ARP entry: %s -> %s", mac, ip)
+        
+        logger.info("ARP table (via /proc/net/arp) contains %d entries", len(arp_map))
+        return arp_map
+    
+    except FileNotFoundError:
+        logger.warning("/proc/net/arp not found")
+    except Exception as e:
+        logger.error("Failed to read /proc/net/arp: %s", e)
+    
+    logger.warning("All ARP table methods failed, returning empty table")
     return arp_map
 
 
@@ -72,30 +139,34 @@ def broadcast_ping(subnet: str = "192.168.1.255", count: int = 2) -> bool:
     Returns:
         True if ping succeeded, False otherwise
     """
-    try:
-        # Use ping -b for broadcast (Linux)
-        # -b: allow pinging broadcast address
-        # -c: count of pings
-        # -W: timeout in seconds
-        result = subprocess.run(
-            ['ping', '-b', '-c', str(count), '-W', '1', subnet],
-            capture_output=True,
-            text=True,
-            timeout=5
-        )
-        
-        logger.debug("Broadcast ping to %s completed with code %d", subnet, result.returncode)
-        return True
-        
-    except subprocess.TimeoutExpired:
-        logger.warning("Broadcast ping timed out")
-        return False
-    except FileNotFoundError:
-        logger.warning("ping command not found")
-        return False
-    except Exception as e:
-        logger.error("Broadcast ping failed: %s", e)
-        return False
+    # Try multiple ping commands
+    for ping_cmd in ['/usr/bin/ping', '/bin/ping', 'ping']:
+        try:
+            # Use ping -b for broadcast (Linux)
+            # -b: allow pinging broadcast address
+            # -c: count of pings
+            # -W: timeout in seconds
+            result = subprocess.run(
+                [ping_cmd, '-b', '-c', str(count), '-W', '1', subnet],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            
+            logger.debug("Broadcast ping to %s completed with code %d", subnet, result.returncode)
+            return True
+            
+        except FileNotFoundError:
+            continue
+        except subprocess.TimeoutExpired:
+            logger.warning("Broadcast ping timed out")
+            return False
+        except Exception as e:
+            logger.debug("Broadcast ping with %s failed: %s", ping_cmd, e)
+            continue
+    
+    logger.warning("All ping commands failed or not found")
+    return False
 
 
 def discover_ips_via_arp(vm_mac_map: Dict[int, str], subnets: Optional[list] = None) -> Dict[int, str]:
