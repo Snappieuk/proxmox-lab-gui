@@ -170,6 +170,8 @@ def test_cluster_query_functions_exist():
         get_all_lxc_containers,
         invalidate_cluster_cache,
         lookup_ips_parallel,
+        shutdown_executor,
+        _get_cached_ips_batch,
     )
     
     # Verify functions are callable
@@ -177,7 +179,35 @@ def test_cluster_query_functions_exist():
     assert callable(get_all_lxc_containers)
     assert callable(invalidate_cluster_cache)
     assert callable(lookup_ips_parallel)
+    assert callable(shutdown_executor)
+    assert callable(_get_cached_ips_batch)
     print("✓ Cluster-wide query functions exist")
+
+
+def test_batch_ip_cache():
+    """Test batch IP cache retrieval function."""
+    from proxmox_client import (
+        _cache_ip,
+        _get_cached_ips_batch,
+    )
+    
+    # Cache some test IPs
+    test_vmids = [9901, 9902, 9903, 9904]
+    for i, vmid in enumerate(test_vmids):
+        _cache_ip(vmid, f"10.99.0.{i+1}")
+    
+    # Batch retrieve
+    cached = _get_cached_ips_batch(test_vmids + [9999])  # Include non-existent
+    
+    # Verify we got the cached IPs
+    assert 9901 in cached
+    assert 9902 in cached
+    assert 9903 in cached
+    assert 9904 in cached
+    assert 9999 not in cached  # Non-existent should not be in results
+    assert cached[9901] == "10.99.0.1"
+    
+    print("✓ Batch IP cache retrieval works")
 
 
 def test_thread_pool_executor_exists():
@@ -264,6 +294,23 @@ def test_rdp_content_in_memory():
     print("✓ RDP content is built in-memory")
 
 
+def test_flask_app_creates():
+    """Test that Flask app can be created without errors."""
+    # This test runs in the test process, not connected to Proxmox
+    # It just verifies the app module loads correctly
+    import sys
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'rdp-gen'))
+    
+    # Import should not raise
+    from app import app, cache
+    
+    assert app is not None
+    assert cache is not None
+    assert app.secret_key is not None
+    
+    print("✓ Flask app creates successfully")
+
+
 def run_all_tests():
     """Run all smoke tests."""
     print("\n=== Running Proxmox Lab GUI Smoke Tests ===\n")
@@ -271,8 +318,10 @@ def run_all_tests():
     tests = [
         test_proxmox_cache_ttl_config,
         test_cluster_query_functions_exist,
+        test_batch_ip_cache,
         test_thread_pool_executor_exists,
         test_rdp_content_in_memory,
+        test_flask_app_creates,
         test_cluster_cache_thread_safety,
         test_ip_cache_thread_safety,
         test_mappings_cache_thread_safety,
