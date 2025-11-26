@@ -74,33 +74,58 @@ logger = logging.getLogger(__name__)
 _proxmox_admin = None
 _proxmox_admin_wrapper = None
 _proxmox_pid = None  # Track which process created the connection
+_connection_lock = None  # Thread lock for connection creation
+
+def _get_connection_lock():
+    """Get or create a threading lock for connection creation."""
+    global _connection_lock
+    if _connection_lock is None:
+        import threading
+        _connection_lock = threading.Lock()
+    return _connection_lock
 
 def _create_proxmox_connection():
-    """Create a fresh ProxmoxAPI connection."""
-    return ProxmoxAPI(
-        PVE_HOST,
-        user=PVE_ADMIN_USER,
-        password=PVE_ADMIN_PASS,
-        verify_ssl=PVE_VERIFY,
-    )
+    """Create a fresh ProxmoxAPI connection with retry on SSL errors."""
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            conn = ProxmoxAPI(
+                PVE_HOST,
+                user=PVE_ADMIN_USER,
+                password=PVE_ADMIN_PASS,
+                verify_ssl=PVE_VERIFY,
+            )
+            # Test the connection
+            conn.version.get()
+            return conn
+        except (ssl.SSLError, OSError) as e:
+            if attempt < max_retries - 1:
+                logger.warning("SSL error creating connection (attempt %d/%d): %s", attempt + 1, max_retries, e)
+                time.sleep(0.5)  # Brief delay before retry
+            else:
+                logger.error("Failed to create Proxmox connection after %d attempts: %s", max_retries, e)
+                raise
 
 def get_proxmox_admin(force_reconnect=False):
     """
     Get or create the Proxmox API connection.
     Recreates connection if process has forked (Gunicorn workers) or on SSL errors.
+    Thread-safe with locking.
     """
     global _proxmox_admin, _proxmox_pid
     current_pid = os.getpid()
     
     # Recreate connection if we're in a new process (post-fork) or forced
     if force_reconnect or _proxmox_admin is None or _proxmox_pid != current_pid:
-        try:
-            _proxmox_admin = _create_proxmox_connection()
-            _proxmox_pid = current_pid
-            logger.info("Connected to Proxmox at %s (PID: %s)", PVE_HOST, current_pid)
-        except Exception as e:
-            logger.error("Failed to connect to Proxmox: %s", e)
-            raise
+        with _get_connection_lock():
+            # Double-check after acquiring lock
+            if force_reconnect or _proxmox_admin is None or _proxmox_pid != current_pid:
+                _proxmox_admin = _create_proxmox_connection()
+                _proxmox_pid = current_pid
+                logger.info("Connected to Proxmox at %s (PID: %s)", PVE_HOST, current_pid)
+    
+    if _proxmox_admin is None:
+        raise RuntimeError("Failed to establish Proxmox connection")
     return _proxmox_admin
 
 def get_proxmox_admin_wrapper(force_reconnect=False):
