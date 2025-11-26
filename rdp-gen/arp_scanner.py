@@ -34,6 +34,8 @@ def get_arp_table() -> Dict[str, str]:
             logger.warning("arp command failed: %s", result.stderr)
             return arp_map
         
+        logger.debug("ARP table output:\n%s", result.stdout)
+        
         # Parse output like:
         # ? (192.168.1.100) at 52:54:00:12:34:56 [ether] on eth0
         # or on some systems:
@@ -47,6 +49,7 @@ def get_arp_table() -> Dict[str, str]:
                 ip = ip_match.group(1)
                 mac = mac_match.group(0).lower().replace(':', '').replace('-', '')
                 arp_map[mac] = ip
+                logger.debug("ARP entry: %s -> %s", mac, ip)
         
         logger.info("ARP table contains %d entries", len(arp_map))
         
@@ -109,23 +112,29 @@ def discover_ips_via_arp(vm_mac_map: Dict[int, str], subnets: Optional[list] = N
     if not vm_mac_map:
         return {}
     
+    logger.info("VM MAC map: %s", vm_mac_map)
+    
     # Default subnets if none provided
     if subnets is None:
         subnets = ["192.168.1.255", "10.220.15.255"]  # Common defaults
     
     # Broadcast ping to populate ARP tables
     for subnet in subnets:
+        logger.info("Broadcasting ping to %s", subnet)
         broadcast_ping(subnet)
     
     # Get ARP table
     arp_table = get_arp_table()
+    logger.info("ARP table has %d entries, looking for %d VM MACs", len(arp_table), len(vm_mac_map))
     
     # Map VM MACs to IPs
     vm_ips = {}
     for vmid, mac in vm_mac_map.items():
         if mac in arp_table:
             vm_ips[vmid] = arp_table[mac]
-            logger.debug("VM %d (MAC %s) -> IP %s", vmid, mac, arp_table[mac])
+            logger.info("VM %d (MAC %s) -> IP %s", vmid, mac, arp_table[mac])
+        else:
+            logger.debug("VM %d (MAC %s) not found in ARP table", vmid, mac)
     
     logger.info("Discovered IPs for %d/%d VMs via ARP", len(vm_ips), len(vm_mac_map))
     return vm_ips

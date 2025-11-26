@@ -253,6 +253,7 @@ def _enrich_vms_with_arp_ips(vms: List[Dict[str, Any]]) -> None:
     This is much faster than querying guest agents individually.
     """
     if not ARP_SCANNER_AVAILABLE:
+        logger.info("ARP scanner not available, skipping ARP discovery")
         return
     
     # Build map of vmid -> MAC for VMs that don't have IPs yet
@@ -264,8 +265,12 @@ def _enrich_vms_with_arp_ips(vms: List[Dict[str, Any]]) -> None:
         mac = _get_vm_mac(vm["node"], vm["vmid"], vm["type"])
         if mac:
             vm_mac_map[vm["vmid"]] = mac
+            logger.debug("VM %d (%s) has MAC: %s", vm["vmid"], vm["name"], mac)
+        else:
+            logger.debug("VM %d (%s) has no MAC found", vm["vmid"], vm["name"])
     
     if not vm_mac_map:
+        logger.info("No VMs need ARP discovery (all have IPs or no MACs)")
         return
     
     logger.info("Attempting ARP discovery for %d VMs", len(vm_mac_map))
