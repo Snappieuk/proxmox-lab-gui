@@ -45,14 +45,28 @@
     <select id="node-filter" class="filter-select">
         <option value="all">All Nodes</option>
     </select>
-    <button type="button" id="refresh-btn" class="btn-secondary" onclick="refreshVMs()">
-        <i class="bi bi-arrow-clockwise"></i> Refresh
-    </button>
 </div>
 
 {% if message %}
 <div class="page-banner">{{ message }}</div>
 {% endif %}
+
+<!-- Loading indicator for progressive load -->
+{% if progressive_load %}
+<div id="loading-indicator" style="padding: 3rem 0; text-align: center;">
+    <div style="width: 40px; height: 40px; border: 4px solid #f3f3f3; border-top: 4px solid #0078d4; border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto 1rem;"></div>
+    <p style="color: #666; font-size: 16px;">Loading virtual machines...</p>
+</div>
+<style>
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+</style>
+{% endif %}
+
+<!-- VM Tables Container -->
+<div id="vm-tables-container">
 
 <!-- Windows VMs Table -->
 {% if windows_vms %}
@@ -288,6 +302,16 @@
 </table>
 {% endif %}
 
+</div><!-- End vm-tables-container -->
+
+<!-- Refresh Cache Button at bottom -->
+<div style="margin-top: 3rem; padding: 2rem 0; border-top: 1px solid #e1dfdd; text-align: center;">
+    <button type="button" id="refresh-btn" class="btn-secondary" onclick="refreshVMs()" style="padding: 0.75rem 2rem; font-size: 14px;">
+        <i class="bi bi-arrow-clockwise"></i> Refresh Cache
+    </button>
+    <p style="margin-top: 0.5rem; color: #605e5c; font-size: 12px;">Click to force reload VM data from Proxmox server</p>
+</div>
+
 <script>
 // Populate node filter
 window.addEventListener('load', function() {
@@ -345,53 +369,205 @@ function applyFilters() {
     });
 }
 
+// Load VMs initially (for progressive load)
+async function loadVMs() {
+    const loadingIndicator = document.getElementById('loading-indicator');
+    try {
+        const resp = await fetch("/api/vms");
+        if (!resp.ok) {
+            if (loadingIndicator) loadingIndicator.remove();
+            return;
+        }
+        const data = await resp.json();
+        
+        // If tables are empty, populate them
+        if (document.querySelectorAll('.vm-table tbody tr').length === 0) {
+            populateTables(data);
+        }
+        
+        if (loadingIndicator) loadingIndicator.remove();
+        updateVMsFromData(data);
+    } catch (e) {
+        console.error('Failed to load VMs:', e);
+        if (loadingIndicator) loadingIndicator.remove();
+    }
+}
+
+function populateTables(vms) {
+    const container = document.getElementById('vm-tables-container');
+    const categories = {
+        windows: { title: 'Windows VMs', vms: [] },
+        linux: { title: 'Linux VMs', vms: [] },
+        lxc: { title: 'LXC Containers', vms: [] },
+        other: { title: 'Other / Unknown', vms: [] }
+    };
+    
+    vms.forEach(vm => {
+        const cat = vm.type === 'lxc' ? 'lxc' : vm.category || 'other';
+        if (categories[cat]) {
+            categories[cat].vms.push(vm);
+        }
+    });
+    
+    container.innerHTML = '';
+    
+    Object.entries(categories).forEach(([cat, data]) => {
+        if (data.vms.length === 0) return;
+        
+        const header = document.createElement('h4');
+        header.className = 'section-header';
+        header.textContent = data.title;
+        container.appendChild(header);
+        
+        const table = document.createElement('table');
+        table.className = 'vm-table';
+        table.id = `${cat}-table`;
+        table.innerHTML = `
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>VMID</th>
+                    <th>Node</th>
+                    <th>Status</th>
+                    <th>IP Address</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+            </tbody>
+        `;
+        
+        const tbody = table.querySelector('tbody');
+        data.vms.forEach(vm => {
+            tbody.appendChild(createVMRow(vm, cat));
+        });
+        
+        container.appendChild(table);
+    });
+    
+    // Update summary tiles
+    updateSummaryTiles(vms);
+}
+
+function createVMRow(vm, category) {
+    const row = document.createElement('tr');
+    row.setAttribute('data-vmid', vm.vmid);
+    row.setAttribute('data-category', category);
+    row.setAttribute('data-node', vm.node);
+    
+    const statusClass = vm.status === 'running' ? 'badge-success' : vm.status === 'stopped' ? 'badge-danger' : 'badge-secondary';
+    const statusText = vm.status === 'running' ? '● Running' : vm.status === 'stopped' ? '● Stopped' : '● Unknown';
+    
+    const isWindows = category === 'windows';
+    const isLinux = category === 'linux' || category === 'lxc';
+    
+    row.innerHTML = `
+        <td><strong>${vm.name}</strong></td>
+        <td>${vm.vmid}</td>
+        <td>${vm.node}</td>
+        <td>
+            <span class="badge ${statusClass}">${statusText}</span>
+        </td>
+        <td class="vm-ip">${vm.ip || 'N/A'}</td>
+        <td>
+            <div class="action-buttons">
+                <button class="btn-icon btn-icon-success btn-power" 
+                        data-vmid="${vm.vmid}" 
+                        data-action="start"
+                        data-tooltip="Start"
+                        ${vm.status === 'running' ? 'disabled' : ''}>
+                    <i class="bi bi-play-fill"></i>
+                </button>
+                <button class="btn-icon btn-icon-danger btn-power" 
+                        data-vmid="${vm.vmid}" 
+                        data-action="stop"
+                        data-tooltip="Stop"
+                        ${vm.status === 'stopped' ? 'disabled' : ''}>
+                    <i class="bi bi-stop-fill"></i>
+                </button>
+                ${isWindows ? `
+                <a class="btn-icon btn-icon-primary" 
+                   href="/rdp/${vm.vmid}.rdp"
+                   data-tooltip="Download RDP File">
+                    <i class="bi bi-download"></i>
+                </a>
+                ` : ''}
+                ${isLinux ? `
+                <button class="btn-icon btn-icon-dark btn-ssh-web" 
+                        data-vmid="${vm.vmid}"
+                        data-ip="${vm.ip || ''}"
+                        data-name="${vm.name}"
+                        data-tooltip="Open Web SSH Terminal"
+                        ${!vm.ip ? 'disabled' : ''}>
+                    <i class="bi bi-terminal"></i>
+                </button>
+                <button class="btn-icon btn-icon-dark btn-ssh-copy" 
+                        data-vmid="${vm.vmid}"
+                        data-ip="${vm.ip || ''}"
+                        data-tooltip="Copy SSH Command"
+                        ${!vm.ip ? 'disabled' : ''}>
+                    <i class="bi bi-clipboard"></i>
+                </button>
+                ` : ''}
+            </div>
+        </td>
+    `;
+    
+    return row;
+}
+
 // Refresh VM status
 async function refreshVmStatus() {
     try {
         const resp = await fetch("/api/vms");
         if (!resp.ok) return;
         const data = await resp.json();
+        updateVMsFromData(data);
 
-        data.forEach(vm => {
-            const row = document.querySelector(`tr[data-vmid="${vm.vmid}"]`);
-            if (!row) return;
-
-            // Update status badge
-            const badge = row.querySelector('.badge');
-            if (badge) {
-                badge.className = 'badge';
-                badge.classList.add(vm.status === 'running' ? 'badge-success' : 
-                                  vm.status === 'stopped' ? 'badge-danger' : 'badge-secondary');
-                badge.textContent = vm.status === 'running' ? '● Running' :
-                                   vm.status === 'stopped' ? '● Stopped' : '● Unknown';
-            }
-
-            // Update IP
-            const ipCell = row.querySelector('.vm-ip');
-            if (ipCell) {
-                ipCell.textContent = vm.ip || 'N/A';
-            }
-
-            // Update power buttons
-            const startBtn = row.querySelector('.btn-power[data-action="start"]');
-            const stopBtn = row.querySelector('.btn-power[data-action="stop"]');
-            if (startBtn) startBtn.disabled = vm.status === 'running';
-            if (stopBtn) stopBtn.disabled = vm.status === 'stopped';
-
-            // Update SSH buttons
-            row.querySelectorAll('.btn-ssh-web, .btn-ssh-copy').forEach(btn => {
-                btn.disabled = !vm.ip;
-                if (vm.ip) {
-                    btn.setAttribute('data-ip', vm.ip);
-                }
-            });
-        });
-        
-        // Update summary tiles
-        updateSummaryTiles(data);
+        updateVMsFromData(data);
     } catch (e) {
         console.error('Failed to refresh:', e);
     }
+}
+
+function updateVMsFromData(data) {
+    data.forEach(vm => {
+        const row = document.querySelector(`tr[data-vmid="${vm.vmid}"]`);
+        if (!row) return;
+
+        // Update status badge
+        const badge = row.querySelector('.badge');
+        if (badge) {
+            badge.className = 'badge';
+            badge.classList.add(vm.status === 'running' ? 'badge-success' : 
+                              vm.status === 'stopped' ? 'badge-danger' : 'badge-secondary');
+            badge.textContent = vm.status === 'running' ? '● Running' :
+                               vm.status === 'stopped' ? '● Stopped' : '● Unknown';
+        }
+
+        // Update IP
+        const ipCell = row.querySelector('.vm-ip');
+        if (ipCell) {
+            ipCell.textContent = vm.ip || 'N/A';
+        }
+
+        // Update power buttons
+        const startBtn = row.querySelector('.btn-power[data-action="start"]');
+        const stopBtn = row.querySelector('.btn-power[data-action="stop"]');
+        if (startBtn) startBtn.disabled = vm.status === 'running';
+        if (stopBtn) stopBtn.disabled = vm.status === 'stopped';
+
+        // Update SSH buttons
+        row.querySelectorAll('.btn-ssh-web, .btn-ssh-copy').forEach(btn => {
+            btn.disabled = !vm.ip;
+            if (vm.ip) {
+                btn.setAttribute('data-ip', vm.ip);
+            }
+        });
+    });
+    
+    // Update summary tiles
+    updateSummaryTiles(data);
 }
 
 function updateSummaryTiles(vms) {
@@ -446,8 +622,16 @@ async function refreshVMs() {
 
 // Event listeners
 window.addEventListener("load", function () {
-    // Initial refresh after page load
-    setTimeout(refreshVmStatus, 500);
+    const progressiveLoad = {{ 'true' if progressive_load else 'false' }};
+    
+    if (progressiveLoad) {
+        // Load VMs immediately for progressive load
+        loadVMs();
+    } else {
+        // Just refresh status for pre-loaded VMs
+        setTimeout(refreshVmStatus, 500);
+    }
+    
     // Poll every 15 seconds
     setInterval(refreshVmStatus, 15000);
 
