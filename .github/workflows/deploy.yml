@@ -8,5 +8,5 @@ jobs:
   deploy:
     runs-on: self-hosted
     steps:
-      - name: Pull and restart with Gunicorn
+      - name: Pull latest changes and restart Flask app
         run: bash ~/rdp-gen/deploy.sh
