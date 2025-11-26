@@ -10,6 +10,30 @@
     </div>
 </div>
 
+{% if progressive_load %}
+<!-- Loading indicator -->
+<div id="mappings-loading" style="padding: 3rem 0; text-align: center;">
+    <div class="spinner" style="margin: 0 auto 1rem;"></div>
+    <p style="color: #666; font-size: 16px;">Loading mappings data...</p>
+</div>
+<style>
+.spinner {
+    width: 40px;
+    height: 40px;
+    border: 4px solid #f3f3f3;
+    border-top: 4px solid #3498db;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+</style>
+
+<div id="mappings-content" style="display: none;">
+{% endif %}
+
 <div class="mapping-layout">
 
     <div class="mapping-form-card">
@@ -26,9 +50,11 @@
             <label for="user">User</label>
             <select id="user" name="user" required>
                 <option value="">Select a user…</option>
+                {% if not progressive_load %}
                 {% for u in users %}
                     <option value="{{ u.userid }}">{{ u.userid }}</option>
                 {% endfor %}
+                {% endif %}
             </select>
 
             <label for="vmids">VM IDs (comma separated)</label>
@@ -52,7 +78,8 @@
                 <th>VM IDs</th>
             </tr>
             </thead>
-            <tbody>
+            <tbody id="mappings-tbody">
+            {% if not progressive_load %}
             {% if mapping %}
                 {% for user_id, vmids in mapping.items() %}
                     <tr>
@@ -67,17 +94,96 @@
             {% else %}
                 <tr><td colspan="2">No mappings defined.</td></tr>
             {% endif %}
+            {% endif %}
             </tbody>
         </table>
 
-        <p class="help-text">
+        <p class="help-text" id="vm-list">
+            {% if not progressive_load %}
             Existing VMs:
             {% for vmid in all_vm_ids %}
                 {{ vmid }} ({{ vm_id_to_name.get(vmid, 'unknown') }}){% if not loop.last %}, {% endif %}
             {% endfor %}
+            {% endif %}
         </p>
     </div>
 
 </div>
+
+{% if progressive_load %}
+</div>
+
+<script>
+async function loadMappingsData() {
+    try {
+        const resp = await fetch("/api/mappings");
+        if (!resp.ok) {
+            showError("Failed to load mappings data");
+            return;
+        }
+        const data = await resp.json();
+        
+        // Populate user dropdown
+        const userSelect = document.getElementById('user');
+        data.users.forEach(u => {
+            const option = document.createElement('option');
+            option.value = u.userid;
+            option.textContent = u.userid;
+            userSelect.appendChild(option);
+        });
+        
+        // Populate mappings table
+        const tbody = document.getElementById('mappings-tbody');
+        tbody.innerHTML = '';
+        
+        if (Object.keys(data.mapping).length > 0) {
+            Object.entries(data.mapping).forEach(([userId, vmids]) => {
+                const tr = document.createElement('tr');
+                const tdUser = document.createElement('td');
+                tdUser.textContent = userId;
+                
+                const tdVMs = document.createElement('td');
+                const vmNames = vmids.map(vmid => 
+                    `${vmid} (${data.vm_id_to_name[vmid] || 'unknown'})`
+                ).join(', ');
+                tdVMs.textContent = vmNames;
+                
+                tr.appendChild(tdUser);
+                tr.appendChild(tdVMs);
+                tbody.appendChild(tr);
+            });
+        } else {
+            const tr = document.createElement('tr');
+            const td = document.createElement('td');
+            td.colSpan = 2;
+            td.textContent = 'No mappings defined.';
+            tr.appendChild(td);
+            tbody.appendChild(tr);
+        }
+        
+        // Populate VM list
+        const vmList = document.getElementById('vm-list');
+        const vmListText = 'Existing VMs: ' + data.all_vm_ids.map(vmid => 
+            `${vmid} (${data.vm_id_to_name[vmid] || 'unknown'})`
+        ).join(', ');
+        vmList.textContent = vmListText;
+        
+        // Hide loading, show content
+        document.getElementById('mappings-loading').style.display = 'none';
+        document.getElementById('mappings-content').style.display = 'block';
+    } catch (e) {
+        console.error("Failed to load mappings:", e);
+        showError("Error loading mappings data");
+    }
+}
+
+function showError(message) {
+    const loading = document.getElementById('mappings-loading');
+    loading.innerHTML = `<p style="color: #d32f2f; font-size: 16px;">${message}</p>`;
+}
+
+window.addEventListener('load', loadMappingsData);
+</script>
+{% endif %}
 {% endblock %}
 
