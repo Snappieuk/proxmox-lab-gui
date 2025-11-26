@@ -52,21 +52,15 @@ class SSHWebSocketHandler:
             # Flags:
             # -o StrictHostKeyChecking=no: Auto-accept host keys
             # -o UserKnownHostsFile=/dev/null: Don't save host keys
-            # -o PreferredAuthentications=keyboard-interactive,password: Try interactive/password auth
-            # -o PubkeyAuthentication=no: Disable SSH key auth attempts
-            # -o IdentitiesOnly=yes: Don't use SSH agent
             # -o ServerAliveInterval=30: Keep connection alive
             # -o ServerAliveCountMax=3: Disconnect after 3 failed keepalives
-            # Note: If target requires publickey only, connection will fail with "Permission denied"
+            # Note: Connects as current user (root). Target must allow password auth for root.
             self.process = subprocess.Popen(
                 [
                     'ssh',
                     '-p', str(self.port),
                     '-o', 'StrictHostKeyChecking=no',
                     '-o', 'UserKnownHostsFile=/dev/null',
-                    '-o', 'PreferredAuthentications=keyboard-interactive,password',
-                    '-o', 'PubkeyAuthentication=no',
-                    '-o', 'IdentitiesOnly=yes',
                     '-o', 'ServerAliveInterval=30',
                     '-o', 'ServerAliveCountMax=3',
                     self.ip
@@ -85,6 +79,14 @@ class SSHWebSocketHandler:
             import fcntl
             flag = fcntl.fcntl(self.master_fd, fcntl.F_GETFL)
             fcntl.fcntl(self.master_fd, fcntl.F_SETFL, flag | os.O_NONBLOCK)
+            
+            # Give SSH a moment to initialize before checking if it's alive
+            time.sleep(0.1)
+            
+            # Check if process is still running
+            if self.process.poll() is not None:
+                logger.error("SSH process exited immediately with code %d", self.process.returncode)
+                return False
             
             self.running = True
             
