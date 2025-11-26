@@ -22,8 +22,11 @@ from config import (
 
 # Disable SSL warnings when certificate verification is disabled
 if not PVE_VERIFY:
-    import urllib3
-    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    try:
+        import urllib3
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    except ImportError:
+        pass  # urllib3 not available, warnings will show but won't crash
 
 # ---------------------------------------------------------------------------
 # Proxmox connection (admin account)

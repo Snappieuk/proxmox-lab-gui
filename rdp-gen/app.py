@@ -282,28 +282,43 @@ def admin_probe():
 @login_required
 def api_vms():
     user = require_user()
-    vms = get_vms_for_user(user)
-    return jsonify(vms)
+    try:
+        vms = get_vms_for_user(user)
+        return jsonify(vms)
+    except Exception as e:
+        app.logger.exception("Failed to get VMs for user %s", user)
+        return jsonify({
+            "error": True,
+            "message": f"Failed to load VMs: {str(e)}",
+            "details": "Check if Proxmox server is reachable and credentials are correct"
+        }), 500
 
 
 @app.route("/api/mappings")
 @admin_required
 def api_mappings():
     """Return mappings data for progressive loading."""
-    mapping = get_user_vm_map()
-    users = get_pve_users()
-    all_vms = get_all_vms()
-    
-    # Create vmid to name mapping for display
-    vm_id_to_name = {v["vmid"]: v.get("name", f"vm-{v['vmid']}") for v in all_vms}
-    all_vm_ids = sorted({v["vmid"] for v in all_vms})
-    
-    return jsonify({
-        "mapping": mapping,
-        "users": users,
-        "all_vm_ids": all_vm_ids,
-        "vm_id_to_name": vm_id_to_name,
-    })
+    try:
+        mapping = get_user_vm_map()
+        users = get_pve_users()
+        all_vms = get_all_vms()
+        
+        # Create vmid to name mapping for display
+        vm_id_to_name = {v["vmid"]: v.get("name", f"vm-{v['vmid']}") for v in all_vms}
+        all_vm_ids = sorted({v["vmid"] for v in all_vms})
+        
+        return jsonify({
+            "mapping": mapping,
+            "users": users,
+            "all_vm_ids": all_vm_ids,
+            "vm_id_to_name": vm_id_to_name,
+        })
+    except Exception as e:
+        app.logger.exception("Failed to get mappings data")
+        return jsonify({
+            "error": True,
+            "message": f"Failed to load mappings: {str(e)}"
+        }), 500
 
 
 
