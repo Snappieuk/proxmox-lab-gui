@@ -33,6 +33,7 @@ Cache:
 import subprocess
 import re
 import logging
+import os
 import threading
 import time
 from typing import Dict, Optional, List
@@ -44,6 +45,9 @@ logger = logging.getLogger(__name__)
 _arp_cache: Dict[str, str] = {}  # mac -> ip
 _arp_cache_time: float = 0
 _arp_cache_ttl: int = 300  # 5 minutes
+
+# Scan timeout configuration
+NMAP_SCAN_TIMEOUT_BUFFER: int = 30  # Extra seconds to wait for nmap scan completion
 
 # Background scan state
 _scan_thread: Optional[threading.Thread] = None
@@ -217,7 +221,6 @@ def broadcast_ping(subnet: str = "192.168.1.255", count: int = 1) -> bool:
 
 def _is_root() -> bool:
     """Check if we're running with root privileges."""
-    import os
     return os.geteuid() == 0
 
 
@@ -260,26 +263,37 @@ def scan_network_range(subnet_cidr: str = "10.220.8.0/21", timeout: int = 2) -> 
     # Try nmap with different paths
     for nmap_cmd in ['/usr/bin/nmap', '/usr/local/bin/nmap', 'nmap']:
         try:
+            scan_timeout = timeout + NMAP_SCAN_TIMEOUT_BUFFER
             result = subprocess.run(
                 [nmap_cmd] + nmap_args,
                 capture_output=True,
                 text=True,
-                timeout=timeout + 30  # ARP scans on large subnets can take time
+                timeout=scan_timeout
             )
             
             if result.returncode != 0:
                 logger.warning("nmap returned non-zero: %d, stderr: %s", 
                              result.returncode, result.stderr[:200] if result.stderr else "")
-                # Check if it's a privilege error for -PR
-                if "requires root" in (result.stderr or "").lower() or \
-                   "operation not permitted" in (result.stderr or "").lower():
+                # Check if it's a privilege error for -PR (nmap exits with code 1)
+                # We check stderr for common privilege-related messages
+                stderr_lower = (result.stderr or "").lower()
+                is_privilege_error = (
+                    result.returncode == 1 and 
+                    any(msg in stderr_lower for msg in [
+                        "requires root",
+                        "operation not permitted",
+                        "permission denied",
+                        "raw socket",
+                    ])
+                )
+                if is_privilege_error:
                     logger.warning("nmap -PR requires root privileges, falling back to unprivileged scan")
                     # Retry without -PR
                     result = subprocess.run(
                         [nmap_cmd, '-sn', '-T4', '--max-retries', '1', subnet_cidr],
                         capture_output=True,
                         text=True,
-                        timeout=timeout + 30
+                        timeout=scan_timeout
                     )
             
             logger.info("Network scan with nmap completed: returncode=%d", result.returncode)
@@ -292,7 +306,7 @@ def scan_network_range(subnet_cidr: str = "10.220.8.0/21", timeout: int = 2) -> 
         except FileNotFoundError:
             continue
         except subprocess.TimeoutExpired:
-            logger.warning("nmap scan timed out after %d seconds", timeout + 30)
+            logger.warning("nmap scan timed out after %d seconds", scan_timeout)
             return False
         except Exception as e:
             logger.debug("nmap scan failed: %s", e)
