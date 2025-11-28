@@ -29,7 +29,7 @@ except ImportError:
     logger = __import__('logging').getLogger(__name__)
     logger.warning("flask-sock not installed, WebSocket SSH terminal disabled")
 
-from config import SECRET_KEY, VM_CACHE_TTL
+from config import SECRET_KEY, VM_CACHE_TTL, CLUSTERS
 from auth import login_required, current_user, authenticate_proxmox_user
 from proxmox_client import (
     get_all_vms,
@@ -85,7 +85,16 @@ def inject_admin_flag():
     # Log admin status for debugging (INFO level to be visible)
     if user:
         app.logger.info("inject_admin_flag: user=%s is_admin=%s", user, is_admin)
-    return {"is_admin": is_admin}
+    
+    # Inject cluster info for dropdown
+    current_cluster = session.get("cluster_id", CLUSTERS[0]["id"])
+    clusters = [{"id": c["id"], "name": c["name"]} for c in CLUSTERS]
+    
+    return {
+        "is_admin": is_admin,
+        "clusters": clusters,
+        "current_cluster": current_cluster
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -124,6 +133,9 @@ def login():
             error = "Invalid username or password."
         else:
             session["user"] = full_user
+            # Initialize cluster selection (default to first cluster)
+            if "cluster_id" not in session:
+                session["cluster_id"] = CLUSTERS[0]["id"]
             app.logger.info("user logged in: %s", full_user)
             next_url = request.args.get("next") or url_for("portal")
             return redirect(next_url)
@@ -663,6 +675,31 @@ def api_vm_stop(vmid: int):
         return jsonify({"ok": False, "error": str(e)}), 500
 
     return jsonify({"ok": True})
+
+
+@app.route("/api/switch-cluster", methods=["POST"])
+@login_required
+def api_switch_cluster():
+    """Switch to a different Proxmox cluster."""
+    user = require_user()
+    data = request.get_json()
+    cluster_id = data.get("cluster_id")
+    
+    # Validate cluster ID
+    valid_cluster_ids = [c["id"] for c in CLUSTERS]
+    if cluster_id not in valid_cluster_ids:
+        return jsonify({"ok": False, "error": "Invalid cluster ID"}), 400
+    
+    # Store in session
+    session["cluster_id"] = cluster_id
+    app.logger.info("User %s switched to cluster %s", user, cluster_id)
+    
+    # Invalidate all caches to force refresh from new cluster
+    from proxmox_client import switch_cluster
+    switch_cluster(cluster_id)
+    invalidate_cluster_cache()
+    
+    return jsonify({"ok": True, "cluster_id": cluster_id})
 
 
 # ---------------------------------------------------------------------------

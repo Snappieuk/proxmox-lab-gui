@@ -1,6 +1,28 @@
 # Proxmox admin API config (defaults can be overriden via env vars)
 import os
 
+# Multi-cluster configuration
+# Each cluster has: id (internal key), name (display), host, user, password
+CLUSTERS = [
+    {
+        "id": "cluster1",
+        "name": "Main Cluster (10.220.15.249)",
+        "host": os.getenv("PVE_HOST", "10.220.15.249"),
+        "user": os.getenv("PVE_ADMIN_USER", "root@pam"),
+        "password": os.getenv("PVE_ADMIN_PASS", "password!"),
+        "verify_ssl": os.getenv("PVE_VERIFY", "False").lower() in ("true", "1", "yes"),
+    },
+    {
+        "id": "cluster2",
+        "name": "Secondary Cluster (10.220.12.6)",
+        "host": "10.220.12.6",
+        "user": "root@pam",
+        "password": "abc123##",
+        "verify_ssl": False,
+    },
+]
+
+# Legacy single-cluster config (deprecated - kept for backwards compatibility)
 PVE_HOST        = os.getenv("PVE_HOST", "10.220.15.249")
 PVE_ADMIN_USER  = os.getenv("PVE_ADMIN_USER", "root@pam")  # admin/service account
 PVE_ADMIN_PASS  = os.getenv("PVE_ADMIN_PASS", "password!")

@@ -26,6 +26,18 @@
 
 <div class="app-shell">
     <nav class="sidebar">
+        {% if session.get("user") %}
+        <div class="cluster-selector">
+            <label for="cluster-select" class="cluster-label">Cluster:</label>
+            <select id="cluster-select" class="cluster-dropdown" onchange="switchCluster(this.value)">
+                {% for cluster in clusters %}
+                <option value="{{ cluster.id }}" {% if cluster.id == current_cluster %}selected{% endif %}>
+                    {{ cluster.name }}
+                </option>
+                {% endfor %}
+            </select>
+        </div>
+        {% endif %}
         <div class="sidebar-section-title">Navigation</div>
         {% if session.get("user") %}
             <a class="sidebar-link {% if request.endpoint == 'portal' %}sidebar-link-active{% endif %}"
@@ -46,6 +58,30 @@
         {% block content %}{% endblock %}
     </main>
 </div>
+
+<script>
+function switchCluster(clusterId) {
+    // Post cluster change to server
+    fetch('/api/switch-cluster', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({cluster_id: clusterId})
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.ok) {
+            // Reload page to show VMs from new cluster
+            window.location.reload();
+        } else {
+            alert('Failed to switch cluster: ' + (data.error || 'Unknown error'));
+        }
+    })
+    .catch(err => {
+        console.error('Cluster switch error:', err);
+        alert('Failed to switch cluster');
+    });
+}
+</script>
 </body>
 </html>
 

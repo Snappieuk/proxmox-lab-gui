@@ -72,6 +72,42 @@ body {
     padding: 16px 12px;
 }
 
+.cluster-selector {
+    margin-bottom: 16px;
+    padding: 10px;
+    background: #f3f2f1;
+    border-radius: 4px;
+}
+
+.cluster-label {
+    display: block;
+    font-size: 11px;
+    text-transform: uppercase;
+    color: #605e5c;
+    margin-bottom: 6px;
+    font-weight: 600;
+}
+
+.cluster-dropdown {
+    width: 100%;
+    padding: 6px 8px;
+    border: 1px solid #8a8886;
+    border-radius: 2px;
+    background: white;
+    font-size: 13px;
+    color: #323130;
+    cursor: pointer;
+}
+
+.cluster-dropdown:hover {
+    border-color: #323130;
+}
+
+.cluster-dropdown:focus {
+    outline: 2px solid #0078d4;
+    outline-offset: 0;
+}
+
 .sidebar-section-title {
     font-size: 11px;
     text-transform: uppercase;

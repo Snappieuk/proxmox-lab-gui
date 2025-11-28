@@ -28,6 +28,7 @@ from config import (
     ENABLE_IP_LOOKUP,
     ENABLE_IP_PERSISTENCE,
     ARP_SUBNETS,
+    CLUSTERS,
 )
 
 # Import ARP scanner for fast IP discovery
@@ -51,6 +52,43 @@ except ImportError:
 _proxmox_lock = threading.Lock()
 # Lazy connection - only created when first accessed, reused by all threads
 _proxmox_admin = None
+# Current cluster ID (session-based selection)
+_current_cluster_id = None
+
+def get_current_cluster():
+    """Get current cluster configuration."""
+    global _current_cluster_id
+    if _current_cluster_id is None:
+        _current_cluster_id = CLUSTERS[0]["id"]  # Default to first cluster
+    
+    for cluster in CLUSTERS:
+        if cluster["id"] == _current_cluster_id:
+            return cluster
+    
+    # Fallback to first cluster if invalid ID somehow
+    return CLUSTERS[0]
+
+
+def switch_cluster(cluster_id: str):
+    """Switch to a different Proxmox cluster.
+    
+    Args:
+        cluster_id: ID of the cluster to switch to
+    
+    Invalidates the current connection and forces reconnection on next use.
+    """
+    global _proxmox_admin, _current_cluster_id
+    
+    # Validate cluster ID
+    valid = any(c["id"] == cluster_id for c in CLUSTERS)
+    if not valid:
+        raise ValueError(f"Invalid cluster ID: {cluster_id}")
+    
+    with _proxmox_lock:
+        _current_cluster_id = cluster_id
+        _proxmox_admin = None  # Force reconnection
+        logger.info("Switched to cluster: %s", cluster_id)
+
 
 def get_proxmox_admin():
     """Get or create Proxmox connection on first use (lazy initialization).
@@ -59,6 +97,8 @@ def get_proxmox_admin():
     only one Proxmox connection is created even in multi-threaded scenarios.
     The ProxmoxAPI client is reused for all subsequent calls, avoiding
     authentication overhead on each request.
+    
+    Supports multi-cluster: uses current cluster from session.
     """
     global _proxmox_admin
     if _proxmox_admin is not None:
@@ -67,13 +107,14 @@ def get_proxmox_admin():
     with _proxmox_lock:
         # Double-check inside lock to handle race conditions
         if _proxmox_admin is None:
+            cluster = get_current_cluster()
             _proxmox_admin = ProxmoxAPI(
-                PVE_HOST,
-                user=PVE_ADMIN_USER,
-                password=PVE_ADMIN_PASS,
-                verify_ssl=PVE_VERIFY,
+                cluster["host"],
+                user=cluster["user"],
+                password=cluster["password"],
+                verify_ssl=cluster.get("verify_ssl", False),
             )
-            logger.info("Connected to Proxmox at %s", PVE_HOST)
+            logger.info("Connected to Proxmox cluster '%s' at %s", cluster["name"], cluster["host"])
     return _proxmox_admin
 
 
@@ -83,11 +124,12 @@ def _create_proxmox_client():
     Used by ThreadPoolExecutor workers to avoid sharing the main client
     across threads, since ProxmoxAPI may not be fully thread-safe.
     """
+    cluster = get_current_cluster()
     return ProxmoxAPI(
-        PVE_HOST,
-        user=PVE_ADMIN_USER,
-        password=PVE_ADMIN_PASS,
-        verify_ssl=PVE_VERIFY,
+        cluster["host"],
+        user=cluster["user"],
+        password=cluster["password"],
+        verify_ssl=cluster.get("verify_ssl", False),
     )
 
 
