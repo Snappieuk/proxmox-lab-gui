@@ -63,34 +63,22 @@
 </div>
 
 <script>
-function switchCluster(clusterId) {
-    console.log('Switching to cluster:', clusterId);
+function filterByCluster(clusterId) {
+    console.log('Filtering VMs by cluster:', clusterId);
     
-    // Post cluster change to server
-    fetch('/api/switch-cluster', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({cluster_id: clusterId})
-    })
-    .then(response => {
-        console.log('Switch cluster response status:', response.status);
-        return response.json();
-    })
-    .then(data => {
-        console.log('Switch cluster response data:', data);
-        if (data.ok) {
-            // Hard reload with force_refresh to bypass all caches
-            const newUrl = window.location.pathname + '?force_refresh=true&t=' + Date.now();
-            console.log('Redirecting to:', newUrl);
-            window.location.href = newUrl;
-        } else {
-            alert('Failed to switch cluster: ' + (data.error || 'Unknown error'));
-        }
-    })
-    .catch(err => {
-        console.error('Cluster switch error:', err);
-        alert('Failed to switch cluster: ' + err.message);
-    });
+    // Store selected cluster in sessionStorage
+    if (clusterId === 'all') {
+        sessionStorage.removeItem('selected_cluster');
+    } else {
+        sessionStorage.setItem('selected_cluster', clusterId);
+    }
+    
+    // Trigger re-render of VM tables with filter
+    if (typeof window.filterVMsByCluster === 'function') {
+        window.filterVMsByCluster(clusterId);
+    } else {
+        console.warn('filterVMsByCluster function not found, page may need to reload');
+    }
 }
 </script>
 </body>

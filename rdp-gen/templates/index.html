@@ -318,14 +318,33 @@ let allVMs = [];
 
 // Filter VMs by cluster (called from base.html dropdown)
 window.filterVMsByCluster = function(clusterId) {
-    console.log('Filtering', allVMs.length, 'VMs by cluster:', clusterId);
-    if (clusterId === 'all') {
-        populateTables(allVMs);
-    } else {
-        const filtered = allVMs.filter(vm => vm.cluster_id === clusterId);
-        console.log('Filtered to', filtered.length, 'VMs');
-        populateTables(filtered);
+    console.log('filterVMsByCluster called with:', clusterId);
+    console.log('Total VMs available:', allVMs.length);
+    
+    if (allVMs.length === 0) {
+        console.warn('No VMs loaded yet, filtering will have no effect');
+        return;
     }
+    
+    let filtered;
+    if (clusterId === 'all') {
+        filtered = allVMs;
+        console.log('Showing all VMs:', filtered.length);
+    } else {
+        filtered = allVMs.filter(vm => vm.cluster_id === clusterId);
+        console.log(`Filtered to cluster ${clusterId}:`, filtered.length, 'VMs');
+    }
+    
+    // Repopulate tables with filtered VMs
+    populateTables(filtered);
+    
+    // Update summary tiles with filtered data
+    updateSummaryTiles(filtered);
+    
+    // Update node filter dropdown with filtered nodes
+    populateNodeFilter(filtered);
+    
+    console.log('Cluster filter applied successfully');
 };
 
 // Populate node filter
@@ -413,10 +432,15 @@ async function loadVMs() {
             ? data.filter(vm => vm.cluster_id === selectedCluster)
             : data;
         
+        console.log('Displaying', vmsToDisplay.length, 'VMs (filtered by:', selectedCluster || 'none', ')');
+        
         // Restore dropdown selection if exists
         if (selectedCluster) {
             const dropdown = document.getElementById('cluster-select');
-            if (dropdown) dropdown.value = selectedCluster;
+            if (dropdown) {
+                dropdown.value = selectedCluster;
+                console.log('Restored dropdown selection:', selectedCluster);
+            }
         }
         
         // Mark VMs without IPs as "Fetching..." (unless force refresh)
@@ -431,6 +455,8 @@ async function loadVMs() {
         // If tables are empty OR force refresh (cluster switch), populate them
         if (document.querySelectorAll('.vm-table tbody tr').length === 0 || forceRefresh) {
             populateTables(vmsToDisplay);
+            updateSummaryTiles(vmsToDisplay);
+            populateNodeFilter(vmsToDisplay);
         }
         
         if (loadingIndicator) loadingIndicator.remove();
