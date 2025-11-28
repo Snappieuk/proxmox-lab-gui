@@ -65,7 +65,7 @@ from proxmox_operations import (
     CLASS_CLUSTER_IP,
 )
 
-from models import User
+from models import User, VMAssignment
 
 logger = logging.getLogger(__name__)
 
@@ -597,8 +597,6 @@ def delete_vm_route(class_id: int, assignment_id: int):
         return jsonify({"ok": False, "error": "Access denied"}), 403
     
     # Get assignment to find Proxmox VMID
-    from class_service import get_vm_assignment_by_vmid
-    from models import VMAssignment
     assignment = VMAssignment.query.get(assignment_id)
     
     if not assignment:
