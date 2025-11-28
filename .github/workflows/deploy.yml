@@ -8,5 +8,31 @@ jobs:
   deploy:
     runs-on: self-hosted
     steps:
-      - name: Pull latest changes and restart Flask app
-        run: bash ~/deploy.sh
+      - name: Stop running Flask app
+        run: |
+          pkill -9 -f "app.py" 2>/dev/null || true
+          pkill -9 -f "python.*app" 2>/dev/null || true
+          lsof -ti:8080 | xargs kill -9 2>/dev/null || true
+          sleep 2
+          
+      - name: Pull latest changes
+        run: |
+          cd ~
+          git pull
+          
+      - name: Start Flask app
+        run: |
+          cd ~/rdp-gen
+          nohup python3 app.py > /tmp/flask.log 2>&1 &
+          sleep 3
+          
+      - name: Verify Flask is running
+        run: |
+          if pgrep -f "app.py" > /dev/null; then
+            echo "✓ Flask app is running"
+            exit 0
+          else
+            echo "ERROR: Flask app failed to start!"
+            tail -30 /tmp/flask.log
+            exit 1
+          fi
