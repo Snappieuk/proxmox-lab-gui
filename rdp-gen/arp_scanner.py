@@ -251,15 +251,19 @@ def scan_network_range(subnet_cidr: str = "10.220.8.0/21", timeout: int = 3) -> 
     
     # Determine nmap arguments based on privileges
     # Use -T4 (aggressive but not insane) for better reliability
+    # Add --min-rate and --max-rate to control scan speed
     if is_root:
         # ARP ping (-PR) is most reliable but requires root
         # Increased host timeout to 2s to ensure hosts have time to respond
-        nmap_args = ['-sn', '-PR', '-T4', '--max-retries', '1', '--host-timeout', '2s', subnet_cidr]
+        # Use --min-rate 50 to ensure scan doesn't complete instantly
+        nmap_args = ['-sn', '-PR', '-T4', '--min-rate', '50', '--max-rate', '300', 
+                    '--max-retries', '2', '--host-timeout', '3s', subnet_cidr]
         scan_type = "ARP ping (root)"
     else:
         # Unprivileged: use standard ping scan without -PR
         # -sn does ICMP echo, TCP SYN to 443, TCP ACK to 80, ICMP timestamp
-        nmap_args = ['-sn', '-T4', '--max-retries', '1', '--host-timeout', '2s', subnet_cidr]
+        nmap_args = ['-sn', '-T4', '--min-rate', '50', '--max-rate', '300',
+                    '--max-retries', '2', '--host-timeout', '3s', subnet_cidr]
         scan_type = "ICMP/TCP ping (unprivileged)"
     
     logger.info("Starting %s scan on %s (timeout: %ds)", scan_type, subnet_cidr, timeout)
@@ -268,12 +272,19 @@ def scan_network_range(subnet_cidr: str = "10.220.8.0/21", timeout: int = 3) -> 
     for nmap_cmd in ['/usr/bin/nmap', '/usr/local/bin/nmap', 'nmap']:
         try:
             scan_timeout = timeout + NMAP_SCAN_TIMEOUT_BUFFER
+            
+            logger.info("Executing: %s %s", nmap_cmd, ' '.join(nmap_args))
+            start_time = time.time()
+            
             result = subprocess.run(
                 [nmap_cmd] + nmap_args,
                 capture_output=True,
                 text=True,
                 timeout=scan_timeout
             )
+            
+            elapsed = time.time() - start_time
+            logger.info("nmap completed in %.2f seconds (returncode=%d)", elapsed, result.returncode)
             
             if result.returncode != 0:
                 logger.warning("nmap returned non-zero: %d, stderr: %s", 
