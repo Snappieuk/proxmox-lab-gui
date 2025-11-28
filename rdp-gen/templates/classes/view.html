@@ -1,0 +1,650 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1>
+            <i class="bi bi-mortarboard"></i> {{ class_.name }}
+        </h1>
+        <p class="page-subtitle">
+            {% if class_.description %}
+                {{ class_.description }}
+            {% else %}
+                Lab class managed by {{ class_.teacher_name or 'Unknown' }}
+            {% endif %}
+        </p>
+    </div>
+    <div class="header-actions">
+        {% if can_manage %}
+        <button class="btn-secondary" onclick="showInviteModal()">
+            <i class="bi bi-link-45deg"></i> Invite Link
+        </button>
+        <button class="btn-secondary" onclick="showAddVmsModal()">
+            <i class="bi bi-plus-circle"></i> Add VMs
+        </button>
+        <button class="btn-primary" onclick="pushUpdates()">
+            <i class="bi bi-cloud-upload"></i> Push Updates
+        </button>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Summary Tiles -->
+<div class="summary-tiles">
+    <div class="summary-tile">
+        <div class="summary-tile-title">Total VMs</div>
+        <div class="summary-tile-value" id="total-vms">{{ vm_assignments|length }}</div>
+    </div>
+    <div class="summary-tile">
+        <div class="summary-tile-title">Assigned</div>
+        <div class="summary-tile-value" id="assigned-count">{{ class_.assigned_count }}</div>
+    </div>
+    <div class="summary-tile">
+        <div class="summary-tile-title">Available</div>
+        <div class="summary-tile-value" id="unassigned-count">{{ class_.unassigned_count }}</div>
+    </div>
+</div>
+
+<!-- VM Table -->
+<div class="vm-section">
+    <h3 class="section-header">Virtual Machines</h3>
+    
+    {% if vm_assignments %}
+    <table class="vm-table">
+        <thead>
+            <tr>
+                <th>VMID</th>
+                <th>Node</th>
+                <th>Status</th>
+                <th>Assigned To</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody id="vm-tbody">
+            {% for vm in vm_assignments %}
+            <tr data-vmid="{{ vm.proxmox_vmid }}" data-assignment-id="{{ vm.id }}">
+                <td><strong>{{ vm.proxmox_vmid }}</strong></td>
+                <td>{{ vm.node or 'N/A' }}</td>
+                <td>
+                    <span class="badge badge-secondary" id="status-{{ vm.proxmox_vmid }}">Loading...</span>
+                </td>
+                <td>
+                    {% if vm.assigned_user_name %}
+                        <span class="user-badge">{{ vm.assigned_user_name }}</span>
+                    {% else %}
+                        <span class="user-badge user-badge-empty">Unassigned</span>
+                    {% endif %}
+                </td>
+                <td>
+                    <div class="action-buttons">
+                        {% if can_manage or vm.assigned_user_id == user.id %}
+                        <button class="btn-icon btn-icon-success" 
+                                onclick="startVm({{ vm.proxmox_vmid }}, '{{ vm.node }}')"
+                                data-tooltip="Start VM">
+                            <i class="bi bi-play-fill"></i>
+                        </button>
+                        <button class="btn-icon btn-icon-danger" 
+                                onclick="stopVm({{ vm.proxmox_vmid }}, '{{ vm.node }}')"
+                                data-tooltip="Stop VM">
+                            <i class="bi bi-stop-fill"></i>
+                        </button>
+                        <button class="btn-icon btn-icon-warning" 
+                                onclick="revertVm({{ vm.proxmox_vmid }}, '{{ vm.node }}')"
+                                data-tooltip="Revert to Baseline">
+                            <i class="bi bi-arrow-counterclockwise"></i>
+                        </button>
+                        {% endif %}
+                        {% if can_manage %}
+                        <button class="btn-icon btn-icon-dark" 
+                                onclick="showAssignModal({{ vm.id }}, {{ vm.proxmox_vmid }})"
+                                data-tooltip="Assign User">
+                            <i class="bi bi-person-plus"></i>
+                        </button>
+                        <button class="btn-icon btn-icon-danger" 
+                                onclick="deleteVm({{ vm.id }}, {{ vm.proxmox_vmid }})"
+                                data-tooltip="Delete VM">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                        {% endif %}
+                    </div>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div class="empty-state">
+        <i class="bi bi-pc-display" style="font-size: 48px; color: #8a8886;"></i>
+        <h3>No Virtual Machines</h3>
+        {% if can_manage %}
+            <p>Add VMs to this class to get started.</p>
+            <button class="btn-primary" onclick="showAddVmsModal()">
+                <i class="bi bi-plus-circle"></i> Add VMs
+            </button>
+        {% else %}
+            <p>No VMs have been assigned to you yet.</p>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+
+<!-- Invite Modal -->
+{% if can_manage %}
+<div id="invite-modal" class="modal" style="display: none;">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>Invite Link</h3>
+            <button class="modal-close" onclick="closeModal('invite-modal')">&times;</button>
+        </div>
+        <div class="modal-body">
+            {% if class_.token_valid %}
+            <div class="invite-active">
+                <p>Current invite link:</p>
+                <div class="invite-link-box">
+                    <input type="text" id="invite-url" readonly 
+                           value="{{ request.host_url }}classes/join/{{ class_.join_token }}">
+                    <button class="btn-icon btn-icon-primary" onclick="copyInviteLink()">
+                        <i class="bi bi-clipboard"></i>
+                    </button>
+                </div>
+                {% if class_.token_never_expires %}
+                    <p class="invite-info"><i class="bi bi-infinity"></i> Never expires</p>
+                {% else %}
+                    <p class="invite-info"><i class="bi bi-clock"></i> Expires: {{ class_.token_expires_at }}</p>
+                {% endif %}
+            </div>
+            {% else %}
+            <p>No active invite link for this class.</p>
+            {% endif %}
+            
+            <div class="invite-actions">
+                <label>
+                    <input type="checkbox" id="never-expires"> Never expires
+                </label>
+                <button class="btn-primary" onclick="generateInvite()">
+                    <i class="bi bi-arrow-repeat"></i> Generate New Link
+                </button>
+                {% if class_.token_valid %}
+                <button class="btn-danger" onclick="disableInvite()">
+                    <i class="bi bi-x-circle"></i> Disable Link
+                </button>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Add VMs Modal -->
+<div id="add-vms-modal" class="modal" style="display: none;">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>Add VMs to Class</h3>
+            <button class="modal-close" onclick="closeModal('add-vms-modal')">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div class="form-group">
+                <label>Number of VMs to create</label>
+                <input type="number" id="vm-count" value="1" min="1" max="50">
+            </div>
+            <div class="form-group">
+                <label>Template</label>
+                <select id="vm-template">
+                    <option value="">Loading...</option>
+                </select>
+            </div>
+            <div class="form-actions">
+                <button class="btn-secondary" onclick="closeModal('add-vms-modal')">Cancel</button>
+                <button class="btn-primary" onclick="createVms()">
+                    <i class="bi bi-plus-circle"></i> Create VMs
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Assign User Modal -->
+<div id="assign-modal" class="modal" style="display: none;">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>Assign VM to User</h3>
+            <button class="modal-close" onclick="closeModal('assign-modal')">&times;</button>
+        </div>
+        <div class="modal-body">
+            <input type="hidden" id="assign-vm-id">
+            <div class="form-group">
+                <label>Select User</label>
+                <select id="assign-user">
+                    <option value="">Loading...</option>
+                </select>
+            </div>
+            <div class="form-actions">
+                <button class="btn-secondary" onclick="unassignVm()">
+                    <i class="bi bi-person-x"></i> Unassign
+                </button>
+                <button class="btn-primary" onclick="assignVm()">
+                    <i class="bi bi-person-check"></i> Assign
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<style>
+.header-actions {
+    display: flex;
+    gap: 0.75rem;
+}
+
+.vm-section {
+    margin-top: 2rem;
+}
+
+.user-badge {
+    display: inline-block;
+    padding: 0.25rem 0.75rem;
+    background: #e8f4fd;
+    color: #0078d4;
+    border-radius: 12px;
+    font-size: 0.85rem;
+}
+
+.user-badge-empty {
+    background: #f3f2f1;
+    color: #8a8886;
+}
+
+.empty-state {
+    text-align: center;
+    padding: 4rem 2rem;
+    background: #faf9f8;
+    border-radius: 8px;
+}
+
+.modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0,0,0,0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+
+.modal-content {
+    background: white;
+    border-radius: 8px;
+    width: 90%;
+    max-width: 500px;
+    max-height: 90vh;
+    overflow-y: auto;
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid #e1dfdd;
+}
+
+.modal-header h3 {
+    margin: 0;
+}
+
+.modal-close {
+    background: none;
+    border: none;
+    font-size: 1.5rem;
+    cursor: pointer;
+    color: #605e5c;
+}
+
+.modal-body {
+    padding: 1.5rem;
+}
+
+.invite-link-box {
+    display: flex;
+    gap: 0.5rem;
+    margin: 1rem 0;
+}
+
+.invite-link-box input {
+    flex: 1;
+    padding: 0.75rem;
+    border: 1px solid #8a8886;
+    border-radius: 4px;
+    font-family: monospace;
+}
+
+.invite-info {
+    font-size: 0.9rem;
+    color: #605e5c;
+}
+
+.invite-actions {
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+    margin-top: 1.5rem;
+    padding-top: 1rem;
+    border-top: 1px solid #e1dfdd;
+}
+
+.btn-danger {
+    background: #d13438;
+    color: white;
+    border: none;
+    padding: 0.5rem 1rem;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.btn-danger:hover {
+    background: #a4262c;
+}
+
+.btn-icon-warning {
+    background: #fff4ce !important;
+    color: #8a6d3b !important;
+}
+
+.btn-icon-warning:hover {
+    background: #ffecab !important;
+}
+</style>
+
+<script>
+const classId = {{ class_.id }};
+
+// Update VM statuses
+async function updateStatuses() {
+    try {
+        const resp = await fetch(`/api/classes/${classId}/vms`);
+        const data = await resp.json();
+        
+        if (!data.ok) return;
+        
+        data.vms.forEach(vm => {
+            const statusEl = document.getElementById(`status-${vm.proxmox_vmid}`);
+            if (statusEl) {
+                statusEl.className = 'badge';
+                if (vm.status === 'running') {
+                    statusEl.classList.add('badge-success');
+                    statusEl.textContent = '● Running';
+                } else if (vm.status === 'stopped') {
+                    statusEl.classList.add('badge-danger');
+                    statusEl.textContent = '● Stopped';
+                } else {
+                    statusEl.classList.add('badge-secondary');
+                    statusEl.textContent = vm.status;
+                }
+            }
+        });
+    } catch (e) {
+        console.error('Failed to update statuses:', e);
+    }
+}
+
+// VM Power actions
+async function startVm(vmid, node) {
+    try {
+        const resp = await fetch(`/api/classes/${classId}/my-vm/start`, { method: 'POST' });
+        const data = await resp.json();
+        if (!data.ok) {
+            // Try using direct API for teachers
+            const resp2 = await fetch(`/api/vm/${vmid}/start`, { method: 'POST' });
+            const data2 = await resp2.json();
+            if (!data2.ok) alert('Failed to start VM: ' + (data2.error || data.error));
+        }
+        setTimeout(updateStatuses, 2000);
+    } catch (e) {
+        alert('Error starting VM: ' + e.message);
+    }
+}
+
+async function stopVm(vmid, node) {
+    try {
+        const resp = await fetch(`/api/classes/${classId}/my-vm/stop`, { method: 'POST' });
+        const data = await resp.json();
+        if (!data.ok) {
+            const resp2 = await fetch(`/api/vm/${vmid}/stop`, { method: 'POST' });
+            const data2 = await resp2.json();
+            if (!data2.ok) alert('Failed to stop VM: ' + (data2.error || data.error));
+        }
+        setTimeout(updateStatuses, 2000);
+    } catch (e) {
+        alert('Error stopping VM: ' + e.message);
+    }
+}
+
+async function revertVm(vmid, node) {
+    if (!confirm('Revert this VM to the class baseline? All changes will be lost!')) return;
+    
+    try {
+        const resp = await fetch(`/api/classes/${classId}/my-vm/revert`, { method: 'POST' });
+        const data = await resp.json();
+        if (data.ok) {
+            alert('VM reverted to baseline successfully!');
+        } else {
+            alert('Failed to revert VM: ' + data.error);
+        }
+    } catch (e) {
+        alert('Error reverting VM: ' + e.message);
+    }
+}
+
+{% if can_manage %}
+// Modal functions
+function showInviteModal() {
+    document.getElementById('invite-modal').style.display = 'flex';
+}
+
+function showAddVmsModal() {
+    loadTemplates();
+    document.getElementById('add-vms-modal').style.display = 'flex';
+}
+
+function showAssignModal(assignmentId, vmid) {
+    document.getElementById('assign-vm-id').value = assignmentId;
+    loadUsers();
+    document.getElementById('assign-modal').style.display = 'flex';
+}
+
+function closeModal(id) {
+    document.getElementById(id).style.display = 'none';
+}
+
+function copyInviteLink() {
+    const input = document.getElementById('invite-url');
+    input.select();
+    document.execCommand('copy');
+    alert('Invite link copied!');
+}
+
+async function generateInvite() {
+    const neverExpires = document.getElementById('never-expires').checked;
+    try {
+        const resp = await fetch(`/api/classes/${classId}/invite`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ never_expires: neverExpires })
+        });
+        const data = await resp.json();
+        if (data.ok) {
+            location.reload();
+        } else {
+            alert('Failed to generate invite: ' + data.error);
+        }
+    } catch (e) {
+        alert('Error: ' + e.message);
+    }
+}
+
+async function disableInvite() {
+    if (!confirm('Disable the current invite link?')) return;
+    try {
+        const resp = await fetch(`/api/classes/${classId}/invite`, { method: 'DELETE' });
+        const data = await resp.json();
+        if (data.ok) {
+            location.reload();
+        } else {
+            alert('Failed to disable invite: ' + data.error);
+        }
+    } catch (e) {
+        alert('Error: ' + e.message);
+    }
+}
+
+async function loadTemplates() {
+    try {
+        const resp = await fetch('/api/classes/templates');
+        const data = await resp.json();
+        const select = document.getElementById('vm-template');
+        select.innerHTML = '<option value="">Select a template...</option>';
+        if (data.ok && data.proxmox_templates) {
+            data.proxmox_templates.forEach(t => {
+                select.innerHTML += `<option value="${t.vmid}">${t.name} (${t.vmid})</option>`;
+            });
+        }
+    } catch (e) {
+        console.error('Failed to load templates:', e);
+    }
+}
+
+async function loadUsers() {
+    try {
+        const resp = await fetch('/api/classes/users');
+        const data = await resp.json();
+        const select = document.getElementById('assign-user');
+        select.innerHTML = '<option value="">Select a user...</option>';
+        if (data.ok && data.users) {
+            data.users.forEach(u => {
+                select.innerHTML += `<option value="${u.id}">${u.username} (${u.role})</option>`;
+            });
+        }
+    } catch (e) {
+        console.error('Failed to load users:', e);
+    }
+}
+
+async function createVms() {
+    const count = parseInt(document.getElementById('vm-count').value);
+    const templateVmid = document.getElementById('vm-template').value;
+    
+    if (!templateVmid) {
+        alert('Please select a template');
+        return;
+    }
+    
+    try {
+        const resp = await fetch(`/api/classes/${classId}/vms`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ count, template_vmid: parseInt(templateVmid) })
+        });
+        const data = await resp.json();
+        if (data.ok) {
+            closeModal('add-vms-modal');
+            location.reload();
+        } else {
+            alert('Failed to create VMs: ' + data.error);
+        }
+    } catch (e) {
+        alert('Error: ' + e.message);
+    }
+}
+
+async function assignVm() {
+    const assignmentId = document.getElementById('assign-vm-id').value;
+    const userId = document.getElementById('assign-user').value;
+    
+    if (!userId) {
+        alert('Please select a user');
+        return;
+    }
+    
+    try {
+        const resp = await fetch(`/api/classes/${classId}/vms/${assignmentId}/assign`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ user_id: parseInt(userId) })
+        });
+        const data = await resp.json();
+        if (data.ok) {
+            closeModal('assign-modal');
+            location.reload();
+        } else {
+            alert('Failed to assign VM: ' + data.error);
+        }
+    } catch (e) {
+        alert('Error: ' + e.message);
+    }
+}
+
+async function unassignVm() {
+    const assignmentId = document.getElementById('assign-vm-id').value;
+    
+    try {
+        const resp = await fetch(`/api/classes/${classId}/vms/${assignmentId}/unassign`, {
+            method: 'POST'
+        });
+        const data = await resp.json();
+        if (data.ok) {
+            closeModal('assign-modal');
+            location.reload();
+        } else {
+            alert('Failed to unassign VM: ' + data.error);
+        }
+    } catch (e) {
+        alert('Error: ' + e.message);
+    }
+}
+
+async function deleteVm(assignmentId, vmid) {
+    if (!confirm(`Delete VM ${vmid}? This cannot be undone!`)) return;
+    
+    try {
+        const resp = await fetch(`/api/classes/${classId}/vms/${assignmentId}`, {
+            method: 'DELETE'
+        });
+        const data = await resp.json();
+        if (data.ok) {
+            location.reload();
+        } else {
+            alert('Failed to delete VM: ' + data.error);
+        }
+    } catch (e) {
+        alert('Error: ' + e.message);
+    }
+}
+
+async function pushUpdates() {
+    if (!confirm('Push current template state to all VMs in this class? This will update the baseline snapshot.')) return;
+    
+    try {
+        const resp = await fetch(`/api/classes/${classId}/push-updates`, { method: 'POST' });
+        const data = await resp.json();
+        if (data.ok) {
+            alert(`Updated ${data.success_count} of ${data.total} VMs.`);
+        } else {
+            alert('Failed to push updates: ' + data.error);
+        }
+    } catch (e) {
+        alert('Error: ' + e.message);
+    }
+}
+{% endif %}
+
+// Initialize
+document.addEventListener('DOMContentLoaded', function() {
+    updateStatuses();
+    setInterval(updateStatuses, 15000);
+});
+</script>
+
+{% endblock %}

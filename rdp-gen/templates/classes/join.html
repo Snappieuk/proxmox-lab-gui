@@ -1,0 +1,159 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="join-container">
+    <div class="join-card">
+        <div class="join-icon">
+            <i class="bi bi-mortarboard"></i>
+        </div>
+        <h1>Join Class</h1>
+        <h2>{{ class_.name }}</h2>
+        
+        {% if class_.description %}
+        <p class="join-description">{{ class_.description }}</p>
+        {% endif %}
+        
+        <div class="join-info">
+            <div class="join-info-item">
+                <i class="bi bi-person"></i>
+                <span>Teacher: {{ class_.teacher_name or 'Unknown' }}</span>
+            </div>
+            <div class="join-info-item">
+                <i class="bi bi-pc-display"></i>
+                <span>{{ class_.unassigned_count }} VMs available</span>
+            </div>
+        </div>
+        
+        {% if class_.unassigned_count > 0 %}
+        <form action="{{ url_for('classes.confirm_join_class', token=token) }}" method="POST">
+            <button type="submit" class="btn-join">
+                <i class="bi bi-box-arrow-in-right"></i> Join Class
+            </button>
+        </form>
+        <p class="join-note">
+            Joining will automatically assign you a virtual machine.
+        </p>
+        {% else %}
+        <div class="join-full">
+            <i class="bi bi-exclamation-triangle"></i>
+            <p>This class has no available VMs. Please contact your teacher.</p>
+        </div>
+        {% endif %}
+        
+        <a href="{{ url_for('classes.classes_list') }}" class="back-link">
+            <i class="bi bi-arrow-left"></i> Back to Classes
+        </a>
+    </div>
+</div>
+
+<style>
+.join-container {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: calc(100vh - 200px);
+    padding: 2rem;
+}
+
+.join-card {
+    background: white;
+    border: 1px solid #e1dfdd;
+    border-radius: 12px;
+    padding: 3rem;
+    text-align: center;
+    max-width: 500px;
+    width: 100%;
+}
+
+.join-icon {
+    font-size: 64px;
+    color: #0078d4;
+    margin-bottom: 1rem;
+}
+
+.join-card h1 {
+    font-size: 1.5rem;
+    color: #605e5c;
+    margin: 0;
+}
+
+.join-card h2 {
+    font-size: 2rem;
+    color: #323130;
+    margin: 0.5rem 0 1rem;
+}
+
+.join-description {
+    color: #605e5c;
+    margin-bottom: 1.5rem;
+}
+
+.join-info {
+    display: flex;
+    justify-content: center;
+    gap: 2rem;
+    margin-bottom: 2rem;
+    padding: 1rem;
+    background: #faf9f8;
+    border-radius: 8px;
+}
+
+.join-info-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: #323130;
+}
+
+.btn-join {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 1rem 2rem;
+    background: #0078d4;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    font-size: 1.1rem;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.btn-join:hover {
+    background: #106ebe;
+}
+
+.join-note {
+    margin-top: 1rem;
+    font-size: 0.9rem;
+    color: #8a8886;
+}
+
+.join-full {
+    background: #fff4ce;
+    padding: 1.5rem;
+    border-radius: 8px;
+    color: #8a6d3b;
+}
+
+.join-full i {
+    font-size: 2rem;
+    display: block;
+    margin-bottom: 0.5rem;
+}
+
+.back-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 2rem;
+    color: #0078d4;
+    text-decoration: none;
+}
+
+.back-link:hover {
+    text-decoration: underline;
+}
+</style>
+
+{% endblock %}

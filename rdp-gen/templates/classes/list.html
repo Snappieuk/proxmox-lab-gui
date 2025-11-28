@@ -1,0 +1,229 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1><i class="bi bi-mortarboard"></i> Classes</h1>
+        <p class="page-subtitle">
+            {% if user_role == 'teacher' or user_role == 'adminer' %}
+                Manage your lab classes and student VMs
+            {% else %}
+                Access your enrolled classes and virtual machines
+            {% endif %}
+        </p>
+    </div>
+    {% if user_role == 'teacher' or user_role == 'adminer' %}
+    <div>
+        <a href="{{ url_for('classes.create_class') }}" class="btn-primary">
+            <i class="bi bi-plus-circle"></i> Create Class
+        </a>
+    </div>
+    {% endif %}
+</div>
+
+{% if message %}
+<div class="page-banner page-banner-warning">{{ message }}</div>
+{% endif %}
+
+<!-- Classes Grid -->
+<div class="classes-grid" id="classes-container">
+    {% if classes %}
+        {% for class in classes %}
+        <div class="class-card" onclick="window.location.href='{{ url_for('classes.view_class', class_id=class.id) }}'">
+            <div class="class-card-header">
+                <h3 class="class-card-title">{{ class.name }}</h3>
+                {% if class.teacher_name %}
+                <span class="class-card-teacher">
+                    <i class="bi bi-person"></i> {{ class.teacher_name }}
+                </span>
+                {% endif %}
+            </div>
+            <div class="class-card-body">
+                {% if class.description %}
+                <p class="class-card-description">{{ class.description }}</p>
+                {% endif %}
+                <div class="class-card-stats">
+                    <div class="class-stat">
+                        <span class="class-stat-value">{{ class.assigned_count }}</span>
+                        <span class="class-stat-label">Enrolled</span>
+                    </div>
+                    <div class="class-stat">
+                        <span class="class-stat-value">{{ class.unassigned_count }}</span>
+                        <span class="class-stat-label">Available</span>
+                    </div>
+                    <div class="class-stat">
+                        <span class="class-stat-value">{{ class.pool_size or 0 }}</span>
+                        <span class="class-stat-label">Pool Size</span>
+                    </div>
+                </div>
+            </div>
+            <div class="class-card-footer">
+                {% if class.token_valid %}
+                <span class="badge badge-success">
+                    <i class="bi bi-link-45deg"></i> Invite Active
+                </span>
+                {% else %}
+                <span class="badge badge-secondary">
+                    <i class="bi bi-link-45deg"></i> No Invite
+                </span>
+                {% endif %}
+                {% if class.template_name %}
+                <span class="badge badge-info">
+                    <i class="bi bi-box"></i> {{ class.template_name }}
+                </span>
+                {% endif %}
+            </div>
+        </div>
+        {% endfor %}
+    {% else %}
+        <div class="empty-state">
+            <i class="bi bi-mortarboard" style="font-size: 48px; color: #8a8886;"></i>
+            <h3>No Classes Found</h3>
+            {% if user_role == 'teacher' or user_role == 'adminer' %}
+                <p>Create your first class to get started!</p>
+                <a href="{{ url_for('classes.create_class') }}" class="btn-primary">
+                    <i class="bi bi-plus-circle"></i> Create Class
+                </a>
+            {% else %}
+                <p>You haven't joined any classes yet. Ask your teacher for an invite link.</p>
+            {% endif %}
+        </div>
+    {% endif %}
+</div>
+
+<style>
+.classes-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 1.5rem;
+    margin-top: 1.5rem;
+}
+
+.class-card {
+    background: white;
+    border: 1px solid #e1dfdd;
+    border-radius: 8px;
+    padding: 1.5rem;
+    cursor: pointer;
+    transition: box-shadow 0.2s, border-color 0.2s;
+}
+
+.class-card:hover {
+    border-color: #0078d4;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.class-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 1rem;
+}
+
+.class-card-title {
+    margin: 0;
+    font-size: 1.25rem;
+    color: #323130;
+}
+
+.class-card-teacher {
+    font-size: 0.85rem;
+    color: #605e5c;
+}
+
+.class-card-description {
+    color: #605e5c;
+    font-size: 0.9rem;
+    margin-bottom: 1rem;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.class-card-stats {
+    display: flex;
+    gap: 1.5rem;
+    margin-bottom: 1rem;
+}
+
+.class-stat {
+    text-align: center;
+}
+
+.class-stat-value {
+    display: block;
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: #0078d4;
+}
+
+.class-stat-label {
+    font-size: 0.75rem;
+    color: #8a8886;
+    text-transform: uppercase;
+}
+
+.class-card-footer {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.empty-state {
+    grid-column: 1 / -1;
+    text-align: center;
+    padding: 4rem 2rem;
+    background: #faf9f8;
+    border-radius: 8px;
+}
+
+.empty-state h3 {
+    margin: 1rem 0 0.5rem;
+    color: #323130;
+}
+
+.empty-state p {
+    color: #605e5c;
+    margin-bottom: 1.5rem;
+}
+
+.btn-primary {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.75rem 1.5rem;
+    background: #0078d4;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    font-size: 0.9rem;
+    text-decoration: none;
+    cursor: pointer;
+}
+
+.btn-primary:hover {
+    background: #106ebe;
+}
+
+.badge-info {
+    background: #e8f4fd;
+    color: #0078d4;
+}
+
+.role-badge {
+    display: inline-block;
+    padding: 0.15rem 0.5rem;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    border-radius: 3px;
+    margin-left: 0.5rem;
+}
+
+.role-adminer { background: #ffd4d4; color: #a80000; }
+.role-teacher { background: #d4e5ff; color: #0050a0; }
+.role-user { background: #e0e0e0; color: #505050; }
+</style>
+
+{% endblock %}

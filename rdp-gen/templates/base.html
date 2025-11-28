@@ -18,7 +18,12 @@
     </div>
     <div class="topbar-right">
         {% if session.get("user") %}
-            <span class="topbar-user">{{ session.get("user") }}</span>
+            <span class="topbar-user">
+                {{ session.get("user") }}
+                {% if local_user_role %}
+                    <span class="role-badge role-{{ local_user_role }}">{{ local_user_role }}</span>
+                {% endif %}
+            </span>
             <a href="{{ url_for('auth.logout') }}" class="topbar-link">Sign out</a>
         {% endif %}
     </div>
@@ -44,14 +49,35 @@
         <div class="sidebar-section-title">Navigation</div>
         {% if session.get("user") %}
             <a class="sidebar-link {% if request.endpoint == 'portal.portal' %}sidebar-link-active{% endif %}"
-               href="{{ url_for('portal.portal') }}">My machines</a>
-                {% if is_admin %}
+               href="{{ url_for('portal.portal') }}">
+                <i class="bi bi-pc-display"></i> My machines
+            </a>
+            <a class="sidebar-link {% if request.endpoint and 'classes' in request.endpoint %}sidebar-link-active{% endif %}"
+               href="{{ url_for('classes.classes_list') }}">
+                <i class="bi bi-mortarboard"></i> Classes
+            </a>
+            {% if is_admin or local_user_role == 'teacher' or local_user_role == 'adminer' %}
+                <div class="sidebar-section-title" style="margin-top: 1rem;">Management</div>
+            {% endif %}
+            {% if local_user_role == 'teacher' or local_user_role == 'adminer' %}
+                <a class="sidebar-link {% if request.endpoint == 'classes.create_class' %}sidebar-link-active{% endif %}"
+                   href="{{ url_for('classes.create_class') }}">
+                    <i class="bi bi-plus-circle"></i> Create Class
+                </a>
+            {% endif %}
+            {% if is_admin %}
                 <a class="sidebar-link {% if request.endpoint == 'admin_diagnostics.admin_view' %}sidebar-link-active{% endif %}"
-                   href="{{ url_for('admin_diagnostics.admin_view') }}">Admin view</a>
+                   href="{{ url_for('admin_diagnostics.admin_view') }}">
+                    <i class="bi bi-eye"></i> Admin view
+                </a>
                 <a class="sidebar-link {% if request.endpoint == 'admin_mappings.admin_mappings' %}sidebar-link-active{% endif %}"
-                   href="{{ url_for('admin_mappings.admin_mappings') }}">User ↔ VM mappings</a>
+                   href="{{ url_for('admin_mappings.admin_mappings') }}">
+                    <i class="bi bi-arrow-left-right"></i> User ↔ VM mappings
+                </a>
                 <a class="sidebar-link {% if request.endpoint == 'admin_diagnostics.admin_probe' %}sidebar-link-active{% endif %}"
-                   href="{{ url_for('admin_diagnostics.admin_probe') }}">Proxmox probe</a>
+                   href="{{ url_for('admin_diagnostics.admin_probe') }}">
+                    <i class="bi bi-activity"></i> Proxmox probe
+                </a>
             {% endif %}
     {% endif %}
     

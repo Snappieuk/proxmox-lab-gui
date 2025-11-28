@@ -51,6 +51,11 @@ def create_app(config=None):
     # Configure logging
     logging.basicConfig(level=logging.INFO)
     
+    # Initialize database (SQLAlchemy)
+    from models import init_db
+    init_db(app)
+    logger.info("Database initialized")
+    
     # Initialize WebSocket support
     try:
         from flask_sock import Sock
@@ -84,10 +89,25 @@ def create_app(config=None):
         current_cluster = session.get("cluster_id", CLUSTERS[0]["id"])
         clusters = [{"id": c["id"], "name": c["name"]} for c in CLUSTERS]
         
+        # Check if user has local account with role info
+        local_user = None
+        local_user_role = None
+        if user:
+            try:
+                from class_service import get_user_by_username
+                username = user.split('@')[0] if '@' in user else user
+                local_user = get_user_by_username(username)
+                if local_user:
+                    local_user_role = local_user.role
+            except Exception:
+                pass
+        
         return {
             "is_admin": is_admin,
             "clusters": clusters,
-            "current_cluster": current_cluster
+            "current_cluster": current_cluster,
+            "local_user": local_user,
+            "local_user_role": local_user_role,
         }
     
     logger.info("Flask app created successfully")
