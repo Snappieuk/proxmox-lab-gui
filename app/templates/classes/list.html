@@ -29,50 +29,59 @@
 <div class="classes-grid" id="classes-container">
     {% if classes %}
         {% for class in classes %}
-        <div class="class-card" onclick="window.location.href='{{ url_for('classes.view_class', class_id=class.id) }}'">
-            <div class="class-card-header">
-                <h3 class="class-card-title">{{ class.name }}</h3>
-                {% if class.teacher_name %}
-                <span class="class-card-teacher">
-                    <i class="bi bi-person"></i> {{ class.teacher_name }}
-                </span>
-                {% endif %}
-            </div>
-            <div class="class-card-body">
-                {% if class.description %}
-                <p class="class-card-description">{{ class.description }}</p>
-                {% endif %}
-                <div class="class-card-stats">
-                    <div class="class-stat">
-                        <span class="class-stat-value">{{ class.enrolled_count or 0 }}</span>
-                        <span class="class-stat-label">Students</span>
-                    </div>
-                    <div class="class-stat">
-                        <span class="class-stat-value">{{ class.assigned_count }}</span>
-                        <span class="class-stat-label">VMs Assigned</span>
-                    </div>
-                    <div class="class-stat">
-                        <span class="class-stat-value">{{ class.unassigned_count }}</span>
-                        <span class="class-stat-label">VMs Available</span>
+        <div class="class-card">
+            <div class="class-card-content" onclick="window.location.href='{{ url_for('classes.view_class', class_id=class.id) }}'">
+                <div class="class-card-header">
+                    <h3 class="class-card-title">{{ class.name }}</h3>
+                    {% if class.teacher_name %}
+                    <span class="class-card-teacher">
+                        <i class="bi bi-person"></i> {{ class.teacher_name }}
+                    </span>
+                    {% endif %}
+                </div>
+                <div class="class-card-body">
+                    {% if class.description %}
+                    <p class="class-card-description">{{ class.description }}</p>
+                    {% endif %}
+                    <div class="class-card-stats">
+                        <div class="class-stat">
+                            <span class="class-stat-value">{{ class.enrolled_count or 0 }}</span>
+                            <span class="class-stat-label">Students</span>
+                        </div>
+                        <div class="class-stat">
+                            <span class="class-stat-value">{{ class.assigned_count }}</span>
+                            <span class="class-stat-label">VMs Assigned</span>
+                        </div>
+                        <div class="class-stat">
+                            <span class="class-stat-value">{{ class.unassigned_count }}</span>
+                            <span class="class-stat-label">VMs Available</span>
+                        </div>
                     </div>
                 </div>
+                <div class="class-card-footer">
+                    {% if class.token_valid %}
+                    <span class="badge badge-success">
+                        <i class="bi bi-link-45deg"></i> Invite Active
+                    </span>
+                    {% else %}
+                    <span class="badge badge-secondary">
+                        <i class="bi bi-link-45deg"></i> No Invite
+                    </span>
+                    {% endif %}
+                    {% if class.template_name %}
+                    <span class="badge badge-info">
+                        <i class="bi bi-box"></i> {{ class.template_name }}
+                    </span>
+                    {% endif %}
+                </div>
             </div>
-            <div class="class-card-footer">
-                {% if class.token_valid %}
-                <span class="badge badge-success">
-                    <i class="bi bi-link-45deg"></i> Invite Active
-                </span>
-                {% else %}
-                <span class="badge badge-secondary">
-                    <i class="bi bi-link-45deg"></i> No Invite
-                </span>
-                {% endif %}
-                {% if class.template_name %}
-                <span class="badge badge-info">
-                    <i class="bi bi-box"></i> {{ class.template_name }}
-                </span>
-                {% endif %}
+            {% if user_role == 'teacher' or user_role == 'adminer' %}
+            <div class="class-card-actions">
+                <button class="action-btn danger" onclick="event.stopPropagation(); deleteClass({{ class.id }}, '{{ class.name }}')">
+                    <i class="bi bi-trash"></i> Delete
+                </button>
             </div>
+            {% endif %}
         </div>
         {% endfor %}
     {% else %}
@@ -100,14 +109,53 @@
     background: white;
     border: 1px solid #e1dfdd;
     border-radius: 8px;
-    padding: 1.5rem;
-    cursor: pointer;
+    padding: 0;
     transition: box-shadow 0.2s, border-color 0.2s;
 }
 
 .class-card:hover {
     border-color: #0078d4;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.class-card-content {
+    padding: 1.5rem;
+    cursor: pointer;
+}
+
+.class-card-actions {
+    padding: 0.75rem 1.5rem;
+    border-top: 1px solid #e1dfdd;
+    display: flex;
+    justify-content: flex-end;
+}
+
+.action-btn {
+    padding: 0.35rem 0.7rem;
+    border-radius: 4px;
+    border: 1px solid #d1d1d1;
+    background: white;
+    color: #605e5c;
+    cursor: pointer;
+    font-size: 0.8rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    transition: all 0.15s;
+}
+
+.action-btn:hover {
+    background: #f3f2f1;
+    border-color: #8a8886;
+}
+
+.action-btn.danger {
+    color: #a4262c;
+}
+
+.action-btn.danger:hover {
+    background: #fde7e9;
+    border-color: #a4262c;
 }
 
 .class-card-header {
@@ -222,5 +270,31 @@
 .role-teacher { background: #d4e5ff; color: #0050a0; }
 .role-user { background: #e0e0e0; color: #505050; }
 </style>
+
+<script>
+async function deleteClass(classId, className) {
+    if (!confirm(`Are you sure you want to delete the class "${className}"?\n\nThis will delete all associated VMs and cannot be undone!`)) {
+        return;
+    }
+    
+    try {
+        const resp = await fetch(`/api/class/${classId}`, {
+            method: 'DELETE'
+        });
+        
+        const data = await resp.json();
+        
+        if (data.ok) {
+            alert(data.message || 'Class deleted successfully');
+            location.reload();
+        } else {
+            alert('Failed to delete class: ' + (data.error || 'Unknown error'));
+        }
+    } catch (e) {
+        console.error('Failed to delete class:', e);
+        alert('Failed to delete class. Please try again.');
+    }
+}
+</script>
 
 {% endblock %}

@@ -283,10 +283,10 @@ def delete_class_route(class_id: int):
 # Invite Token Management
 # ---------------------------------------------------------------------------
 
-@api_classes_bp.route("/<int:class_id>/invite", methods=["POST"])
+@api_classes_bp.route("/<int:class_id>/invite", methods=["POST", "DELETE"])
 @login_required
-def generate_invite(class_id: int):
-    """Generate or regenerate invite token for a class."""
+def manage_invite(class_id: int):
+    """Generate/delete invite token for a class."""
     user, error = require_teacher_or_adminer()
     if error:
         return jsonify(error[0]), error[1]

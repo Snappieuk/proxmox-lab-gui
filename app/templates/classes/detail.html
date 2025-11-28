@@ -86,41 +86,33 @@
                 </div>
                 
                 <div id="template-info" style="display: none;">
-                    <!-- Template Details Grid -->
-                    <div class="template-details-grid" style="margin-bottom: 2rem;">
-                        <div class="template-detail-card">
-                            <div class="template-detail-label">Template Name</div>
-                            <div class="template-detail-value" id="template-name">-</div>
-                        </div>
-                        <div class="template-detail-card">
-                            <div class="template-detail-label">VMID</div>
-                            <div class="template-detail-value" id="template-vmid">-</div>
-                        </div>
-                        <div class="template-detail-card">
-                            <div class="template-detail-label">Status</div>
-                            <div class="template-detail-value">
-                                <span id="template-status" class="status-badge">-</span>
+                    <!-- Template Details -->
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem; padding: 1.5rem; background: #f9f9f9; border-radius: 8px;">
+                        <div>
+                            <h3 style="margin: 0 0 0.5rem 0; font-size: 1.25rem;" id="template-name">-</h3>
+                            <div style="color: #605e5c; font-size: 0.9rem;">
+                                <span><strong>VMID:</strong> <span id="template-vmid">-</span></span>
+                                <span style="margin-left: 1.5rem;"><strong>Node:</strong> <span id="template-node">-</span></span>
                             </div>
                         </div>
-                        <div class="template-detail-card">
-                            <div class="template-detail-label">Node</div>
-                            <div class="template-detail-value" id="template-node">-</div>
+                        <div style="display: flex; align-items: center; gap: 1rem;">
+                            <div style="display: flex; align-items: center; gap: 0.5rem;">
+                                <span style="font-weight: 600; color: #323130;">Power:</span>
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="power-toggle" onchange="togglePower()">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
                         </div>
                     </div>
                     
-                    <!-- Template Controls -->
-                    <div class="template-controls-grid" style="margin-bottom: 2rem;">
-                        <button id="btn-start-template" onclick="startTemplate()" class="btn-control btn-control-green">
-                            <i class="bi bi-power"></i>
-                            <span>Start</span>
+                    <!-- Quick Actions -->
+                    <div style="display: flex; gap: 0.5rem; margin-bottom: 2rem;">
+                        <button id="btn-rdp-template" onclick="rdpToTemplate()" class="btn-minimal" style="display: none;" title="Download RDP file">
+                            <i class="bi bi-file-earmark-arrow-down"></i>
                         </button>
-                        <button id="btn-stop-template" onclick="stopTemplate()" class="btn-control btn-control-red">
-                            <i class="bi bi-stop-circle"></i>
-                            <span>Stop</span>
-                        </button>
-                        <button id="btn-rdp-template" onclick="rdpToTemplate()" class="btn-control btn-control-blue" style="display: none;">
-                            <i class="bi bi-display"></i>
-                            <span>RDP</span>
+                        <button id="btn-ssh-template" onclick="sshToTemplate()" class="btn-minimal" title="Open SSH terminal">
+                            <i class="bi bi-terminal-fill"></i>
                         </button>
                     </div>
                     
@@ -214,11 +206,11 @@
             </div>
             
             <div class="content-card">
-                <!-- Current Invite -->
+                <!-- Permanent Invite Link -->
                 <div id="invite-status" style="margin-bottom: 2rem;">
-                    <h3 style="font-size: 1.1rem; margin-bottom: 1rem;">Current Invite Link</h3>
-                    <div id="invite-display" style="padding: 1.5rem; background: #f9f9f9; border-radius: 6px;">
-                        <p style="color: #666;">No active invite link. Generate one to allow students to join this class.</p>
+                    <h3 style="font-size: 1.1rem; margin-bottom: 1rem;">Class Invite Link</h3>
+                    <div id="invite-display">
+                        <!-- Populated by JavaScript -->
                     </div>
                 </div>
                 
@@ -558,6 +550,86 @@
     font-size: 0.85rem;
     color: #605e5c;
 }
+
+/* Toggle Switch */
+.toggle-switch {
+    position: relative;
+    display: inline-block;
+    width: 50px;
+    height: 26px;
+}
+
+.toggle-switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.toggle-slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #ccc;
+    transition: 0.3s;
+    border-radius: 26px;
+}
+
+.toggle-slider:before {
+    position: absolute;
+    content: "";
+    height: 20px;
+    width: 20px;
+    left: 3px;
+    bottom: 3px;
+    background-color: white;
+    transition: 0.3s;
+    border-radius: 50%;
+}
+
+input:checked + .toggle-slider {
+    background-color: #28a745;
+}
+
+input:checked + .toggle-slider:before {
+    transform: translateX(24px);
+}
+
+input:disabled + .toggle-slider {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Minimal Icon Buttons */
+.btn-minimal {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    background: white;
+    border: 1px solid #d1d1d1;
+    border-radius: 4px;
+    color: #605e5c;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.btn-minimal:hover {
+    background: #f3f2f1;
+    border-color: #8a8886;
+    color: #323130;
+}
+
+.btn-minimal:active {
+    background: #e1dfdd;
+}
+
+.btn-minimal i {
+    font-size: 1rem;
+}
 </style>
 
 <script>
@@ -605,17 +677,43 @@ function updateTemplateDisplay() {
     document.getElementById('template-vmid').textContent = currentTemplateInfo.proxmox_vmid;
     document.getElementById('template-node').textContent = currentTemplateInfo.node || 'N/A';
     
-    const statusBadge = document.getElementById('template-status');
-    statusBadge.textContent = currentTemplateInfo.status || 'unknown';
-    statusBadge.className = 'status-badge status-' + (currentTemplateInfo.status || 'unknown');
+    // Update power toggle
+    const powerToggle = document.getElementById('power-toggle');
+    const isRunning = currentTemplateInfo.status === 'running';
+    powerToggle.checked = isRunning;
     
     // Show/hide RDP button based on status
     const rdpBtn = document.getElementById('btn-rdp-template');
-    if (currentTemplateInfo.status === 'running') {
-        rdpBtn.style.display = 'inline-block';
+    if (isRunning) {
+        rdpBtn.style.display = 'inline-flex';
     } else {
         rdpBtn.style.display = 'none';
     }
+}
+
+async function togglePower() {
+    const powerToggle = document.getElementById('power-toggle');
+    const shouldStart = powerToggle.checked;
+    
+    // Disable toggle during operation
+    powerToggle.disabled = true;
+    
+    try {
+        if (shouldStart) {
+            await startTemplate();
+        } else {
+            await stopTemplate();
+        }
+    } finally {
+        // Re-enable and refresh status
+        powerToggle.disabled = false;
+        setTimeout(() => loadTemplateInfo(), 2000);
+    }
+}
+
+function sshToTemplate() {
+    if (!currentTemplateInfo) return;
+    window.open(`/ssh/${currentTemplateInfo.proxmox_vmid}`, '_blank');
 }
 
 async function startTemplate() {
@@ -752,20 +850,18 @@ function showAlert(message, type = 'info') {
 }
 
 async function generateInviteLink() {
-    const neverExpires = confirm('Should this invite link never expire? (Click Cancel for 7-day expiration)');
-    
     try {
         const resp = await fetch(`/api/class/${classId}/invite`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ never_expires: neverExpires })
+            body: JSON.stringify({ never_expires: true })
         });
         
         const data = await resp.json();
         
         if (data.ok) {
-            displayInviteLink(data.invite_url, data.expires_at);
             showAlert('Invite link generated successfully!', 'success');
+            loadStudentsList(); // Refresh to show new link
         } else {
             showAlert(data.error || 'Failed to generate invite link', 'error');
         }
@@ -774,19 +870,54 @@ async function generateInviteLink() {
     }
 }
 
-function displayInviteLink(url, expiresAt) {
+async function deleteInviteLink() {
+    if (!confirm('Delete the invite link? Students will no longer be able to join using this link.')) return;
+    
+    try {
+        const resp = await fetch(`/api/class/${classId}/invite`, {
+            method: 'DELETE'
+        });
+        
+        const data = await resp.json();
+        
+        if (data.ok) {
+            showAlert('Invite link deleted', 'success');
+            loadStudentsList(); // Refresh to hide link
+        } else {
+            showAlert(data.error || 'Failed to delete invite link', 'error');
+        }
+    } catch (e) {
+        showAlert('Failed to delete invite link', 'error');
+    }
+}
+
+function displayInviteLink(url) {
     const display = document.getElementById('invite-display');
-    const expiry = expiresAt ? new Date(expiresAt).toLocaleString() : 'Never';
+    
+    if (!url) {
+        display.innerHTML = `
+            <div style="padding: 1.5rem; background: #f9f9f9; border-radius: 6px; text-align: center;">
+                <p style="color: #666; margin-bottom: 1rem;">No invite link created yet.</p>
+                <button onclick="generateInviteLink()" class="btn-primary" style="display: inline-flex; align-items: center; gap: 0.5rem;">
+                    <i class="bi bi-link-45deg"></i> Create Invite Link
+                </button>
+            </div>
+        `;
+        return;
+    }
     
     display.innerHTML = `
         <div class="invite-link-box">
             <input type="text" value="${url}" readonly onclick="this.select()">
-            <button onclick="copyInviteLink('${url}')">
+            <button onclick="copyInviteLink('${url}')" style="background: #0078d4;">
                 <i class="bi bi-clipboard"></i> Copy
+            </button>
+            <button onclick="deleteInviteLink()" style="background: #dc3545; border-color: #dc3545;">
+                <i class="bi bi-trash"></i> Delete
             </button>
         </div>
         <div style="margin-top: 0.75rem; font-size: 0.85rem; color: #605e5c;">
-            <strong>Expires:</strong> ${expiry}
+            <i class="bi bi-info-circle"></i> This link never expires and can be used by multiple students.
         </div>
     `;
 }
@@ -826,11 +957,13 @@ async function loadStudentsList() {
                 </div>
             `;
             
-            // Also update invite link if exists
+            // Update invite link display
             if (data.class.join_token) {
                 const baseUrl = window.location.origin;
                 const inviteUrl = `${baseUrl}/classes/join/${data.class.join_token}`;
-                displayInviteLink(inviteUrl, data.class.token_expires_at);
+                displayInviteLink(inviteUrl);
+            } else {
+                displayInviteLink(null);
             }
         }
     } catch (e) {

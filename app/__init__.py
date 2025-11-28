@@ -106,5 +106,9 @@ def create_app(config=None):
             "local_user_role": local_user_role,
         }
     
+    # Start background IP scanner
+    from app.services.proxmox_client import start_background_ip_scanner
+    start_background_ip_scanner()
+    
     logger.info("Flask app created successfully")
     return app

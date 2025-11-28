@@ -256,7 +256,6 @@
 
         const vmid = {{ vmid }};
         const ip = '{{ ip }}';
-        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         
         const status = document.getElementById('status');
         const modal = document.getElementById('login-modal');
@@ -271,7 +270,8 @@
         function connect(username, password) {
             modal.classList.add('hidden');
             
-            const wsUrl = `${protocol}//${window.location.host}/ws/ssh/${vmid}?ip=${encodeURIComponent(ip)}`;
+            // Use ws:// protocol - SSL VPN will break WebSockets anyway
+            const wsUrl = `ws://${window.location.host}/ws/ssh/${vmid}?ip=${encodeURIComponent(ip)}`;
             
             status.textContent = 'Connecting...';
             status.className = '';

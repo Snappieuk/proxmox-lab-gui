@@ -1326,6 +1326,67 @@ def _save_ips_to_db(vms: List[Dict[str, Any]], vm_mac_map: Dict[int, str]) -> No
         logger.error("Failed to save IPs to database: %s", e)
         db.session.rollback()
 
+
+# ---------------------------------------------------------------------------
+# Background IP Scanner - Continuous IP discovery and database persistence
+# ---------------------------------------------------------------------------
+
+_background_scanner_thread = None
+_background_scanner_running = False
+
+def start_background_ip_scanner():
+    """Start background thread to continuously scan for IPs and populate database."""
+    global _background_scanner_thread, _background_scanner_running
+    
+    if _background_scanner_thread is not None and _background_scanner_thread.is_alive():
+        logger.info("Background IP scanner already running")
+        return
+    
+    _background_scanner_running = True
+    _background_scanner_thread = threading.Thread(target=_background_ip_scan_loop, daemon=True)
+    _background_scanner_thread.start()
+    logger.info("Started background IP scanner thread")
+
+def _background_ip_scan_loop():
+    """Background loop that scans for IPs only when needed (running VMs without IPs)."""
+    import time
+    logger.info("Background IP scanner: starting...")
+    
+    # Wait 10 seconds for app to fully start
+    time.sleep(10)
+    
+    while _background_scanner_running:
+        try:
+            # Get all VMs (skip IPs for quick status check)
+            vms = get_all_vms(skip_ips=True, force_refresh=True)
+            
+            # Check if any running VMs lack IPs
+            running_without_ip = [
+                vm for vm in vms 
+                if vm.get('status') == 'running' 
+                and (not vm.get('ip') or vm['ip'] in ('N/A', 'Fetching...', ''))
+            ]
+            
+            if running_without_ip:
+                logger.info(f"Background IP scanner: {len(running_without_ip)} running VMs need IPs, scanning...")
+                # Force IP discovery for VMs that need it
+                vms = get_all_vms(skip_ips=False, force_refresh=True)
+                
+                # Count results
+                with_ips = sum(1 for vm in vms if vm.get('ip') and vm['ip'] not in ('N/A', 'Fetching...', ''))
+                logger.info(f"Background IP scanner: {with_ips}/{len(vms)} VMs now have IPs")
+            else:
+                logger.debug("Background IP scanner: all running VMs have IPs, sleeping...")
+            
+            # Sleep for 2 minutes before next check
+            time.sleep(120)
+        except Exception as e:
+            logger.exception(f"Background IP scanner error: {e}")
+            time.sleep(60)  # Sleep 1 minute on error
+    
+    logger.info("Background IP scanner: stopped")
+
+
 def get_all_vms(skip_ips: bool = False, force_refresh: bool = False) -> List[Dict[str, Any]]:
     """
     Cached list of ALL VMs/containers from ALL clusters.
