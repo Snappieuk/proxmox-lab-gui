@@ -372,14 +372,23 @@ function applyFilters() {
 // Load VMs initially (for progressive load)
 async function loadVMs() {
     const loadingIndicator = document.getElementById('loading-indicator');
-    try:
-        // Load VMs with ARP scan for IPs
-        const resp = await fetch("/api/vms");
+    try {
+        // Fast initial load: skip IPs to populate VMs immediately
+        const resp = await fetch("/api/vms?skip_ips=true");
         if (!resp.ok) {
             if (loadingIndicator) loadingIndicator.remove();
             return;
         }
         const data = await resp.json();
+        
+        // Mark VMs without IPs as "Fetching..."
+        if (Array.isArray(data)) {
+            data.forEach(vm => {
+                if (!vm.ip || vm.ip === 'N/A') {
+                    vm.ip = 'Fetching...';
+                }
+            });
+        }
         
         // If tables are empty, populate them
         if (document.querySelectorAll('.vm-table tbody tr').length === 0) {
@@ -387,6 +396,9 @@ async function loadVMs() {
         }
         
         if (loadingIndicator) loadingIndicator.remove();
+        
+        // Fetch IPs in background after page renders
+        setTimeout(fetchIPsInBackground, 500);
     } catch (e) {
         console.error('Failed to load VMs:', e);
         if (loadingIndicator) loadingIndicator.remove();

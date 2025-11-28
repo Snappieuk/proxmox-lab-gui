@@ -500,17 +500,17 @@ def api_vms():
     so filtering is just a list comprehension, not a new API query.
     
     Query parameters:
+    - skip_ips: Skip ARP scan for fast initial load (IPs will be 'N/A')
     - force_refresh: Bypass cache and fetch fresh data from Proxmox
     - search: Filter VMs by name/VMID/IP
-    
-    IPs are always fetched via ARP scan.
     """
     user = require_user()
+    skip_ips = request.args.get('skip_ips', 'false').lower() == 'true'
     force_refresh = request.args.get('force_refresh', 'false').lower() == 'true'
     search = request.args.get('search', '')
     
     try:
-        vms = get_vms_for_user(user, search=search or None, force_refresh=force_refresh)
+        vms = get_vms_for_user(user, search=search or None, skip_ips=skip_ips, force_refresh=force_refresh)
         return jsonify(vms)
     except Exception as e:
         app.logger.exception("Failed to get VMs for user %s", user)
