@@ -617,11 +617,12 @@ def discover_ips_via_arp(vm_mac_map: Dict[int, str], subnets: Optional[List[str]
         for vmid, mac in vm_mac_map.items():
             if mac in _arp_cache:
                 vm_ips[vmid] = _arp_cache[mac]
-                logger.info("VM %d (MAC %s) -> IP %s (cached)", vmid, mac, _arp_cache[mac])
+                logger.debug("VM %d (MAC %s) -> IP %s (cached)", vmid, mac, _arp_cache[mac])
     
-    # If we found all IPs and cache is valid, no need to scan
+    # If we found all IPs and cache is valid, no need to scan at all
     if len(vm_ips) == len(vm_mac_map) and cache_valid:
-        logger.info("All IPs found in valid cache, skipping network scan")
+        logger.info("All %d IPs found in valid cache (age: %.1f seconds), skipping network scan entirely", 
+                   len(vm_ips), cache_age)
         return vm_ips
     
     # If background mode, start scan thread and return immediately
