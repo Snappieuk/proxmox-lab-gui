@@ -12,10 +12,8 @@ from typing import Dict, List, Any, Optional
 
 from flask import session, abort
 
-# Re-export from legacy module (rdp-gen)
-import sys
-import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'rdp-gen'))
+# Import path setup (adds rdp-gen to sys.path)
+import app.utils.paths
 
 from config import ADMIN_USERS, ADMIN_GROUP, CLUSTERS
 from proxmoxer import ProxmoxAPI

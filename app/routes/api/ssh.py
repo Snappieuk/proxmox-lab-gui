@@ -12,10 +12,8 @@ from flask import Blueprint, render_template, request, url_for, abort, current_a
 
 from app.utils.decorators import login_required
 
-# Import from legacy module
-import sys
-import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..', 'rdp-gen'))
+# Import path setup (adds rdp-gen to sys.path)
+import app.utils.paths
 
 from proxmox_client import find_vm_for_user, verify_vm_ip
 
@@ -65,7 +63,7 @@ def init_websocket(app, sock):
                 
                 creds_msg = ws.receive()
                 if not creds_msg:
-                    logger.error("No credentials received")
+                    logger.error("SSH WebSocket: No credentials received for VM %d (IP: %s). Expected JSON with 'username' and 'password' fields.", vmid, ip)
                     return
                 
                 creds = json.loads(creds_msg)
@@ -73,7 +71,10 @@ def init_websocket(app, sock):
                 password = creds.get('password')
                 
                 if not username or not password:
-                    logger.error("Invalid credentials message")
+                    logger.error("SSH WebSocket: Invalid credentials for VM %d - missing %s", 
+                                vmid, 
+                                "username and password" if not username and not password 
+                                else ("username" if not username else "password"))
                     ws.send("\r\n\x1b[1;31mError: Invalid credentials.\x1b[0m\r\n")
                     return
                 

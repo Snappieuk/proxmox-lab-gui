@@ -11,10 +11,8 @@ from flask import Blueprint, render_template, redirect, url_for, request, jsonif
 
 from app.utils.decorators import admin_required
 
-# Import from legacy module for VM operations
-import sys
-import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..', 'rdp-gen'))
+# Import path setup (adds rdp-gen to sys.path)
+import app.utils.paths
 
 from proxmox_client import (
     get_all_vms,

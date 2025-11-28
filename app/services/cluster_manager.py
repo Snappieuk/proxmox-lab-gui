@@ -10,10 +10,8 @@ import logging
 import threading
 from typing import Dict, List, Any
 
-# Re-export from legacy module (rdp-gen)
-import sys
-import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'rdp-gen'))
+# Import path setup (adds rdp-gen to sys.path)
+import app.utils.paths
 
 from config import CLUSTERS, CLUSTER_CONFIG_FILE
 
@@ -51,10 +49,11 @@ def save_cluster_config(clusters: List[Dict[str, Any]]) -> None:
         logger.error(f"Failed to write cluster config file: {e}")
         raise
     
-    # Clear all existing connections to force reconnection with new config
-    from app.services.proxmox_service import switch_cluster
-    # Note: switch_cluster clears connections, but we need to not switch
-    # Just invalidate cache instead
+    # Clear all existing Proxmox connections to force reconnection with new config
+    from app.services import proxmox_service
+    proxmox_service._proxmox_connections.clear()
+    
+    # Also invalidate the cluster cache
     invalidate_cluster_cache()
     
     logger.info(f"Updated cluster configuration with {len(clusters)} cluster(s)")
