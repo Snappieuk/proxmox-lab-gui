@@ -712,7 +712,10 @@ if WEBSOCKET_AVAILABLE:
                 try:
                     message = ws.receive()  # flask-sock doesn't support timeout parameter
                     if message is None:
+                        app.logger.info("WebSocket receive returned None, closing")
                         break
+                    
+                    app.logger.debug("Received WebSocket message: %r", message[:100] if len(message) > 100 else message)
                     
                     # Parse message (expecting JSON with type and data)
                     try:
@@ -729,12 +732,12 @@ if WEBSOCKET_AVAILABLE:
                     except json.JSONDecodeError:
                         # If not JSON, treat as raw input
                         handler.handle_client_input(message)
-                        handler.handle_client_input(message)
                         
                 except Exception as e:
-                    app.logger.debug("WebSocket error: %s", e)
+                    app.logger.error("WebSocket error in message loop: %s", e, exc_info=True)
                     break
         finally:
+            app.logger.info("Exiting message loop, closing handler")
             handler.close()
 
 
