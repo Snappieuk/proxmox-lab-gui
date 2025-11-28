@@ -1462,6 +1462,19 @@ def get_all_vms(skip_ips: bool = False, force_refresh: bool = False) -> List[Dic
         
         return result
 
+    # Build map of previous cached IPs (to preserve while new scan runs)
+    prev_ips: Dict[int, str] = {}
+    if cached_vms:
+        for prev_vm in cached_vms:
+            try:
+                vmid_prev = int(prev_vm.get("vmid"))
+            except Exception:
+                continue
+            ip_prev = prev_vm.get("ip")
+            if ip_prev and ip_prev not in ("N/A", "Fetching...", ""):
+                prev_ips[vmid_prev] = ip_prev
+    logger.debug("get_all_vms: loaded %d preserved IPs from prior cache", len(prev_ips))
+
     # Fetch VMs from all clusters
     out: List[Dict[str, Any]] = []
     
@@ -1534,10 +1547,33 @@ def get_all_vms(skip_ips: bool = False, force_refresh: bool = False) -> List[Dic
                 except Exception as e:
                     logger.debug(f"Failed to list VMs on {node} in cluster {cluster_name}: {e}")
 
+    # Preserve previous IPs for running VMs if new build produced no IP yet
+    preserved = 0
+    placeholders_set = 0
+    for vm in out:
+        vmid = vm.get("vmid")
+        status = vm.get("status")
+        ip_current = vm.get("ip")
+        if status == "running":
+            if (not ip_current or ip_current in ("", None, "N/A")) and vmid in prev_ips:
+                vm["ip"] = prev_ips[vmid]
+                preserved += 1
+            elif not ip_current or ip_current in ("", None):
+                # Set fetching placeholder instead of wiping to N/A
+                vm["ip"] = "Fetching..."
+                placeholders_set += 1
+        else:
+            # Non-running VMs: if no IP, mark N/A
+            if not ip_current:
+                vm["ip"] = "N/A"
+
     # Sort VMs alphabetically by name
     out.sort(key=lambda vm: (vm.get("name") or "").lower())
 
-    logger.info("get_all_vms: returning %d VM(s)", len(out))
+    logger.info(
+        "get_all_vms: returning %d VM(s) (preserved_ips=%d, placeholders=%d)",
+        len(out), preserved, placeholders_set
+    )
 
     # Always enrich with user mappings (needed for both admin and user views)
     _enrich_with_user_mappings(out)
