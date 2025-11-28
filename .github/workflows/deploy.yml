@@ -10,25 +10,32 @@ jobs:
     steps:
       - name: Stop running Flask app
         run: |
-          pkill -9 -f "app.py" 2>/dev/null || true
-          pkill -9 -f "python.*app" 2>/dev/null || true
+          pkill -9 -f "run.py" 2>/dev/null || true
+          pkill -9 -f "python.*proxmox-lab-gui" 2>/dev/null || true
           lsof -ti:8080 | xargs kill -9 2>/dev/null || true
           sleep 2
           
       - name: Pull latest changes
         run: |
-          cd ~
+          cd ~/proxmox-lab-gui
           git pull
+          
+      - name: Install dependencies
+        run: |
+          cd ~/proxmox-lab-gui
+          source venv/bin/activate
+          pip install -r requirements.txt
           
       - name: Start Flask app
         run: |
-          cd ~/rdp-gen
-          nohup python3 app.py > /tmp/flask.log 2>&1 &
+          cd ~/proxmox-lab-gui
+          source venv/bin/activate
+          nohup python3 run.py > /tmp/flask.log 2>&1 &
           sleep 3
           
       - name: Verify Flask is running
         run: |
-          if pgrep -f "app.py" > /dev/null; then
+          if pgrep -f "run.py" > /dev/null; then
             echo "✓ Flask app is running"
             exit 0
           else

@@ -9,7 +9,7 @@ import logging
 
 from flask import Blueprint, render_template, redirect, url_for, request, jsonify, current_app
 
-from app.utils.decorators import login_required
+from app.utils.decorators import login_required, admin_required
 
 # Import path setup (adds rdp-gen to sys.path)
 import app.utils.paths

@@ -7,9 +7,9 @@ Handles admin view and diagnostics/probe endpoints.
 
 import logging
 
-from flask import Blueprint, render_template, jsonify
+from flask import Blueprint, render_template, jsonify, session
 
-from app.utils.decorators import login_required
+from app.utils.decorators import login_required, admin_required
 
 # Import path setup (adds rdp-gen to sys.path)
 import app.utils.paths
