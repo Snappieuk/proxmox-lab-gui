@@ -235,17 +235,24 @@ def update_class_route(class_id: int):
 @login_required
 def delete_class_route(class_id: int):
     """Delete a class and its VMs (teacher owner or adminer only)."""
+    logger.info(f"DELETE request for class {class_id}")
+    
     user, error = require_teacher_or_adminer()
     if error:
+        logger.error(f"Permission denied for class {class_id} deletion: {error}")
         return jsonify(error[0]), error[1]
     
     class_ = get_class_by_id(class_id)
     if not class_:
+        logger.error(f"Class {class_id} not found")
         return jsonify({"ok": False, "error": "Class not found"}), 404
     
     # Check ownership
     if not user.is_adminer and class_.teacher_id != user.id:
+        logger.error(f"User {user.username} not authorized to delete class {class_id}")
         return jsonify({"ok": False, "error": "Access denied"}), 403
+    
+    logger.info(f"Deleting class {class_id} ({class_.name}) with {len(class_.vm_assignments)} VMs")
     
     # Get VMs to delete BEFORE deleting the class
     vm_assignments_to_delete = []
@@ -259,7 +266,10 @@ def delete_class_route(class_id: int):
     success, msg, vmids = delete_class(class_id)
     
     if not success:
+        logger.error(f"Failed to delete class {class_id} from database: {msg}")
         return jsonify({"ok": False, "error": msg}), 400
+    
+    logger.info(f"Class {class_id} deleted from database, now deleting {len(vm_assignments_to_delete)} VMs from Proxmox")
     
     # Delete VMs from Proxmox (best effort, class already deleted)
     deleted_vms = []
@@ -270,11 +280,16 @@ def delete_class_route(class_id: int):
         if class_.template and class_.template.cluster_ip:
             cluster_ip = class_.template.cluster_ip
         
+        logger.info(f"Deleting VM {vm_info['vmid']} on node {vm_info['node']} (cluster: {cluster_ip})")
         vm_success, vm_msg = delete_vm(vm_info['vmid'], vm_info['node'], cluster_ip)
         if vm_success:
             deleted_vms.append(vm_info['vmid'])
+            logger.info(f"Successfully deleted VM {vm_info['vmid']}")
         else:
             failed_vms.append({'vmid': vm_info['vmid'], 'error': vm_msg})
+            logger.warning(f"Failed to delete VM {vm_info['vmid']}: {vm_msg}")
+    
+    logger.info(f"Class deletion complete: {len(deleted_vms)} VMs deleted, {len(failed_vms)} failed")
     
     return jsonify({
         "ok": True,
