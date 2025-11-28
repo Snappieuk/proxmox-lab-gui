@@ -11,10 +11,10 @@ from flask import Blueprint, jsonify, request, session
 
 from app.utils.decorators import login_required
 
-# Import path setup (adds rdp-gen to sys.path)
+# Import path setup is no longer needed
 import app.utils.paths
 
-from class_service import (
+from app.services.class_service import (
     # Class management
     create_class,
     get_class_by_id,
@@ -51,7 +51,7 @@ from class_service import (
     update_user_role,
 )
 
-from proxmox_operations import (
+from app.services.proxmox_operations import (
     list_proxmox_templates,
     clone_vm_from_template,
     convert_vm_to_template,
@@ -62,7 +62,7 @@ from proxmox_operations import (
     stop_class_vm,
     get_vm_status,
     clone_vms_for_class,
-    CLASS_CLUSTER_IP,
+    CLASS_CLUSTER_IP
 )
 
 from models import User, VMAssignment

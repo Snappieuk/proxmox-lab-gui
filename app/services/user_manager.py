@@ -15,7 +15,7 @@ from flask import session, abort
 # Import path setup (adds rdp-gen to sys.path)
 import app.utils.paths
 
-from config import ADMIN_USERS, ADMIN_GROUP, CLUSTERS
+from app.config import ADMIN_USERS, ADMIN_GROUP, CLUSTERS
 from proxmoxer import ProxmoxAPI
 
 logger = logging.getLogger(__name__)

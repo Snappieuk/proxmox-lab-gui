@@ -15,7 +15,7 @@ from proxmoxer import ProxmoxAPI
 # Import path setup (adds rdp-gen to sys.path)
 import app.utils.paths
 
-from config import CLUSTERS
+from app.config import CLUSTERS
 
 logger = logging.getLogger(__name__)
 

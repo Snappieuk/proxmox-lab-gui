@@ -11,10 +11,10 @@ from flask import Blueprint, jsonify, request, current_app
 
 from app.utils.decorators import login_required
 
-# Import path setup (adds rdp-gen to sys.path)
+# Import path setup is no longer needed
 import app.utils.paths
 
-from proxmox_client import (
+from app.services.proxmox_client import (
     get_vms_for_user,
     get_vm_ip,
     find_vm_for_user,

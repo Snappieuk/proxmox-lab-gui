@@ -15,10 +15,6 @@ if os.getenv("PVE_VERIFY", "False").lower() not in ("true", "1", "yes"):
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Ensure the app directory is in the Python path
-# NOTE: We import from 'app' package (our new modular structure)
-# The rdp-gen directory should be added to path AFTER app package is imported
-# to avoid conflicts with rdp-gen/app.py
-
 # Add current directory to path first for 'app' package
 _current_dir = os.path.dirname(os.path.abspath(__file__))
 if _current_dir not in sys.path:

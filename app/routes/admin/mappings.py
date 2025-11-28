@@ -9,22 +9,20 @@ import logging
 
 from flask import Blueprint, render_template, redirect, url_for, request, jsonify, current_app
 
-from app.utils.decorators import admin_required
+from app.utils.decorators import login_required
 
 # Import path setup (adds rdp-gen to sys.path)
 import app.utils.paths
 
-from proxmox_client import (
+from app.services.proxmox_client import (
     get_all_vms,
     get_user_vm_map,
     set_user_vm_mapping,
     get_admin_group_members,
     add_user_to_admin_group,
     remove_user_from_admin_group,
-    ADMIN_GROUP,
-    ADMIN_USERS,
 )
-from config import ADMIN_GROUP, ADMIN_USERS
+from app.config import ADMIN_GROUP, ADMIN_USERS
 
 logger = logging.getLogger(__name__)
 

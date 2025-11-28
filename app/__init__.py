@@ -7,15 +7,11 @@ configured Flask application instances.
 """
 
 import logging
-import sys
 import os
 
 from flask import Flask, session
 
-# Add rdp-gen to path for legacy imports
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'rdp-gen'))
-
-from config import SECRET_KEY, CLUSTERS
+from app.config import SECRET_KEY, CLUSTERS
 
 # Initialize logging
 from app.utils.logging import configure_logging, get_logger
@@ -33,9 +29,9 @@ def create_app(config=None):
     Returns:
         Configured Flask application instance
     """
-    # Create Flask app with template/static from rdp-gen directory
-    template_folder = os.path.join(os.path.dirname(__file__), '..', 'rdp-gen', 'templates')
-    static_folder = os.path.join(os.path.dirname(__file__), '..', 'rdp-gen', 'static')
+    # Create Flask app with template/static from app directory
+    template_folder = os.path.join(os.path.dirname(__file__), 'templates')
+    static_folder = os.path.join(os.path.dirname(__file__), 'static')
     
     app = Flask(__name__, 
                 template_folder=template_folder,
@@ -52,7 +48,7 @@ def create_app(config=None):
     logging.basicConfig(level=logging.INFO)
     
     # Initialize database (SQLAlchemy)
-    from models import init_db
+    from app.models import init_db
     init_db(app)
     logger.info("Database initialized")
     
@@ -94,7 +90,7 @@ def create_app(config=None):
         local_user_role = None
         if user:
             try:
-                from class_service import get_user_by_username
+                from app.services.class_service import get_user_by_username
                 username = user.split('@')[0] if '@' in user else user
                 local_user = get_user_by_username(username)
                 if local_user:

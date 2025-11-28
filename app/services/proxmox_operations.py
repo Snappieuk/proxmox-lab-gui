@@ -1,0 +1,425 @@
+#!/usr/bin/env python3
+"""
+Proxmox Operations - VM cloning, template management, and snapshots.
+
+This module provides higher-level operations for class-based VM management.
+"""
+
+import logging
+from typing import List, Dict, Tuple, Any
+
+from app.services.proxmox_service import get_proxmox_admin_for_cluster
+from app.config import CLUSTERS
+
+logger = logging.getLogger(__name__)
+
+# Default cluster IP for class operations (restricted to single cluster)
+CLASS_CLUSTER_IP = "10.220.15.249"
+
+
+def list_proxmox_templates(cluster_ip: str = None) -> List[Dict[str, Any]]:
+    """List all VM templates on a Proxmox cluster.
+    
+    Args:
+        cluster_ip: IP of the Proxmox cluster (restricted to 10.220.15.249)
+    
+    Returns:
+        List of template dicts with keys: vmid, name, node, description
+    """
+    try:
+        # Restrict to 10.220.15.249 cluster only
+        target_ip = CLASS_CLUSTER_IP
+        if cluster_ip and cluster_ip != CLASS_CLUSTER_IP:
+            logger.warning(f"Template listing restricted to {CLASS_CLUSTER_IP}, ignoring request for {cluster_ip}")
+        
+        # Find cluster by IP
+        cluster_id = None
+        for cluster in CLUSTERS:
+            if cluster["host"] == target_ip:
+                cluster_id = cluster["id"]
+                break
+        
+        if not cluster_id:
+            logger.error(f"Cluster not found for IP: {target_ip}")
+            return []
+        
+        proxmox = get_proxmox_admin_for_cluster(cluster_id)
+        templates = []
+        
+        for node in proxmox.nodes.get():
+            node_name = node["node"]
+            
+            # Get QEMU VMs
+            for vm in proxmox.nodes(node_name).qemu.get():
+                if vm.get("template") == 1:
+                    templates.append({
+                        "vmid": vm["vmid"],
+                        "name": vm.get("name", f"VM-{vm['vmid']}"),
+                        "node": node_name,
+                        "description": vm.get("description", ""),
+                        "type": "qemu"
+                    })
+        
+        return templates
+    except Exception as e:
+        logger.exception(f"Failed to list templates: {e}")
+        return []
+
+
+def clone_vm_from_template(template_vmid: int, new_vmid: int, name: str, node: str, 
+                           cluster_ip: str = None) -> Tuple[bool, str]:
+    """Clone a VM from a template.
+    
+    Args:
+        template_vmid: VMID of the template to clone
+        new_vmid: VMID for the new VM
+        name: Name for the new VM
+        node: Node to create the VM on
+        cluster_ip: IP of the Proxmox cluster (restricted to 10.220.15.249)
+    
+    Returns:
+        Tuple of (success, message)
+    """
+    try:
+        # Restrict to 10.220.15.249 cluster only
+        target_ip = CLASS_CLUSTER_IP
+        if cluster_ip and cluster_ip != CLASS_CLUSTER_IP:
+            return False, f"VM deployment restricted to {CLASS_CLUSTER_IP} cluster only"
+        
+        cluster_id = None
+        for cluster in CLUSTERS:
+            if cluster["host"] == target_ip:
+                cluster_id = cluster["id"]
+                break
+        
+        if not cluster_id:
+            return False, f"Cluster not found for IP: {target_ip}"
+        
+        proxmox = get_proxmox_admin_for_cluster(cluster_id)
+        
+        # Clone the template
+        proxmox.nodes(node).qemu(template_vmid).clone.post(
+            newid=new_vmid,
+            name=name,
+            full=1  # Full clone (not linked)
+        )
+        
+        logger.info(f"Cloned template {template_vmid} to {new_vmid} ({name}) on {node}")
+        return True, f"Successfully cloned VM {name}"
+        
+    except Exception as e:
+        logger.exception(f"Failed to clone VM: {e}")
+        return False, f"Clone failed: {str(e)}"
+
+
+def clone_vms_for_class(template_vmid: int, node: str, count: int, name_prefix: str,
+                        cluster_ip: str = None) -> List[Dict[str, Any]]:
+    """Clone multiple VMs from a template for a class.
+    
+    Args:
+        template_vmid: VMID of the template
+        node: Node to create VMs on
+        count: Number of VMs to clone
+        name_prefix: Prefix for VM names (will append number)
+        cluster_ip: IP of the Proxmox cluster (restricted to 10.220.15.249)
+    
+    Returns:
+        List of dicts with keys: vmid, name, node
+    """
+    created_vms = []
+    
+    try:
+        # Restrict to 10.220.15.249 cluster only
+        target_ip = CLASS_CLUSTER_IP
+        if cluster_ip and cluster_ip != CLASS_CLUSTER_IP:
+            logger.error(f"VM deployment restricted to {CLASS_CLUSTER_IP}, ignoring request for {cluster_ip}")
+            return []
+        
+        cluster_id = None
+        for cluster in CLUSTERS:
+            if cluster["host"] == target_ip:
+                cluster_id = cluster["id"]
+                break
+        
+        if not cluster_id:
+            logger.error(f"Cluster not found for IP: {target_ip}")
+            return []
+        
+        proxmox = get_proxmox_admin_for_cluster(cluster_id)
+        
+        # Get next available VMID
+        used_vmids = set()
+        for node_info in proxmox.nodes.get():
+            node_name = node_info["node"]
+            for vm in proxmox.nodes(node_name).qemu.get():
+                used_vmids.add(vm["vmid"])
+        
+        next_vmid = 200  # Start from 200 for class VMs
+        
+        for i in range(count):
+            # Find next available VMID
+            while next_vmid in used_vmids:
+                next_vmid += 1
+            
+            vm_name = f"{name_prefix}-{i+1}"
+            success, msg = clone_vm_from_template(
+                template_vmid=template_vmid,
+                new_vmid=next_vmid,
+                name=vm_name,
+                node=node,
+                cluster_ip=cluster_ip
+            )
+            
+            if success:
+                created_vms.append({
+                    "vmid": next_vmid,
+                    "name": vm_name,
+                    "node": node
+                })
+                used_vmids.add(next_vmid)
+                next_vmid += 1
+            else:
+                logger.error(f"Failed to clone VM {vm_name}: {msg}")
+        
+        return created_vms
+        
+    except Exception as e:
+        logger.exception(f"Failed to clone VMs for class: {e}")
+        return created_vms
+
+
+def start_class_vm(vmid: int, node: str, cluster_ip: str = None) -> Tuple[bool, str]:
+    """Start a class VM.
+    
+    Args:
+        vmid: VM ID
+        node: Node name
+        cluster_ip: IP of the Proxmox cluster
+    
+    Returns:
+        Tuple of (success, message)
+    """
+    try:
+        cluster_id = None
+        for cluster in CLUSTERS:
+            if cluster["host"] == (cluster_ip or CLASS_CLUSTER_IP):
+                cluster_id = cluster["id"]
+                break
+        
+        if not cluster_id:
+            return False, f"Cluster not found"
+        
+        proxmox = get_proxmox_admin_for_cluster(cluster_id)
+        proxmox.nodes(node).qemu(vmid).status.start.post()
+        
+        logger.info(f"Started VM {vmid} on {node}")
+        return True, "VM started successfully"
+        
+    except Exception as e:
+        logger.exception(f"Failed to start VM {vmid}: {e}")
+        return False, f"Start failed: {str(e)}"
+
+
+def stop_class_vm(vmid: int, node: str, cluster_ip: str = None) -> Tuple[bool, str]:
+    """Stop a class VM.
+    
+    Args:
+        vmid: VM ID
+        node: Node name
+        cluster_ip: IP of the Proxmox cluster
+    
+    Returns:
+        Tuple of (success, message)
+    """
+    try:
+        cluster_id = None
+        for cluster in CLUSTERS:
+            if cluster["host"] == (cluster_ip or CLASS_CLUSTER_IP):
+                cluster_id = cluster["id"]
+                break
+        
+        if not cluster_id:
+            return False, f"Cluster not found"
+        
+        proxmox = get_proxmox_admin_for_cluster(cluster_id)
+        proxmox.nodes(node).qemu(vmid).status.shutdown.post()
+        
+        logger.info(f"Stopped VM {vmid} on {node}")
+        return True, "VM stopped successfully"
+        
+    except Exception as e:
+        logger.exception(f"Failed to stop VM {vmid}: {e}")
+        return False, f"Stop failed: {str(e)}"
+
+
+def get_vm_status(vmid: int, node: str, cluster_ip: str = None) -> Dict[str, Any]:
+    """Get VM status.
+    
+    Args:
+        vmid: VM ID
+        node: Node name
+        cluster_ip: IP of the Proxmox cluster
+    
+    Returns:
+        Dict with VM status info
+    """
+    try:
+        cluster_id = None
+        for cluster in CLUSTERS:
+            if cluster["host"] == (cluster_ip or CLASS_CLUSTER_IP):
+                cluster_id = cluster["id"]
+                break
+        
+        if not cluster_id:
+            return {"status": "unknown", "error": "Cluster not found"}
+        
+        proxmox = get_proxmox_admin_for_cluster(cluster_id)
+        status = proxmox.nodes(node).qemu(vmid).status.current.get()
+        
+        return {
+            "status": status.get("status", "unknown"),
+            "uptime": status.get("uptime", 0),
+            "cpu": status.get("cpu", 0),
+            "mem": status.get("mem", 0),
+            "maxmem": status.get("maxmem", 0),
+        }
+        
+    except Exception as e:
+        logger.exception(f"Failed to get VM status: {e}")
+        return {"status": "unknown", "error": str(e)}
+
+
+def create_vm_snapshot(vmid: int, node: str, snapname: str, description: str = "",
+                      cluster_ip: str = None) -> Tuple[bool, str]:
+    """Create a snapshot of a VM.
+    
+    Args:
+        vmid: VM ID
+        node: Node name
+        snapname: Snapshot name
+        description: Snapshot description
+        cluster_ip: IP of the Proxmox cluster
+    
+    Returns:
+        Tuple of (success, message)
+    """
+    try:
+        cluster_id = None
+        for cluster in CLUSTERS:
+            if cluster["host"] == (cluster_ip or CLASS_CLUSTER_IP):
+                cluster_id = cluster["id"]
+                break
+        
+        if not cluster_id:
+            return False, "Cluster not found"
+        
+        proxmox = get_proxmox_admin_for_cluster(cluster_id)
+        proxmox.nodes(node).qemu(vmid).snapshot.post(
+            snapname=snapname,
+            description=description
+        )
+        
+        logger.info(f"Created snapshot {snapname} for VM {vmid}")
+        return True, f"Snapshot '{snapname}' created"
+        
+    except Exception as e:
+        logger.exception(f"Failed to create snapshot: {e}")
+        return False, f"Snapshot failed: {str(e)}"
+
+
+def revert_vm_to_snapshot(vmid: int, node: str, snapname: str,
+                          cluster_ip: str = None) -> Tuple[bool, str]:
+    """Revert a VM to a snapshot.
+    
+    Args:
+        vmid: VM ID
+        node: Node name
+        snapname: Snapshot name
+        cluster_ip: IP of the Proxmox cluster
+    
+    Returns:
+        Tuple of (success, message)
+    """
+    try:
+        cluster_id = None
+        for cluster in CLUSTERS:
+            if cluster["host"] == (cluster_ip or CLASS_CLUSTER_IP):
+                cluster_id = cluster["id"]
+                break
+        
+        if not cluster_id:
+            return False, "Cluster not found"
+        
+        proxmox = get_proxmox_admin_for_cluster(cluster_id)
+        proxmox.nodes(node).qemu(vmid).snapshot(snapname).rollback.post()
+        
+        logger.info(f"Reverted VM {vmid} to snapshot {snapname}")
+        return True, f"Reverted to snapshot '{snapname}'"
+        
+    except Exception as e:
+        logger.exception(f"Failed to revert to snapshot: {e}")
+        return False, f"Revert failed: {str(e)}"
+
+
+def delete_vm(vmid: int, node: str, cluster_ip: str = None) -> Tuple[bool, str]:
+    """Delete a VM.
+    
+    Args:
+        vmid: VM ID
+        node: Node name
+        cluster_ip: IP of the Proxmox cluster
+    
+    Returns:
+        Tuple of (success, message)
+    """
+    try:
+        cluster_id = None
+        for cluster in CLUSTERS:
+            if cluster["host"] == (cluster_ip or CLASS_CLUSTER_IP):
+                cluster_id = cluster["id"]
+                break
+        
+        if not cluster_id:
+            return False, "Cluster not found"
+        
+        proxmox = get_proxmox_admin_for_cluster(cluster_id)
+        proxmox.nodes(node).qemu(vmid).delete()
+        
+        logger.info(f"Deleted VM {vmid} on {node}")
+        return True, "VM deleted successfully"
+        
+    except Exception as e:
+        logger.exception(f"Failed to delete VM {vmid}: {e}")
+        return False, f"Delete failed: {str(e)}"
+
+
+def convert_vm_to_template(vmid: int, node: str, cluster_ip: str = None) -> Tuple[bool, str]:
+    """Convert a VM to a template.
+    
+    Args:
+        vmid: VM ID
+        node: Node name
+        cluster_ip: IP of the Proxmox cluster
+    
+    Returns:
+        Tuple of (success, message)
+    """
+    try:
+        cluster_id = None
+        for cluster in CLUSTERS:
+            if cluster["host"] == (cluster_ip or CLASS_CLUSTER_IP):
+                cluster_id = cluster["id"]
+                break
+        
+        if not cluster_id:
+            return False, "Cluster not found"
+        
+        proxmox = get_proxmox_admin_for_cluster(cluster_id)
+        proxmox.nodes(node).qemu(vmid).template.post()
+        
+        logger.info(f"Converted VM {vmid} to template on {node}")
+        return True, "VM converted to template"
+        
+    except Exception as e:
+        logger.exception(f"Failed to convert VM to template: {e}")
+        return False, f"Conversion failed: {str(e)}"

@@ -10,7 +10,7 @@ import secrets
 from datetime import datetime, timedelta
 from typing import Optional, List, Tuple, Dict, Any
 
-from models import db, User, Class, Template, VMAssignment
+from app.models import db, User, Class, Template, VMAssignment
 
 logger = logging.getLogger(__name__)
 

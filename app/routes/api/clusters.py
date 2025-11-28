@@ -9,13 +9,13 @@ import logging
 
 from flask import Blueprint, jsonify, request, session, current_app
 
-from app.utils.decorators import login_required, admin_required
+from app.utils.decorators import login_required
 
-# Import path setup (adds rdp-gen to sys.path)
+# Import path setup is no longer needed
 import app.utils.paths
 
-from config import CLUSTERS
-from proxmox_client import (
+from app.config import CLUSTERS
+from app.services.proxmox_client import (
     switch_cluster,
     invalidate_cluster_cache,
     _invalidate_vm_cache,

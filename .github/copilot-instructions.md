@@ -1,80 +1,147 @@
 # Copilot Instructions for proxmox-lab-gui
 
 ## What this repo is
-A lightweight Flask webapp providing a lab VM portal similar to Azure Labs. Think "self-service VM access for students" – users log in with Proxmox credentials, see their assigned VMs, and can start/stop them or download RDP files. All code lives in `rdp-gen/` (Flask app + templates + Proxmox integration). No frontend framework, just vanilla JS + progressive loading.
+A Flask webapp providing a lab VM portal similar to Azure Labs for self-service student VM access.
+
+**Architecture**: Modular blueprint-based Flask application with all code under `app/` directory. Uses SQLite for class management and Proxmox API for VM control.
+
+**Entry point**: `run.py` - imports `create_app()` factory from `app/` package and runs Flask with threaded mode.
 
 ## Architecture patterns
 
-**Single-page progressive loading**:
-- Routes like `/portal` and `/admin` render skeleton HTML shells
-- JavaScript immediately calls `/api/vms` to fetch VM data and populate cards client-side
-- Avoids slow initial page loads while Proxmox API is queried
-- See `templates/index.html` for fetch pattern, `app.py` for API routes
+**Dual system coexistence** (user access):
+- **Legacy mappings.json system**: Admins manually map Proxmox users → VMIDs in JSON file at `app/mappings.json`. Still active for backwards compatibility.
+- **Class-based system**: Teachers create classes linked to Proxmox templates, VMs auto-cloned and assigned to students via invite links. SQLite-backed (`app/lab_portal.db`).
+- Both systems query same Proxmox clusters via `app/services/proxmox_client.py` and render same templates. User sees combined VM list (mappings.json + class assignments).
 
-**Two-tier caching strategy** (`proxmox_client.py` + `cache.py`):
-- Module-level `_vm_cache_data` dict (TTL from `VM_CACHE_TTL`, default 120s) caches full VM list
-- Separate `_ip_cache` (hardcoded 5min TTL) for guest agent IP lookups – **critical** to avoid timeout storms
-- `ProxmoxCache` class wraps `ProxmoxAdminWrapper` for threadsafe bulk fetching
-- Cache invalidation: automatic on VM start/stop via `_invalidate_vm_cache()`
+**Multi-cluster support** (`app/config.py` + `app/services/cluster_manager.py`):
+- `CLUSTERS` list defines multiple Proxmox clusters (can load from `clusters.json` for persistence)
+- Session stores `cluster_id` – user switches clusters via dropdown in UI
+- Each cluster gets separate `ProxmoxAPI` connection (cached in `_proxmox_connections` dict)
+- `get_proxmox_admin()` returns connection for current session cluster
+- **Key quirk**: `get_proxmox_admin_for_cluster(id)` bypasses session (used in parallel fetches)
 
-**Authentication & authorization** (`auth.py`):
-- User logs in with Proxmox username/password → attempts `ProxmoxAPI(...).version.get()` to validate
-- On success, session stores full userid (`student1@pve`)
-- `@login_required` checks session, `@admin_required` also checks `is_admin_user(userid)`
-- Admins defined by: (a) `ADMIN_USERS` list in config OR (b) membership in `ADMIN_GROUP` Proxmox group
+**Progressive loading pattern** (avoids slow page renders):
+- Routes like `/portal` render skeleton HTML with empty VM cards
+- JavaScript immediately calls `/api/vms` to fetch data and populate cards client-side
+- Prevents timeout on initial page load while Proxmox API is queried (can take 30s+ with many VMs)
+- See `templates/index.html` for fetch pattern, `app/routes/api/vms.py` for API
 
-**User-VM mapping** (`mappings.json`):
-- Non-admin users only see VMs explicitly mapped to their userid in JSON file
-- Admins see ALL VMs across all nodes (subject to `VALID_NODES` filter if set)
-- Admin UI at `/admin/mappings` lets you assign/unassign VMs to users
-- File format: `{"user@pve": [100, 101, 102], "student2@pve": [103]}`
+**Three-tier caching strategy** (complex, easy to confuse):
+1. **VM list cache** (`app/services/proxmox_client.py` module-level `_vm_cache_data` dict): TTL from `VM_CACHE_TTL` (300s default), caches full VM list per cluster. Invalidated on VM start/stop.
+2. **IP lookup cache** (`_ip_cache` in `app/services/proxmox_client.py`): Separate 5min TTL for guest agent IP queries – **critical** to avoid timeout storms (guest agent calls are SLOW).
+3. **Persistent cache** (`app/utils/caching.py` `PersistentCache` class): Optional JSON-backed cache for VM data/IPs across restarts (files: `vm_cache.json`, `ip_cache.json`).
+
+**IP discovery hierarchy** (most complex subsystem):
+1. **LXC containers**: Fast via `.interfaces.get()` API (works even when stopped)
+2. **QEMU VMs with guest agent**: Slow via `.agent.get()` API (requires running VM + installed agent)
+3. **ARP scanner fallback** (`app/services/arp_scanner.py`): Uses `nmap -sn -PR` (requires root/CAP_NET_RAW) to populate kernel ARP table, matches VM MAC → IP. Cached 1hr, runs in background thread.
+4. **RDP port scan**: Optional validation that discovered IP has port 3389 open (Windows VMs only)
+
+**Authentication & authorization** (dual-mode):
+- **Proxmox auth** (`app/services/user_manager.py`): Validates credentials via `ProxmoxAPI(...).version.get()` call. Session stores full userid (`student1@pve`).
+- **Local auth** (`app/services/class_service.py`): SQLite users with password hashing (Werkzeug) for class system. Three roles: `adminer` (full admin), `teacher` (create/manage classes), `user` (student).
+- Login flow: Try Proxmox auth first, then local auth fallback. Session sets `user` key to username (with or without realm suffix).
+- Admin detection: `is_admin_user(userid)` checks (a) `ADMIN_USERS` list OR (b) membership in `ADMIN_GROUP` Proxmox group OR (c) local user role == 'adminer'.
+
+**Blueprint-based routing** (`app/routes/__init__.py`):
+```
+auth.py          → /login, /register, /logout
+portal.py        → /portal (main VM dashboard)
+classes.py       → /classes, /classes/create, /classes/join/<token>
+admin/
+  mappings.py    → /admin/mappings (legacy JSON editor)
+  clusters.py    → /admin/clusters (add/edit Proxmox clusters)
+  diagnostics.py → /admin (probe nodes, view system info)
+api/
+  vms.py         → /api/vms (fetch VM list), /api/vm/<vmid>/start|stop
+  classes.py     → /api/classes (CRUD), /api/class/<id>/pool, /api/class/<id>/assign
+  rdp.py         → /rdp/<vmid>.rdp (download RDP file)
+  ssh.py         → /ssh/<vmid> (WebSocket terminal, requires flask-sock)
+  mappings.py    → /api/mappings (CRUD for mappings.json)
+  clusters.py    → /api/clusters/switch (change active cluster)
+```
+
 
 ## Key files
 
-**`rdp-gen/app.py`** (Flask entrypoint, ~410 lines):
-- All routes: `/login`, `/register`, `/logout`, `/portal`, `/admin`, `/admin/mappings`, `/admin/probe`, `/health`
-- API endpoints: `/api/vms`, `/api/mappings`, `/api/vm/<vmid>/start`, `/api/vm/<vmid>/stop`
-- RDP download: `/rdp/<vmid>.rdp` (triggers browser download with Content-Disposition header)
-- Helper: `require_user()` returns current userid or aborts 401 (use instead of raw `session.get("user")`)
-- Decorator: `admin_required` = `login_required` + `is_admin_user()` check
-- Runs on 0.0.0.0:8080 via `app.run()` with threaded mode for development and production
+**`run.py`** (Application entry point, ~60 lines):
+- Imports `create_app` factory from `app/` package, runs Flask app with `threaded=True`
+- Disables SSL warnings if `PVE_VERIFY=False` (before any imports)
+- Adds `rdp-gen/` to sys.path for legacy imports (done in `app/utils/paths.py`)
 
-**`rdp-gen/proxmox_client.py`** (Proxmox integration, ~680 lines):
-- Singletons: `proxmox_admin` (ProxmoxAPI instance), `proxmox_admin_wrapper` (for cache interface)
-- Core functions: `get_all_vms()`, `get_vms_for_user(user, search)`, `find_vm_for_user(user, vmid)`
-- VM operations: `start_vm(vm)`, `shutdown_vm(vm)` – handle both QEMU and LXC types
-- RDP generation: `build_rdp(vm)` – raises `ValueError` if VM has no IP (caller must catch)
-- Category guessing: `_guess_category(vm)` – "win" in name → windows, LXC → linux, else → other
-- IP lookups: LXC via `.interfaces.get()` (fast, works when stopped), QEMU via guest agent (slow, requires running VM)
-- User management: `create_pve_user(username, password)` for self-service registration
-- Admin detection: `is_admin_user(userid)` checks `ADMIN_USERS` list + `ADMIN_GROUP` membership
-- Diagnostics: `probe_proxmox()` returns node/resource summary dict (used by `/admin/probe` route)
+**`app/__init__.py`** (Application factory, ~110 lines):
+- `create_app()` function: configures Flask, initializes SQLAlchemy (`models.init_db()`), registers blueprints
+- WebSocket support: conditionally imports `flask-sock` (gracefully degrades if missing)
+- Context processor: injects `is_admin`, `clusters`, `current_cluster`, `local_user` into all templates
+- Templates/static served from `app/templates/` and `app/static/` directories
 
-**`rdp-gen/config.py`**:
-- **ALL settings use `os.getenv()` with hardcoded defaults** – never commit prod secrets!
-- Proxmox API: `PVE_HOST`, `PVE_ADMIN_USER`, `PVE_ADMIN_PASS`, `PVE_VERIFY` (SSL verification)
-- Node filtering: `VALID_NODES` (comma-separated list, or None for all nodes)
-- Admin privileges: `ADMIN_USERS` (comma-separated), `ADMIN_GROUP` (Proxmox group name)
-- Performance: `VM_CACHE_TTL` (seconds, default 120), `ENABLE_IP_LOOKUP` (bool, default True)
-- Persistence: `MAPPINGS_FILE` (path to JSON file, defaults to `rdp-gen/mappings.json`)
-- Session: `SECRET_KEY` (Flask session signing, change in production!)
+**`app/models.py`** (SQLAlchemy ORM, ~260 lines):
+- `User`: Local accounts with roles (`adminer`/`teacher`/`user`), password hashing via Werkzeug
+- `Class`: Lab classes created by teachers, linked to `Template`, has `join_token` with expiry
+- `Template`: References Proxmox template VMIDs, can be cluster-wide or class-specific
+- `VMAssignment`: Tracks cloned VMs assigned to classes/users, status field (`available`/`assigned`/`deleting`)
+- `init_db(app)`: Sets up SQLite at `app/lab_portal.db`, creates tables on first run
 
-**`rdp-gen/cache.py`** (`ProxmoxCache` class):
-- Threadsafe caching wrapper with `threading.Lock()` and TTL expiration
-- Requires client implementing: `get_nodes()`, `list_qemu(node)`, `status_qemu(node, vmid)`
-- Used by `app.py` on startup: `cache = ProxmoxCache(proxmox_admin_wrapper, ttl=VM_CACHE_TTL)`
-- **Note**: `proxmox_client.py` functions use separate module-level cache, not this class
+**`app/services/proxmox_operations.py`** (VM cloning & template operations, ~410 lines):
+- Template management: `list_proxmox_templates()` (scans clusters for template VMs)
+- VM cloning: `clone_vm_from_template()`, `clone_vms_for_class()` (multi-VM batch cloning)
+- VM lifecycle: `start_class_vm()`, `stop_class_vm()`, `delete_vm()`, `get_vm_status()`
+- Snapshot operations: `create_vm_snapshot()`, `revert_vm_to_snapshot()`
+- Template conversion: `convert_vm_to_template()` (converts VM → template)
+- Multi-cluster aware: Takes `cluster_ip` param, looks up cluster by IP in `CLUSTERS` config
 
-**`rdp-gen/auth.py`**:
-- `authenticate_proxmox_user(username, password)` – attempts Proxmox API call to validate credentials
-- `@login_required` decorator – checks `session.get("user")`, redirects to login if missing
-- `current_user()` – returns userid from session or None
+**`app/services/class_service.py`** (Class management logic, ~560 lines):
+- User CRUD: `create_local_user()`, `authenticate_local_user()`, `update_user_role()`
+- Class CRUD: `create_class()`, `update_class()`, `delete_class()`, `get_classes_for_teacher()`
+- VM pool management: `add_vms_to_class_pool()` (clones template), `remove_vm_from_class()` (deletes VM)
+- Student enrollment: `join_class_via_token()` (auto-assigns unassigned VM), `generate_class_invite()`
+- Template registration: `register_template()` (scans Proxmox for templates, saves to DB)
+
+**`app/services/proxmox_client.py`** (Proxmox integration, ~1800 lines):
+- **Singletons**: `proxmox_admin` (legacy single cluster), `proxmox_admin_wrapper` (cache adapter)
+- **Core VM functions**: `get_all_vms()` (fetch all VMs, applies mappings.json filter), `get_vms_for_user()` (user-specific view), `find_vm_for_user()` (permission check)
+- **VM operations**: `start_vm(vm)`, `shutdown_vm(vm)` – handle both QEMU and LXC, invalidate cache after operation
+- **IP discovery**: `_lookup_vm_ip(vm, proxmox, node, vmid, vm_type)` – tries guest agent (QEMU) or interfaces (LXC), falls back to ARP scan
+- **RDP generation**: `build_rdp(vm)` – raises `ValueError` if VM has no IP (caller must catch)
+- **Admin operations**: `create_pve_user()`, `is_admin_user()`, `_user_in_group()` (handles dual membership format quirk)
+- **Caching**: Module-level `_vm_cache_data`, `_ip_cache` dicts with `_invalidate_vm_cache()` function
+
+**`app/services/proxmox_service.py`** (Multi-cluster proxy, ~180 lines):
+- `get_proxmox_admin()`: Returns `ProxmoxAPI` instance for current session cluster (lazy init + thread-safe)
+- `get_proxmox_admin_for_cluster(cluster_id)`: Returns connection for specific cluster (no session dependency)
+- `_proxmox_connections` dict: Caches one `ProxmoxAPI` per cluster (cleared on cluster config change)
+- `get_current_cluster()`: Reads `session["cluster_id"]` or defaults to first cluster in `CLUSTERS` list
+
+**`app/services/cluster_manager.py`** (~80 lines):
+- `save_cluster_config(clusters)`: Persists to `clusters.json`, updates runtime `CLUSTERS` list, clears connections
+- `invalidate_cluster_cache()`: Clears short-lived cluster resources cache (not VM cache, confusingly named)
+
+**`app/config.py`** (Configuration, ~105 lines):
+- **Multi-cluster**: `CLUSTERS` list (id, name, host, user, password, verify_ssl) – loads from `clusters.json` if exists
+- **Legacy single-cluster**: `PVE_HOST`, `PVE_ADMIN_USER`, `PVE_ADMIN_PASS` (still used as defaults)
+- **Admin privileges**: `ADMIN_USERS` (comma-separated), `ADMIN_GROUP` (Proxmox group name, default "adminers")
+- **Performance**: `VM_CACHE_TTL` (300s), `PROXMOX_CACHE_TTL` (30s), `ENABLE_IP_LOOKUP` (bool), `ENABLE_IP_PERSISTENCE` (slow, disabled by default)
+- **Persistence files**: `MAPPINGS_FILE` (JSON), `CLUSTER_CONFIG_FILE` (JSON), `IP_CACHE_FILE` (JSON), `VM_CACHE_FILE` (JSON)
+- **ARP scanner**: `ARP_SUBNETS` (broadcast addresses, default `["10.220.15.255"]` for 10.220.8.0/21 network)
+
+**`app/services/arp_scanner.py`** (ARP-based IP discovery, ~740 lines):
+- `discover_ips_via_arp(vm_mac_map, subnets, background=True)`: Runs nmap ARP probe, matches MAC→IP
+- `get_arp_table()`: Parses `ip neigh` or `/proc/net/arp` output, returns `{mac: ip}` dict
+- `check_rdp_ports(ips, timeout=1)`: Parallel TCP port 3389 check (validates Windows VM connectivity)
+- **Background mode**: Spawns thread, returns cached results immediately (avoids blocking API responses)
+- **Root requirement**: `nmap -sn -PR` (ARP ping) needs root or `CAP_NET_RAW` capability. Falls back to ICMP ping without root.
+- **Cache**: `_arp_cache` (1hr TTL), `_rdp_hosts_cache` (RDP-enabled IPs), invalidated on VM operations
+
+**`app/utils/caching.py`** (Cache utilities, ~170 lines):
+- `ThreadSafeCache`: In-memory dict with TTL, thread lock, `get()`/`set()`/`invalidate()` methods
+- `PersistentCache`: JSON-backed cache with same interface, survives restarts, used for VM/IP persistence
 
 **Production deployment files**:
-- `start.sh` – Activates venv, loads `.env`, runs Flask app.py directly with threaded mode
-- `deploy.sh` – Deployment script: detects systemd service or standalone Flask, restarts
-- `proxmox-gui.service` – Systemd unit file running app.py directly (edit User/Group/paths, then `systemctl enable/start`)
-- `.env.example` – Template for local `.env` file (gitignored)
+- `start.sh` – Activates venv, loads `.env`, runs `python3 run.py`
+- `deploy.sh` – Git pull, pip install, restart systemd service or standalone Flask
+- `proxmox-gui.service` – Systemd unit (edit User/Group/paths, then `systemctl enable/start`)
+
 
 ## Developer workflows
 
@@ -82,16 +149,16 @@ A lightweight Flask webapp providing a lab VM portal similar to Azure Labs. Thin
 ```bash
 cd /workspaces/proxmox-lab-gui
 python3 -m venv venv
-source venv/bin/activate
+source venv/bin/activate  # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 cp .env.example .env  # Edit with your Proxmox credentials
-cd rdp-gen && python3 app.py  # Runs on http://0.0.0.0:8080
+python3 run.py  # Runs on http://0.0.0.0:8080
 ```
 
 **Production deployment**:
 ```bash
 # Quick start with Flask
-./start.sh  # Activates venv, loads .env, runs app.py directly with threaded mode
+./start.sh  # Activates venv, loads .env, runs run.py with threaded mode
 
 # Or via systemd (recommended)
 sudo cp proxmox-gui.service /etc/systemd/system/
@@ -104,28 +171,54 @@ sudo systemctl status proxmox-gui
 ./deploy.sh  # Auto-detects systemd or standalone Flask, restarts
 ```
 
+**Class-based lab workflow**:
+1. **Initial setup**: Admin creates local teacher accounts via `create_local_user(username, password, role='teacher')` or direct DB insert
+2. **Register templates**: Teacher visits `/admin/probe` to see available templates, registers them via API or DB
+3. **Create class**: Teacher creates class at `/classes/create`, selects template, sets pool size
+4. **Generate invite**: Teacher generates never-expiring or time-limited invite link (7-day default)
+5. **Clone VMs**: Teacher adds VMs to pool (clones template N times, creates `VMAssignment` records)
+6. **Student enrollment**: Students visit invite link, auto-assigned first available VM in class pool
+7. **Student access**: Student sees assigned VM in `/portal`, can start/stop/revert to baseline snapshot
+
+**Database migrations** (no formal tool, manual process):
+- Schema changes: edit `app/models.py`, then in Python shell:
+  ```python
+  from app import create_app
+  from app.models import db
+  app = create_app()
+  with app.app_context():
+      db.drop_all()  # WARNING: destroys data!
+      db.create_all()
+  ```
+- For production: manually ALTER TABLE or export/import data
+
 **Debugging tips**:
 - Check `/health` endpoint – returns `{"status": "ok"}` if app is running
-- Use `/admin/probe` (admin only) – shows Proxmox node summary, resource counts, API latency
-- Run `python3 rdp-gen/proxmox_probe.py` – CLI tool dumps probe output as JSON
+- Use `/admin` (admin only) – shows Proxmox node summary, resource counts, API latency
+- Run `python3 -c "from app.services import proxmox_client; print(proxmox_client.probe_proxmox())"` – Test Proxmox connectivity
 - Session debugging: `app.logger.info()` logs to stdout/stderr (visible in `journalctl -u proxmox-gui -f`)
 - Admin access issues: verify `is_admin_user(userid)` returns True, check logs for "inject_admin_flag" entries
+- Cache debugging: check `_vm_cache_data` age, manually call `_invalidate_vm_cache()` if stale
+- ARP scanner: verify nmap installed, run with `sudo` for ARP probe access, check `_arp_cache` status
 
 **Testing without Proxmox** (no test suite exists):
-- `mock_client.py` removed (not maintained) – implement your own stub if needed
-- Minimal stub: class with `get_nodes()` → `[{"node": "prox1"}]`, `list_qemu(node)` → `[{...vm dict...}]`, `status_qemu(node, vmid)` → `{...status...}`
-- Swap `proxmox_admin_wrapper` in `app.py` with your stub instance
+- Create mock `ProxmoxAPI` class with methods: `version.get()`, `nodes().qemu().status.current.get()`, etc.
+- Swap `proxmox_admin` in `app/services/proxmox_client.py` or inject mock into `app/services/proxmox_service.py`
+- Return fixture VM dicts: `{"vmid": 100, "name": "test-vm", "status": "running", "node": "mock1", "type": "qemu"}`
 
 **Environment config priority**:
 1. Export env vars: `export PVE_HOST=10.220.15.249`
 2. Or create `.env` file (gitignored): `PVE_HOST=10.220.15.249`
-3. Fallback to hardcoded defaults in `config.py` (insecure for prod!)
+3. Or edit `clusters.json` for multi-cluster persistence
+4. Fallback to hardcoded defaults in `app/config.py` (insecure for prod!)
 
 **No automated tests** – manual testing workflow:
 - Start app, login with Proxmox user, verify VMs appear in `/portal`
 - Test start/stop buttons, check Proxmox UI for VM status changes
 - Download RDP file for Windows VM, verify connection works
 - Admin: login as admin user, verify `/admin` and `/admin/mappings` accessible
+- Classes: create local account, create class as teacher, generate invite, join as student
+
 
 ## Security & secrets
 - `config.py` has hardcoded defaults for local dev (10.220.15.249, password!)
@@ -137,7 +230,7 @@ sudo systemctl status proxmox-gui
 
 **Dual caching layers** (easy to confuse):
 - `ProxmoxCache` class in `cache.py` – used minimally, mostly for app startup warmup
-- Module-level `_vm_cache_data` dict in `proxmox_client.py` – **primary cache** for all `/api/vms` calls
+- Module-level `_vm_cache_data` dict in `app/services/proxmox_client.py` – **primary cache** for all `/api/vms` calls
 - IP lookups have separate `_ip_cache` (5min TTL) to avoid guest agent timeout storms
 - Cache invalidation: `start_vm()` and `shutdown_vm()` call `_invalidate_vm_cache()` to clear module-level cache
 
@@ -149,7 +242,7 @@ sudo systemctl status proxmox-gui
 **LXC vs QEMU differences** (both exposed as "VMs"):
 - LXC: `nodes(node).lxc(vmid)`, IP via `.interfaces.get()` (fast, works when stopped)
 - QEMU: `nodes(node).qemu(vmid)`, IP via `.agent.get()` (slow, requires running VM + guest agent installed)
-- Unified in code via `type` field: "lxc" or "qemu" (see `_build_vm_dict()` in `proxmox_client.py`)
+- Unified in code via `type` field: "lxc" or "qemu" (see `_build_vm_dict()` in `app/services/proxmox_client.py`)
 
 **RDP file generation failures**:
 - `build_rdp(vm)` raises `ValueError` if VM has no IP address (stopped VMs, missing guest agent)
@@ -157,7 +250,7 @@ sudo systemctl status proxmox-gui
 - Frontend: `index.html` hides RDP button if `vm.ip` is falsy or placeholder string
 
 **mappings.json path resolution**:
-- Defaults to `rdp-gen/mappings.json` (relative to `proxmox_client.py`)
+- Defaults to `app/mappings.json` (relative to `config.py`)
 - Override with `MAPPINGS_FILE` env var (absolute path recommended for production)
 - Auto-created on first write if missing – parent dir must exist!
 
@@ -167,9 +260,10 @@ sudo systemctl status proxmox-gui
 - Production: use proper certs and set `PVE_VERIFY=True`
 
 **Session secret key hardcoded** (`SECRET_KEY="change-me-session-key"`):
-- Default in `config.py` is **insecure** – sessions can be forged!
+- Default in `app/config.py` is **insecure** – sessions can be forged!
 - Production: generate random key: `python3 -c 'import secrets; print(secrets.token_hex(32))'`
 - Set via `SECRET_KEY` env var or `.env` file
+
 
 ## Common tasks
 
@@ -187,7 +281,7 @@ def api_vm_reboot(vmid: int):
 ```
 
 **Add VM metadata field**:
-1. In `proxmox_client.py` `_build_vm_dict()`, extract from `raw` dict: `cores = raw.get("maxcpu")`
+1. In `app/services/proxmox_client.py` `_build_vm_dict()`, extract from `raw` dict: `cores = raw.get("maxcpu")`
 2. Add to return dict: `"cores": cores`
 3. In `index.html`, add display: `<div>Cores: {{ vm.cores }}</div>`
 
@@ -198,7 +292,7 @@ def api_vm_reboot(vmid: int):
 
 **Manually test authentication**:
 ```python
-from auth import authenticate_proxmox_user
+from app.services.user_manager import authenticate_proxmox_user
 result = authenticate_proxmox_user("student1", "password")
 print(result)  # Should return "student1@pve" or None
 ```

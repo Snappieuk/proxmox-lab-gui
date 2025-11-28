@@ -12,7 +12,7 @@ import urllib3
 # Completely disable SSL warnings and verification
 urllib3.disable_warnings()
 
-from config import (
+from app.config import (
     PVE_HOST,
     PVE_ADMIN_USER,
     PVE_ADMIN_PASS,
@@ -33,7 +33,7 @@ from config import (
 
 # Import ARP scanner for fast IP discovery
 try:
-    from arp_scanner import discover_ips_via_arp, normalize_mac, has_rdp_port_open, invalidate_arp_cache
+    from app.services.arp_scanner import discover_ips_via_arp, normalize_mac, has_rdp_port_open, invalidate_arp_cache
     ARP_SCANNER_AVAILABLE = True
 except ImportError:
     ARP_SCANNER_AVAILABLE = False

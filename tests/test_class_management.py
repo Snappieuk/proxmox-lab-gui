@@ -184,7 +184,7 @@ def test_class_service_functions_exist():
 
 def test_proxmox_operations_functions_exist():
     """Test that Proxmox operations functions exist."""
-    from proxmox_operations import (
+    from app.services.proxmox_operations import (
         list_proxmox_templates,
         clone_vm_from_template,
         convert_vm_to_template,

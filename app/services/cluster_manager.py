@@ -13,7 +13,7 @@ from typing import Dict, List, Any
 # Import path setup (adds rdp-gen to sys.path)
 import app.utils.paths
 
-from config import CLUSTERS, CLUSTER_CONFIG_FILE
+from app.config import CLUSTERS, CLUSTER_CONFIG_FILE
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ def save_cluster_config(clusters: List[Dict[str, Any]]) -> None:
     
     Persists changes across restarts by writing to clusters.json.
     """
-    import config
+    import app.config as config
     
     # Update runtime config
     CLUSTERS.clear()

@@ -11,10 +11,10 @@ from flask import Blueprint, render_template, redirect, url_for, request, sessio
 
 from app.utils.decorators import login_required
 
-# Import path setup (adds rdp-gen to sys.path)
+# Import path setup is no longer needed
 import app.utils.paths
 
-from class_service import (
+from app.services.class_service import (
     get_class_by_id,
     get_class_by_token,
     get_classes_for_teacher,

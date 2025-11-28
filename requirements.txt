@@ -1,5 +1,4 @@
 flask
-flask-caching
 flask-sock
 flask-sqlalchemy
 proxmoxer
