@@ -57,7 +57,7 @@ class SSHWebSocketHandler:
                 '-o', 'UserKnownHostsFile=/dev/null',
                 '-o', 'NumberOfPasswordPrompts=3',
                 '-o', 'PubkeyAuthentication=no',  # Disable key auth to force password
-                '-T',  # Disable pseudo-terminal allocation (we already have one)
+                '-tt',  # Disable pseudo-terminal allocation (we already have one)
                 f'{self.username}@{self.ip}'
             ]
             logger.info("Starting SSH with command: %s", ' '.join(ssh_cmd))
