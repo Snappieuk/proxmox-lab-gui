@@ -63,14 +63,34 @@ def get_template_info(class_id: int):
         # Get VM status from Proxmox
         vm_status = get_vm_status(template.proxmox_vmid, template.cluster_ip)
         
-        # Validate node
+        # Get node from Proxmox if not set in template
         node = template.node
         logger.info(f"Fetching VM config for template_id={template.id}, vmid={template.proxmox_vmid}, node={node}")
-        if not node or node.lower() == "qemu":
-            logger.error(f"Template {template.id} has invalid node assigned: '{node}'. Cannot fetch config for VMID {template.proxmox_vmid}.")
-            return jsonify({"ok": False, "error": f"Template has invalid node assigned: '{node}'"}), 500
         
         proxmox = get_proxmox_admin_for_cluster(template.cluster_ip)
+        
+        # If node is missing or invalid, fetch it from Proxmox
+        if not node or node.lower() == "qemu":
+            logger.warning(f"Template {template.id} has invalid/missing node: '{node}'. Fetching from Proxmox...")
+            try:
+                # Get all VMs from cluster to find the node
+                resources = proxmox.cluster.resources.get(type="vm")
+                for r in resources:
+                    if r.get('vmid') == template.proxmox_vmid:
+                        node = r.get('node')
+                        logger.info(f"Found node '{node}' for VMID {template.proxmox_vmid}")
+                        # Update template with correct node
+                        template.node = node
+                        db.session.commit()
+                        break
+                
+                if not node or node.lower() == "qemu":
+                    logger.error(f"Could not find valid node for VMID {template.proxmox_vmid}")
+                    return jsonify({"ok": False, "error": f"Could not find VM node for VMID {template.proxmox_vmid}"}), 500
+            except Exception as e:
+                logger.error(f"Failed to fetch node from Proxmox: {e}")
+                return jsonify({"ok": False, "error": f"Failed to fetch VM node: {e}"}), 500
+        
         vm_config = proxmox.nodes(node).qemu(template.proxmox_vmid).config.get()
         
         # Extract MAC address from network config
