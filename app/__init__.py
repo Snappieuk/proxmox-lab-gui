@@ -1,0 +1,94 @@
+#!/usr/bin/env python3
+"""
+Flask Application Factory
+
+This module provides the create_app factory function for creating
+configured Flask application instances.
+"""
+
+import logging
+import sys
+import os
+
+from flask import Flask, session
+
+# Add rdp-gen to path for legacy imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'rdp-gen'))
+
+from config import SECRET_KEY, CLUSTERS
+
+# Initialize logging
+from app.utils.logging import configure_logging, get_logger
+
+configure_logging()
+logger = get_logger(__name__)
+
+
+def create_app(config=None):
+    """Create and configure the Flask application.
+    
+    Args:
+        config: Optional configuration dictionary to override defaults
+        
+    Returns:
+        Configured Flask application instance
+    """
+    # Create Flask app with template/static from rdp-gen directory
+    template_folder = os.path.join(os.path.dirname(__file__), '..', 'rdp-gen', 'templates')
+    static_folder = os.path.join(os.path.dirname(__file__), '..', 'rdp-gen', 'static')
+    
+    app = Flask(__name__, 
+                template_folder=template_folder,
+                static_folder=static_folder)
+    
+    # Configure secret key
+    app.secret_key = SECRET_KEY
+    
+    # Apply any additional config
+    if config:
+        app.config.update(config)
+    
+    # Configure logging
+    logging.basicConfig(level=logging.INFO)
+    
+    # Initialize WebSocket support
+    try:
+        from flask_sock import Sock
+        sock = Sock(app)
+        logger.info("WebSocket support ENABLED (flask-sock loaded)")
+        
+        # Initialize WebSocket routes
+        from app.routes.api.ssh import init_websocket
+        init_websocket(app, sock)
+    except ImportError:
+        logger.warning("WebSocket support DISABLED (flask-sock not available)")
+    
+    # Register blueprints
+    from app.routes import register_blueprints
+    register_blueprints(app)
+    
+    # Register context processor
+    @app.context_processor
+    def inject_admin_flag():
+        """Inject admin flag and cluster info into all templates."""
+        from app.services.user_manager import is_admin_user
+        
+        user = session.get("user")
+        is_admin = is_admin_user(user) if user else False
+        
+        # Log admin status for debugging
+        if user:
+            app.logger.debug("inject_admin_flag: user=%s is_admin=%s", user, is_admin)
+        
+        # Inject cluster info for dropdown
+        current_cluster = session.get("cluster_id", CLUSTERS[0]["id"])
+        clusters = [{"id": c["id"], "name": c["name"]} for c in CLUSTERS]
+        
+        return {
+            "is_admin": is_admin,
+            "clusters": clusters,
+            "current_cluster": current_cluster
+        }
+    
+    logger.info("Flask app created successfully")
+    return app

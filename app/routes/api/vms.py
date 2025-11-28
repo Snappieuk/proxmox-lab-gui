@@ -1,0 +1,173 @@
+#!/usr/bin/env python3
+"""
+VM API routes blueprint.
+
+Handles VM list, IP lookup, and power control operations.
+"""
+
+import logging
+
+from flask import Blueprint, jsonify, request, current_app
+
+from app.utils.decorators import login_required
+
+# Import from legacy module
+import sys
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..', 'rdp-gen'))
+
+from proxmox_client import (
+    get_vms_for_user,
+    get_vm_ip,
+    find_vm_for_user,
+    start_vm,
+    shutdown_vm,
+    build_rdp,
+    invalidate_cluster_cache,
+    verify_vm_ip,
+)
+from arp_scanner import get_scan_status, has_rdp_port_open, get_rdp_cache_time
+
+logger = logging.getLogger(__name__)
+
+api_vms_bp = Blueprint('api_vms', __name__, url_prefix='/api')
+
+
+@api_vms_bp.route("/vms")
+@login_required
+def api_vms():
+    """
+    Get VMs for current user.
+    
+    Query parameters:
+    - skip_ips: Skip ARP scan for fast initial load (IPs will be 'N/A')
+    - force_refresh: Bypass cache and fetch fresh data from Proxmox
+    - search: Filter VMs by name/VMID/IP
+    """
+    from app.services.user_manager import require_user
+    
+    user = require_user()
+    skip_ips = request.args.get('skip_ips', 'false').lower() == 'true'
+    force_refresh = request.args.get('force_refresh', 'false').lower() == 'true'
+    search = request.args.get('search', '')
+    
+    try:
+        vms = get_vms_for_user(user, search=search or None, skip_ips=skip_ips, force_refresh=force_refresh)
+        
+        # Check which VMs can actually generate RDP files
+        rdp_cache_valid = get_rdp_cache_time() > 0  # Has the port scan completed?
+        
+        for vm in vms:
+            rdp_can_build = False
+            rdp_port_available = False
+            
+            # Check if build_rdp would succeed (has valid IP)
+            try:
+                build_rdp(vm)
+                rdp_can_build = True
+            except Exception:
+                rdp_can_build = False
+            
+            # Check if this is Windows OR has port 3389 open
+            if vm.get('category') == 'windows':
+                rdp_port_available = True  # Windows always assumed to have RDP
+            elif rdp_cache_valid and vm.get('ip') and vm['ip'] not in ('N/A', 'Fetching...', ''):
+                rdp_port_available = has_rdp_port_open(vm['ip'])
+            
+            # Only show button if BOTH conditions met
+            vm['rdp_available'] = rdp_can_build and rdp_port_available
+        
+        return jsonify(vms)
+    except Exception as e:
+        logger.exception("Failed to get VMs for user %s", user)
+        return jsonify({
+            "error": True,
+            "message": f"Failed to load VMs: {str(e)}",
+            "details": "Check if Proxmox server is reachable and credentials are correct"
+        }), 500
+
+
+@api_vms_bp.route("/vm/<int:vmid>/ip")
+@login_required
+def api_vm_ip(vmid: int):
+    """Get IP address for a specific VM (lazy loading)."""
+    from app.services.user_manager import require_user
+    
+    user = require_user()
+    try:
+        vm = find_vm_for_user(user, vmid)
+        if not vm:
+            return jsonify({"error": "VM not found or not accessible"}), 404
+        
+        # First check if we have a scan status (from background ARP scan)
+        scan_status = get_scan_status(vmid)
+        
+        if scan_status:
+            # If status is an IP address (contains dots), return it
+            if '.' in scan_status and scan_status.count('.') == 3:
+                return jsonify({
+                    "vmid": vmid,
+                    "ip": scan_status,
+                    "status": "complete"
+                })
+        
+        # Direct IP lookup (guest agent/interfaces)
+        cluster_id = vm.get("cluster_id", "cluster1")
+        ip = get_vm_ip(cluster_id, vmid, vm["node"], vm["type"])
+        
+        if ip:
+            return jsonify({
+                "vmid": vmid,
+                "ip": ip,
+                "status": "complete"
+            })
+        
+        # No IP found
+        return jsonify({
+            "vmid": vmid,
+            "ip": None,
+            "status": scan_status if scan_status else "not_found"
+        })
+    except Exception as e:
+        logger.exception("Failed to get IP for VM %d", vmid)
+        return jsonify({"error": str(e), "status": "error"}), 500
+
+
+@api_vms_bp.route("/vm/<int:vmid>/start", methods=["POST"])
+@login_required
+def api_vm_start(vmid: int):
+    """Start a VM."""
+    from app.services.user_manager import require_user
+    
+    user = require_user()
+    vm = find_vm_for_user(user, vmid)
+    if not vm:
+        return jsonify({"ok": False, "error": "VM not found or not allowed"}), 404
+
+    try:
+        start_vm(vm)
+        invalidate_cluster_cache()
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+    return jsonify({"ok": True})
+
+
+@api_vms_bp.route("/vm/<int:vmid>/stop", methods=["POST"])
+@login_required
+def api_vm_stop(vmid: int):
+    """Stop a VM."""
+    from app.services.user_manager import require_user
+    
+    user = require_user()
+    vm = find_vm_for_user(user, vmid)
+    if not vm:
+        return jsonify({"ok": False, "error": "VM not found or not allowed"}), 404
+
+    try:
+        shutdown_vm(vm)
+        invalidate_cluster_cache()
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+    return jsonify({"ok": True})

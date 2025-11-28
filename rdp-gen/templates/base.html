@@ -19,7 +19,7 @@
     <div class="topbar-right">
         {% if session.get("user") %}
             <span class="topbar-user">{{ session.get("user") }}</span>
-            <a href="{{ url_for('logout') }}" class="topbar-link">Sign out</a>
+            <a href="{{ url_for('auth.logout') }}" class="topbar-link">Sign out</a>
         {% endif %}
     </div>
 </header>
@@ -43,22 +43,22 @@
         {% endif %}
         <div class="sidebar-section-title">Navigation</div>
         {% if session.get("user") %}
-            <a class="sidebar-link {% if request.endpoint == 'portal' %}sidebar-link-active{% endif %}"
-               href="{{ url_for('portal') }}">My machines</a>
+            <a class="sidebar-link {% if request.endpoint == 'portal.portal' %}sidebar-link-active{% endif %}"
+               href="{{ url_for('portal.portal') }}">My machines</a>
                 {% if is_admin %}
-                <a class="sidebar-link {% if request.endpoint == 'admin_view' %}sidebar-link-active{% endif %}"
-                   href="{{ url_for('admin_view') }}">Admin view</a>
-                <a class="sidebar-link {% if request.endpoint == 'admin_mappings' %}sidebar-link-active{% endif %}"
-                   href="{{ url_for('admin_mappings') }}">User ↔ VM mappings</a>
-                <a class="sidebar-link {% if request.endpoint == 'admin_probe' %}sidebar-link-active{% endif %}"
-                   href="{{ url_for('admin_probe') }}">Proxmox probe</a>
+                <a class="sidebar-link {% if request.endpoint == 'admin_diagnostics.admin_view' %}sidebar-link-active{% endif %}"
+                   href="{{ url_for('admin_diagnostics.admin_view') }}">Admin view</a>
+                <a class="sidebar-link {% if request.endpoint == 'admin_mappings.admin_mappings' %}sidebar-link-active{% endif %}"
+                   href="{{ url_for('admin_mappings.admin_mappings') }}">User ↔ VM mappings</a>
+                <a class="sidebar-link {% if request.endpoint == 'admin_diagnostics.admin_probe' %}sidebar-link-active{% endif %}"
+                   href="{{ url_for('admin_diagnostics.admin_probe') }}">Proxmox probe</a>
             {% endif %}
     {% endif %}
     
     {% if session.get("user") and is_admin %}
     <div class="sidebar-settings">
-        <a class="sidebar-link sidebar-link-settings {% if request.endpoint == 'admin_settings' %}sidebar-link-active{% endif %}"
-           href="{{ url_for('admin_settings') }}">
+        <a class="sidebar-link sidebar-link-settings {% if request.endpoint == 'admin_clusters.admin_settings' %}sidebar-link-active{% endif %}"
+           href="{{ url_for('admin_clusters.admin_settings') }}">
             <i class="bi bi-gear-fill"></i> Settings
         </a>
     </div>
