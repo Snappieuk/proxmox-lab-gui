@@ -1,0 +1,564 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>{{ class_.name }} - Lab VM Portal</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Segoe+UI:wght@400;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<header class="topbar">
+    <div class="topbar-left">
+        <span class="logo-square"></span>
+        <span class="topbar-title">{{ class_.name }}</span>
+    </div>
+    <div class="topbar-right">
+        {% if session.get("user") %}
+            <span class="topbar-user">
+                {{ session.get("user") }}
+                {% if local_user_role %}
+                    <span class="role-badge role-{{ local_user_role }}">{{ local_user_role }}</span>
+                {% endif %}
+            </span>
+            <a href="{{ url_for('classes.classes_list') }}" class="topbar-link">← Back to Classes</a>
+            <a href="{{ url_for('auth.logout') }}" class="topbar-link">Sign out</a>
+        {% endif %}
+    </div>
+</header>
+
+<div class="app-shell">
+    <nav class="sidebar">
+        <div class="sidebar-section-title">{{ class_.name }}</div>
+        
+        <!-- Template Section (Teacher/Admin Only) -->
+        {% if can_manage %}
+            <a class="sidebar-link sidebar-link-active" href="#template" onclick="showSection('template'); return false;">
+                <i class="bi bi-box-seam"></i> Template
+            </a>
+            <a class="sidebar-link" href="#vms" onclick="showSection('vms'); return false;">
+                <i class="bi bi-hdd-rack"></i> Virtual Machines
+            </a>
+            <a class="sidebar-link" href="#students" onclick="showSection('students'); return false;">
+                <i class="bi bi-people"></i> Students
+            </a>
+        {% else %}
+            <!-- Student View -->
+            <a class="sidebar-link sidebar-link-active" href="#my-vm" onclick="showSection('my-vm'); return false;">
+                <i class="bi bi-pc-display"></i> My Machine
+            </a>
+        {% endif %}
+        
+        <div class="sidebar-section-title" style="margin-top: 1rem;">Navigation</div>
+        <a class="sidebar-link" href="{{ url_for('portal.portal') }}">
+            <i class="bi bi-house"></i> Portal Home
+        </a>
+        <a class="sidebar-link" href="{{ url_for('classes.classes_list') }}">
+            <i class="bi bi-arrow-left"></i> Back to Classes
+        </a>
+    </nav>
+
+    <main class="main">
+        <div id="alert-container"></div>
+        
+        <!-- Template Section (Teacher/Admin) -->
+        {% if can_manage %}
+        <div id="template-section" class="content-section">
+            <div class="page-header">
+                <div>
+                    <h1><i class="bi bi-box-seam"></i> Template Management</h1>
+                    <p class="page-subtitle">Manage the base template for this class</p>
+                </div>
+            </div>
+            
+            <div class="content-card">
+                <div id="template-info-loading" style="padding: 2rem; text-align: center;">
+                    <div class="spinner" style="margin: 0 auto 1rem;"></div>
+                    <p>Loading template information...</p>
+                </div>
+                
+                <div id="template-info" style="display: none;">
+                    <!-- Template Info -->
+                    <div style="margin-bottom: 2rem;">
+                        <h3 style="font-size: 1.1rem; margin-bottom: 1rem;">Template Details</h3>
+                        <div class="info-grid">
+                            <div class="info-item">
+                                <span class="info-label">Name:</span>
+                                <span id="template-name">-</span>
+                            </div>
+                            <div class="info-item">
+                                <span class="info-label">VMID:</span>
+                                <span id="template-vmid">-</span>
+                            </div>
+                            <div class="info-item">
+                                <span class="info-label">Status:</span>
+                                <span id="template-status" class="status-badge">-</span>
+                            </div>
+                            <div class="info-item">
+                                <span class="info-label">Node:</span>
+                                <span id="template-node">-</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Template Controls -->
+                    <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
+                        <button id="btn-start-template" onclick="startTemplate()" class="btn-primary">
+                            <i class="bi bi-play-fill"></i> Start
+                        </button>
+                        <button id="btn-stop-template" onclick="stopTemplate()" class="btn-secondary">
+                            <i class="bi bi-stop-fill"></i> Stop
+                        </button>
+                        <button id="btn-rdp-template" onclick="rdpToTemplate()" class="btn-primary" style="display: none;">
+                            <i class="bi bi-display"></i> RDP
+                        </button>
+                        <button onclick="reimageTemplate()" class="btn-secondary" style="background: #ff6b6b;">
+                            <i class="bi bi-arrow-counterclockwise"></i> Reimage (Reset to Base)
+                        </button>
+                        <button onclick="saveTemplate()" class="btn-primary" style="background: #51cf66;">
+                            <i class="bi bi-save"></i> Save as New Template
+                        </button>
+                        <button onclick="pushTemplate()" class="btn-primary" style="background: #ff922b;">
+                            <i class="bi bi-arrow-repeat"></i> Push to All VMs
+                        </button>
+                    </div>
+                    
+                    <div style="margin-top: 1.5rem; padding: 1rem; background: #fff3cd; border-radius: 6px; border-left: 4px solid #ffc107;">
+                        <strong>Template Workflow:</strong>
+                        <ul style="margin: 0.5rem 0 0 1.5rem;">
+                            <li><strong>Reimage:</strong> Revert template to original baseline state</li>
+                            <li><strong>Save:</strong> Save current template state as new baseline</li>
+                            <li><strong>Push:</strong> Delete and recreate all student VMs from current template</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- VMs Section (Teacher/Admin) -->
+        <div id="vms-section" class="content-section" style="display: none;">
+            <div class="page-header">
+                <div>
+                    <h1><i class="bi bi-hdd-rack"></i> Virtual Machines</h1>
+                    <p class="page-subtitle">Manage student VMs for this class</p>
+                </div>
+                <div>
+                    <button onclick="refreshVMs()" class="btn-primary">
+                        <i class="bi bi-arrow-clockwise"></i> Refresh
+                    </button>
+                </div>
+            </div>
+            
+            <div class="content-card">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>VMID</th>
+                            <th>MAC Address</th>
+                            <th>Assigned Student</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="vms-tbody">
+                        {% for vm in vm_assignments %}
+                        <tr>
+                            <td><strong>{{ vm.proxmox_vmid }}</strong></td>
+                            <td><code style="font-size: 0.85rem;">{{ vm.mac_address or 'N/A' }}</code></td>
+                            <td>{{ vm.assigned_user_name or '<span style="color: #999;">Unassigned</span>' | safe }}</td>
+                            <td><span class="status-badge status-{{ vm.status }}">{{ vm.status }}</span></td>
+                            <td>
+                                <button class="action-btn" onclick="viewVM({{ vm.proxmox_vmid }})">
+                                    <i class="bi bi-eye"></i> View
+                                </button>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        
+        <!-- Students Section (Teacher/Admin) -->
+        <div id="students-section" class="content-section" style="display: none;">
+            <div class="page-header">
+                <div>
+                    <h1><i class="bi bi-people"></i> Students</h1>
+                    <p class="page-subtitle">Manage student enrollment and assignments</p>
+                </div>
+            </div>
+            
+            <div class="content-card">
+                <p>Student management coming soon...</p>
+            </div>
+        </div>
+        {% endif %}
+        
+        <!-- My VM Section (Student) -->
+        {% if is_student %}
+        <div id="my-vm-section" class="content-section">
+            <div class="page-header">
+                <div>
+                    <h1><i class="bi bi-pc-display"></i> My Virtual Machine</h1>
+                    <p class="page-subtitle">Your assigned VM for {{ class_.name }}</p>
+                </div>
+            </div>
+            
+            <div class="content-card">
+                {% if vm_assignments and vm_assignments|length > 0 %}
+                {% set vm = vm_assignments[0] %}
+                <div class="info-grid">
+                    <div class="info-item">
+                        <span class="info-label">VMID:</span>
+                        <span>{{ vm.proxmox_vmid }}</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Status:</span>
+                        <span class="status-badge">{{ vm.status }}</span>
+                    </div>
+                </div>
+                
+                <div style="margin-top: 1.5rem; display: flex; gap: 1rem;">
+                    <button class="btn-primary">
+                        <i class="bi bi-play-fill"></i> Start
+                    </button>
+                    <button class="btn-secondary">
+                        <i class="bi bi-stop-fill"></i> Stop
+                    </button>
+                    <button class="btn-primary">
+                        <i class="bi bi-display"></i> RDP
+                    </button>
+                </div>
+                {% else %}
+                <div style="padding: 2rem; text-align: center; background: #fff3cd; border-radius: 6px; border-left: 4px solid #ffc107;">
+                    <i class="bi bi-hourglass-split" style="font-size: 2rem; color: #856404;"></i>
+                    <h3 style="margin: 1rem 0 0.5rem; color: #856404;">No VM Assigned Yet</h3>
+                    <p style="color: #856404; margin: 0;">You're enrolled in this class, but no VM has been assigned yet.</p>
+                    <p style="color: #856404; margin: 0.5rem 0 0;">Your teacher will assign a VM when available.</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+    </main>
+</div>
+
+<style>
+.content-section {
+    animation: fadeIn 0.3s;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+.content-card {
+    background: white;
+    border: 1px solid #e1dfdd;
+    border-radius: 8px;
+    padding: 1.5rem;
+    margin-top: 1.5rem;
+}
+
+.info-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1rem;
+}
+
+.info-item {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.info-label {
+    font-weight: 600;
+    color: #605e5c;
+    font-size: 0.85rem;
+}
+
+.status-badge {
+    display: inline-block;
+    padding: 0.25rem 0.75rem;
+    border-radius: 12px;
+    font-size: 0.85rem;
+    font-weight: 500;
+}
+
+.status-running {
+    background: #d4edda;
+    color: #155724;
+}
+
+.status-stopped {
+    background: #f8d7da;
+    color: #721c24;
+}
+
+.status-available {
+    background: #d1ecf1;
+    color: #0c5460;
+}
+
+.status-assigned {
+    background: #d4edda;
+    color: #155724;
+}
+
+.spinner {
+    width: 40px;
+    height: 40px;
+    border: 4px solid #f3f3f3;
+    border-top: 4px solid #3498db;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+.data-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.data-table th {
+    text-align: left;
+    padding: 1rem;
+    font-weight: 600;
+    color: #323130;
+    border-bottom: 2px solid #e1dfdd;
+    background: #f3f2f1;
+}
+
+.data-table td {
+    padding: 1rem;
+    border-bottom: 1px solid #e1dfdd;
+}
+
+.data-table tbody tr:hover {
+    background: #f9f9f9;
+}
+
+.action-btn {
+    padding: 0.4rem 0.8rem;
+    border-radius: 4px;
+    border: 1px solid #8a8886;
+    background: white;
+    color: #323130;
+    cursor: pointer;
+    font-size: 0.85rem;
+}
+
+.action-btn:hover {
+    background: #f3f2f1;
+}
+</style>
+
+<script>
+const classId = {{ class_.id }};
+let currentTemplateInfo = null;
+
+function showSection(section) {
+    // Hide all sections
+    document.querySelectorAll('.content-section').forEach(el => el.style.display = 'none');
+    
+    // Remove active class from all links
+    document.querySelectorAll('.sidebar-link').forEach(el => el.classList.remove('sidebar-link-active'));
+    
+    // Show selected section
+    document.getElementById(section + '-section').style.display = 'block';
+    
+    // Add active class to clicked link
+    event.target.closest('.sidebar-link').classList.add('sidebar-link-active');
+}
+
+async function loadTemplateInfo() {
+    try {
+        const resp = await fetch(`/api/class/${classId}/template/info`);
+        const data = await resp.json();
+        
+        if (data.ok) {
+            currentTemplateInfo = data.template;
+            updateTemplateDisplay();
+        } else {
+            showAlert(data.error || 'Failed to load template', 'error');
+        }
+    } catch (e) {
+        console.error('Failed to load template:', e);
+        showAlert('Failed to load template information', 'error');
+    }
+}
+
+function updateTemplateDisplay() {
+    document.getElementById('template-info-loading').style.display = 'none';
+    document.getElementById('template-info').style.display = 'block';
+    
+    if (!currentTemplateInfo) return;
+    
+    document.getElementById('template-name').textContent = currentTemplateInfo.name;
+    document.getElementById('template-vmid').textContent = currentTemplateInfo.proxmox_vmid;
+    document.getElementById('template-node').textContent = currentTemplateInfo.node || 'N/A';
+    
+    const statusBadge = document.getElementById('template-status');
+    statusBadge.textContent = currentTemplateInfo.status || 'unknown';
+    statusBadge.className = 'status-badge status-' + (currentTemplateInfo.status || 'unknown');
+    
+    // Show/hide RDP button based on status
+    const rdpBtn = document.getElementById('btn-rdp-template');
+    if (currentTemplateInfo.status === 'running') {
+        rdpBtn.style.display = 'inline-block';
+    } else {
+        rdpBtn.style.display = 'none';
+    }
+}
+
+async function startTemplate() {
+    if (!confirm('Start the template VM?')) return;
+    
+    try {
+        const resp = await fetch(`/api/class/${classId}/template/start`, { method: 'POST' });
+        const data = await resp.json();
+        
+        if (data.ok) {
+            showAlert(data.message, 'success');
+            setTimeout(() => loadTemplateInfo(), 2000);
+        } else {
+            showAlert(data.error || 'Failed to start template', 'error');
+        }
+    } catch (e) {
+        showAlert('Failed to start template', 'error');
+    }
+}
+
+async function stopTemplate() {
+    if (!confirm('Stop the template VM?')) return;
+    
+    try {
+        const resp = await fetch(`/api/class/${classId}/template/stop`, { method: 'POST' });
+        const data = await resp.json();
+        
+        if (data.ok) {
+            showAlert(data.message, 'success');
+            setTimeout(() => loadTemplateInfo(), 2000);
+        } else {
+            showAlert(data.error || 'Failed to stop template', 'error');
+        }
+    } catch (e) {
+        showAlert('Failed to stop template', 'error');
+    }
+}
+
+function rdpToTemplate() {
+    if (!currentTemplateInfo) return;
+    window.location.href = `/rdp/${currentTemplateInfo.proxmox_vmid}.rdp`;
+}
+
+async function reimageTemplate() {
+    if (!confirm('Revert template to baseline? This will reset all changes made to the template VM.')) return;
+    
+    try {
+        const resp = await fetch(`/api/class/${classId}/template/reimage`, { method: 'POST' });
+        const data = await resp.json();
+        
+        if (data.ok) {
+            showAlert(data.message, 'success');
+        } else {
+            showAlert(data.error || 'Failed to reimage template', 'error');
+        }
+    } catch (e) {
+        showAlert('Failed to reimage template', 'error');
+    }
+}
+
+async function saveTemplate() {
+    if (!confirm('Save current template state as new baseline? This will replace the existing baseline snapshot.')) return;
+    
+    try {
+        const resp = await fetch(`/api/class/${classId}/template/save`, { method: 'POST' });
+        const data = await resp.json();
+        
+        if (data.ok) {
+            showAlert(data.message, 'success');
+        } else {
+            showAlert(data.error || 'Failed to save template', 'error');
+        }
+    } catch (e) {
+        showAlert('Failed to save template', 'error');
+    }
+}
+
+async function pushTemplate() {
+    if (!confirm('Push template to all VMs? This will DELETE and RECREATE all student VMs. Students will lose any changes. Are you sure?')) return;
+    
+    showAlert('Pushing template to all VMs... This may take several minutes.', 'info');
+    
+    try {
+        const resp = await fetch(`/api/class/${classId}/template/push`, { method: 'POST' });
+        const data = await resp.json();
+        
+        if (data.ok) {
+            showAlert(data.message + (data.errors.length > 0 ? '. Some errors occurred.' : ''), 'success');
+            if (data.errors.length > 0) {
+                console.error('Push errors:', data.errors);
+            }
+            refreshVMs();
+        } else {
+            showAlert(data.error || 'Failed to push template', 'error');
+        }
+    } catch (e) {
+        showAlert('Failed to push template', 'error');
+    }
+}
+
+function refreshVMs() {
+    location.reload();
+}
+
+function viewVM(vmid) {
+    // Navigate to portal with VM highlighted
+    window.location.href = `/portal#vm-${vmid}`;
+}
+
+function showAlert(message, type = 'info') {
+    const container = document.getElementById('alert-container');
+    const alert = document.createElement('div');
+    alert.className = `alert alert-${type}`;
+    alert.style.cssText = 'padding: 1rem; margin-bottom: 1rem; border-radius: 6px; border-left: 4px solid;';
+    
+    if (type === 'success') {
+        alert.style.background = '#d4edda';
+        alert.style.color = '#155724';
+        alert.style.borderColor = '#28a745';
+    } else if (type === 'error') {
+        alert.style.background = '#f8d7da';
+        alert.style.color = '#721c24';
+        alert.style.borderColor = '#dc3545';
+    } else {
+        alert.style.background = '#d1ecf1';
+        alert.style.color = '#0c5460';
+        alert.style.borderColor = '#17a2b8';
+    }
+    
+    alert.textContent = message;
+    container.appendChild(alert);
+    
+    setTimeout(() => alert.remove(), 5000);
+}
+
+// Load template info on page load (for teachers/admins)
+{% if can_manage %}
+document.addEventListener('DOMContentLoaded', () => {
+    loadTemplateInfo();
+});
+{% endif %}
+</script>
+
+</body>
+</html>

@@ -1,0 +1,441 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1><i class="bi bi-people"></i> User Management</h1>
+        <p class="page-subtitle">Manage Proxmox and local user accounts</p>
+    </div>
+    <div>
+        <button onclick="showCreateUserModal()" class="btn-primary">
+            <i class="bi bi-person-plus"></i> Create User
+        </button>
+    </div>
+</div>
+
+<div id="alert-container"></div>
+
+<!-- Users Table -->
+<div class="content-card">
+    <div class="table-container">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Username</th>
+                    <th>Type</th>
+                    <th>Local Role</th>
+                    <th>Admin</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="users-tbody">
+                <tr><td colspan="5" style="text-align: center; padding: 2rem;">Loading users...</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Create User Modal -->
+<div id="create-user-modal" class="modal" style="display: none;">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2>Create New User</h2>
+            <button class="modal-close" onclick="closeCreateUserModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <form id="create-user-form">
+                <div class="form-group">
+                    <label for="new-username">Username *</label>
+                    <input type="text" id="new-username" required>
+                </div>
+                <div class="form-group">
+                    <label for="new-password">Password *</label>
+                    <input type="password" id="new-password" required>
+                </div>
+                <div class="form-group">
+                    <label for="user-type">Account Type *</label>
+                    <select id="user-type">
+                        <option value="proxmox">Proxmox User (can access VMs)</option>
+                        <option value="local">Local Only (classes only)</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="user-role">Local Role</label>
+                    <select id="user-role">
+                        <option value="user">User (Student)</option>
+                        <option value="teacher">Teacher</option>
+                        <option value="adminer">Administrator</option>
+                    </select>
+                </div>
+                <div class="form-actions">
+                    <button type="button" onclick="closeCreateUserModal()" class="btn-secondary">Cancel</button>
+                    <button type="submit" class="btn-primary">Create User</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<style>
+.content-card {
+    background: white;
+    border: 1px solid #e1dfdd;
+    border-radius: 8px;
+    padding: 0;
+    margin-top: 1.5rem;
+}
+
+.table-container {
+    overflow-x: auto;
+}
+
+.data-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.data-table thead {
+    background: #f3f2f1;
+}
+
+.data-table th {
+    text-align: left;
+    padding: 1rem;
+    font-weight: 600;
+    color: #323130;
+    border-bottom: 2px solid #e1dfdd;
+}
+
+.data-table td {
+    padding: 1rem;
+    border-bottom: 1px solid #e1dfdd;
+}
+
+.data-table tbody tr:hover {
+    background: #f9f9f9;
+}
+
+.badge {
+    display: inline-block;
+    padding: 0.25rem 0.75rem;
+    border-radius: 12px;
+    font-size: 0.8rem;
+    font-weight: 500;
+}
+
+.badge-proxmox {
+    background: #e8f4fd;
+    color: #0078d4;
+}
+
+.badge-local {
+    background: #f3f2f1;
+    color: #605e5c;
+}
+
+.badge-admin {
+    background: #fef6e0;
+    color: #c19c00;
+}
+
+.badge-teacher {
+    background: #e8f5e9;
+    color: #2e7d32;
+}
+
+.badge-user {
+    background: #f3f2f1;
+    color: #605e5c;
+}
+
+.action-btn {
+    padding: 0.4rem 0.8rem;
+    border-radius: 4px;
+    border: 1px solid #8a8886;
+    background: white;
+    color: #323130;
+    cursor: pointer;
+    font-size: 0.85rem;
+    margin-right: 0.5rem;
+}
+
+.action-btn:hover {
+    background: #f3f2f1;
+}
+
+.action-btn.danger {
+    border-color: #a4262c;
+    color: #a4262c;
+}
+
+.action-btn.danger:hover {
+    background: #fde7e9;
+}
+
+.modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+
+.modal-content {
+    background: white;
+    border-radius: 8px;
+    width: 90%;
+    max-width: 500px;
+    max-height: 90vh;
+    overflow-y: auto;
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1.5rem;
+    border-bottom: 1px solid #e1dfdd;
+}
+
+.modal-header h2 {
+    margin: 0;
+    font-size: 1.25rem;
+}
+
+.modal-close {
+    background: none;
+    border: none;
+    font-size: 1.5rem;
+    cursor: pointer;
+    color: #605e5c;
+}
+
+.modal-body {
+    padding: 1.5rem;
+}
+
+.form-group {
+    margin-bottom: 1rem;
+}
+
+.form-group label {
+    display: block;
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+    color: #323130;
+}
+
+.form-group input,
+.form-group select {
+    width: 100%;
+    padding: 0.75rem;
+    border: 1px solid #8a8886;
+    border-radius: 4px;
+    font-size: 0.95rem;
+}
+
+.form-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.75rem;
+    margin-top: 1.5rem;
+}
+
+.alert {
+    padding: 1rem 1.5rem;
+    border-radius: 4px;
+    margin-bottom: 1.5rem;
+}
+
+.alert-success {
+    background: #dff6dd;
+    color: #107c10;
+    border: 1px solid #107c10;
+}
+
+.alert-error {
+    background: #fde7e9;
+    color: #a4262c;
+    border: 1px solid #a4262c;
+}
+</style>
+
+<script>
+async function loadUsers() {
+    try {
+        const resp = await fetch('/admin/users/api/users');
+        const data = await resp.json();
+        
+        if (!data.ok) {
+            showAlert('Failed to load users: ' + (data.error || 'Unknown error'), 'error');
+            return;
+        }
+        
+        const tbody = document.getElementById('users-tbody');
+        const users = data.users || [];
+        
+        if (users.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 2rem;">No users found</td></tr>';
+            return;
+        }
+        
+        tbody.innerHTML = users.map(user => `
+            <tr>
+                <td><strong>${user.username}</strong></td>
+                <td><span class="badge badge-${user.type}">${user.type}</span></td>
+                <td>
+                    ${user.has_local_account ? `
+                        <select class="action-btn" onchange="updateUserRole('${user.username}', this.value)">
+                            <option value="user" ${user.local_role === 'user' ? 'selected' : ''}>User</option>
+                            <option value="teacher" ${user.local_role === 'teacher' ? 'selected' : ''}>Teacher</option>
+                            <option value="adminer" ${user.local_role === 'adminer' ? 'selected' : ''}>Admin</option>
+                        </select>
+                    ` : '<span style="color: #8a8886;">None</span>'}
+                </td>
+                <td>
+                    ${user.type === 'proxmox' ? `
+                        <input type="checkbox" ${user.is_admin ? 'checked' : ''} 
+                               onchange="toggleAdmin('${user.username}', this.checked)">
+                    ` : '<span style="color: #8a8886;">N/A</span>'}
+                </td>
+                <td>
+                    ${user.has_local_account && user.local_role !== 'adminer' ? `
+                        <button class="action-btn danger" onclick="deleteUser('${user.username}')">
+                            <i class="bi bi-trash"></i> Delete Local
+                        </button>
+                    ` : ''}
+                </td>
+            </tr>
+        `).join('');
+        
+    } catch (e) {
+        console.error('Failed to load users:', e);
+        showAlert('Failed to load users', 'error');
+    }
+}
+
+function showCreateUserModal() {
+    document.getElementById('create-user-modal').style.display = 'flex';
+}
+
+function closeCreateUserModal() {
+    document.getElementById('create-user-modal').style.display = 'none';
+    document.getElementById('create-user-form').reset();
+}
+
+document.getElementById('create-user-form').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    
+    const username = document.getElementById('new-username').value.trim();
+    const password = document.getElementById('new-password').value;
+    const type = document.getElementById('user-type').value;
+    const role = document.getElementById('user-role').value;
+    
+    try {
+        const resp = await fetch('/admin/users/api/users/create', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password, type, role, create_local: type === 'proxmox' })
+        });
+        
+        const data = await resp.json();
+        
+        if (data.ok) {
+            showAlert(data.message, 'success');
+            closeCreateUserModal();
+            loadUsers();
+        } else {
+            showAlert(data.error || 'Failed to create user', 'error');
+        }
+    } catch (e) {
+        console.error('Failed to create user:', e);
+        showAlert('Failed to create user', 'error');
+    }
+});
+
+async function updateUserRole(username, newRole) {
+    try {
+        const resp = await fetch(`/admin/users/api/users/${username}/role`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ role: newRole })
+        });
+        
+        const data = await resp.json();
+        
+        if (data.ok) {
+            showAlert(data.message, 'success');
+        } else {
+            showAlert(data.error || 'Failed to update role', 'error');
+            loadUsers();
+        }
+    } catch (e) {
+        console.error('Failed to update role:', e);
+        showAlert('Failed to update role', 'error');
+        loadUsers();
+    }
+}
+
+async function toggleAdmin(username, isAdmin) {
+    try {
+        const resp = await fetch(`/admin/users/api/users/${username}/admin`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ is_admin: isAdmin })
+        });
+        
+        const data = await resp.json();
+        
+        if (data.ok) {
+            showAlert(data.message, 'success');
+        } else {
+            showAlert(data.error || 'Failed to update admin status', 'error');
+            loadUsers();
+        }
+    } catch (e) {
+        console.error('Failed to toggle admin:', e);
+        showAlert('Failed to update admin status', 'error');
+        loadUsers();
+    }
+}
+
+async function deleteUser(username) {
+    if (!confirm(`Are you sure you want to delete the local account for ${username}?`)) {
+        return;
+    }
+    
+    try {
+        const resp = await fetch(`/admin/users/api/users/${username}`, {
+            method: 'DELETE'
+        });
+        
+        const data = await resp.json();
+        
+        if (data.ok) {
+            showAlert(data.message, 'success');
+            loadUsers();
+        } else {
+            showAlert(data.error || 'Failed to delete user', 'error');
+        }
+    } catch (e) {
+        console.error('Failed to delete user:', e);
+        showAlert('Failed to delete user', 'error');
+    }
+}
+
+function showAlert(message, type) {
+    const container = document.getElementById('alert-container');
+    container.innerHTML = `<div class="alert alert-${type}">${message}</div>`;
+    setTimeout(() => container.innerHTML = '', 5000);
+}
+
+// Load users on page load
+document.addEventListener('DOMContentLoaded', loadUsers);
+</script>
+
+{% endblock %}

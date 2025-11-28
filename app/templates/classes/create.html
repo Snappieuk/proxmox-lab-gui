@@ -30,14 +30,11 @@
         </div>
         
         <div class="form-group">
-            <label>Template (from cluster 10.220.15.249)</label>
-            <div id="template-loading" class="template-loading">
-                <i class="bi bi-hourglass-split"></i> Loading templates...
-            </div>
-            <div id="templates-container" class="templates-grid" style="display: none;">
-                <!-- Templates will be loaded here -->
-            </div>
-            <input type="hidden" id="template-id" name="template_id">
+            <label for="template-select">Template *</label>
+            <select id="template-select" name="template_id" required>
+                <option value="">Loading templates...</option>
+            </select>
+            <small class="form-help">Select a VM template from cluster 10.220.15.249</small>
         </div>
         
         <div class="form-actions">
@@ -75,6 +72,7 @@
 
 .form-group input[type="text"],
 .form-group input[type="number"],
+.form-group select,
 .form-group textarea {
     width: 100%;
     padding: 0.75rem;
@@ -84,6 +82,7 @@
 }
 
 .form-group input:focus,
+.form-group select:focus,
 .form-group textarea:focus {
     outline: none;
     border-color: #0078d4;
@@ -136,98 +135,38 @@
 .btn-secondary:hover {
     background: #e1dfdd;
 }
-
-.template-loading {
-    padding: 2rem;
-    text-align: center;
-    color: #605e5c;
-}
-
-.templates-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-    gap: 1rem;
-}
-
-.template-card {
-    border: 2px solid #e1dfdd;
-    border-radius: 6px;
-    padding: 1rem;
-    cursor: pointer;
-    transition: border-color 0.2s, background 0.2s;
-}
-
-.template-card:hover {
-    border-color: #0078d4;
-    background: #f3f9fd;
-}
-
-.template-card.selected {
-    border-color: #0078d4;
-    background: #e8f4fd;
-}
-
-.template-card-name {
-    font-weight: 600;
-    margin-bottom: 0.25rem;
-}
-
-.template-card-info {
-    font-size: 0.85rem;
-    color: #605e5c;
-}
-
-.template-card-vmid {
-    font-size: 0.75rem;
-    color: #8a8886;
-}
 </style>
 
 <script>
 // Load templates when page loads
 document.addEventListener('DOMContentLoaded', async function() {
+    const selectElement = document.getElementById('template-select');
+    
     try {
         const resp = await fetch('/api/classes/templates');
         const data = await resp.json();
         
         if (!data.ok) {
-            document.getElementById('template-loading').innerHTML = 
-                '<i class="bi bi-exclamation-triangle"></i> Failed to load templates';
+            selectElement.innerHTML = '<option value="">Failed to load templates</option>';
             return;
         }
         
-        const container = document.getElementById('templates-container');
         const templates = data.proxmox_templates || [];
         
         if (templates.length === 0) {
-            container.innerHTML = '<p class="form-help">No templates available on this cluster.</p>';
+            selectElement.innerHTML = '<option value="">No templates available</option>';
         } else {
-            container.innerHTML = templates.map(t => `
-                <div class="template-card" data-vmid="${t.vmid}" onclick="selectTemplate(this, ${t.vmid})">
-                    <div class="template-card-name">${t.name}</div>
-                    <div class="template-card-info">${t.type.toUpperCase()} • ${t.node}</div>
-                    <div class="template-card-vmid">VMID: ${t.vmid}</div>
-                </div>
-            `).join('');
+            selectElement.innerHTML = '<option value="">Select a template...</option>' +
+                templates.map(t => 
+                    `<option value="${t.vmid}">${t.name} (VMID: ${t.vmid})</option>`
+                ).join('');
         }
-        
-        document.getElementById('template-loading').style.display = 'none';
-        container.style.display = 'grid';
         
     } catch (e) {
         console.error('Failed to load templates:', e);
-        document.getElementById('template-loading').innerHTML = 
-            '<i class="bi bi-exclamation-triangle"></i> Error loading templates';
+        selectElement.innerHTML = '<option value="">Error loading templates</option>';
     }
 });
-
-function selectTemplate(card, vmid) {
-    // Deselect all
-    document.querySelectorAll('.template-card').forEach(c => c.classList.remove('selected'));
-    // Select this one
-    card.classList.add('selected');
-    document.getElementById('template-id').value = vmid;
-}
 
 // Handle form submission
 document.getElementById('create-class-form').addEventListener('submit', async function(e) {
@@ -236,10 +175,15 @@ document.getElementById('create-class-form').addEventListener('submit', async fu
     const name = document.getElementById('class-name').value.trim();
     const description = document.getElementById('class-description').value.trim();
     const poolSize = parseInt(document.getElementById('pool-size').value) || 0;
-    const templateVmid = document.getElementById('template-id').value;
+    const templateVmid = document.getElementById('template-select').value;
     
     if (!name) {
         alert('Please enter a class name.');
+        return;
+    }
+    
+    if (!templateVmid) {
+        alert('Please select a template.');
         return;
     }
     

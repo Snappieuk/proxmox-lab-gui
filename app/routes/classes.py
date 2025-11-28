@@ -114,7 +114,7 @@ def create_class():
 @classes_bp.route("/<int:class_id>")
 @login_required
 def view_class(class_id: int):
-    """View class details."""
+    """View class details with dynamic sidebar."""
     user = get_current_user()
     class_ = get_class_by_id(class_id)
     
@@ -124,15 +124,17 @@ def view_class(class_id: int):
     
     # Check access
     can_manage = False
+    is_student = False
     if user:
         if user.is_adminer:
             can_manage = True
         elif user.is_teacher and class_.teacher_id == user.id:
             can_manage = True
-        elif not user.is_teacher:
-            # Student - check if they have a VM
-            vm = get_user_vm_in_class(user.id, class_id)
-            if not vm:
+        else:
+            # Check if student is enrolled
+            if user in class_.students:
+                is_student = True
+            else:
                 flash("You don't have access to this class.", "error")
                 return redirect(url_for('classes.classes_list'))
     
@@ -140,15 +142,16 @@ def view_class(class_id: int):
     if can_manage:
         vm_assignments = get_vm_assignments_for_class(class_id)
     else:
-        # Student only sees their own VM
+        # Student only sees their own VM (if they have one)
         student_vm = get_user_vm_in_class(user.id if user else 0, class_id)
         vm_assignments = [student_vm] if student_vm else []
     
     return render_template(
-        "classes/view.html",
+        "classes/detail.html",
         class_=class_.to_dict(),
         vm_assignments=[v.to_dict() for v in vm_assignments] if vm_assignments else [],
         can_manage=can_manage,
+        is_student=is_student,
         user_role=user.role if user else 'user',
         user=user
     )

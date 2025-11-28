@@ -5,14 +5,14 @@
 body {
     margin: 0;
     font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, "Roboto", sans-serif;
-    background: #f3f2f1;
+    background: #e8e7e5;
     color: #201f1e;
 }
 
 /* Top bar */
 .topbar {
     height: 56px;
-    background: linear-gradient(135deg, #001f3f 0%, #003d73 50%, #0078d4 100%);
+    background: linear-gradient(135deg, #001427 0%, #002d52 50%, #005a9e 100%);
     color: white;
     display: flex;
     align-items: center;
@@ -887,7 +887,7 @@ body {
 .bi-clipboard::before { content: "📋"; }
 .bi-arrow-clockwise::before { content: "↻"; }
 .bi-trash::before { content: "🗑"; }
-.bi-plus-circle::before { content: "➕"; }
+.bi-plus-circle::before { content: "+"; font-size: 1em; }
 .bi-save::before { content: "💾"; }
 .bi-x-circle::before { content: "❌"; }
 .bi-check-circle-fill::before { content: "✓"; }

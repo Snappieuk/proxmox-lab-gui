@@ -25,6 +25,14 @@ from werkzeug.security import generate_password_hash, check_password_hash
 db = SQLAlchemy()
 
 
+# Association table for class enrollments (many-to-many)
+class_enrollments = db.Table('class_enrollments',
+    db.Column('user_id', db.Integer, db.ForeignKey('users.id'), primary_key=True),
+    db.Column('class_id', db.Integer, db.ForeignKey('classes.id'), primary_key=True),
+    db.Column('enrolled_at', db.DateTime, default=datetime.utcnow)
+)
+
+
 class User(db.Model):
     """Local user account with role-based access."""
     __tablename__ = 'users'
@@ -39,6 +47,8 @@ class User(db.Model):
     taught_classes = db.relationship('Class', back_populates='teacher', lazy='dynamic')
     created_templates = db.relationship('Template', back_populates='created_by', lazy='dynamic')
     vm_assignments = db.relationship('VMAssignment', back_populates='assigned_user', lazy='dynamic')
+    enrolled_classes = db.relationship('Class', secondary=class_enrollments, 
+                                      backref=db.backref('students', lazy='dynamic'))
     
     def set_password(self, password: str) -> None:
         """Hash and store password."""
@@ -131,6 +141,11 @@ class Class(db.Model):
         """Number of VMs not assigned to any user."""
         return sum(1 for vm in self.vm_assignments if vm.assigned_user_id is None)
     
+    @property
+    def enrolled_count(self) -> int:
+        """Number of students enrolled in this class."""
+        return self.students.count()
+    
     def to_dict(self) -> dict:
         return {
             'id': self.id,
@@ -147,6 +162,7 @@ class Class(db.Model):
             'pool_size': self.pool_size,
             'assigned_count': self.assigned_count,
             'unassigned_count': self.unassigned_count,
+            'enrolled_count': self.enrolled_count,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
         }
@@ -199,6 +215,7 @@ class VMAssignment(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     class_id = db.Column(db.Integer, db.ForeignKey('classes.id'), nullable=False, index=True)
     proxmox_vmid = db.Column(db.Integer, nullable=False, index=True)  # Cloned VM's VMID in Proxmox
+    mac_address = db.Column(db.String(17), nullable=True, index=True)  # VM's MAC address (e.g., "AA:BB:CC:DD:EE:FF")
     node = db.Column(db.String(80), nullable=True)  # Proxmox node where VM resides
     assigned_user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True, index=True)
     status = db.Column(db.String(20), default='available')  # available, assigned, deleting
@@ -227,6 +244,7 @@ class VMAssignment(db.Model):
             'class_id': self.class_id,
             'class_name': self.class_.name if self.class_ else None,
             'proxmox_vmid': self.proxmox_vmid,
+            'mac_address': self.mac_address,
             'node': self.node,
             'assigned_user_id': self.assigned_user_id,
             'assigned_user_name': self.assigned_user.username if self.assigned_user else None,

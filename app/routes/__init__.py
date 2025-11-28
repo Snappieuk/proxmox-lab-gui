@@ -7,12 +7,14 @@ from app.routes.classes import classes_bp
 from app.routes.admin.mappings import admin_mappings_bp
 from app.routes.admin.clusters import admin_clusters_bp
 from app.routes.admin.diagnostics import admin_diagnostics_bp
+from app.routes.admin.users import admin_users_bp
 from app.routes.api.vms import api_vms_bp
 from app.routes.api.mappings import api_mappings_bp
 from app.routes.api.clusters import api_clusters_bp
 from app.routes.api.rdp import api_rdp_bp
 from app.routes.api.ssh import api_ssh_bp
 from app.routes.api.classes import api_classes_bp
+from app.routes.api.class_template import api_class_template_bp
 
 
 def register_blueprints(app):
@@ -23,9 +25,11 @@ def register_blueprints(app):
     app.register_blueprint(admin_mappings_bp)
     app.register_blueprint(admin_clusters_bp)
     app.register_blueprint(admin_diagnostics_bp)
+    app.register_blueprint(admin_users_bp)
     app.register_blueprint(api_vms_bp)
     app.register_blueprint(api_mappings_bp)
     app.register_blueprint(api_clusters_bp)
     app.register_blueprint(api_rdp_bp)
     app.register_blueprint(api_ssh_bp)
     app.register_blueprint(api_classes_bp)
+    app.register_blueprint(api_class_template_bp)

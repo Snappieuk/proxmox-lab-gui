@@ -18,24 +18,8 @@
 
 <div id="mappings-content" style="display: none;">
     <div class="mapping-layout">
-        <!-- Left side: Current mappings table -->
-        <div class="mapping-table-card">
-            <h2>Current Mappings</h2>
-            <table class="mapping-table">
-                <thead>
-                    <tr>
-                        <th>User</th>
-                        <th>Assigned VMs</th>
-                    </tr>
-                </thead>
-                <tbody id="mappings-tbody">
-                    <tr><td colspan="2">Loading...</td></tr>
-                </tbody>
-            </table>
-        </div>
-
-        <!-- Right side: User selection + VM assignment -->
-        <div class="mapping-form-card">
+        <!-- Single centered card -->
+        <div class="mapping-form-card" style="max-width: 800px; margin: 0 auto;">
             <h2>Manage User Access</h2>
 
             <div id="alert-container"></div>
@@ -46,9 +30,19 @@
                 <option value="">Select a user…</option>
             </select>
 
+            <!-- User Info Area (shown when user selected) -->
+            <div id="user-info-area" style="display: none; margin-top: 1.5rem; padding: 1rem; background: #f9f9f9; border-radius: 6px;">
+                <h3 style="font-size: 16px; margin-bottom: 0.5rem;" id="selected-user-name"></h3>
+                <div id="user-classes" style="margin-bottom: 0.5rem; color: #666; font-size: 14px;">
+                    <strong>Classes:</strong> <span id="user-classes-list">None</span>
+                </div>
+                <div id="user-current-vms" style="color: #666; font-size: 14px;">
+                    <strong>Current VM Assignments:</strong> <span id="user-vms-list">None</span>
+                </div>
+            </div>
+
             <!-- VM Selection Area (shown when user selected) -->
             <div id="vm-selection-area" style="display: none; margin-top: 2rem; padding-top: 2rem; border-top: 1px solid #ddd;">
-                <h3 style="font-size: 16px; margin-bottom: 1rem;" id="selected-user-name"></h3>
                 
                 <!-- VM Checkboxes -->
                 <div style="margin-bottom: 1.5rem;">
@@ -203,6 +197,7 @@ let allVMs = [];
 let allUsers = [];
 let currentMappings = {};
 let selectedUser = '';
+let userClasses = {};
 
 async function loadMappingsData() {
     try {
@@ -227,8 +222,8 @@ async function loadMappingsData() {
             userSelect.appendChild(option);
         });
         
-        // Render mappings table
-        renderMappingsTable();
+        // Fetch user classes
+        await loadUserClasses();
         
         // Hide loading, show content
         document.getElementById('mappings-loading').style.display = 'none';
@@ -239,41 +234,31 @@ async function loadMappingsData() {
     }
 }
 
-function renderMappingsTable() {
-    const tbody = document.getElementById('mappings-tbody');
-    tbody.innerHTML = '';
-    
-    if (Object.keys(currentMappings).length === 0) {
-        tbody.innerHTML = '<tr><td colspan="2" style="text-align: center; color: #666;">No mappings defined.</td></tr>';
-        return;
-    }
-    
-    Object.entries(currentMappings).forEach(([userId, vmids]) => {
-        const tr = document.createElement('tr');
+async function loadUserClasses() {
+    try {
+        const resp = await fetch("/api/classes");
+        if (!resp.ok) return;
         
-        const tdUser = document.createElement('td');
-        tdUser.textContent = userId;
-        tr.appendChild(tdUser);
+        const data = await resp.json();
+        const classes = data.classes || [];
         
-        const tdVMs = document.createElement('td');
-        vmids.forEach((vmid, idx) => {
-            const vm = allVMs.find(v => v.vmid === vmid);
-            const vmName = vm ? vm.name : 'unknown';
-            const clusterName = vm ? vm.cluster_name : '';
-            
-            const span = document.createElement('span');
-            span.className = 'vm-mapping-item';
-            span.innerHTML = `${vmid} (${vmName})${clusterName ? ` <span class="vm-cluster-badge">${clusterName}</span>` : ''}`;
-            tdVMs.appendChild(span);
-            
-            if (idx < vmids.length - 1) {
-                tdVMs.appendChild(document.createTextNode(', '));
+        // Build a map of username -> class names
+        userClasses = {};
+        
+        classes.forEach(cls => {
+            if (cls.students) {
+                cls.students.forEach(student => {
+                    const username = student.username;
+                    if (!userClasses[username]) {
+                        userClasses[username] = [];
+                    }
+                    userClasses[username].push(cls.name);
+                });
             }
         });
-        tr.appendChild(tdVMs);
-        
-        tbody.appendChild(tr);
-    });
+    } catch (e) {
+        console.error("Failed to load user classes:", e);
+    }
 }
 
 function showError(message) {
@@ -307,11 +292,42 @@ document.addEventListener('DOMContentLoaded', () => {
         selectedUser = e.target.value;
         
         if (!selectedUser) {
+            document.getElementById('user-info-area').style.display = 'none';
             vmSelectionArea.style.display = 'none';
             return;
         }
         
+        // Show user info area
+        const userInfoArea = document.getElementById('user-info-area');
+        userInfoArea.style.display = 'block';
+        
         selectedUserName.textContent = selectedUser;
+        
+        // Get username without realm for class lookup
+        const username = selectedUser.split('@')[0];
+        
+        // Display user's classes
+        const classList = document.getElementById('user-classes-list');
+        const classes = userClasses[username] || [];
+        if (classes.length > 0) {
+            classList.textContent = classes.join(', ');
+        } else {
+            classList.textContent = 'None';
+        }
+        
+        // Display current VM assignments
+        const vmsList = document.getElementById('user-vms-list');
+        const userVMs = currentMappings[selectedUser] || [];
+        if (userVMs.length > 0) {
+            const vmNames = userVMs.map(vmid => {
+                const vm = allVMs.find(v => v.vmid === vmid);
+                return vm ? `${vmid} (${vm.name})` : vmid;
+            });
+            vmsList.textContent = vmNames.join(', ');
+        } else {
+            vmsList.textContent = 'None';
+        }
+        
         vmSelectionArea.style.display = 'block';
         
         // Render VM checkboxes
@@ -347,7 +363,20 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (data.mapping.length === 0) {
                     delete currentMappings[selectedUser];
                 }
-                renderMappingsTable();
+                
+                // Update the user info display with new VM assignments
+                const vmsList = document.getElementById('user-vms-list');
+                const userVMs = currentMappings[selectedUser] || [];
+                if (userVMs.length > 0) {
+                    const vmNames = userVMs.map(vmid => {
+                        const vm = allVMs.find(v => v.vmid === vmid);
+                        return vm ? `${vmid} (${vm.name})` : vmid;
+                    });
+                    vmsList.textContent = vmNames.join(', ');
+                } else {
+                    vmsList.textContent = 'None';
+                }
+                
                 showAlert(`Successfully updated mappings for ${selectedUser}`, 'success');
             } else {
                 showAlert(`Failed: ${data.error}`, 'error');

@@ -103,6 +103,44 @@ def list_all_users() -> List[User]:
     return User.query.order_by(User.username).all()
 
 
+def get_all_users() -> List[User]:
+    """Alias for list_all_users() - get all users."""
+    return list_all_users()
+
+
+def delete_user(user_id: int) -> Tuple[bool, str]:
+    """Delete a user and their assignments.
+    
+    Returns: (success, message/error)
+    """
+    user = User.query.get(user_id)
+    if not user:
+        return False, "User not found"
+    
+    # Don't allow deleting adminer accounts
+    if user.role == 'adminer':
+        return False, "Cannot delete admin accounts"
+    
+    username = user.username
+    
+    try:
+        # Delete user's VM assignments (unassign VMs, don't delete the VMs)
+        assignments = VMAssignment.query.filter_by(assigned_user_id=user_id).all()
+        for assignment in assignments:
+            assignment.assigned_user_id = None
+            assignment.status = 'available'
+        
+        # Delete user
+        db.session.delete(user)
+        db.session.commit()
+        logger.info("Deleted user: %s", username)
+        return True, f"User {username} deleted successfully"
+    except Exception as e:
+        db.session.rollback()
+        logger.exception("Failed to delete user %s: %s", username, e)
+        return False, f"Failed to delete user: {str(e)}"
+
+
 # ---------------------------------------------------------------------------
 # Class Management
 # ---------------------------------------------------------------------------
@@ -164,10 +202,11 @@ def get_classes_for_teacher(teacher_id: int) -> List[Class]:
 
 
 def get_classes_for_student(user_id: int) -> List[Class]:
-    """Get all classes a student is enrolled in (has a VM assignment)."""
-    assignments = VMAssignment.query.filter_by(assigned_user_id=user_id).all()
-    class_ids = set(a.class_id for a in assignments)
-    return Class.query.filter(Class.id.in_(class_ids)).order_by(Class.name).all()
+    """Get all classes a student is enrolled in."""
+    user = User.query.get(user_id)
+    if not user:
+        return []
+    return list(user.enrolled_classes)
 
 
 def list_all_classes() -> List[Class]:
@@ -280,7 +319,8 @@ def invalidate_class_invite(class_id: int) -> Tuple[bool, str]:
 def join_class_via_token(token: str, user_id: int) -> Tuple[bool, str, Optional[VMAssignment]]:
     """Join a class using an invite token.
     
-    Auto-assigns an available VM to the user if one exists.
+    Enrolls user in class and auto-assigns an available VM if one exists.
+    If no VMs are available, user is still enrolled and can be assigned later.
     
     Returns: (success, message/error, vm_assignment)
     """
@@ -298,37 +338,53 @@ def join_class_via_token(token: str, user_id: int) -> Tuple[bool, str, Optional[
     if not user:
         return False, "User not found", None
     
-    # Check if user already has a VM in this class
-    existing = VMAssignment.query.filter_by(
-        class_id=class_.id, 
-        assigned_user_id=user_id
-    ).first()
+    # Check if user is already enrolled
+    if user in class_.students:
+        # Check if they have a VM assigned
+        existing_vm = VMAssignment.query.filter_by(
+            class_id=class_.id, 
+            assigned_user_id=user_id
+        ).first()
+        
+        if existing_vm:
+            return True, "You are already enrolled in this class with a VM assigned", existing_vm
+        else:
+            return True, "You are already enrolled in this class. Waiting for VM assignment.", None
     
-    if existing:
-        return True, "You are already enrolled in this class", existing
+    # Enroll user in class
+    class_.students.append(user)
     
-    # Find an unassigned VM in the class
+    # Try to find an unassigned VM in the class
     available_vm = VMAssignment.query.filter_by(
         class_id=class_.id,
         assigned_user_id=None,
         status='available'
     ).first()
     
-    if not available_vm:
-        return False, "No available VMs in this class. Contact your teacher.", None
-    
-    # Assign the VM to the user
-    available_vm.assign_to_user(user)
-    
-    try:
-        db.session.commit()
-        logger.info("User %s joined class %s, assigned VM %d", 
-                    user.username, class_.name, available_vm.proxmox_vmid)
-        return True, f"Successfully joined class {class_.name}", available_vm
-    except Exception as e:
-        db.session.rollback()
-        logger.exception("Failed to join class %s for user %s: %s", class_.name, user.username, e)
-        return False, f"Failed to join class: {str(e)}", None
+    if available_vm:
+        # Assign the VM to the user
+        available_vm.assign_to_user(user)
+        
+        try:
+            db.session.commit()
+            logger.info("User %s joined class %s, assigned VM %d", 
+                        user.username, class_.name, available_vm.proxmox_vmid)
+            return True, f"Successfully joined class {class_.name} with VM assigned", available_vm
+        except Exception as e:
+            db.session.rollback()
+            logger.exception("Failed to join class %s for user %s: %s", class_.name, user.username, e)
+            return False, f"Failed to join class: {str(e)}", None
+    else:
+        # No VMs available, but still enroll the user
+        try:
+            db.session.commit()
+            logger.info("User %s joined class %s without VM (none available)", 
+                        user.username, class_.name)
+            return True, f"Successfully joined class {class_.name}. You'll be assigned a VM when one becomes available.", None
+        except Exception as e:
+            db.session.rollback()
+            logger.exception("Failed to join class %s for user %s: %s", class_.name, user.username, e)
+            return False, f"Failed to join class: {str(e)}", None
 
 
 # ---------------------------------------------------------------------------

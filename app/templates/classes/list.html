@@ -44,16 +44,16 @@
                 {% endif %}
                 <div class="class-card-stats">
                     <div class="class-stat">
+                        <span class="class-stat-value">{{ class.enrolled_count or 0 }}</span>
+                        <span class="class-stat-label">Students</span>
+                    </div>
+                    <div class="class-stat">
                         <span class="class-stat-value">{{ class.assigned_count }}</span>
-                        <span class="class-stat-label">Enrolled</span>
+                        <span class="class-stat-label">VMs Assigned</span>
                     </div>
                     <div class="class-stat">
                         <span class="class-stat-value">{{ class.unassigned_count }}</span>
-                        <span class="class-stat-label">Available</span>
-                    </div>
-                    <div class="class-stat">
-                        <span class="class-stat-value">{{ class.pool_size or 0 }}</span>
-                        <span class="class-stat-label">Pool Size</span>
+                        <span class="class-stat-label">VMs Available</span>
                     </div>
                 </div>
             </div>
@@ -80,10 +80,7 @@
             <i class="bi bi-mortarboard" style="font-size: 48px; color: #8a8886;"></i>
             <h3>No Classes Found</h3>
             {% if user_role == 'teacher' or user_role == 'adminer' %}
-                <p>Create your first class to get started!</p>
-                <a href="{{ url_for('classes.create_class') }}" class="btn-primary">
-                    <i class="bi bi-plus-circle"></i> Create Class
-                </a>
+                <p>Create your first class to get started using the button above!</p>
             {% else %}
                 <p>You haven't joined any classes yet. Ask your teacher for an invite link.</p>
             {% endif %}

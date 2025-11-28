@@ -303,43 +303,43 @@ def _save_ip_cache() -> None:
         logger.warning("Failed to save IP cache: %s", e)
 
 def _load_vm_cache() -> None:
-    """Load VM cache from JSON file on startup for current cluster."""
+    """Load VM cache from JSON file on startup for all clusters."""
     global _vm_cache_data, _vm_cache_ts, _vm_cache_loaded
-    cluster_id = get_current_cluster_id()
+    cache_key = "all_clusters"
     
-    if _vm_cache_loaded.get(cluster_id, False):
+    if _vm_cache_loaded.get(cache_key, False):
         return
     
     if not os.path.exists(VM_CACHE_FILE):
-        _vm_cache_data[cluster_id] = None
-        _vm_cache_ts[cluster_id] = 0.0
-        _vm_cache_loaded[cluster_id] = True
+        _vm_cache_data[cache_key] = None
+        _vm_cache_ts[cache_key] = 0.0
+        _vm_cache_loaded[cache_key] = True
         return
     
     try:
         with open(VM_CACHE_FILE, "r", encoding="utf-8") as f:
             all_data = json.load(f)
-            cluster_data = all_data.get(cluster_id, {})
-            _vm_cache_data[cluster_id] = cluster_data.get("vms", [])
-            _vm_cache_ts[cluster_id] = cluster_data.get("timestamp", 0.0)
-        cache_count = len(_vm_cache_data.get(cluster_id) or [])
-        logger.info("Loaded VM cache for cluster %s with %d VMs from %s", 
-                   cluster_id, cache_count, VM_CACHE_FILE)
+            cluster_data = all_data.get(cache_key, {})
+            _vm_cache_data[cache_key] = cluster_data.get("vms", [])
+            _vm_cache_ts[cache_key] = cluster_data.get("timestamp", 0.0)
+        cache_count = len(_vm_cache_data.get(cache_key) or [])
+        logger.info("Loaded VM cache for all clusters with %d VMs from %s", 
+                   cache_count, VM_CACHE_FILE)
     except Exception as e:
         logger.warning("Failed to load VM cache: %s", e)
-        _vm_cache_data[cluster_id] = None
-        _vm_cache_ts[cluster_id] = 0.0
+        _vm_cache_data[cache_key] = None
+        _vm_cache_ts[cache_key] = 0.0
     
-    _vm_cache_loaded[cluster_id] = True
+    _vm_cache_loaded[cache_key] = True
 
 def _save_vm_cache() -> None:
-    """Save VM cache to JSON file for current cluster.
+    """Save VM cache to JSON file for all clusters.
     
     Skips writing if the on-disk cache timestamp matches the in-memory timestamp,
     indicating no changes since last save.
     """
-    cluster_id = get_current_cluster_id()
-    if _vm_cache_data.get(cluster_id) is None:
+    cache_key = "all_clusters"
+    if _vm_cache_data.get(cache_key) is None:
         return
     
     # Load existing data for all clusters
@@ -348,11 +348,11 @@ def _save_vm_cache() -> None:
         try:
             with open(VM_CACHE_FILE, "r", encoding="utf-8") as f:
                 all_data = json.load(f)
-            # Check if on-disk cache is already up-to-date for this cluster
-            disk_cluster_data = all_data.get(cluster_id, {})
+            # Check if on-disk cache is already up-to-date
+            disk_cluster_data = all_data.get(cache_key, {})
             disk_ts = disk_cluster_data.get("timestamp", 0.0)
-            if disk_ts == _vm_cache_ts.get(cluster_id, 0.0):
-                logger.debug("Skipping VM cache write for cluster %s: disk timestamp matches in-memory (%.1f)", cluster_id, disk_ts)
+            if disk_ts == _vm_cache_ts.get(cache_key, 0.0):
+                logger.debug("Skipping VM cache write: disk timestamp matches in-memory (%.1f)", disk_ts)
                 return
         except Exception:
             # If we can't read the file, proceed with write
@@ -360,29 +360,31 @@ def _save_vm_cache() -> None:
     
     try:
         # Update cluster-specific data
-        all_data[cluster_id] = {
-            "vms": _vm_cache_data[cluster_id],
-            "timestamp": _vm_cache_ts.get(cluster_id, time.time())
+        all_data[cache_key] = {
+            "vms": _vm_cache_data[cache_key],
+            "timestamp": _vm_cache_ts.get(cache_key, time.time())
         }
         with open(VM_CACHE_FILE, "w", encoding="utf-8") as f:
             json.dump(all_data, f, indent=2)
-        cache_count = len(_vm_cache_data.get(cluster_id) or [])
-        logger.debug("Saved VM cache for cluster %s with %d VMs", cluster_id, cache_count)
+        cache_count = len(_vm_cache_data.get(cache_key) or [])
+        logger.debug("Saved VM cache with %d VMs", cache_count)
     except Exception as e:
         logger.warning("Failed to save VM cache: %s", e)
 
 def _invalidate_vm_cache() -> None:
-    """Invalidate VM cache for current cluster."""
+    """Invalidate VM cache for all clusters."""
     global _vm_cache_data, _vm_cache_ts, _cluster_cache_data, _cluster_cache_ts
-    cluster_id = get_current_cluster_id()
+    cache_key = "all_clusters"
     with _vm_cache_lock:
-        _vm_cache_data[cluster_id] = None
-        _vm_cache_ts[cluster_id] = 0.0
+        _vm_cache_data[cache_key] = None
+        _vm_cache_ts[cache_key] = 0.0
+    # Also invalidate cluster-specific caches
+    cluster_id = get_current_cluster_id()
     with _cluster_cache_lock:
         _cluster_cache_data[cluster_id] = None
         _cluster_cache_ts[cluster_id] = 0.0
     # Note: Don't reset _vm_cache_loaded - we want to keep trying disk cache
-    logger.debug("Invalidated VM cache for cluster %s", cluster_id)
+    logger.debug("Invalidated VM cache for all clusters")
 
 
 # ---------------------------------------------------------------------------
@@ -1240,10 +1242,9 @@ def get_all_vms(skip_ips: bool = False, force_refresh: bool = False) -> List[Dic
     else:
         logger.warning("get_all_vms: SKIPPING ARP scan (scanner not available)")
 
-    # Cache the VM structure for this cluster
-    cluster_id = get_current_cluster_id()
-    _vm_cache_data[cluster_id] = out
-    _vm_cache_ts[cluster_id] = now
+    # Cache the VM structure for all clusters using consistent key
+    _vm_cache_data[cache_key] = out
+    _vm_cache_ts[cache_key] = now
     _save_vm_cache()  # Persist to disk for fast restart
     
     return out
