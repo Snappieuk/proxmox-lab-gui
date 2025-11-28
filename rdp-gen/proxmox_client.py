@@ -962,17 +962,16 @@ def _enrich_vms_with_arp_ips(vms: List[Dict[str, Any]], force_sync: bool = False
 
 
 
-def get_all_vms(skip_ips: bool = False, force_refresh: bool = False) -> List[Dict[str, Any]]:
+def get_all_vms(force_refresh: bool = False) -> List[Dict[str, Any]]:
     """
     Cached list of all VMs/containers visible to the admin user.
 
     Each item: { vmid, node, name, status, ip, category, type }
     
     Uses /cluster/resources endpoint for fast loading (single API call).
-    Set skip_ips=True to avoid IP lookups for initial fast load.
     Set force_refresh=True to bypass cache and fetch fresh data from Proxmox.
     
-    Note: Cache stores VM structure. When skip_ips=True, returns cached VMs without IP lookup.
+    IPs are always fetched via ARP scan for running VMs.
     """
     global _vm_cache_data, _vm_cache_ts
 
@@ -984,36 +983,20 @@ def get_all_vms(skip_ips: bool = False, force_refresh: bool = False) -> List[Dic
     # Check if we have valid cached data
     cache_valid = _vm_cache_data is not None and (now - _vm_cache_ts) < VM_CACHE_TTL
     
-    # If cache is valid and not forcing refresh, return cached data
-    # When skip_ips=True, return cached data including any IPs from persistent cache
+    # If cache is valid and not forcing refresh, return cached data with fresh IP lookup
     if not force_refresh and cache_valid and _vm_cache_data is not None:
-        logger.info("get_all_vms: returning cached data (skip_ips=%s, age=%.1fs)", skip_ips, now - _vm_cache_ts)
-        if skip_ips:
-            # Return cached VMs with IPs from both caches (vm_cache.json + ip_cache.json)
-            # VMs already have IPs from vm_cache, but enrich with fresher ones from ip_cache if available
-            result = []
-            ip_count = 0
-            for vm in _vm_cache_data:
-                cached_ip = _get_cached_ip(vm['vmid'])
-                # Use cached IP if available and not expired, otherwise keep VM's stored IP
-                final_ip = cached_ip if cached_ip else vm.get('ip')
-                if final_ip:
-                    ip_count += 1
-                result.append({**vm, "ip": final_ip})
-            logger.info("get_all_vms: returned %d VMs with %d IPs from cache", len(result), ip_count)
-            return result
-        else:
-            # Return full cached data with IPs enriched from ip_cache
-            result = []
-            ip_count = 0
-            for vm in _vm_cache_data:
-                cached_ip = _get_cached_ip(vm['vmid'])
-                final_ip = cached_ip if cached_ip else vm.get('ip')
-                if final_ip:
-                    ip_count += 1
-                result.append({**vm, "ip": final_ip})
-            logger.info("get_all_vms: returned %d VMs with %d IPs from cache (skip_ips=False)", len(result), ip_count)
-            return result
+        logger.info("get_all_vms: returning cached data (age=%.1fs)", now - _vm_cache_ts)
+        # Return cached VMs but always run ARP scan to get fresh IPs
+        result = []
+        for vm in _vm_cache_data:
+            result.append({**vm})
+        
+        # Always run ARP scan for fresh IPs
+        if ARP_SCANNER_AVAILABLE:
+            logger.info("get_all_vms: calling ARP scan enrichment on cached data")
+            _enrich_vms_with_arp_ips(result)
+        
+        return result
 
     # Fast path: use cluster resources API (single call vs N node queries)
     out: List[Dict[str, Any]] = []
@@ -1030,7 +1013,7 @@ def get_all_vms(skip_ips: bool = False, force_refresh: bool = False) -> List[Dic
             if VALID_NODES and vm.get("node") not in VALID_NODES:
                 continue
             
-            out.append(_build_vm_dict(vm, skip_ip=skip_ips))
+            out.append(_build_vm_dict(vm))
     except Exception as e:
         logger.warning("cluster resources API failed, falling back to per-node queries: %s", e)
         # Fallback: per-node queries (slower)
@@ -1054,7 +1037,7 @@ def get_all_vms(skip_ips: bool = False, force_refresh: bool = False) -> List[Dic
                         continue
                     vm['node'] = node
                     vm['type'] = 'qemu'
-                    out.append(_build_vm_dict(vm, skip_ip=skip_ips))
+                    out.append(_build_vm_dict(vm))
                 
                 # Get LXC containers
                 lxc_vms = get_proxmox_admin().nodes(node).lxc.get() or []
@@ -1064,7 +1047,7 @@ def get_all_vms(skip_ips: bool = False, force_refresh: bool = False) -> List[Dic
                         continue
                     vm['node'] = node
                     vm['type'] = 'lxc'
-                    out.append(_build_vm_dict(vm, skip_ip=skip_ips))
+                    out.append(_build_vm_dict(vm))
             except Exception as e:
                 logger.debug("failed to list VMs on %s: %s", node, e)
 
@@ -1076,17 +1059,14 @@ def get_all_vms(skip_ips: bool = False, force_refresh: bool = False) -> List[Dic
     # Always enrich with user mappings (needed for both admin and user views)
     _enrich_with_user_mappings(out)
 
-    # Try ARP-based IP discovery for VMs without IPs (fast batch operation)
-    # Only run when not skipping IPs
-    if not skip_ips and ARP_SCANNER_AVAILABLE:
-        logger.info("get_all_vms: calling ARP scan enrichment (skip_ips=%s)", skip_ips)
+    # Always run ARP-based IP discovery for VMs (fast batch operation)
+    if ARP_SCANNER_AVAILABLE:
+        logger.info("get_all_vms: calling ARP scan enrichment")
         _enrich_vms_with_arp_ips(out)
-    elif skip_ips:
-        logger.info("get_all_vms: SKIPPING ARP scan (skip_ips=True)")
-    elif not ARP_SCANNER_AVAILABLE:
+    else:
         logger.warning("get_all_vms: SKIPPING ARP scan (scanner not available)")
 
-    # Cache the VM structure (always cache, even with skip_ips)
+    # Cache the VM structure (always cache)
     _vm_cache_data = out
     _vm_cache_ts = now
     _save_vm_cache()  # Persist to disk for fast restart
@@ -1437,18 +1417,18 @@ def get_vm_ip(vmid: int, node: str, vmtype: str) -> Optional[str]:
     return ip
 
 
-def get_vms_for_user(user: str, search: Optional[str] = None, skip_ips: bool = False, force_refresh: bool = False) -> List[Dict[str, Any]]:
+def get_vms_for_user(user: str, search: Optional[str] = None, force_refresh: bool = False) -> List[Dict[str, Any]]:
     """
     Non-admin: only VMs listed in mappings.
     Admin: all VMs.
     Optional search parameter filters by VM name (case-insensitive).
-    Set skip_ips=True to skip IP lookups for fast initial load.
     Set force_refresh=True to bypass cache and fetch fresh data.
+    IPs are always fetched via ARP scan.
     
     NOTE: This function now uses cached user_mappings from get_all_vms(),
     so switching between admin/user views doesn't trigger new Proxmox API calls.
     """
-    vms = get_all_vms(skip_ips=skip_ips, force_refresh=force_refresh)
+    vms = get_all_vms(force_refresh=force_refresh)
     admin = is_admin_user(user)
     logger.debug("get_vms_for_user: user=%s is_admin=%s all_vms=%d", user, admin, len(vms))
     

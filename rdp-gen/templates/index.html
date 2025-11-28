@@ -372,23 +372,14 @@ function applyFilters() {
 // Load VMs initially (for progressive load)
 async function loadVMs() {
     const loadingIndicator = document.getElementById('loading-indicator');
-    try {
-        // Fast initial load: skip IPs to populate VMs immediately
-        const resp = await fetch("/api/vms?skip_ips=true");
+    try:
+        // Load VMs with ARP scan for IPs
+        const resp = await fetch("/api/vms");
         if (!resp.ok) {
             if (loadingIndicator) loadingIndicator.remove();
             return;
         }
         const data = await resp.json();
-        
-        // Mark VMs without IPs for status indicator
-        if (Array.isArray(data)) {
-            data.forEach(vm => {
-                if (!vm.ip || vm.ip === 'N/A') {
-                    vm.ip = 'Fetching...';
-                }
-            });
-        }
         
         // If tables are empty, populate them
         if (document.querySelectorAll('.vm-table tbody tr').length === 0) {
@@ -396,9 +387,6 @@ async function loadVMs() {
         }
         
         if (loadingIndicator) loadingIndicator.remove();
-        
-        // Now fetch with IPs in the background (slight delay to let page render)
-        setTimeout(fetchIPsInBackground, 500);
     } catch (e) {
         console.error('Failed to load VMs:', e);
         if (loadingIndicator) loadingIndicator.remove();
@@ -485,6 +473,32 @@ function populateTables(vms) {
     
     // Update summary tiles
     updateSummaryTiles(vms);
+    
+    // Populate node filter dropdown
+    populateNodeFilter(vms);
+}
+
+function populateNodeFilter(vms) {
+    const nodeFilter = document.getElementById('node-filter');
+    
+    // Get unique nodes from VMs
+    const nodes = new Set();
+    vms.forEach(vm => {
+        if (vm.node) {
+            nodes.add(vm.node);
+        }
+    });
+    
+    // Clear existing options except "All Nodes"
+    nodeFilter.innerHTML = '<option value="all">All Nodes</option>';
+    
+    // Add option for each node
+    Array.from(nodes).sort().forEach(node => {
+        const option = document.createElement('option');
+        option.value = node;
+        option.textContent = node;
+        nodeFilter.appendChild(option);
+    });
 }
 
 function createVMRow(vm, category) {
