@@ -148,7 +148,7 @@
     color: #605e5c;
 }
 
-.action-btn {
+.action-btn, .role-select {
     padding: 0.4rem 0.8rem;
     border-radius: 4px;
     border: 1px solid #8a8886;
@@ -157,6 +157,10 @@
     cursor: pointer;
     font-size: 0.85rem;
     margin-right: 0.5rem;
+}
+
+.role-select {
+    min-width: 120px;
 }
 
 .action-btn:hover {
@@ -290,12 +294,16 @@ async function loadUsers() {
                 <td><span class="badge badge-${user.type}">${user.type}</span></td>
                 <td>
                     ${user.has_local_account ? `
-                        <select class="action-btn" onchange="updateUserRole('${user.username}', this.value)">
+                        <select class="role-select" onchange="updateUserRole('${user.username}', this.value)">
                             <option value="user" ${user.local_role === 'user' ? 'selected' : ''}>User</option>
                             <option value="teacher" ${user.local_role === 'teacher' ? 'selected' : ''}>Teacher</option>
                             <option value="adminer" ${user.local_role === 'adminer' ? 'selected' : ''}>Admin</option>
                         </select>
-                    ` : '<span style="color: #8a8886;">None</span>'}
+                    ` : `
+                        <button class="action-btn" onclick="createLocalAccount('${user.username}')">
+                            <i class="bi bi-plus"></i> Create Local
+                        </button>
+                    `}
                 </td>
                 <td>
                     ${user.type === 'proxmox' ? `
@@ -425,6 +433,36 @@ async function deleteUser(username) {
     } catch (e) {
         console.error('Failed to delete user:', e);
         showAlert('Failed to delete user', 'error');
+    }
+}
+
+async function createLocalAccount(username) {
+    const password = prompt(`Enter password for ${username}'s local account:`);
+    if (!password) return;
+    
+    try {
+        const resp = await fetch('/admin/users/api/users/create', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+                username, 
+                password, 
+                type: 'local', 
+                role: 'user'
+            })
+        });
+        
+        const data = await resp.json();
+        
+        if (data.ok) {
+            showAlert(`Local account created for ${username}`, 'success');
+            loadUsers();
+        } else {
+            showAlert(data.error || 'Failed to create local account', 'error');
+        }
+    } catch (e) {
+        console.error('Failed to create local account:', e);
+        showAlert('Failed to create local account', 'error');
     }
 }
 
