@@ -1238,26 +1238,30 @@ def _enrich_vms_with_arp_ips(vms: List[Dict[str, Any]], force_sync: bool = False
     discovered_ips = discover_ips_via_arp(vm_mac_map, subnets=ARP_SUBNETS, background=True)
     
     # Update VMs with discovered IPs (from cache only, background scan will update later)
+    # IMPORTANT: Only update VMs that have IPs in discovered_ips
+    # Don't touch VMs that already have IPs from database cache
     updated_count = 0
     
     for vm in vms:
         if vm["vmid"] in discovered_ips:
             cached_ip = discovered_ips[vm["vmid"]]
             
-            # Update VM with cached IP
-            vm["ip"] = cached_ip
-            updated_count += 1
-            
-            # Check RDP availability: Windows always true, others check port scan cache
-            if cached_ip:
+            # Only update if we got a valid IP from ARP cache
+            if cached_ip and cached_ip not in ("N/A", "Fetching...", ""):
+                vm["ip"] = cached_ip
+                updated_count += 1
+                
+                # Check RDP availability: Windows always true, others check port scan cache
                 if vm.get("category") == "windows":
                     vm["rdp_available"] = True  # Windows assumed to have RDP
                 else:
                     vm["rdp_available"] = has_rdp_port_open(cached_ip)  # Check scan cache
-                logger.debug("VM %d (%s): RDP available = %s", 
-                            vm["vmid"], vm["name"], vm["rdp_available"])
+                logger.debug("VM %d (%s): Updated with ARP cached IP=%s, RDP=%s", 
+                            vm["vmid"], vm["name"], cached_ip, vm["rdp_available"])
             else:
-                logger.debug("VM %d (%s): No cached IP", vm["vmid"], vm["name"])
+                logger.debug("VM %d (%s): ARP cache returned invalid IP: %s", 
+                            vm["vmid"], vm["name"], cached_ip)
+        # If VM not in discovered_ips, keep whatever IP it already has (from database cache)
     
     if updated_count == len(vm_mac_map):
         logger.info("=== ARP CACHE HIT === All %d VMs had cached IPs", updated_count)
