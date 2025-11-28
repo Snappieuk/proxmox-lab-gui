@@ -219,7 +219,6 @@ logger = logging.getLogger(__name__)
 
 # Thread-safe locks for caches
 _vm_cache_lock = threading.Lock()
-_ip_cache_lock = threading.Lock()
 _mappings_cache_lock = threading.Lock()
 
 # Per-cluster VM cache - dict mapping cluster_id to cache data
@@ -232,13 +231,6 @@ _vm_cache_loaded: Dict[str, bool] = {}
 _cluster_cache_data: Dict[str, Optional[List[Dict[str, Any]]]] = {}
 _cluster_cache_ts: Dict[str, float] = {}
 _cluster_cache_lock = threading.Lock()
-
-# IP address cache: "cluster_id:vmid" -> {"ip": "x.x.x.x", "timestamp": unix_time}
-# Stored in JSON file for persistence across restarts
-# Cache key format changed to include cluster_id to avoid VMID collisions between clusters
-_ip_cache: Dict[str, Dict[str, Any]] = {}
-_ip_cache_loaded = False
-IP_CACHE_TTL = 3600  # 1 hour (much longer since we validate on use)
 
 # In-memory mappings cache (write-through to disk)
 _mappings_cache: Optional[Dict[str, List[int]]] = None
@@ -499,72 +491,122 @@ def invalidate_cluster_cache() -> None:
         _cluster_cache_ts[cluster_id] = 0.0
     logger.debug("Invalidated cluster cache for %s", cluster_id)
 
-def _get_cached_ip(cluster_id: str, vmid: int) -> Optional[str]:
-    """Get IP from persistent cache if not expired. Thread-safe."""
-    _load_ip_cache()
-    cache_key = f"{cluster_id}:{vmid}"
-    with _ip_cache_lock:
-        if cache_key in _ip_cache:
-            entry = _ip_cache[cache_key]
-            ip = entry.get("ip")
-            ts = entry.get("timestamp", 0)
-            if time.time() - ts < IP_CACHE_TTL:
-                return ip
+
+def _get_cached_ip_from_db(cluster_id: str, vmid: int) -> Optional[str]:
+    """Get IP from database cache if not expired (1 hour TTL)."""
+    from datetime import datetime, timedelta
+    from app.models import VMAssignment, VMIPCache
+    
+    try:
+        # Check VMAssignment first (class VMs)
+        assignment = VMAssignment.query.filter_by(vmid=vmid).first()
+        if assignment and assignment.cached_ip and assignment.ip_updated_at:
+            age = datetime.utcnow() - assignment.ip_updated_at
+            if age < timedelta(hours=1):
+                return assignment.cached_ip
+        
+        # Check VMIPCache (legacy VMs)
+        cache_entry = VMIPCache.query.filter_by(vmid=vmid, cluster_id=cluster_id).first()
+        if cache_entry and cache_entry.cached_ip and cache_entry.ip_updated_at:
+            age = datetime.utcnow() - cache_entry.ip_updated_at
+            if age < timedelta(hours=1):
+                return cache_entry.cached_ip
+    except Exception as e:
+        logger.debug(f"Failed to get cached IP from DB for VM {vmid}: {e}")
+    
     return None
 
 
 def _get_cached_ips_batch(cluster_id: str, vmids: List[int]) -> Dict[int, str]:
-    """Get multiple IPs from cache in a single lock acquisition.
-    
-    More efficient than calling _get_cached_ip() in a loop for many VMs.
-    Thread-safe.
+    """Get multiple IPs from database cache in batch.
     
     Returns:
         Dict mapping vmid to cached IP (only includes VMs with valid cached IPs)
     """
-    _load_ip_cache()
-    now = time.time()
-    results: Dict[int, str] = {}
+    from datetime import datetime, timedelta
+    from app.models import VMAssignment, VMIPCache
     
-    with _ip_cache_lock:
-        for vmid in vmids:
-            cache_key = f"{cluster_id}:{vmid}"
-            if cache_key in _ip_cache:
-                entry = _ip_cache[cache_key]
-                ip = entry.get("ip")
-                ts = entry.get("timestamp", 0)
-                if ip and now - ts < IP_CACHE_TTL:
-                    results[vmid] = ip
+    results: Dict[int, str] = {}
+    cutoff = datetime.utcnow() - timedelta(hours=1)
+    
+    try:
+        # Get all VMAssignments for these VMs
+        assignments = VMAssignment.query.filter(
+            VMAssignment.vmid.in_(vmids),
+            VMAssignment.cached_ip.isnot(None),
+            VMAssignment.ip_updated_at >= cutoff
+        ).all()
+        
+        for assignment in assignments:
+            results[assignment.vmid] = assignment.cached_ip
+        
+        # Get remaining VMs from VMIPCache
+        remaining_vmids = [v for v in vmids if v not in results]
+        if remaining_vmids:
+            cache_entries = VMIPCache.query.filter(
+                VMIPCache.vmid.in_(remaining_vmids),
+                VMIPCache.cluster_id == cluster_id,
+                VMIPCache.cached_ip.isnot(None),
+                VMIPCache.ip_updated_at >= cutoff
+            ).all()
+            
+            for entry in cache_entries:
+                results[entry.vmid] = entry.cached_ip
+    
+    except Exception as e:
+        logger.debug(f"Failed to batch fetch cached IPs from DB: {e}")
     
     return results
 
 
-def _cache_ip(cluster_id: str, vmid: int, ip: Optional[str]) -> None:
-    """Store IP in persistent cache. Thread-safe."""
-    _load_ip_cache()
-    if ip:
-        cache_key = f"{cluster_id}:{vmid}"
-        with _ip_cache_lock:
-            _ip_cache[cache_key] = {
-                "ip": ip,
-                "timestamp": time.time()
-            }
-        _save_ip_cache()
+def _cache_ip_to_db(cluster_id: str, vmid: int, ip: Optional[str], mac: Optional[str] = None) -> None:
+    """Store IP in database cache."""
+    from datetime import datetime
+    from app.models import db, VMAssignment, VMIPCache
+    
+    if not ip:
+        return
+    
+    try:
+        now = datetime.utcnow()
+        
+        # Try to update VMAssignment first
+        assignment = VMAssignment.query.filter_by(vmid=vmid).first()
+        if assignment:
+            assignment.cached_ip = ip
+            assignment.ip_updated_at = now
+            if mac:
+                assignment.mac_address = mac
+            db.session.commit()
+            return
+        
+        # Otherwise update/create VMIPCache
+        cache_entry = VMIPCache.query.filter_by(vmid=vmid, cluster_id=cluster_id).first()
+        if cache_entry:
+            cache_entry.cached_ip = ip
+            cache_entry.ip_updated_at = now
+            if mac:
+                cache_entry.mac_address = mac
+        else:
+            cache_entry = VMIPCache(
+                vmid=vmid,
+                cluster_id=cluster_id,
+                cached_ip=ip,
+                mac_address=mac,
+                ip_updated_at=now
+            )
+            db.session.add(cache_entry)
+        
+        db.session.commit()
+    except Exception as e:
+        logger.debug(f"Failed to cache IP to DB for VM {vmid}: {e}")
+        db.session.rollback()
 
 
 def _clear_vm_ip_cache(cluster_id: str, vmid: int) -> None:
-    """Clear IP cache for specific VM (both memory and database). Thread-safe."""
+    """Clear IP cache for specific VM in database."""
     from app.models import db, VMAssignment, VMIPCache
     
-    _load_ip_cache()
-    cache_key = f"{cluster_id}:{vmid}"
-    with _ip_cache_lock:
-        if cache_key in _ip_cache:
-            del _ip_cache[cache_key]
-            logger.debug("Cleared memory IP cache for VM %s:%d", cluster_id, vmid)
-    _save_ip_cache()
-    
-    # Also clear database cache
     try:
         # Clear VMAssignment cache
         assignment = VMAssignment.query.filter_by(vmid=vmid).first()
@@ -596,7 +638,7 @@ def verify_vm_ip(cluster_id: str, node: str, vmid: int, vmtype: str, cached_ip: 
         current_ip = _lookup_vm_ip(node, vmid, vmtype)
         if current_ip and current_ip != cached_ip:
             logger.info("VM %s:%d IP changed: %s -> %s", cluster_id, vmid, cached_ip, current_ip)
-            _cache_ip(cluster_id, vmid, current_ip)
+            _cache_ip_to_db(cluster_id, vmid, current_ip)
             return current_ip
         return cached_ip
     except Exception as e:
@@ -926,7 +968,7 @@ def lookup_ips_parallel(vms: List[Dict[str, Any]]) -> Dict[int, str]:
                 # Extract cluster_id from the vm dict
                 vm = futures[future]
                 cluster_id = vm.get("cluster_id", "cluster1")
-                _cache_ip(cluster_id, vmid, ip)
+                _cache_ip_to_db(cluster_id, vmid, ip)
         except Exception as e:
             vm = futures[future]
             logger.debug("Parallel IP lookup failed for VM %s: %s", vm.get("vmid"), e)
@@ -962,10 +1004,10 @@ def _build_vm_dict(raw: Dict[str, Any], skip_ip: bool = False) -> Dict[str, Any]
     # 3. ARP scanning for QEMU and LXC with DHCP (handled by _enrich_vms_with_arp_ips)
     ip = None
     if not skip_ip:
-        # First: Check memory cache
+        # First: Check database cache
         # Note: cluster_id should be in raw dict, fallback to cluster1 for backward compat
         cluster_id = raw.get("cluster_id", "cluster1")
-        cached_ip = _get_cached_ip(cluster_id, vmid)
+        cached_ip = _get_cached_ip_from_db(cluster_id, vmid)
         if cached_ip:
             # Validate cached IP for running VMs to detect IP changes
             if status == "running" and vmtype == "qemu":
@@ -980,7 +1022,7 @@ def _build_vm_dict(raw: Dict[str, Any], skip_ip: bool = False) -> Dict[str, Any]
             # LXC containers: network config API
             ip = _lookup_vm_ip(node, vmid, vmtype)
             if ip:
-                _cache_ip(cluster_id, vmid, ip)
+                _cache_ip_to_db(cluster_id, vmid, ip)
             # If no IP from API and container is running, ARP scan will find it (DHCP case)
         
         # For running VMs/containers without IPs:
@@ -1957,15 +1999,15 @@ def get_vm_ip(cluster_id: str, vmid: int, node: str, vmtype: str) -> Optional[st
     
     Returns IP from cache if available, otherwise performs API lookup.
     """
-    # Check cache first
-    ip = _get_cached_ip(cluster_id, vmid)
+    # Check database cache first
+    ip = _get_cached_ip_from_db(cluster_id, vmid)
     if ip:
         return ip
     
     # Lookup from API
     ip = _lookup_vm_ip(node, vmid, vmtype)
     if ip:
-        _cache_ip(cluster_id, vmid, ip)
+        _cache_ip_to_db(cluster_id, vmid, ip)
     
     return ip
 
