@@ -48,9 +48,61 @@
             background: #a1260d;
             color: white;
         }
-        #terminal-container {
+        #connect-bar {
             position: absolute;
             top: 40px;
+            left: 0;
+            right: 0;
+            height: 50px;
+            background: #2d2d30;
+            border-bottom: 1px solid #3e3e42;
+            display: flex;
+            align-items: center;
+            padding: 0 16px;
+            gap: 12px;
+        }
+        #connect-bar label {
+            font-size: 13px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        #ssh-username {
+            background: #3c3c3c;
+            border: 1px solid #5a5a5a;
+            color: #d4d4d4;
+            padding: 6px 10px;
+            border-radius: 3px;
+            font-size: 13px;
+            font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif;
+            width: 200px;
+        }
+        #ssh-username:focus {
+            outline: none;
+            border-color: #007acc;
+            background: #454545;
+        }
+        #ssh-connect-btn {
+            background: #0e639c;
+            border: none;
+            color: white;
+            padding: 6px 16px;
+            border-radius: 3px;
+            font-size: 13px;
+            cursor: pointer;
+            font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif;
+        }
+        #ssh-connect-btn:hover {
+            background: #1177bb;
+        }
+        #ssh-connect-btn:disabled {
+            background: #3a3d41;
+            cursor: not-allowed;
+            opacity: 0.6;
+        }
+        #terminal-container {
+            position: absolute;
+            top: 90px;
             left: 0;
             right: 0;
             bottom: 0;
@@ -71,7 +123,14 @@
             <span id="vm-name">{{ vm_name }}</span>
             <span id="vm-ip">{{ ip }}</span>
         </div>
-        <span id="status">Connecting...</span>
+        <span id="status">Ready</span>
+    </div>
+    <div id="connect-bar">
+        <label>
+            Username:
+            <input id="ssh-username" type="text" autocomplete="off" placeholder="Enter username">
+        </label>
+        <button id="ssh-connect-btn">Connect</button>
     </div>
     <div id="terminal-container">
         <div id="terminal"></div>
@@ -129,15 +188,20 @@
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         
         const status = document.getElementById('status');
+        const usernameInput = document.getElementById('ssh-username');
+        const connectBtn = document.getElementById('ssh-connect-btn');
         let ws = null;
 
         function connect() {
-            // Prompt for username
-            const username = prompt('Enter SSH username:', 'root');
+            const username = usernameInput.value.trim();
             if (!username) {
-                term.write('\r\n\x1b[1;33mConnection cancelled\x1b[0m\r\n');
+                term.write('\r\n\x1b[1;33mPlease enter a username\x1b[0m\r\n');
+                usernameInput.focus();
                 return;
             }
+            
+            connectBtn.disabled = true;
+            usernameInput.disabled = true;
             
             const wsUrl = `${protocol}//${window.location.host}/ws/ssh/${vmid}?ip=${encodeURIComponent(ip)}&username=${encodeURIComponent(username)}`;
             
@@ -174,6 +238,8 @@
             ws.onclose = (event) => {
                 status.textContent = 'Disconnected';
                 status.className = 'error';
+                connectBtn.disabled = false;
+                usernameInput.disabled = false;
                 console.log('WebSocket closed:', event.code, event.reason, event.wasClean);
                 term.write('\r\n\x1b[1;31mConnection closed\x1b[0m\r\n');
                 if (event.reason) {
@@ -188,7 +254,18 @@
             });
         }
 
-        connect();
+        // Connect button click
+        connectBtn.addEventListener('click', connect);
+        
+        // Enter key in username field
+        usernameInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                connect();
+            }
+        });
+        
+        // Focus username input on load
+        usernameInput.focus();
     </script>
 </body>
 </html>

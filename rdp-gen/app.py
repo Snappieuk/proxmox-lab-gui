@@ -685,13 +685,13 @@ if WEBSOCKET_AVAILABLE:
         
         # Get IP and username from query parameters
         ip = request.args.get('ip')
-        username = request.args.get('username', 'root')
+        username = request.args.get('username')
         
         app.logger.info("SSH WebSocket: vmid=%d, ip=%s, username=%s", vmid, ip, username)
         
-        if not ip:
-            app.logger.error("SSH WebSocket: No IP provided")
-            ws.send("Error: No IP address provided")
+        if not ip or not username:
+            app.logger.error("SSH WebSocket: IP or username missing")
+            ws.send("\r\n\x1b[1;31mError: IP address or username not provided.\x1b[0m\r\n")
             return
         
         # Create SSH handler with username
