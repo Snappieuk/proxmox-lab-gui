@@ -461,8 +461,10 @@ async function loadVMs() {
         
         if (loadingIndicator) loadingIndicator.remove();
         
-        // Fetch IPs in background after page renders (skip if force refresh already loaded IPs)
-        if (!forceRefresh) {
+        // Only fetch IPs in background if initial load was fast (skip_ips=true)
+        // Don't fetch if we just did a force_refresh (IPs already loaded)
+        const needsIPFetch = vmsToDisplay.some(vm => vm.ip === 'Fetching...' || vm.ip === 'N/A');
+        if (!forceRefresh && needsIPFetch) {
             setTimeout(fetchIPsInBackground, 500);
         }
     } catch (e) {
@@ -651,15 +653,48 @@ function createVMRow(vm, category) {
 
 // Refresh VM status
 async function refreshVmStatus() {
+    // Skip refresh if page is not visible (tab is in background)
+    if (document.hidden) {
+        console.log('Page hidden, skipping status refresh');
+        return;
+    }
+    
     try {
         const resp = await fetch("/api/vms");
         if (!resp.ok) return;
         const data = await resp.json();
         updateVMsFromData(data);
-
-        updateVMsFromData(data);
     } catch (e) {
         console.error('Failed to refresh:', e);
+    }
+}
+
+// Refresh single VM status (more efficient after power actions)
+async function refreshSingleVMStatus(vmid, skipIp = true) {
+    try {
+        // Skip IP lookup since power actions don't change IPs
+        const url = skipIp ? `/api/vm/${vmid}/status?skip_ip=true` : `/api/vm/${vmid}/status`;
+        const resp = await fetch(url);
+        if (!resp.ok) return;
+        const vm = await resp.json();
+        
+        // Update just this VM in the UI (updates status badges and button states)
+        const existingVm = allVMs.find(v => v.vmid === vmid);
+        if (existingVm) {
+            // Keep existing IP if we skipped lookup
+            if (skipIp && existingVm.ip) {
+                vm.ip = existingVm.ip;
+            }
+            // Update the VM in allVMs array
+            Object.assign(existingVm, vm);
+        }
+        
+        // Re-render the tables with updated data
+        populateTables(allVMs);
+    } catch (e) {
+        console.error('Failed to refresh single VM:', e);
+        // Fallback to full refresh if single refresh fails
+        refreshVmStatus();
     }
 }
 
@@ -780,8 +815,10 @@ async function sendPowerAction(vmid, action, btn) {
         icon.className = originalIcon;
         btn.style.opacity = '';
         
-        // Refresh VM status after a short delay to allow Proxmox task to complete
-        setTimeout(refreshVmStatus, 2000);
+        // Only refresh this specific VM's status instead of all VMs
+        setTimeout(() => {
+            refreshSingleVMStatus(vmid);
+        }, 2000);
         
     } catch (e) {
         console.error("Power action exception:", e);
@@ -831,6 +868,40 @@ async function refreshVMs() {
 }
 
 // Event listeners
+let statusPollInterval = null;
+let lastUserActivity = Date.now();
+
+// Track user activity to adjust polling frequency
+function updateUserActivity() {
+    lastUserActivity = Date.now();
+}
+
+document.addEventListener('mousedown', updateUserActivity);
+document.addEventListener('keydown', updateUserActivity);
+
+// Smart polling - adjust rate based on page visibility and user activity
+function startSmartPolling() {
+    if (statusPollInterval) {
+        clearInterval(statusPollInterval);
+    }
+    
+    // Poll every 30 seconds instead of 15 (reduce by 50%)
+    // Skip polling when page is hidden
+    statusPollInterval = setInterval(() => {
+        if (!document.hidden) {
+            refreshVmStatus();
+        }
+    }, 30000);
+}
+
+// Resume polling when page becomes visible
+document.addEventListener('visibilitychange', function() {
+    if (!document.hidden) {
+        console.log('Page visible, refreshing status');
+        refreshVmStatus();
+    }
+});
+
 window.addEventListener("load", function () {
     const progressiveLoad = {{ 'true' if progressive_load else 'false' }};
     
@@ -842,8 +913,8 @@ window.addEventListener("load", function () {
         setTimeout(refreshVmStatus, 500);
     }
     
-    // Poll every 15 seconds
-    setInterval(refreshVmStatus, 15000);
+    // Start smart polling
+    startSmartPolling();
 
     // Power button clicks
     document.addEventListener("click", function (e) {

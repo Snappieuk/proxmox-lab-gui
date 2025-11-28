@@ -131,6 +131,53 @@ def api_vm_ip(vmid: int):
         return jsonify({"error": str(e), "status": "error"}), 500
 
 
+@api_vms_bp.route("/vm/<int:vmid>/status")
+@login_required
+def api_vm_status(vmid: int):
+    """
+    Get status for a single VM (optimized for post-action refresh).
+    
+    Query parameters:
+    - skip_ip: Skip IP lookup for faster response (defaults to False)
+    """
+    from app.services.user_manager import require_user
+    
+    user = require_user()
+    skip_ip = request.args.get('skip_ip', 'false').lower() == 'true'
+    
+    try:
+        # Pass skip_ip to find_vm_for_user for optimization
+        vm = find_vm_for_user(user, vmid, skip_ip=skip_ip)
+        if not vm:
+            return jsonify({"error": "VM not found or not accessible"}), 404
+        
+        # Check RDP availability (only if we have an IP and didn't skip lookup)
+        if not skip_ip and vm.get('ip') and vm['ip'] not in ('N/A', 'Fetching...', ''):
+            rdp_cache_valid = get_rdp_cache_time() > 0
+            rdp_can_build = False
+            rdp_port_available = False
+            
+            try:
+                build_rdp(vm)
+                rdp_can_build = True
+            except Exception:
+                rdp_can_build = False
+            
+            if vm.get('category') == 'windows':
+                rdp_port_available = True
+            elif rdp_cache_valid:
+                rdp_port_available = has_rdp_port_open(vm['ip'])
+            
+            vm['rdp_available'] = rdp_can_build and rdp_port_available
+        else:
+            vm['rdp_available'] = False
+        
+        return jsonify(vm)
+    except Exception as e:
+        logger.exception("Failed to get status for VM %d", vmid)
+        return jsonify({"error": str(e)}), 500
+
+
 @api_vms_bp.route("/vm/<int:vmid>/start", methods=["POST"])
 @login_required
 def api_vm_start(vmid: int):

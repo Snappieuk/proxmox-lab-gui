@@ -1732,16 +1732,26 @@ def get_vms_for_user(user: str, search: Optional[str] = None, skip_ips: bool = F
     return vms
 
 
-def find_vm_for_user(user: str, vmid: int) -> Optional[Dict[str, Any]]:
+def find_vm_for_user(user: str, vmid: int, skip_ip: bool = False) -> Optional[Dict[str, Any]]:
     """
     Return VM dict if the user is allowed to see/control it.
+    
+    Args:
+        user: Username to check access for
+        vmid: VM ID to look up
+        skip_ip: If True, skip IP lookup for faster response (useful after power actions)
+    
+    Returns:
+        VM dict if found and accessible, None otherwise
     """
     try:
         vmid = int(vmid)
     except Exception:
         return None
 
-    for vm in get_vms_for_user(user):
+    # When skip_ip is True, we only need to check access and get basic status
+    # This is much faster for post-power-action status checks
+    for vm in get_vms_for_user(user, skip_ips=skip_ip):
         if vm["vmid"] == vmid:
             return vm
     logger.debug("find_vm_for_user: user=%s vmid=%s -> not found", user, vmid)
