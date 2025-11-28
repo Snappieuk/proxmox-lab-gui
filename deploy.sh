@@ -40,13 +40,9 @@ if pgrep -f "python.*app.py" > /dev/null; then
     fi
     
 else
-    echo "ERROR: No running instance found!"
-    echo ""
-    echo "Checking for Flask/Python processes:"
-    ps aux | grep -i "[p]ython.*app.py" || echo "  (none found)"
-    echo ""
-    echo "Start the app with: cd rdp-gen && python3 app.py"
-    exit 1
+    echo "No running instance found, starting with start.sh..."
+    cd "$REPO_DIR"
+    bash start.sh
 fi
 
 echo "=== Deployment complete ==="
