@@ -867,8 +867,17 @@ def get_all_vms(skip_ips: bool = False, force_refresh: bool = False) -> List[Dic
             logger.info("get_all_vms: returned %d VMs with %d IPs from cache", len(result), ip_count)
             return result
         else:
-            # Return full cached data
-            return list(_vm_cache_data)
+            # Return full cached data with IPs enriched from ip_cache
+            result = []
+            ip_count = 0
+            for vm in _vm_cache_data:
+                cached_ip = _get_cached_ip(vm['vmid'])
+                final_ip = cached_ip if cached_ip else vm.get('ip')
+                if final_ip:
+                    ip_count += 1
+                result.append({**vm, "ip": final_ip})
+            logger.info("get_all_vms: returned %d VMs with %d IPs from cache (skip_ips=False)", len(result), ip_count)
+            return result
 
     # Fast path: use cluster resources API (single call vs N node queries)
     out: List[Dict[str, Any]] = []
