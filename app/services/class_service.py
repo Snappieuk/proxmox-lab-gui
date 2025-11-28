@@ -227,8 +227,22 @@ def get_class_by_token(token: str) -> Optional[Class]:
 
 
 def get_classes_for_teacher(teacher_id: int) -> List[Class]:
-    """Get all classes taught by a teacher."""
-    return Class.query.filter_by(teacher_id=teacher_id).order_by(Class.created_at.desc()).all()
+    """Get all classes accessible to a teacher (taught by them OR enrolled in)."""
+    user = User.query.get(teacher_id)
+    if not user:
+        return []
+    
+    # Get classes they teach
+    taught_classes = Class.query.filter_by(teacher_id=teacher_id).all()
+    
+    # Get classes they're enrolled in as students
+    enrolled_classes = list(user.enrolled_classes)
+    
+    # Combine and deduplicate (in case they're somehow enrolled in their own class)
+    all_classes = {cls.id: cls for cls in taught_classes + enrolled_classes}
+    
+    # Sort by created_at descending
+    return sorted(all_classes.values(), key=lambda c: c.created_at, reverse=True)
 
 
 def get_classes_for_student(user_id: int) -> List[Class]:

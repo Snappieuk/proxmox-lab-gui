@@ -59,6 +59,11 @@
                     </div>
                 </div>
                 <div class="class-card-footer">
+                    {% if user_role == 'teacher' and class.teacher_id != user.id %}
+                    <span class="badge badge-enrolled">
+                        <i class="bi bi-person-check"></i> Enrolled
+                    </span>
+                    {% endif %}
                     {% if class.token_valid %}
                     <span class="badge badge-success">
                         <i class="bi bi-link-45deg"></i> Invite Active
@@ -75,7 +80,7 @@
                     {% endif %}
                 </div>
             </div>
-            {% if user_role == 'teacher' or user_role == 'adminer' %}
+            {% if (user_role == 'teacher' and class.teacher_id == user.id) or user_role == 'adminer' %}
             <div class="class-card-actions">
                 <button class="action-btn danger" onclick="event.stopPropagation(); deleteClass({{ class.id }}, '{{ class.name }}')">
                     <i class="bi bi-trash"></i> Delete
@@ -254,6 +259,12 @@
 .badge-info {
     background: #e8f4fd;
     color: #0078d4;
+}
+
+.badge-enrolled {
+    background: #fff4ce;
+    color: #8a5c00;
+    border: 1px solid #f5e5a4;
 }
 
 .role-badge {

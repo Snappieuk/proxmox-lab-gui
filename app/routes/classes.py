@@ -129,14 +129,14 @@ def view_class(class_id: int):
         if user.is_adminer:
             can_manage = True
         elif user.is_teacher and class_.teacher_id == user.id:
+            # Teacher who owns the class
             can_manage = True
+        elif user in class_.students:
+            # User is enrolled as a student (includes teachers enrolled in other teachers' classes)
+            is_student = True
         else:
-            # Check if student is enrolled
-            if user in class_.students:
-                is_student = True
-            else:
-                flash("You don't have access to this class.", "error")
-                return redirect(url_for('classes.classes_list'))
+            flash("You don't have access to this class.", "error")
+            return redirect(url_for('classes.classes_list'))
     
     # Get VM assignments for this class
     if can_manage:
