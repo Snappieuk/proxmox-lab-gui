@@ -550,13 +550,6 @@ function createVMRow(vm, category) {
                         ${vm.status === 'stopped' ? 'disabled' : ''}>
                     <i class="bi bi-stop-fill"></i>
                 </button>
-                ${hasRdp ? `
-                <a class="btn-icon btn-icon-primary" 
-                   href="/rdp/${vm.vmid}.rdp"
-                   data-tooltip="Download RDP File">
-                    <i class="bi bi-download"></i>
-                </a>
-                ` : ''}
                 ${isLinux ? `
                 <button class="btn-icon btn-icon-dark btn-ssh-web" 
                         data-vmid="${vm.vmid}"
@@ -573,6 +566,13 @@ function createVMRow(vm, category) {
                         ${!vm.ip ? 'disabled' : ''}>
                     <i class="bi bi-clipboard"></i>
                 </button>
+                ` : ''}
+                ${hasRdp ? `
+                <a class="btn-icon btn-icon-primary" 
+                   href="/rdp/${vm.vmid}.rdp"
+                   data-tooltip="Download RDP File">
+                    <i class="bi bi-download"></i>
+                </a>
                 ` : ''}
             </div>
         </td>

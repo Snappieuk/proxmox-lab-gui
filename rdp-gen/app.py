@@ -788,11 +788,12 @@ def rdp_file(vmid: int):
         app.logger.warning("rdp_file: VM %s not found for user %s", vmid, user)
         abort(404)
 
-    app.logger.info("rdp_file: Found VM: vmid=%s, name=%s, type=%s, category=%s, ip=%s", 
-                    vm.get('vmid'), vm.get('name'), vm.get('type'), vm.get('category'), vm.get('ip'))
+    app.logger.info("rdp_file: Found VM: vmid=%s, name=%s, type=%s, category=%s, ip=%s, rdp_available=%s", 
+                    vm.get('vmid'), vm.get('name'), vm.get('type'), vm.get('category'), vm.get('ip'), vm.get('rdp_available'))
 
-    if vm.get("category") != "windows":
-        app.logger.warning("rdp_file: VM %s is not Windows (category=%s)", vmid, vm.get("category"))
+    # Check if RDP is actually available (Windows or has port 3389 open)
+    if not vm.get("rdp_available"):
+        app.logger.warning("rdp_file: VM %s does not have RDP available (rdp_available=%s)", vmid, vm.get("rdp_available"))
         abort(404)
 
     # Trust cached IP if available (ARP scan keeps it fresh)

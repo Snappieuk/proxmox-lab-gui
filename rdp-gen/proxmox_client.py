@@ -924,19 +924,10 @@ def _enrich_vms_with_arp_ips(vms: List[Dict[str, Any]], force_sync: bool = False
         logger.info("=== ARP SCAN COMPLETE === No running VMs need ARP discovery")
         return
     
-    # Log the MAC map being sent to scanner
-    logger.info("VM MAC map being sent to ARP scanner: %s", 
-                {vmid: mac for vmid, mac in list(vm_mac_map.items())[:10]})
-    
-    logger.info("Starting background ARP discovery for %d running VMs...", len(vm_mac_map))
-    
     # Run ARP scan in background mode (non-blocking)
     # Returns cached IPs immediately, scan happens in background thread
     # VMs without cached IPs will show "Fetching..." until background scan completes
     discovered_ips = discover_ips_via_arp(vm_mac_map, subnets=ARP_SUBNETS, background=True)
-    
-    logger.info("ARP discovery returned %d cached IPs: %s", len(discovered_ips),
-                {vmid: ip for vmid, ip in list(discovered_ips.items())[:10]})  # Show first 10
     
     # Update VMs with discovered IPs (from cache only, background scan will update later)
     updated_count = 0
@@ -960,10 +951,13 @@ def _enrich_vms_with_arp_ips(vms: List[Dict[str, Any]], force_sync: bool = False
             else:
                 logger.debug("VM %d (%s): No cached IP", vm["vmid"], vm["name"])
     
-    logger.info("=== ARP SCAN STARTED (background) === Updated %d VMs from cache, background scan in progress", 
-                updated_count)
-
-
+    if updated_count == len(vm_mac_map):
+        logger.info("=== ARP CACHE HIT === All %d VMs had cached IPs", updated_count)
+    elif updated_count > 0:
+        logger.info("=== ARP SCAN STARTED (background) === %d/%d VMs from cache, background scan for remaining",
+                   updated_count, len(vm_mac_map))
+    else:
+        logger.info("=== ARP SCAN STARTED (background) === No cached IPs, scanning for %d VMs", len(vm_mac_map))
 
 def get_all_vms(skip_ips: bool = False, force_refresh: bool = False) -> List[Dict[str, Any]]:
     """
