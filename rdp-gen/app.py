@@ -514,15 +514,27 @@ def api_vms():
         vms = get_vms_for_user(user, search=search or None, skip_ips=skip_ips, force_refresh=force_refresh)
         
         # Check which VMs can actually generate RDP files
-        # Only show button if build_rdp() would succeed
+        # Show button only if: (1) build_rdp() would succeed AND (2) Windows or port 3389 open
+        from arp_scanner import has_rdp_port_open
         for vm in vms:
+            rdp_can_build = False
+            rdp_port_available = False
+            
+            # Check if build_rdp would succeed (has valid IP)
             try:
-                # Try to build RDP - if it succeeds, the button should show
                 build_rdp(vm)
-                vm['rdp_available'] = True
+                rdp_can_build = True
             except Exception:
-                # build_rdp failed (no IP, wrong format, etc) - no button
-                vm['rdp_available'] = False
+                rdp_can_build = False
+            
+            # Check if this is Windows OR has port 3389 open
+            if vm.get('category') == 'windows':
+                rdp_port_available = True
+            elif vm.get('ip') and vm['ip'] not in ('N/A', 'Fetching...', ''):
+                rdp_port_available = has_rdp_port_open(vm['ip'])
+            
+            # Only show button if BOTH conditions met
+            vm['rdp_available'] = rdp_can_build and rdp_port_available
         
         return jsonify(vms)
     except Exception as e:
