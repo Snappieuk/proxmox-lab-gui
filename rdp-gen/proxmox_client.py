@@ -957,8 +957,8 @@ def _enrich_vms_with_arp_ips(vms: List[Dict[str, Any]], force_sync: bool = False
                     vm["rdp_available"] = has_rdp_port_open(cached_ip)  # Check scan cache
                 logger.debug("VM %d (%s): RDP available = %s", 
                             vm["vmid"], vm["name"], vm["rdp_available"])
-            
-            logger.info("VM %d (%s): IP FROM CACHE %s", vm["vmid"], vm["name"], cached_ip)
+            else:
+                logger.debug("VM %d (%s): No cached IP", vm["vmid"], vm["name"])
     
     logger.info("=== ARP SCAN STARTED (background) === Updated %d VMs from cache, background scan in progress", 
                 updated_count)

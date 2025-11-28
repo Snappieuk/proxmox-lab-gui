@@ -524,6 +524,7 @@ function createVMRow(vm, category) {
     
     const isWindows = category === 'windows';
     const isLinux = category === 'linux' || category === 'lxc';
+    const hasRdp = vm.rdp_available === true;  // Show RDP button if port 3389 is open
     
     row.innerHTML = `
         <td><strong>${vm.name}</strong></td>
@@ -549,7 +550,7 @@ function createVMRow(vm, category) {
                         ${vm.status === 'stopped' ? 'disabled' : ''}>
                     <i class="bi bi-stop-fill"></i>
                 </button>
-                ${isWindows ? `
+                ${hasRdp ? `
                 <a class="btn-icon btn-icon-primary" 
                    href="/rdp/${vm.vmid}.rdp"
                    data-tooltip="Download RDP File">
