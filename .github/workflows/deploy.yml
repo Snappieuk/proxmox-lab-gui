@@ -9,4 +9,4 @@ jobs:
     runs-on: self-hosted
     steps:
       - name: Pull latest changes and restart Flask app
-        run: bash ~/rdp-gen/deploy.sh
+        run: bash ~/deploy.sh

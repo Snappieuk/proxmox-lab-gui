@@ -710,7 +710,7 @@ if WEBSOCKET_AVAILABLE:
         try:
             while handler.running:
                 try:
-                    message = ws.receive(timeout=1.0)
+                    message = ws.receive()  # flask-sock doesn't support timeout parameter
                     if message is None:
                         break
                     
@@ -728,6 +728,7 @@ if WEBSOCKET_AVAILABLE:
                             handler.resize_terminal(width, height)
                     except json.JSONDecodeError:
                         # If not JSON, treat as raw input
+                        handler.handle_client_input(message)
                         handler.handle_client_input(message)
                         
                 except Exception as e:
