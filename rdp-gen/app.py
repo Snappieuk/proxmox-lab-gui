@@ -683,16 +683,37 @@ if WEBSOCKET_AVAILABLE:
         app.logger.info("WebSocket SSH connection attempt for VM %d", vmid)
         from ssh_handler import SSHWebSocketHandler
         
-        # Get IP, username, and password from query parameters
+        # Get IP from query parameters
         ip = request.args.get('ip')
-        username = request.args.get('username')
-        password = request.args.get('password')
         
-        app.logger.info("SSH WebSocket: vmid=%d, ip=%s, username=%s", vmid, ip, username)
+        if not ip:
+            app.logger.error("SSH WebSocket: No IP provided")
+            ws.send("\r\n\x1b[1;31mError: IP address not provided.\x1b[0m\r\n")
+            return
         
-        if not ip or not username or not password:
-            app.logger.error("SSH WebSocket: IP, username, or password missing")
-            ws.send("\r\n\x1b[1;31mError: IP address, username, or password not provided.\x1b[0m\r\n")
+        app.logger.info("SSH WebSocket: vmid=%d, ip=%s, waiting for credentials", vmid, ip)
+        
+        # Wait for credentials from client (sent as first message)
+        try:
+            creds_msg = ws.receive()
+            if not creds_msg:
+                app.logger.error("No credentials received")
+                return
+            
+            creds = json.loads(creds_msg)
+            username = creds.get('username')
+            password = creds.get('password')
+            
+            if not username or not password:
+                app.logger.error("Invalid credentials message")
+                ws.send("\r\n\x1b[1;31mError: Invalid credentials.\x1b[0m\r\n")
+                return
+            
+            app.logger.info("Received credentials for user: %s", username)
+            
+        except Exception as e:
+            app.logger.error("Error receiving credentials: %s", e)
+            ws.send("\r\n\x1b[1;31mError: Failed to receive credentials.\x1b[0m\r\n")
             return
         
         # Create SSH handler with credentials

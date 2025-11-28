@@ -259,7 +259,7 @@
         function connect(username, password) {
             modal.classList.add('hidden');
             
-            const wsUrl = `${protocol}//${window.location.host}/ws/ssh/${vmid}?ip=${encodeURIComponent(ip)}&username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`;
+            const wsUrl = `${protocol}//${window.location.host}/ws/ssh/${vmid}?ip=${encodeURIComponent(ip)}`;
             
             status.textContent = 'Connecting...';
             status.className = '';
@@ -267,21 +267,33 @@
             ws = new WebSocket(wsUrl);
             
             ws.onopen = () => {
-                status.textContent = 'Connected';
-                status.className = 'connected';
-                term.focus();
-                
-                // Send initial terminal size
+                // Send credentials as first message (not in URL for security)
                 ws.send(JSON.stringify({
-                    type: 'resize',
-                    width: term.cols,
-                    height: term.rows
+                    username: username,
+                    password: password
                 }));
+                
+                status.textContent = 'Authenticating...';
+                status.className = '';
+                term.focus();
             };
             
+            let authenticated = false;
             ws.onmessage = (event) => {
                 if (typeof event.data === 'string') {
                     term.write(event.data);
+                    // Update status on first data (connection successful)
+                    if (!authenticated) {
+                        authenticated = true;
+                        status.textContent = 'Connected';
+                        status.className = 'connected';
+                        // Send initial terminal size
+                        ws.send(JSON.stringify({
+                            type: 'resize',
+                            width: term.cols,
+                            height: term.rows
+                        }));
+                    }
                 }
             };
             
