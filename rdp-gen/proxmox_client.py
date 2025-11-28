@@ -199,7 +199,7 @@ def _load_vm_cache() -> None:
             data = json.load(f)
             _vm_cache_data = data.get("vms", [])
             _vm_cache_ts = data.get("timestamp", 0.0)
-        logger.info("Loaded VM cache with %d VMs from %s", len(_vm_cache_data), VM_CACHE_FILE)
+        logger.info("Loaded VM cache with %d VMs from %s", len(_vm_cache_data) if _vm_cache_data else 0, VM_CACHE_FILE)
     except Exception as e:
         logger.warning("Failed to load VM cache: %s", e)
         _vm_cache_data = None
@@ -384,7 +384,7 @@ def _get_cached_ips_batch(vmids: List[int]) -> Dict[int, str]:
                 entry = _ip_cache[vmid]
                 ip = entry.get("ip")
                 ts = entry.get("timestamp", 0)
-                if now - ts < IP_CACHE_TTL:
+                if ip and now - ts < IP_CACHE_TTL:
                     results[vmid] = ip
     
     return results
@@ -438,6 +438,9 @@ def _save_ip_to_proxmox(node: str, vmid: int, vmtype: str, ip: Optional[str]) ->
             config = get_proxmox_admin().nodes(node).lxc(vmid).config.get()
         else:
             config = get_proxmox_admin().nodes(node).qemu(vmid).config.get()
+        
+        if not config:
+            return
         
         current_notes = config.get('description', '')
         
@@ -529,20 +532,27 @@ def _get_vm_mac(node: str, vmid: int, vmtype: str) -> Optional[str]:
     return None
 
 
-def _guess_category(vm: Dict[str, Any]) -> str:
+def _guess_category(raw: Dict[str, Any]) -> str:
     """
-    Basic OS category guess for UI grouping.
-
-    - All LXC: 'linux'
-    - QEMU whose name contains 'win': 'windows'
+    Determine OS category based on VM ostype field.
+    
+    - Checks 'ostype' field in VM data (from config)
+    - Falls back to name-based guessing if ostype not available
+    - LXC: always 'linux'
+    - QEMU with ostype containing 'win': 'windows'
     - Other QEMU: 'linux'
-    - Fallback: 'other'
     """
-    vmtype = vm.get("type", "qemu")
+    vmtype = raw.get("type", "qemu")
     if vmtype == "lxc":
         return "linux"
-
-    name = (vm.get("name") or "").lower()
+    
+    # Check ostype field from VM config
+    ostype = (raw.get("ostype") or "").lower()
+    if ostype and "win" in ostype:
+        return "windows"
+    
+    # Fallback to name-based detection if ostype not available
+    name = (raw.get("name") or "").lower()
     if "win" in name or "windows" in name:
         return "windows"
 
@@ -641,7 +651,7 @@ def lookup_ips_parallel(vms: List[Dict[str, Any]]) -> Dict[int, str]:
         Dict mapping vmid to discovered IP address
     """
     # Get all vmids and batch-check cache (more efficient than per-VM checks)
-    all_vmids = [vm.get("vmid") for vm in vms if vm.get("vmid")]
+    all_vmids = [int(vm["vmid"]) for vm in vms if vm.get("vmid") is not None]
     cached_ips = _get_cached_ips_batch(all_vmids)
     
     # Filter VMs that need IP lookup (running QEMU VMs or all LXC containers)
@@ -700,6 +710,18 @@ def _build_vm_dict(raw: Dict[str, Any], skip_ip: bool = False) -> Dict[str, Any]
     name = raw.get("name", f"vm-{vmid}")
     status = raw.get("status", "unknown")
     vmtype = raw.get("type", "qemu")
+    
+    # Fetch ostype from VM config if not already in raw data
+    if "ostype" not in raw and vmtype == "qemu":
+        try:
+            config = get_proxmox_admin().nodes(node).qemu(vmid).config.get()
+            if config:
+                raw["ostype"] = config.get("ostype", "")
+            else:
+                raw["ostype"] = ""
+        except Exception as e:
+            logger.debug("Could not fetch ostype for VM %s: %s", vmid, e)
+            raw["ostype"] = ""
 
     category = _guess_category(raw)
     
@@ -1222,7 +1244,7 @@ def add_user_to_admin_group(user: str) -> bool:
         # Get current group to fetch comment
         try:
             group_info = get_proxmox_admin().access.groups(ADMIN_GROUP).get()
-            comment = group_info.get('comment', '')
+            comment = group_info.get('comment', '') if group_info else ''
         except:
             comment = ''
         
@@ -1260,7 +1282,7 @@ def remove_user_from_admin_group(user: str) -> bool:
         # Get current group to fetch comment
         try:
             group_info = get_proxmox_admin().access.groups(ADMIN_GROUP).get()
-            comment = group_info.get('comment', '')
+            comment = group_info.get('comment', '') if group_info else ''
         except:
             comment = ''
         

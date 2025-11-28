@@ -695,6 +695,12 @@ if WEBSOCKET_AVAILABLE:
         
         # Wait for credentials from client (sent as first message)
         try:
+            import select
+            import time
+            
+            # Give client a moment to send credentials after connection opens
+            time.sleep(0.1)
+            
             creds_msg = ws.receive()
             if not creds_msg:
                 app.logger.error("No credentials received")
@@ -756,7 +762,11 @@ if WEBSOCKET_AVAILABLE:
                         handler.handle_client_input(message)
                         
                 except Exception as e:
-                    app.logger.error("WebSocket error in message loop: %s", e, exc_info=True)
+                    # Ignore connection closed errors (normal when user closes window)
+                    if "Connection closed" in str(e) or "ConnectionClosed" in str(type(e).__name__):
+                        app.logger.debug("WebSocket closed by client")
+                    else:
+                        app.logger.error("WebSocket error in message loop: %s", e, exc_info=True)
                     break
         finally:
             app.logger.info("Exiting message loop, closing handler")
