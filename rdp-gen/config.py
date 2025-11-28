@@ -55,6 +55,7 @@ ENABLE_IP_LOOKUP = True
 ENABLE_IP_PERSISTENCE = os.getenv("ENABLE_IP_PERSISTENCE", "false").lower() in ("true", "1", "yes")
 
 # ARP scanner: broadcast addresses to ping for IP discovery
+# Scans 10.220.8.0/21 network (10.220.8.0 - 10.220.15.255)
 # Set to subnet broadcast addresses on your network
 # Example: ["192.168.1.255", "10.0.0.255"]
 ARP_SUBNETS = os.getenv("ARP_SUBNETS")
@@ -62,4 +63,5 @@ if ARP_SUBNETS:
     ARP_SUBNETS = [s.strip() for s in ARP_SUBNETS.split(",") if s.strip()]
 else:
     # Default: 10.220.8.0/21 network (broadcast: 10.220.15.255)
+    # This covers all IPs from 10.220.8.0 to 10.220.15.255
     ARP_SUBNETS = ["10.220.15.255"]

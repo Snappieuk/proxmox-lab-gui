@@ -664,13 +664,17 @@ async function refreshVMs() {
     try {
         const resp = await fetch("/api/vms?force_refresh=true");
         if (resp.ok) {
-            await refreshVmStatus();
+            const data = await resp.json();
+            // Clear and repopulate tables with fresh data
+            populateTables(data);
+            // Apply current filters
+            applyFilters();
         }
     } catch (e) {
         console.error(e);
     } finally {
         btn.disabled = false;
-        btn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> Refresh';
+        btn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> Refresh Cache';
     }
 }
 

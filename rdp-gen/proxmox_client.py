@@ -401,6 +401,16 @@ def _cache_ip(vmid: int, ip: Optional[str]) -> None:
             }
         _save_ip_cache()
 
+
+def _clear_vm_ip_cache(vmid: int) -> None:
+    """Clear IP cache for specific VM. Thread-safe."""
+    _load_ip_cache()
+    with _ip_cache_lock:
+        if vmid in _ip_cache:
+            del _ip_cache[vmid]
+            logger.debug("Cleared IP cache for VM %d", vmid)
+    _save_ip_cache()
+
 def verify_vm_ip(node: str, vmid: int, vmtype: str, cached_ip: str) -> Optional[str]:
     """Verify cached IP is still correct, return updated IP if different.
     
@@ -571,58 +581,41 @@ def _lookup_vm_ip_thread_safe(node: str, vmid: int, vmtype: str) -> Optional[str
     """
     Thread-safe IP lookup using a new Proxmox client per call.
     
+    ONLY handles LXC containers via network interfaces API.
+    QEMU VMs use ARP scanning instead (no guest agent dependency).
+    
     Used by ThreadPoolExecutor workers for parallel IP lookups.
     Creates a short-lived client to avoid thread-safety issues with ProxmoxAPI.
     """
     if not ENABLE_IP_LOOKUP:
         return None
     
+    # Only handle LXC containers - QEMU VMs use ARP scanning
+    if vmtype != "lxc":
+        return None
+    
     try:
         client = _create_proxmox_client()
         
         # LXC containers - use network interfaces API
-        if vmtype == "lxc":
-            try:
-                interfaces = client.nodes(node).lxc(vmid).interfaces.get()
-                if interfaces:
-                    for iface in interfaces:
-                        if iface.get("name") in ("eth0", "veth0"):
-                            inet = iface.get("inet")
-                            if inet:
-                                ip = inet.split("/")[0] if "/" in inet else inet
-                                if ip and not ip.startswith("127."):
-                                    return ip
+        try:
+            interfaces = client.nodes(node).lxc(vmid).interfaces.get()
+            if interfaces:
+                for iface in interfaces:
+                    if iface.get("name") in ("eth0", "veth0"):
                         inet = iface.get("inet")
                         if inet:
                             ip = inet.split("/")[0] if "/" in inet else inet
                             if ip and not ip.startswith("127."):
                                 return ip
-            except Exception as e:
-                logger.debug("lxc interface call failed for %s/%s: %s", node, vmid, e)
-                return None
-        
-        # QEMU VMs - use guest agent
-        if vmtype == "qemu":
-            try:
-                data = client.nodes(node).qemu(vmid).agent.get("network-get-interfaces")
-            except Exception as e:
-                logger.debug("guest agent call failed for %s/%s: %s", node, vmid, e)
-                return None
-            
-            if not data:
-                return None
-            try:
-                interfaces = data.get("result", [])
-            except AttributeError:
-                interfaces = []
-            
-            for iface in interfaces:
-                addrs = iface.get("ip-addresses", []) or []
-                for addr in addrs:
-                    if addr.get("ip-address-type") == "ipv4":
-                        ip = addr.get("ip-address")
+                    inet = iface.get("inet")
+                    if inet:
+                        ip = inet.split("/")[0] if "/" in inet else inet
                         if ip and not ip.startswith("127."):
                             return ip
+        except Exception as e:
+            logger.debug("lxc interface call failed for %s/%s: %s", node, vmid, e)
+            return None
     except Exception as e:
         logger.debug("Thread-safe IP lookup failed for %s/%s: %s", node, vmid, e)
     
@@ -720,32 +713,31 @@ def _build_vm_dict(raw: Dict[str, Any], skip_ip: bool = False) -> Dict[str, Any]
     category = _guess_category(raw)
     
     # IP lookup strategy (prioritized):
-    # 1. Proxmox notes field (persistent across cache expiration)
-    # 2. Memory cache (5-minute TTL)
-    # 3. API lookup (slow, only if needed)
+    # 1. Memory cache (1-hour TTL) with validation for running VMs
+    # 2. LXC: Direct API interface lookup
+    # 3. QEMU: ARP scanning (handled by _enrich_vms_with_arp_ips after bulk fetch)
     ip = None
     if not skip_ip:
-        # First: Check Proxmox notes for persisted IP
-        ip = _get_ip_from_proxmox_notes(raw)
+        # First: Check memory cache
+        cached_ip = _get_cached_ip(vmid)
+        if cached_ip:
+            # Validate cached IP for running VMs to detect IP changes
+            if status == "running" and vmtype == "qemu":
+                # Validation happens via ARP scan in background
+                ip = cached_ip
+            else:
+                # For stopped VMs or LXC, trust cache
+                ip = cached_ip
         
-        # Second: Check memory cache if not in notes
-        if not ip:
-            ip = _get_cached_ip(vmid)
+        # Second: For LXC, always try direct API lookup (fast and reliable)
+        if not ip and vmtype == "lxc":
+            # LXC containers: network config API is always readable
+            ip = _lookup_vm_ip(node, vmid, vmtype)
+            if ip:
+                _cache_ip(vmid, ip)
         
-        # Third: Lookup IPs from API only if not found in notes or cache
-        # - LXC: Network interfaces (config readable even when stopped, so always try)
-        # - QEMU: Guest agent (only available when running)
-        if not ip:
-            if vmtype == "lxc":
-                # LXC containers: config is always readable, cache it
-                ip = _lookup_vm_ip(node, vmid, vmtype)
-                if ip:
-                    _cache_ip(vmid, ip)
-            elif vmtype == "qemu" and status == "running":
-                # QEMU VMs: only query when running (guest agent required)
-                ip = _lookup_vm_ip(node, vmid, vmtype)
-                if ip:
-                    _cache_ip(vmid, ip)
+        # Note: QEMU VM IPs are discovered via ARP scanning in _enrich_vms_with_arp_ips()
+        # This runs after bulk VM fetch for better performance
 
     return {
         "vmid": vmid,
@@ -786,23 +778,21 @@ def _enrich_vms_with_arp_ips(vms: List[Dict[str, Any]]) -> None:
     """
     Enrich VM list with IPs discovered via ARP scanning (fast, in-place).
     
-    This is much faster than querying guest agents individually.
-    Runs ARP scan in background thread so VMs load immediately.
-    Only scans QEMU VMs that are running - LXC containers get IPs from direct API calls,
-    and offline QEMU VMs can't have network presence.
+    Scans ALL running QEMU VMs to discover/validate IPs.
+    This is the PRIMARY method for QEMU VM IP discovery (no guest agent needed).
+    Also validates cached IPs and updates if changed.
+    
+    LXC containers get IPs from direct API calls, not ARP.
+    Offline QEMU VMs can't have network presence, so skipped.
     """
     if not ARP_SCANNER_AVAILABLE:
         logger.info("ARP scanner not available, skipping ARP discovery")
         return
     
-    # Build map of vmid -> MAC for RUNNING QEMU VMs that don't have IPs yet
+    # Build map of vmid -> MAC for ALL RUNNING QEMU VMs
     # Skip LXC containers - they get IPs directly from network config API
     vm_mac_map = {}
     for vm in vms:
-        # Skip if already has IP
-        if vm.get("ip"):
-            continue
-        
         # Skip LXC containers (handled by direct API call in _build_vm_dict)
         if vm.get("type") == "lxc":
             logger.debug("VM %d (%s) is LXC, skipping ARP (uses direct API)", 
@@ -823,22 +813,30 @@ def _enrich_vms_with_arp_ips(vms: List[Dict[str, Any]]) -> None:
             logger.debug("VM %d (%s) has no MAC found", vm["vmid"], vm["name"])
     
     if not vm_mac_map:
-        logger.info("No running QEMU VMs need ARP discovery")
+        logger.info("No running QEMU VMs for ARP discovery")
         return
     
-    logger.info("Starting background ARP discovery for %d running QEMU VMs", len(vm_mac_map))
+    logger.info("Starting ARP discovery for %d running QEMU VMs", len(vm_mac_map))
     
     # Discover IPs via ARP in BACKGROUND mode (non-blocking)
     # This returns immediately with cached results and starts scan in background
     discovered_ips = discover_ips_via_arp(vm_mac_map, subnets=ARP_SUBNETS, background=True)
     
-    # Update VMs with any cached IPs we already have
+    # Update VMs with discovered IPs and cache them
     for vm in vms:
         if vm["vmid"] in discovered_ips:
-            vm["ip"] = discovered_ips[vm["vmid"]]
-            _cache_ip(vm["vmid"], vm["ip"])
+            new_ip = discovered_ips[vm["vmid"]]
+            old_ip = vm.get("ip")
+            
+            # Update VM and cache
+            vm["ip"] = new_ip
+            _cache_ip(vm["vmid"], new_ip)
+            
+            # Log IP changes for validation tracking
+            if old_ip and old_ip != new_ip:
+                logger.info("VM %d IP changed: %s -> %s", vm["vmid"], old_ip, new_ip)
     
-    logger.info("ARP discovery returned %d cached IPs (scan running in background)", len(discovered_ips))
+    logger.info("ARP discovery returned %d IPs (scan running in background)", len(discovered_ips))
 
 
 
@@ -1456,6 +1454,7 @@ def start_vm(vm: Dict[str, Any]) -> None:
         logger.exception("failed to start vm %s/%s: %s", node, vmid, e)
 
     _invalidate_vm_cache()
+    _clear_vm_ip_cache(vmid)  # Clear IP cache - VM might get new IP on boot
 
 
 def shutdown_vm(vm: Dict[str, Any]) -> None:
@@ -1474,6 +1473,7 @@ def shutdown_vm(vm: Dict[str, Any]) -> None:
         logger.exception("failed to shutdown vm %s/%s: %s", node, vmid, e)
 
     _invalidate_vm_cache()
+    _clear_vm_ip_cache(vmid)  # Clear IP cache - VM no longer has IP when stopped
 
 
 # ---------------------------------------------------------------------------
