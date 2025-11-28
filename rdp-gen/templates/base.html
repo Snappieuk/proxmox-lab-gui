@@ -70,8 +70,8 @@ function switchCluster(clusterId) {
     .then(response => response.json())
     .then(data => {
         if (data.ok) {
-            // Reload page to show VMs from new cluster
-            window.location.reload();
+            // Hard reload with force_refresh to bypass all caches
+            window.location.href = window.location.pathname + '?force_refresh=true&t=' + Date.now();
         } else {
             alert('Failed to switch cluster: ' + (data.error || 'Unknown error'));
         }

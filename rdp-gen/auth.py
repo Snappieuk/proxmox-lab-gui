@@ -5,7 +5,7 @@ import logging
 from flask import session, redirect, url_for, request
 from proxmoxer import ProxmoxAPI
 
-from config import PVE_HOST, PVE_VERIFY
+from config import PVE_HOST, PVE_VERIFY, CLUSTERS
 
 
 logger = logging.getLogger(__name__)
@@ -30,6 +30,9 @@ def current_user() -> Optional[str]:
 def authenticate_proxmox_user(username: str, password: str) -> Optional[str]:
     """
     Try to authenticate a PVE realm user: '<username>@pve'.
+    
+    Authenticates against the currently selected cluster (from session),
+    or the first cluster if not set.
 
     Returns the full user id on success (e.g. 'student1@pve'),
     or None on failure.
@@ -39,16 +42,21 @@ def authenticate_proxmox_user(username: str, password: str) -> Optional[str]:
         return None
 
     full_user = f"{username}@pve"
+    
+    # Get cluster config from session or default to first cluster
+    cluster_id = session.get("cluster_id", CLUSTERS[0]["id"])
+    cluster = next((c for c in CLUSTERS if c["id"] == cluster_id), CLUSTERS[0])
+    
     try:
         prox = ProxmoxAPI(
-            PVE_HOST,
+            cluster["host"],
             user=full_user,
             password=password,
-            verify_ssl=PVE_VERIFY,
+            verify_ssl=cluster.get("verify_ssl", False),
         )
         # Simple cheap call to verify credentials
         prox.version.get()
         return full_user
     except Exception as e:
-        logger.debug("proxmox auth failed for %s: %s", full_user, e)
+        logger.debug("proxmox auth failed for %s on cluster %s: %s", full_user, cluster["name"], e)
         return None

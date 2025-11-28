@@ -155,14 +155,15 @@ _vm_cache_lock = threading.Lock()
 _ip_cache_lock = threading.Lock()
 _mappings_cache_lock = threading.Lock()
 
-_vm_cache_data: Optional[List[Dict[str, Any]]] = None
-_vm_cache_ts: float = 0.0
-_vm_cache_loaded: bool = False
+# Per-cluster VM cache - dict mapping cluster_id to cache data
+_vm_cache_data: Dict[str, Optional[List[Dict[str, Any]]]] = {}
+_vm_cache_ts: Dict[str, float] = {}
+_vm_cache_loaded: Dict[str, bool] = {}
 
 # Short-lived cluster resources cache (PROXMOX_CACHE_TTL seconds, default 10)
-# This is for the raw cluster.resources data before processing
-_cluster_cache_data: Optional[List[Dict[str, Any]]] = None
-_cluster_cache_ts: float = 0.0
+# Per-cluster cache
+_cluster_cache_data: Dict[str, Optional[List[Dict[str, Any]]]] = {}
+_cluster_cache_ts: Dict[str, float] = {}
 _cluster_cache_lock = threading.Lock()
 
 # IP address cache: vmid -> {"ip": "x.x.x.x", "timestamp": unix_time}
@@ -235,72 +236,86 @@ def _save_ip_cache() -> None:
         logger.warning("Failed to save IP cache: %s", e)
 
 def _load_vm_cache() -> None:
-    """Load VM cache from JSON file on startup."""
+    """Load VM cache from JSON file on startup for current cluster."""
     global _vm_cache_data, _vm_cache_ts, _vm_cache_loaded
-    if _vm_cache_loaded:
+    cluster_id = get_current_cluster_id()
+    
+    if _vm_cache_loaded.get(cluster_id, False):
         return
     
     if not os.path.exists(VM_CACHE_FILE):
-        _vm_cache_data = None
-        _vm_cache_ts = 0.0
-        _vm_cache_loaded = True
+        _vm_cache_data[cluster_id] = None
+        _vm_cache_ts[cluster_id] = 0.0
+        _vm_cache_loaded[cluster_id] = True
         return
     
     try:
         with open(VM_CACHE_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            _vm_cache_data = data.get("vms", [])
-            _vm_cache_ts = data.get("timestamp", 0.0)
-        logger.info("Loaded VM cache with %d VMs from %s", len(_vm_cache_data) if _vm_cache_data else 0, VM_CACHE_FILE)
+            all_data = json.load(f)
+            cluster_data = all_data.get(cluster_id, {})
+            _vm_cache_data[cluster_id] = cluster_data.get("vms", [])
+            _vm_cache_ts[cluster_id] = cluster_data.get("timestamp", 0.0)
+        cache_count = len(_vm_cache_data.get(cluster_id) or [])
+        logger.info("Loaded VM cache for cluster %s with %d VMs from %s", 
+                   cluster_id, cache_count, VM_CACHE_FILE)
     except Exception as e:
         logger.warning("Failed to load VM cache: %s", e)
-        _vm_cache_data = None
-        _vm_cache_ts = 0.0
+        _vm_cache_data[cluster_id] = None
+        _vm_cache_ts[cluster_id] = 0.0
     
-    _vm_cache_loaded = True
+    _vm_cache_loaded[cluster_id] = True
 
 def _save_vm_cache() -> None:
-    """Save VM cache to JSON file.
+    """Save VM cache to JSON file for current cluster.
     
     Skips writing if the on-disk cache timestamp matches the in-memory timestamp,
     indicating no changes since last save.
     """
-    if _vm_cache_data is None:
+    cluster_id = get_current_cluster_id()
+    if _vm_cache_data.get(cluster_id) is None:
         return
     
-    # Check if on-disk cache is already up-to-date
+    # Load existing data for all clusters
+    all_data = {}
     if os.path.exists(VM_CACHE_FILE):
         try:
             with open(VM_CACHE_FILE, "r", encoding="utf-8") as f:
-                disk_data = json.load(f)
-            disk_ts = disk_data.get("timestamp", 0.0)
-            if disk_ts == _vm_cache_ts:
-                logger.debug("Skipping VM cache write: disk timestamp matches in-memory (%.1f)", _vm_cache_ts)
+                all_data = json.load(f)
+            # Check if on-disk cache is already up-to-date for this cluster
+            disk_cluster_data = all_data.get(cluster_id, {})
+            disk_ts = disk_cluster_data.get("timestamp", 0.0)
+            if disk_ts == _vm_cache_ts.get(cluster_id, 0.0):
+                logger.debug("Skipping VM cache write for cluster %s: disk timestamp matches in-memory (%.1f)", cluster_id, disk_ts)
                 return
         except Exception:
             # If we can't read the file, proceed with write
             pass
     
     try:
-        data = {
-            "vms": _vm_cache_data,
-            "timestamp": _vm_cache_ts
+        # Update cluster-specific data
+        all_data[cluster_id] = {
+            "vms": _vm_cache_data[cluster_id],
+            "timestamp": _vm_cache_ts.get(cluster_id, time.time())
         }
         with open(VM_CACHE_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
-        logger.debug("Saved VM cache with %d VMs", len(_vm_cache_data))
+            json.dump(all_data, f, indent=2)
+        cache_count = len(_vm_cache_data.get(cluster_id) or [])
+        logger.debug("Saved VM cache for cluster %s with %d VMs", cluster_id, cache_count)
     except Exception as e:
         logger.warning("Failed to save VM cache: %s", e)
 
 def _invalidate_vm_cache() -> None:
+    """Invalidate VM cache for current cluster."""
     global _vm_cache_data, _vm_cache_ts, _cluster_cache_data, _cluster_cache_ts
+    cluster_id = get_current_cluster_id()
     with _vm_cache_lock:
-        _vm_cache_data = None
-        _vm_cache_ts = 0.0
+        _vm_cache_data[cluster_id] = None
+        _vm_cache_ts[cluster_id] = 0.0
     with _cluster_cache_lock:
-        _cluster_cache_data = None
-        _cluster_cache_ts = 0.0
+        _cluster_cache_data[cluster_id] = None
+        _cluster_cache_ts[cluster_id] = 0.0
     # Note: Don't reset _vm_cache_loaded - we want to keep trying disk cache
+    logger.debug("Invalidated VM cache for cluster %s", cluster_id)
 
 
 # ---------------------------------------------------------------------------
@@ -317,20 +332,23 @@ def get_all_qemu_vms() -> List[Dict[str, Any]]:
     Returns raw VM data from Proxmox API (not processed).
     """
     global _cluster_cache_data, _cluster_cache_ts
+    cluster_id = get_current_cluster_id()
     
     now = time.time()
     with _cluster_cache_lock:
-        if _cluster_cache_data is not None and (now - _cluster_cache_ts) < PROXMOX_CACHE_TTL:
+        cached_data = _cluster_cache_data.get(cluster_id)
+        cached_ts = _cluster_cache_ts.get(cluster_id, 0)
+        if cached_data is not None and (now - cached_ts) < PROXMOX_CACHE_TTL:
             # Return cached QEMU VMs
-            return [r for r in _cluster_cache_data if r.get("type") == "qemu"]
+            return [r for r in cached_data if r.get("type") == "qemu"]
     
     # Fetch fresh data from Proxmox
     try:
         resources = get_proxmox_admin().cluster.resources.get(type="vm") or []
         with _cluster_cache_lock:
-            _cluster_cache_data = resources
-            _cluster_cache_ts = now
-        logger.debug("get_all_qemu_vms: fetched %d resources from cluster API", len(resources))
+            _cluster_cache_data[cluster_id] = resources
+            _cluster_cache_ts[cluster_id] = now
+        logger.debug("get_all_qemu_vms: fetched %d resources from cluster %s API", len(resources), cluster_id)
         return [r for r in resources if r.get("type") == "qemu"]
     except Exception as e:
         logger.warning("Failed to fetch cluster resources: %s", e)
@@ -347,20 +365,23 @@ def get_all_lxc_containers() -> List[Dict[str, Any]]:
     Returns raw container data from Proxmox API (not processed).
     """
     global _cluster_cache_data, _cluster_cache_ts
+    cluster_id = get_current_cluster_id()
     
     now = time.time()
     with _cluster_cache_lock:
-        if _cluster_cache_data is not None and (now - _cluster_cache_ts) < PROXMOX_CACHE_TTL:
+        cached_data = _cluster_cache_data.get(cluster_id)
+        cached_ts = _cluster_cache_ts.get(cluster_id, 0)
+        if cached_data is not None and (now - cached_ts) < PROXMOX_CACHE_TTL:
             # Return cached LXC containers
-            return [r for r in _cluster_cache_data if r.get("type") == "lxc"]
+            return [r for r in cached_data if r.get("type") == "lxc"]
     
     # Fetch fresh data from Proxmox
     try:
         resources = get_proxmox_admin().cluster.resources.get(type="vm") or []
         with _cluster_cache_lock:
-            _cluster_cache_data = resources
-            _cluster_cache_ts = now
-        logger.debug("get_all_lxc_containers: fetched %d resources from cluster API", len(resources))
+            _cluster_cache_data[cluster_id] = resources
+            _cluster_cache_ts[cluster_id] = now
+        logger.debug("get_all_lxc_containers: fetched %d resources from cluster %s API", len(resources), cluster_id)
         return [r for r in resources if r.get("type") == "lxc"]
     except Exception as e:
         logger.warning("Failed to fetch cluster resources: %s", e)
@@ -375,19 +396,22 @@ def _get_cluster_resources_cached() -> List[Dict[str, Any]]:
     Thread-safe.
     """
     global _cluster_cache_data, _cluster_cache_ts
+    cluster_id = get_current_cluster_id()
     
     now = time.time()
     with _cluster_cache_lock:
-        if _cluster_cache_data is not None and (now - _cluster_cache_ts) < PROXMOX_CACHE_TTL:
-            return list(_cluster_cache_data)
+        cached_data = _cluster_cache_data.get(cluster_id)
+        cached_ts = _cluster_cache_ts.get(cluster_id, 0)
+        if cached_data is not None and (now - cached_ts) < PROXMOX_CACHE_TTL:
+            return list(cached_data)
     
     # Fetch fresh data from Proxmox
     try:
         resources = get_proxmox_admin().cluster.resources.get(type="vm") or []
         with _cluster_cache_lock:
-            _cluster_cache_data = resources
-            _cluster_cache_ts = now
-        logger.debug("_get_cluster_resources_cached: fetched %d resources", len(resources))
+            _cluster_cache_data[cluster_id] = resources
+            _cluster_cache_ts[cluster_id] = now
+        logger.debug("_get_cluster_resources_cached: fetched %d resources from cluster %s", len(resources), cluster_id)
         return resources
     except Exception as e:
         logger.warning("Failed to fetch cluster resources: %s", e)
@@ -395,14 +419,16 @@ def _get_cluster_resources_cached() -> List[Dict[str, Any]]:
 
 
 def invalidate_cluster_cache() -> None:
-    """Invalidate the short-lived cluster resources cache.
+    """Invalidate the short-lived cluster resources cache for current cluster.
     
     Called after VM start/stop operations to ensure fresh data is fetched.
     """
     global _cluster_cache_data, _cluster_cache_ts
+    cluster_id = get_current_cluster_id()
     with _cluster_cache_lock:
-        _cluster_cache_data = None
-        _cluster_cache_ts = 0.0
+        _cluster_cache_data[cluster_id] = None
+        _cluster_cache_ts[cluster_id] = 0.0
+    logger.debug("Invalidated cluster cache for %s", cluster_id)
 
 def _get_cached_ip(vmid: int) -> Optional[str]:
     """Get IP from persistent cache if not expired. Thread-safe."""
@@ -1022,20 +1048,24 @@ def get_all_vms(skip_ips: bool = False, force_refresh: bool = False) -> List[Dic
     Set force_refresh=True to bypass cache and fetch fresh data from Proxmox.
     """
     global _vm_cache_data, _vm_cache_ts
+    cluster_id = get_current_cluster_id()
 
     # Load both caches from disk on first call
     _load_vm_cache()
     _load_ip_cache()
 
     now = time.time()
-    # Check if we have valid cached data
-    cache_valid = _vm_cache_data is not None and (now - _vm_cache_ts) < VM_CACHE_TTL
+    # Check if we have valid cached data for this cluster
+    cached_vms = _vm_cache_data.get(cluster_id)
+    cached_ts = _vm_cache_ts.get(cluster_id, 0)
+    cache_valid = cached_vms is not None and (now - cached_ts) < VM_CACHE_TTL
     
     # If cache is valid and not forcing refresh, return cached data
-    if not force_refresh and cache_valid and _vm_cache_data is not None:
-        logger.info("get_all_vms: returning cached data (skip_ips=%s, age=%.1fs)", skip_ips, now - _vm_cache_ts)
+    if not force_refresh and cache_valid and cached_vms is not None:
+        logger.info("get_all_vms: returning cached data for cluster %s (skip_ips=%s, age=%.1fs)", 
+                   cluster_id, skip_ips, now - cached_ts)
         result = []
-        for vm in _vm_cache_data:
+        for vm in cached_vms:
             result.append({**vm})
         
         # Run ARP scan unless skipping IPs
@@ -1117,9 +1147,10 @@ def get_all_vms(skip_ips: bool = False, force_refresh: bool = False) -> List[Dic
     else:
         logger.warning("get_all_vms: SKIPPING ARP scan (scanner not available)")
 
-    # Cache the VM structure
-    _vm_cache_data = out
-    _vm_cache_ts = now
+    # Cache the VM structure for this cluster
+    cluster_id = get_current_cluster_id()
+    _vm_cache_data[cluster_id] = out
+    _vm_cache_ts[cluster_id] = now
     _save_vm_cache()  # Persist to disk for fast restart
     
     return out

@@ -373,16 +373,22 @@ function applyFilters() {
 async function loadVMs() {
     const loadingIndicator = document.getElementById('loading-indicator');
     try {
-        // Fast initial load: skip IPs to populate VMs immediately
-        const resp = await fetch("/api/vms?skip_ips=true");
+        // Check if we need to force refresh (cluster switch)
+        const urlParams = new URLSearchParams(window.location.search);
+        const forceRefresh = urlParams.get('force_refresh') === 'true';
+        
+        // Use force_refresh if coming from cluster switch, otherwise fast load with skip_ips
+        const url = forceRefresh ? '/api/vms?force_refresh=true' : '/api/vms?skip_ips=true';
+        
+        const resp = await fetch(url);
         if (!resp.ok) {
             if (loadingIndicator) loadingIndicator.remove();
             return;
         }
         const data = await resp.json();
         
-        // Mark VMs without IPs as "Fetching..."
-        if (Array.isArray(data)) {
+        // Mark VMs without IPs as "Fetching..." (unless force refresh)
+        if (Array.isArray(data) && !forceRefresh) {
             data.forEach(vm => {
                 if (!vm.ip || vm.ip === 'N/A') {
                     vm.ip = 'Fetching...';
@@ -390,15 +396,21 @@ async function loadVMs() {
             });
         }
         
-        // If tables are empty, populate them
-        if (document.querySelectorAll('.vm-table tbody tr').length === 0) {
+        // Check if we need to force refresh (cluster switch)
+        const urlParams = new URLSearchParams(window.location.search);
+        const forceRefresh = urlParams.get('force_refresh') === 'true';
+        
+        // If tables are empty OR force refresh (cluster switch), populate them
+        if (document.querySelectorAll('.vm-table tbody tr').length === 0 || forceRefresh) {
             populateTables(data);
         }
         
         if (loadingIndicator) loadingIndicator.remove();
         
-        // Fetch IPs in background after page renders
-        setTimeout(fetchIPsInBackground, 500);
+        // Fetch IPs in background after page renders (skip if force refresh already loaded IPs)
+        if (!forceRefresh) {
+            setTimeout(fetchIPsInBackground, 500);
+        }
     } catch (e) {
         console.error('Failed to load VMs:', e);
         if (loadingIndicator) loadingIndicator.remove();
@@ -653,7 +665,9 @@ function updateVMsFromData(data) {
 
 function updateSummaryTiles(vms) {
     const windows = vms.filter(v => v.category === 'windows');
-    const linux = vms.filter(v => v.category === 'linux');
+    // Linux = category 'linux' AND type 'qemu' (exclude LXC)
+    const linux = vms.filter(v => v.category === 'linux' && v.type === 'qemu');
+    // LXC = type 'lxc' (regardless of category)
     const lxc = vms.filter(v => v.type === 'lxc');
     
     document.getElementById('windows-count').textContent = windows.length;
