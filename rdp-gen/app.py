@@ -273,8 +273,9 @@ def admin_mappings_update_vms():
     
     try:
         if vmids_str:
-            parts = re.split(r"[,\s]+", vmids_str)
-            vmids = [int(p) for p in parts if p]
+            # Split by comma or whitespace
+            parts = [p.strip() for p in vmids_str.replace(',', ' ').split() if p.strip()]
+            vmids = [int(p) for p in parts]
         else:
             vmids = []
         set_user_vm_mapping(selected_user, vmids)
@@ -794,14 +795,19 @@ def rdp_file(vmid: int):
         app.logger.warning("rdp_file: VM %s is not Windows (category=%s)", vmid, vm.get("category"))
         abort(404)
 
-    # Verify cached IP before generating RDP
+    # Trust cached IP if available (ARP scan keeps it fresh)
+    # Skip verify_vm_ip to avoid extra API calls - build_rdp will fail clearly if IP is wrong
     cached_ip = vm.get('ip')
-    if cached_ip and cached_ip != "Checking...":
+    if cached_ip and cached_ip not in ("Checking...", "N/A", "Fetching...", ""):
+        app.logger.info("rdp_file: Using cached IP %s for VM %s", cached_ip, vmid)
+    else:
+        # Only verify if IP is missing - last resort
+        app.logger.info("rdp_file: No cached IP for VM %s, attempting verification", vmid)
         try:
-            verified_ip = verify_vm_ip(vm['node'], vmid, vm.get('type', 'qemu'), cached_ip)
-            if verified_ip != cached_ip:
-                app.logger.info("rdp_file: IP changed for VM %s from %s to %s", vmid, cached_ip, verified_ip)
+            verified_ip = verify_vm_ip(vm['node'], vmid, vm.get('type', 'qemu'), cached_ip or "")
+            if verified_ip:
                 vm['ip'] = verified_ip
+                app.logger.info("rdp_file: Verified IP %s for VM %s", verified_ip, vmid)
         except Exception as e:
             app.logger.warning("rdp_file: IP verification failed for VM %s: %s", vmid, e)
 

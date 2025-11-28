@@ -32,7 +32,7 @@ from config import (
 
 # Import ARP scanner for fast IP discovery
 try:
-    from arp_scanner import discover_ips_via_arp, normalize_mac
+    from arp_scanner import discover_ips_via_arp, normalize_mac, has_rdp_port_open, invalidate_arp_cache
     ARP_SCANNER_AVAILABLE = True
 except ImportError:
     ARP_SCANNER_AVAILABLE = False
@@ -597,12 +597,13 @@ def _check_rdp_port(ip: str, timeout: float = 0.5) -> bool:
 
 def _guess_category(raw: Dict[str, Any]) -> str:
     """
-    Determine OS category based on VM ostype field.
+    Determine OS category based on VM ostype field and name heuristic.
     
-    - Checks 'ostype' field in VM data (from config)
     - LXC: always 'linux'
-    - QEMU with ostype containing 'win': 'windows'
-    - Other QEMU: 'linux'
+    - QEMU: Check ostype field, fallback to name check for "win"
+    - Default QEMU: 'linux'
+    
+    No extra API calls - uses existing VM data only.
     """
     vmtype = raw.get("type", "qemu")
     if vmtype == "lxc":
@@ -610,7 +611,10 @@ def _guess_category(raw: Dict[str, Any]) -> str:
     
     # Check ostype field from VM config
     ostype = (raw.get("ostype") or "").lower()
-    if ostype and "win" in ostype:
+    name_lower = (raw.get("name") or "").lower()
+    
+    # Check ostype first, then fallback to name heuristic
+    if "win" in ostype or "win" in name_lower:
         return "windows"
 
     if vmtype == "qemu":
@@ -803,10 +807,15 @@ def _build_vm_dict(raw: Dict[str, Any], skip_ip: bool = False) -> Dict[str, Any]
         # - ARP scan in _enrich_vms_with_arp_ips() will populate it
         # - Frontend will show "Fetching..." until scan completes
     
-    # Check if RDP port is available (Windows VMs only, and only if we have an IP)
+    # Check if RDP port is available
+    # - All Windows VMs assumed to have RDP (default enabled)
+    # - Any other VM with port 3389 open (e.g., Linux with xrdp)
     rdp_available = False
-    if category == "windows" and ip and ip not in ("N/A", "Fetching...", ""):
-        rdp_available = _check_rdp_port(ip)
+    if ip and ip not in ("N/A", "Fetching...", ""):
+        if category == "windows":
+            rdp_available = True  # Windows always has RDP
+        else:
+            rdp_available = has_rdp_port_open(ip)  # Check non-Windows VMs via scan cache
 
     return {
         "vmid": vmid,
@@ -919,46 +928,40 @@ def _enrich_vms_with_arp_ips(vms: List[Dict[str, Any]], force_sync: bool = False
     logger.info("VM MAC map being sent to ARP scanner: %s", 
                 {vmid: mac for vmid, mac in list(vm_mac_map.items())[:10]})
     
-    logger.info("Starting ARP discovery for %d running VMs (synchronous mode)...", len(vm_mac_map))
+    logger.info("Starting background ARP discovery for %d running VMs...", len(vm_mac_map))
     
-    # Run ARP scan synchronously for immediate results (fast: ~1-2 seconds)
-    # This ensures IPs are available on first page load
-    discovered_ips = discover_ips_via_arp(vm_mac_map, subnets=ARP_SUBNETS, background=False)
+    # Run ARP scan in background mode (non-blocking)
+    # Returns cached IPs immediately, scan happens in background thread
+    # VMs without cached IPs will show "Fetching..." until background scan completes
+    discovered_ips = discover_ips_via_arp(vm_mac_map, subnets=ARP_SUBNETS, background=True)
     
-    logger.info("ARP discovery returned %d IPs: %s", len(discovered_ips),
+    logger.info("ARP discovery returned %d cached IPs: %s", len(discovered_ips),
                 {vmid: ip for vmid, ip in list(discovered_ips.items())[:10]})  # Show first 10
     
-    # Update VMs with discovered IPs and cache them
+    # Update VMs with discovered IPs (from cache only, background scan will update later)
     updated_count = 0
-    changed_count = 0
     
     for vm in vms:
         if vm["vmid"] in discovered_ips:
-            new_ip = discovered_ips[vm["vmid"]]
-            old_ip = vm.get("ip")
+            cached_ip = discovered_ips[vm["vmid"]]
             
-            # Update VM and cache
-            vm["ip"] = new_ip
-            _cache_ip(vm["vmid"], new_ip)
+            # Update VM with cached IP
+            vm["ip"] = cached_ip
             updated_count += 1
             
-            # Check RDP port availability for Windows VMs
-            if vm.get("category") == "windows" and new_ip:
-                rdp_available = _check_rdp_port(new_ip)
-                vm["rdp_available"] = rdp_available
-                logger.debug("VM %d (%s): Windows RDP port check = %s", 
-                            vm["vmid"], vm["name"], rdp_available)
+            # Check RDP availability: Windows always true, others check port scan cache
+            if cached_ip:
+                if vm.get("category") == "windows":
+                    vm["rdp_available"] = True  # Windows assumed to have RDP
+                else:
+                    vm["rdp_available"] = has_rdp_port_open(cached_ip)  # Check scan cache
+                logger.debug("VM %d (%s): RDP available = %s", 
+                            vm["vmid"], vm["name"], vm["rdp_available"])
             
-            # Log IP changes for validation tracking
-            if old_ip and old_ip != new_ip:
-                changed_count += 1
-                logger.info("VM %d (%s): IP CHANGED %s -> %s", 
-                           vm["vmid"], vm["name"], old_ip, new_ip)
-            else:
-                logger.info("VM %d (%s): IP FOUND %s", vm["vmid"], vm["name"], new_ip)
+            logger.info("VM %d (%s): IP FROM CACHE %s", vm["vmid"], vm["name"], cached_ip)
     
-    logger.info("=== ARP SCAN COMPLETE === Updated %d VMs, %d changed IPs", 
-                updated_count, changed_count)
+    logger.info("=== ARP SCAN STARTED (background) === Updated %d VMs from cache, background scan in progress", 
+                updated_count)
 
 
 
@@ -1564,6 +1567,7 @@ def start_vm(vm: Dict[str, Any]) -> None:
 
     _invalidate_vm_cache()
     _clear_vm_ip_cache(vmid)  # Clear IP cache - VM might get new IP on boot
+    invalidate_arp_cache()  # Force fresh network scan to discover new IP
 
 
 def shutdown_vm(vm: Dict[str, Any]) -> None:
@@ -1583,6 +1587,7 @@ def shutdown_vm(vm: Dict[str, Any]) -> None:
 
     _invalidate_vm_cache()
     _clear_vm_ip_cache(vmid)  # Clear IP cache - VM no longer has IP when stopped
+    invalidate_arp_cache()  # Force fresh network scan to update ARP table
 
 
 # ---------------------------------------------------------------------------

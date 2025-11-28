@@ -46,7 +46,7 @@ logger = logging.getLogger(__name__)
 # Module-level cache for ARP results
 _arp_cache: Dict[str, str] = {}  # mac -> ip
 _arp_cache_time: float = 0
-_arp_cache_ttl: int = 300  # 5 minutes
+_arp_cache_ttl: int = 3600  # 1 hour - only invalidate on VM operations
 
 # Scan timeout configuration
 NMAP_SCAN_TIMEOUT_BUFFER: int = 30  # Extra seconds to wait for nmap scan completion
@@ -56,6 +56,10 @@ _scan_thread: Optional[threading.Thread] = None
 _scan_status: Dict[int, str] = {}  # vmid -> status message
 _scan_in_progress: bool = False
 _scan_lock = threading.Lock()
+
+# RDP hosts cache (IPs with port 3389 open)
+_rdp_hosts_cache: set = set()
+_rdp_hosts_cache_time: float = 0
 
 
 def get_arp_table() -> Dict[str, str]:
@@ -228,28 +232,36 @@ def _is_root() -> bool:
     return os.geteuid() == 0
 
 
-def parallel_ping_sweep(subnet_cidr: str, timeout_ms: int = 300, max_workers: int = 300) -> int:
+def parallel_ping_sweep(subnet_cidr: str, timeout_ms: int = 300, max_workers: int = 300, check_rdp: bool = False, needed_macs: Optional[set] = None) -> tuple:
     """
     Ping every IP in a subnet in parallel to populate ARP table.
+    Optionally check RDP port (3389) on responding hosts.
+    Stops early if all needed MACs are found in ARP table.
     
     Args:
         subnet_cidr: CIDR notation (e.g., "10.220.8.0/21")
         timeout_ms: Timeout per ping in milliseconds
         max_workers: Number of concurrent pings
+        check_rdp: If True, check port 3389 on alive hosts
+        needed_macs: Optional set of MAC addresses we're looking for (stops early when all found)
     
     Returns:
-        Number of hosts that responded
+        Tuple of (alive_count, rdp_hosts_set) where rdp_hosts_set contains IPs with RDP open
     """
+    import socket
+    
     try:
         network = ipaddress.ip_network(subnet_cidr, strict=False)
         total_hosts = network.num_addresses - 2  # Exclude network and broadcast
         
-        logger.info("Starting parallel ping sweep of %s (%d hosts, %d workers)", 
-                   subnet_cidr, total_hosts, max_workers)
+        logger.info("Starting parallel ping sweep of %s (%d hosts, %d workers%s)%s", 
+                   subnet_cidr, total_hosts, max_workers,
+                   ", checking RDP ports" if check_rdp else "",
+                   f", looking for {len(needed_macs)} MACs" if needed_macs else "")
         start_time = time.time()
         
-        def ping_host(ip: str) -> bool:
-            """Ping a single host. Returns True if responds."""
+        def ping_and_check(ip: str) -> tuple:
+            """Ping a host and optionally check RDP. Returns (alive, has_rdp)."""
             try:
                 # Use -c 1 (one packet), -W timeout (in seconds), -n (numeric, no DNS)
                 timeout_sec = max(1, timeout_ms // 1000)
@@ -258,33 +270,73 @@ def parallel_ping_sweep(subnet_cidr: str, timeout_ms: int = 300, max_workers: in
                     capture_output=True,
                     timeout=timeout_sec + 1
                 )
-                return result.returncode == 0
+                
+                if result.returncode == 0:
+                    # Host is alive
+                    if check_rdp:
+                        # Check if RDP port is open
+                        try:
+                            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                            sock.settimeout(0.5)
+                            rdp_result = sock.connect_ex((str(ip), 3389))
+                            sock.close()
+                            return (True, rdp_result == 0)
+                        except:
+                            return (True, False)
+                    return (True, False)
+                return (False, False)
             except:
-                return False
+                return (False, False)
         
         # Ping all IPs in parallel
         alive_count = 0
+        rdp_hosts = set()
+        checked_count = 0
+        
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             # Submit all ping jobs
             future_to_ip = {
-                executor.submit(ping_host, str(ip)): str(ip) 
+                executor.submit(ping_and_check, str(ip)): str(ip) 
                 for ip in network.hosts()
             }
             
             # Collect results as they complete
             for future in as_completed(future_to_ip):
-                if future.result():
+                ip = future_to_ip[future]
+                alive, has_rdp = future.result()
+                checked_count += 1
+                
+                if alive:
                     alive_count += 1
+                    if has_rdp:
+                        rdp_hosts.add(ip)
+                
+                # Early exit if we've found all needed MACs
+                if needed_macs and checked_count % 50 == 0:  # Check every 50 hosts to avoid overhead
+                    current_arp = get_arp_table()
+                    found_macs = needed_macs.intersection(current_arp.keys())
+                    if len(found_macs) == len(needed_macs):
+                        logger.info("Found all %d needed MACs after checking %d hosts, stopping early", 
+                                   len(needed_macs), checked_count)
+                        # Cancel remaining futures
+                        for f in future_to_ip.keys():
+                            f.cancel()
+                        break
         
         elapsed = time.time() - start_time
-        logger.info("Parallel ping sweep completed in %.2f seconds: %d/%d hosts alive", 
-                   elapsed, alive_count, total_hosts)
         
-        return alive_count
+        if check_rdp:
+            logger.info("Parallel ping sweep completed in %.2f seconds: %d/%d hosts checked, %d alive, %d with RDP", 
+                       elapsed, checked_count, total_hosts, alive_count, len(rdp_hosts))
+        else:
+            logger.info("Parallel ping sweep completed in %.2f seconds: %d/%d hosts checked, %d alive", 
+                       elapsed, checked_count, total_hosts, alive_count)
+        
+        return (alive_count, rdp_hosts)
         
     except Exception as e:
         logger.error("Parallel ping sweep failed: %s", e)
-        return 0
+        return (0, set())
 
 
 def scan_network_range(subnet_cidr: str = "10.220.8.0/21", timeout: int = 3) -> bool:
@@ -420,6 +472,31 @@ def scan_network_range(subnet_cidr: str = "10.220.8.0/21", timeout: int = 3) -> 
     return False
 
 
+def has_rdp_port_open(ip: str) -> bool:
+    """
+    Check if an IP has RDP port (3389) open based on scan cache.
+    
+    Args:
+        ip: IP address to check
+    
+    Returns:
+        True if IP is in the RDP hosts cache, False otherwise
+    """
+    global _rdp_hosts_cache
+    return ip in _rdp_hosts_cache
+
+
+def invalidate_arp_cache():
+    """
+    Invalidate the ARP cache to force a fresh scan on next request.
+    Call this after VM operations (start/stop/restart) to ensure IPs are updated.
+    """
+    global _arp_cache_time, _rdp_hosts_cache_time
+    logger.info("ARP cache invalidated (forced refresh on next scan)")
+    _arp_cache_time = 0
+    _rdp_hosts_cache_time = 0
+
+
 def get_scan_status(vmid: int) -> Optional[str]:
     """
     Get the current scan status for a VM.
@@ -453,7 +530,8 @@ def _background_scan_worker(vm_mac_map: Dict[int, str], subnets: Optional[List[s
         
         # Try parallel ping sweep first (most reliable for ARP population)
         logger.info("Background: Scanning network range 10.220.8.0/21 with parallel ping sweep")
-        alive_count = parallel_ping_sweep("10.220.8.0/21", timeout_ms=300, max_workers=300)
+        needed_macs = set(vm_mac_map.values())  # Set of MACs we're looking for
+        alive_count, rdp_hosts = parallel_ping_sweep("10.220.8.0/21", timeout_ms=300, max_workers=300, check_rdp=True, needed_macs=needed_macs)
         
         if alive_count == 0:
             # Fallback to nmap if parallel ping found nothing
@@ -463,6 +541,12 @@ def _background_scan_worker(vm_mac_map: Dict[int, str], subnets: Optional[List[s
         # Get updated ARP table
         arp_table = get_arp_table()
         logger.info("Post-scan ARP table has %d entries", len(arp_table))
+        
+        # Cache RDP hosts globally
+        global _rdp_hosts_cache, _rdp_hosts_cache_time
+        with _scan_lock:
+            _rdp_hosts_cache = rdp_hosts
+            _rdp_hosts_cache_time = time.time()
         
         # Match VMs to IPs and update cache + status
         found_count = 0
@@ -494,7 +578,7 @@ def _background_scan_worker(vm_mac_map: Dict[int, str], subnets: Optional[List[s
             _scan_in_progress = False
 
 
-def discover_ips_via_arp(vm_mac_map: Dict[int, str], subnets: Optional[List[str]] = None, background: bool = True) -> Dict[int, str]:
+def discover_ips_via_arp(vm_mac_map: Dict[int, str], subnets: Optional[List[str]] = None, background: bool = True, force_refresh: bool = False) -> Dict[int, str]:
     """
     Discover VM IPs using network scan + ARP lookup.
     
@@ -503,31 +587,41 @@ def discover_ips_via_arp(vm_mac_map: Dict[int, str], subnets: Optional[List[str]
         subnets: List of broadcast addresses to ping (e.g., ["192.168.1.255", "10.0.0.255"])
                  Note: Now used as fallback; primary method is network range scan
         background: If True, run scan in background thread and return immediately with cached results
+        force_refresh: If True, ignore cache and force a new scan (used after VM operations)
     
     Returns:
         Dict mapping vmid to discovered IP address (from cache if background=True)
     """
-    global _scan_thread, _scan_in_progress
+    global _scan_thread, _scan_in_progress, _arp_cache, _arp_cache_time
     
     if not vm_mac_map:
         return {}
     
     logger.info("VM MAC map: %s", vm_mac_map)
     
-    # Get existing ARP table first (might already have cached entries)
-    arp_table = get_arp_table()
-    logger.info("Current ARP table has %d entries", len(arp_table))
+    # Check if cache is still valid (1 hour TTL)
+    cache_age = time.time() - _arp_cache_time
+    cache_valid = cache_age < _arp_cache_ttl and not force_refresh
+    
+    if cache_valid:
+        logger.info("ARP cache is valid (age: %.1f seconds), checking for matches", cache_age)
+    else:
+        if force_refresh:
+            logger.info("Force refresh requested, invalidating cache")
+        else:
+            logger.info("ARP cache expired (age: %.1f seconds, TTL: %d seconds)", cache_age, _arp_cache_ttl)
     
     # Check if we already have matches in cache
     vm_ips = {}
-    for vmid, mac in vm_mac_map.items():
-        if mac in arp_table:
-            vm_ips[vmid] = arp_table[mac]
-            logger.info("VM %d (MAC %s) -> IP %s (cached)", vmid, mac, arp_table[mac])
+    if cache_valid:
+        for vmid, mac in vm_mac_map.items():
+            if mac in _arp_cache:
+                vm_ips[vmid] = _arp_cache[mac]
+                logger.info("VM %d (MAC %s) -> IP %s (cached)", vmid, mac, _arp_cache[mac])
     
-    # If we found all IPs, no need to scan
-    if len(vm_ips) == len(vm_mac_map):
-        logger.info("All IPs found in existing ARP cache, skipping network scan")
+    # If we found all IPs and cache is valid, no need to scan
+    if len(vm_ips) == len(vm_mac_map) and cache_valid:
+        logger.info("All IPs found in valid cache, skipping network scan")
         return vm_ips
     
     # If background mode, start scan thread and return immediately
@@ -557,7 +651,8 @@ def discover_ips_via_arp(vm_mac_map: Dict[int, str], subnets: Optional[List[str]
     
     # Try parallel ping sweep first (most reliable for ARP population)
     logger.info("Scanning network range 10.220.8.0/21 with parallel ping sweep")
-    alive_count = parallel_ping_sweep("10.220.8.0/21", timeout_ms=300, max_workers=300)
+    needed_macs = set(vm_mac_map.values())  # Set of MACs we're looking for
+    alive_count, rdp_hosts = parallel_ping_sweep("10.220.8.0/21", timeout_ms=300, max_workers=300, check_rdp=True, needed_macs=needed_macs)
     
     if alive_count == 0:
         # Fallback to nmap if parallel ping found nothing

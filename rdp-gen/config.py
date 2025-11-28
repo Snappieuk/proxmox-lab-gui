@@ -39,11 +39,12 @@ VM_CACHE_FILE = os.getenv("VM_CACHE_FILE") or os.path.join(os.path.dirname(__fil
 SECRET_KEY = os.getenv("SECRET_KEY", "change-me-session-key")
 
 # VM cache TTL (seconds) – avoids hammering Proxmox API
-VM_CACHE_TTL = int(os.getenv("VM_CACHE_TTL", "120"))
+# 5 minutes is good for student labs; start/stop operations invalidate cache automatically
+VM_CACHE_TTL = int(os.getenv("VM_CACHE_TTL", "300"))
 
 # Proxmox API cache TTL (seconds) – short-lived cache for cluster-wide queries
 # This is used for flask-caching to cache aggregated VM/container lists
-PROXMOX_CACHE_TTL = int(os.getenv("PROXMOX_CACHE_TTL", "10"))
+PROXMOX_CACHE_TTL = int(os.getenv("PROXMOX_CACHE_TTL", "30"))
 
 # If True, try to query the guest agent for IP addresses.
 # This can be slow on large numbers of VMs.
