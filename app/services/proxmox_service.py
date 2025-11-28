@@ -57,12 +57,16 @@ def get_proxmox_admin_for_cluster(cluster_id: str) -> ProxmoxAPI:
     # Fast path: return existing connection if available
     if cluster_id in _proxmox_connections:
         return _proxmox_connections[cluster_id]
-    
-    # Find the cluster config
+
+    # Find the cluster config by ID or IP
     cluster = next((c for c in CLUSTERS if c["id"] == cluster_id), None)
     if not cluster:
-        raise ValueError(f"Unknown cluster_id: {cluster_id}")
-    
+        # Try matching by IP address
+        cluster = next((c for c in CLUSTERS if c["host"] == cluster_id), None)
+        if not cluster:
+            raise ValueError(f"Unknown cluster_id or cluster_ip: {cluster_id}")
+        cluster_id = cluster["id"]
+
     with _proxmox_lock:
         # Double-check inside lock to handle race conditions
         if cluster_id not in _proxmox_connections:
@@ -73,7 +77,7 @@ def get_proxmox_admin_for_cluster(cluster_id: str) -> ProxmoxAPI:
                 verify_ssl=cluster.get("verify_ssl", False),
             )
             logger.info("Connected to Proxmox cluster '%s' at %s", cluster["name"], cluster["host"])
-    
+
     return _proxmox_connections[cluster_id]
 
 
