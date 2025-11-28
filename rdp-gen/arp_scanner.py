@@ -88,11 +88,13 @@ def get_arp_table() -> Dict[str, str]:
                     # Find lladdr index
                     try:
                         lladdr_idx = parts.index('lladdr')
-                        mac = parts[lladdr_idx + 1]
-                        mac_normalized = mac.lower().replace(':', '').replace('-', '')
+                        raw_mac = parts[lladdr_idx + 1]
+                        mac_normalized = raw_mac.lower().replace(':', '').replace('-', '')
                         if len(mac_normalized) == 12:
                             arp_map[mac_normalized] = ip
-                            logger.debug("ARP entry: %s -> %s", mac_normalized, ip)
+                            logger.debug("ARP entry: %s (%s) -> %s", raw_mac, mac_normalized, ip)
+                        else:
+                            logger.warning("Invalid MAC length after normalization: %s -> %s", raw_mac, mac_normalized)
                     except (ValueError, IndexError):
                         continue
             
@@ -502,11 +504,15 @@ def discover_ips_via_arp(vm_mac_map: Dict[int, str], subnets: Optional[List[str]
             vm_ips[vmid] = arp_table[mac]
             logger.info("VM %d (MAC %s) -> IP %s", vmid, mac, arp_table[mac])
         else:
-            logger.warning("VM %d (MAC %s) NOT in ARP table", vmid, mac)
-            # Show a few ARP table entries for comparison
+            logger.warning("VM %d (MAC %s) NOT in ARP table (len=%d)", vmid, mac, len(arp_table))
+            # Show actual ARP table entries for comparison
             if len(arp_table) > 0:
-                sample_macs = list(arp_table.keys())[:3]
-                logger.debug("Sample ARP MACs: %s", sample_macs)
+                sample_entries = list(arp_table.items())[:5]
+                logger.warning("Sample ARP entries: %s", sample_entries)
+                # Check if any partial match exists
+                partial_matches = [k for k in arp_table.keys() if mac[:8] in k or k[:8] in mac]
+                if partial_matches:
+                    logger.warning("Partial MAC matches found: %s", partial_matches)
     
     logger.info("Discovered IPs for %d/%d VMs via ARP", len(vm_ips), len(vm_mac_map))
     return vm_ips

@@ -641,17 +641,72 @@ function updateSummaryTiles(vms) {
 
 // Power actions
 async function sendPowerAction(vmid, action, btn) {
+    const icon = btn.querySelector('i');
+    const originalIcon = icon.className;
+    
     try {
+        // Set pending state (grey button with spinner)
         btn.disabled = true;
+        btn.style.opacity = '0.5';
+        icon.className = 'bi bi-hourglass-split';
+        
         const resp = await fetch(`/api/vm/${vmid}/${action}`, { method: "POST" });
-        if (!resp.ok) {
-            console.error("Power action failed");
+        const data = await resp.json();
+        
+        if (!resp.ok || !data.ok) {
+            // Show error state (red X)
+            btn.classList.remove('btn-icon-success', 'btn-icon-danger');
+            btn.classList.add('btn-icon-error');
+            icon.className = 'bi bi-x-circle-fill';
+            btn.style.opacity = '1';
+            
+            // Log error for debugging
+            console.error("Power action failed:", data.error || 'Unknown error');
+            
+            // Revert to original after 3 seconds
+            setTimeout(() => {
+                icon.className = originalIcon;
+                btn.classList.remove('btn-icon-error');
+                if (action === 'start') {
+                    btn.classList.add('btn-icon-success');
+                } else {
+                    btn.classList.add('btn-icon-danger');
+                }
+                btn.style.opacity = '';
+                btn.disabled = false;
+            }, 3000);
+            
+            return;
         }
+        
+        // Success - revert icon and refresh status
+        icon.className = originalIcon;
+        btn.style.opacity = '';
+        
+        // Refresh VM status after a short delay to allow Proxmox task to complete
         setTimeout(refreshVmStatus, 2000);
+        
     } catch (e) {
-        console.error(e);
-    } finally {
-        btn.disabled = false;
+        console.error("Power action exception:", e);
+        
+        // Show error state
+        btn.classList.remove('btn-icon-success', 'btn-icon-danger');
+        btn.classList.add('btn-icon-error');
+        icon.className = 'bi bi-x-circle-fill';
+        btn.style.opacity = '1';
+        
+        // Revert after 3 seconds
+        setTimeout(() => {
+            icon.className = originalIcon;
+            btn.classList.remove('btn-icon-error');
+            if (action === 'start') {
+                btn.classList.add('btn-icon-success');
+            } else {
+                btn.classList.add('btn-icon-danger');
+            }
+            btn.style.opacity = '';
+            btn.disabled = false;
+        }, 3000);
     }
 }
 

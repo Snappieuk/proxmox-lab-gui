@@ -544,14 +544,21 @@ def _get_vm_mac(node: str, vmid: int, vmtype: str) -> Optional[str]:
                 
                 # QEMU format: "virtio=XX:XX:XX:XX:XX:XX,bridge=vmbr0"
                 # or: "e1000=XX:XX:XX:XX:XX:XX,bridge=vmbr0"
-                logger.debug("VM %d QEMU %s: %s", vmid, net_key, net_config)
+                logger.info("VM %d QEMU %s config: %s", vmid, net_key, net_config)
                 # Match MAC address pattern (6 hex pairs separated by colons)
                 mac_match = re.search(r'([0-9a-fA-F]{2}[:-]){5}([0-9a-fA-F]{2})', net_config)
-                if mac_match and ARP_SCANNER_AVAILABLE:
-                    mac = normalize_mac(mac_match.group(0))
-                    if mac:
-                        logger.debug("VM %d: Extracted MAC %s from %s", vmid, mac, net_key)
-                        return mac
+                if mac_match:
+                    raw_mac = mac_match.group(0)
+                    logger.info("VM %d: Found MAC in regex: %s", vmid, raw_mac)
+                    if ARP_SCANNER_AVAILABLE:
+                        mac = normalize_mac(raw_mac)
+                        if mac:
+                            logger.info("VM %d: Normalized MAC %s -> %s from %s", vmid, raw_mac, mac, net_key)
+                            return mac
+                        else:
+                            logger.warning("VM %d: normalize_mac failed for %s", vmid, raw_mac)
+                else:
+                    logger.warning("VM %d: No MAC regex match in %s: %s", vmid, net_key, net_config)
             
             logger.debug("VM %d: No MAC found in any net interface", vmid)
     
@@ -907,6 +914,10 @@ def _enrich_vms_with_arp_ips(vms: List[Dict[str, Any]], force_sync: bool = False
     if not vm_mac_map:
         logger.info("=== ARP SCAN COMPLETE === No running VMs need ARP discovery")
         return
+    
+    # Log the MAC map being sent to scanner
+    logger.info("VM MAC map being sent to ARP scanner: %s", 
+                {vmid: mac for vmid, mac in list(vm_mac_map.items())[:10]})
     
     logger.info("Starting ARP discovery for %d running VMs (synchronous mode)...", len(vm_mac_map))
     

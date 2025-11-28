@@ -729,6 +729,17 @@ body {
     color: white;
 }
 
+.btn-icon-error {
+    color: #a4262c;
+    border-color: #a4262c;
+    background: #fde7e9;
+    cursor: not-allowed;
+}
+
+.btn-icon-error:hover {
+    background: #fde7e9;
+}
+
 .btn-icon-primary {
     color: #0078d4;
     border-color: #0078d4;
