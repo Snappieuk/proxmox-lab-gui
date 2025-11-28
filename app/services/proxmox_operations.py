@@ -6,6 +6,7 @@ This module provides higher-level operations for class-based VM management.
 """
 
 import logging
+import re
 from typing import List, Dict, Tuple, Any, Optional
 
 from app.services.proxmox_service import get_proxmox_admin_for_cluster
@@ -15,6 +16,47 @@ logger = logging.getLogger(__name__)
 
 # Default cluster IP for class operations (restricted to single cluster)
 CLASS_CLUSTER_IP = "10.220.15.249"
+
+
+def sanitize_vm_name(name: str, fallback: str = "vm") -> str:
+    """Sanitize a proposed VM name to satisfy Proxmox (DNS-style) constraints.
+
+    Rules applied (approx RFC 1123 hostname subset):
+    - Lowercase all characters
+    - Allow only a-z, 0-9, hyphen; replace others with '-'
+    - Collapse consecutive hyphens
+    - Trim leading/trailing hyphens
+    - Ensure starts/ends with alphanumeric (prepend/append fallback tokens if needed)
+    - Limit length to 63 chars
+    - If result empty, use fallback
+    This keeps behavior predictable and prevents 400 clone errors for invalid names.
+    """
+    if not isinstance(name, str):
+        name = str(name) if name is not None else ""
+    original = name
+    name = name.lower().strip()
+    # Replace invalid chars with '-'
+    name = re.sub(r"[^a-z0-9-]", "-", name)
+    # Collapse multiple hyphens
+    name = re.sub(r"-+", "-", name)
+    # Strip leading/trailing hyphens
+    name = name.strip('-')
+    if not name:
+        name = fallback
+    # Ensure starts with alphanumeric
+    if not name[0].isalnum():
+        name = f"{fallback}-{name}" if name else fallback
+    # Ensure ends with alphanumeric
+    if not name[-1].isalnum():
+        name = f"{name}0"
+    # Truncate to 63 characters (typical hostname limit)
+    if len(name) > 63:
+        name = name[:63].rstrip('-')
+        if not name:
+            name = fallback
+    if name != original:
+        logger.info(f"sanitize_vm_name: '{original}' -> '{name}'")
+    return name
 
 
 def list_proxmox_templates(cluster_ip: str = None) -> List[Dict[str, Any]]:
@@ -97,15 +139,16 @@ def clone_vm_from_template(template_vmid: int, new_vmid: int, name: str, node: s
         
         proxmox = get_proxmox_admin_for_cluster(cluster_id)
         
+        safe_name = sanitize_vm_name(name)
         # Clone the template
         proxmox.nodes(node).qemu(template_vmid).clone.post(
             newid=new_vmid,
-            name=name,
+            name=safe_name,
             full=1  # Full clone (not linked)
         )
-        
-        logger.info(f"Cloned template {template_vmid} to {new_vmid} ({name}) on {node}")
-        return True, f"Successfully cloned VM {name}"
+
+        logger.info(f"Cloned template {template_vmid} to {new_vmid} ({safe_name}) on {node}")
+        return True, f"Successfully cloned VM {safe_name}"
         
     except Exception as e:
         logger.exception(f"Failed to clone VM: {e}")
@@ -177,6 +220,7 @@ def clone_vms_for_class(template_vmid: int, node: str, count: int, name_prefix: 
                 next_vmid += 1
             
             vm_name = f"{name_prefix}-{i+1}"
+            vm_name = sanitize_vm_name(vm_name, fallback="classvm")
             success, msg = clone_vm_from_template(
                 template_vmid=template_vmid,
                 new_vmid=next_vmid,
@@ -478,7 +522,8 @@ def clone_template_for_class(template_vmid: int, node: str, name: str,
         
         proxmox = get_proxmox_admin_for_cluster(cluster_id)
         
-        logger.info(f"Cloning template VMID {template_vmid} from node '{node}' to create '{name}'")
+        safe_name = sanitize_vm_name(name, fallback="clonetemplate")
+        logger.info(f"Cloning template VMID {template_vmid} from node '{node}' to create '{safe_name}' (original requested name: '{name}')")
         
         # Find next available VMID - use cluster resources API for complete view
         used_vmids = set()
@@ -510,12 +555,12 @@ def clone_template_for_class(template_vmid: int, node: str, name: str,
         logger.info(f"Selected new VMID: {new_vmid} (next available after checking {len(used_vmids)} existing VMs)")
         
         # Clone the template (full clone, not linked)
-        logger.info(f"Calling proxmox.nodes('{node}').qemu({template_vmid}).clone.post(newid={new_vmid}, name='{name}', full=1)")
+        logger.info(f"Calling proxmox.nodes('{node}').qemu({template_vmid}).clone.post(newid={new_vmid}, name='{safe_name}', full=1)")
         
         try:
             proxmox.nodes(node).qemu(template_vmid).clone.post(
                 newid=new_vmid,
-                name=name,
+                name=safe_name,
                 full=1  # Full clone
             )
         except Exception as clone_error:
@@ -529,14 +574,14 @@ def clone_template_for_class(template_vmid: int, node: str, name: str,
                 logger.info(f"Retrying clone with VMID {new_vmid}")
                 proxmox.nodes(node).qemu(template_vmid).clone.post(
                     newid=new_vmid,
-                    name=name,
+                    name=safe_name,
                     full=1
                 )
             else:
                 raise
         
-        logger.info(f"Cloned template {template_vmid} → {new_vmid} ({name}) on {node}")
-        return True, new_vmid, f"Successfully cloned template to VMID {new_vmid}"
+        logger.info(f"Cloned template {template_vmid} → {new_vmid} ({safe_name}) on {node}")
+        return True, new_vmid, f"Successfully cloned template '{safe_name}' to VMID {new_vmid}"
         
     except Exception as e:
         logger.exception(f"Failed to clone template: {e}")

@@ -24,6 +24,9 @@ from app.services.proxmox_client import (
     invalidate_cluster_cache,
     verify_vm_ip,
 )
+from app.services.inventory_service import fetch_vm_inventory
+from app.config import VM_CACHE_TTL
+import threading, time
 from app.services.arp_scanner import get_scan_status, has_rdp_port_open, get_rdp_cache_time
 
 logger = logging.getLogger(__name__)
@@ -49,8 +52,51 @@ def api_vms():
     force_refresh = request.args.get('force_refresh', 'false').lower() == 'true'
     search = request.args.get('search', '')
     
+    # Optional DB-backed inventory path (?db=true). Allows cluster filtering without live Proxmox queries.
+    use_db = request.args.get('db', 'false').lower() == 'true'
+    cluster_filter = request.args.get('cluster')  # cluster_id string
+
     try:
-        vms = get_vms_for_user(user, search=search or None, skip_ips=skip_ips, force_refresh=force_refresh)
+        if use_db:
+            # Fetch persisted inventory then filter to user's accessible VMs (if mapping applies)
+            inventory = fetch_vm_inventory(cluster_id=cluster_filter, search=search or None)
+            user_accessible = get_vms_for_user(user, skip_ips=True, force_refresh=False)
+            accessible_vmids = {vm['vmid'] for vm in user_accessible}
+            vms = [inv for inv in inventory if inv['vmid'] in accessible_vmids]
+
+            # Determine staleness (max last_updated age for rows considered)
+            now_ts = time.time()
+            latest_dt = None
+            for row in inventory:
+                lu = row.get('last_updated')
+                if lu:
+                    try:
+                        # Parse ISO timestamp
+                        from datetime import datetime
+                        dt = datetime.fromisoformat(lu.replace('Z',''))
+                        if latest_dt is None or dt > latest_dt:
+                            latest_dt = dt
+                    except Exception:
+                        continue
+            stale = True
+            if latest_dt is not None:
+                age = (datetime.utcnow() - latest_dt).total_seconds()
+                stale = age > VM_CACHE_TTL
+
+            # If stale trigger background refresh (non-blocking)
+            if stale:
+                def _bg_refresh():
+                    try:
+                        # Force refresh to update inventory persistence
+                        from app.services.proxmox_client import get_all_vms
+                        get_all_vms(skip_ips=False, force_refresh=True)
+                    except Exception as e:
+                        logger.warning(f"Background inventory refresh failed: {e}")
+                threading.Thread(target=_bg_refresh, daemon=True).start()
+
+            return jsonify({"vms": vms, "stale": stale})
+        else:
+            vms = get_vms_for_user(user, search=search or None, skip_ips=skip_ips, force_refresh=force_refresh)
         
         # Check which VMs can actually generate RDP files
         rdp_cache_valid = get_rdp_cache_time() > 0  # Has the port scan completed?

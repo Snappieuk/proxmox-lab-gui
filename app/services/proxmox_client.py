@@ -1591,6 +1591,13 @@ def get_all_vms(skip_ips: bool = False, force_refresh: bool = False) -> List[Dic
     _vm_cache_data[cache_key] = out
     _vm_cache_ts[cache_key] = now
     _save_vm_cache()  # Persist to disk for fast restart
+
+    # Persist to database inventory (best-effort; avoid hard failure)
+    try:
+        from app.services.inventory_service import persist_vm_inventory
+        persist_vm_inventory(out)
+    except Exception as inv_err:
+        logger.warning(f"get_all_vms: failed to persist VM inventory: {inv_err}")
     
     return out
 

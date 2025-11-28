@@ -95,21 +95,35 @@
 </div>
 
 <script>
-function filterByCluster(clusterId) {
-    console.log('Filtering VMs by cluster:', clusterId);
-    
-    // Store selected cluster in sessionStorage
+async function filterByCluster(clusterId) {
+    console.log('Cluster selection:', clusterId);
     if (clusterId === 'all') {
         sessionStorage.removeItem('selected_cluster');
     } else {
         sessionStorage.setItem('selected_cluster', clusterId);
     }
-    
-    // Trigger re-render of VM tables with filter
-    if (typeof window.filterVMsByCluster === 'function') {
-        window.filterVMsByCluster(clusterId);
-    } else {
-        console.warn('filterVMsByCluster function not found, page may need to reload');
+    // Prefer DB-backed inventory for fast filtered load
+    try {
+        const params = new URLSearchParams();
+        params.set('db', 'true');
+        if (clusterId !== 'all') params.set('cluster', clusterId);
+        const resp = await fetch('/api/vms?' + params.toString());
+        if (!resp.ok) {
+            console.warn('Cluster fetch failed, status', resp.status);
+            return;
+        }
+        const payload = await resp.json();
+        const list = Array.isArray(payload) ? payload : (payload.vms || []);
+        const stale = !!(payload && payload.stale);
+        if (typeof window.populateTables === 'function') {
+            window.populateTables(list);
+            window.allVMs = list; // Replace global cache with filtered set
+        }
+        if (stale) {
+            console.log('Inventory stale; background refresh will update soon');
+        }
+    } catch (e) {
+        console.error('Cluster filter fetch error:', e);
     }
 }
 </script>

@@ -276,6 +276,48 @@ class VMIPCache(db.Model):
         return f'<VMIPCache vmid={self.vmid} ip={self.cached_ip}>'
 
 
+class VMInventory(db.Model):
+    """Persistent inventory of all discovered VMs across clusters.
+
+    Populated from Proxmox API fetches (get_all_vms) to allow UI filtering
+    without re-querying Proxmox and to persist IP/status across restarts.
+    """
+    __tablename__ = 'vm_inventory'
+
+    id = db.Column(db.Integer, primary_key=True)
+    cluster_id = db.Column(db.String(50), nullable=False, index=True)
+    cluster_name = db.Column(db.String(120), nullable=True)
+    vmid = db.Column(db.Integer, nullable=False, index=True)
+    name = db.Column(db.String(200), nullable=True, index=True)
+    node = db.Column(db.String(120), nullable=True, index=True)
+    status = db.Column(db.String(40), nullable=True, index=True)
+    ip = db.Column(db.String(45), nullable=True, index=True)
+    type = db.Column(db.String(20), nullable=True)  # qemu or lxc
+    category = db.Column(db.String(40), nullable=True)  # windows/linux/other
+    last_updated = db.Column(db.DateTime, default=datetime.utcnow, index=True)
+
+    __table_args__ = (
+        db.UniqueConstraint('cluster_id', 'vmid', name='uix_cluster_vmid'),
+    )
+
+    def to_dict(self) -> dict:
+        return {
+            'cluster_id': self.cluster_id,
+            'cluster_name': self.cluster_name,
+            'vmid': self.vmid,
+            'name': self.name,
+            'node': self.node,
+            'status': self.status,
+            'ip': self.ip,
+            'type': self.type,
+            'category': self.category,
+            'last_updated': self.last_updated.isoformat() if self.last_updated else None,
+        }
+
+    def __repr__(self):
+        return f"<VMInventory {self.cluster_id}:{self.vmid} {self.name} {self.status} {self.ip}>"
+
+
 def init_db(app):
     """Initialize database with Flask app context.
     
