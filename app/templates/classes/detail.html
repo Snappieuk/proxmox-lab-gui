@@ -23,7 +23,6 @@
                     <span class="role-badge role-{{ local_user_role }}">{{ local_user_role }}</span>
                 {% endif %}
             </span>
-            <a href="{{ url_for('classes.classes_list') }}" class="topbar-link">← Back to Classes</a>
             <a href="{{ url_for('auth.logout') }}" class="topbar-link">Sign out</a>
         {% endif %}
     </div>
@@ -50,14 +49,6 @@
                 <i class="bi bi-pc-display"></i> My Machine
             </a>
         {% endif %}
-        
-        <div class="sidebar-section-title" style="margin-top: 1rem;">Navigation</div>
-        <a class="sidebar-link" href="{{ url_for('portal.portal') }}">
-            <i class="bi bi-house"></i> Portal Home
-        </a>
-        <a class="sidebar-link" href="{{ url_for('classes.classes_list') }}">
-            <i class="bi bi-arrow-left"></i> Back to Classes
-        </a>
     </nav>
 
     <main class="main">

@@ -63,9 +63,15 @@ def get_template_info(class_id: int):
         # Get VM status from Proxmox
         vm_status = get_vm_status(template.proxmox_vmid, template.cluster_ip)
         
-        # Get IP and other details
+        # Validate node
+        node = template.node
+        logger.info(f"Fetching VM config for template_id={template.id}, vmid={template.proxmox_vmid}, node={node}")
+        if not node or node.lower() == "qemu":
+            logger.error(f"Template {template.id} has invalid node assigned: '{node}'. Cannot fetch config for VMID {template.proxmox_vmid}.")
+            return jsonify({"ok": False, "error": f"Template has invalid node assigned: '{node}'"}), 500
+        
         proxmox = get_proxmox_admin_for_cluster(template.cluster_ip)
-        vm_config = proxmox.nodes(template.node).qemu(template.proxmox_vmid).config.get()
+        vm_config = proxmox.nodes(node).qemu(template.proxmox_vmid).config.get()
         
         # Extract MAC address from network config
         mac_address = None
