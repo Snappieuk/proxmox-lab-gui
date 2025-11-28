@@ -78,15 +78,24 @@ def list_proxmox_templates(cluster_ip: str = CLASS_CLUSTER_IP) -> List[Dict[str,
 
 
 def get_next_vmid(cluster_ip: str = CLASS_CLUSTER_IP) -> int:
-    """Get the next available VMID from Proxmox cluster."""
+    """Get the next available VMID from Proxmox cluster.
+    
+    Uses Proxmox API to get the next available ID. Falls back to a
+    random ID in the 10000-99999 range if API fails.
+    """
+    import random
+    
     try:
         proxmox = get_proxmox_for_ip(cluster_ip)
         result = proxmox.cluster.nextid.get()
         return int(result)
     except Exception as e:
-        logger.exception("Failed to get next VMID: %s", e)
-        # Fallback to timestamp-based ID
-        return int(time.time()) % 1000000 + 1000
+        logger.exception("Failed to get next VMID from API: %s", e)
+        # Fallback: generate random VMID in high range to avoid collisions
+        # Using 10000-99999 range is less likely to collide with existing VMs
+        fallback_vmid = random.randint(10000, 99999)
+        logger.warning("Using fallback VMID: %d (should verify availability)", fallback_vmid)
+        return fallback_vmid
 
 
 def clone_vm_from_template(template_vmid: int, new_name: str, target_node: str = None,

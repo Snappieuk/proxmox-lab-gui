@@ -375,7 +375,7 @@ def get_available_templates(class_id: int = None) -> List[Template]:
     - Class-specific templates for the given class_id (if provided)
     """
     query = Template.query.filter(
-        (Template.is_class_template == False) |
+        (Template.is_class_template.is_(False)) |
         (Template.class_id == class_id)
     )
     return query.order_by(Template.name).all()

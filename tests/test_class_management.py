@@ -34,8 +34,8 @@ def test_user_password_hashing():
     
     assert user.password_hash is not None
     assert user.password_hash != 'testpassword123'
-    assert user.check_password('testpassword123') == True
-    assert user.check_password('wrongpassword') == False
+    assert user.check_password('testpassword123')
+    assert not user.check_password('wrongpassword')
     
     print("✓ User password hashing works")
 

@@ -247,27 +247,35 @@ def delete_class_route(class_id: int):
     if not user.is_adminer and class_.teacher_id != user.id:
         return jsonify({"ok": False, "error": "Access denied"}), 403
     
-    # Get VMs to delete from Proxmox
+    # Get VMs to delete BEFORE deleting the class
+    vm_assignments_to_delete = []
+    for assignment in class_.vm_assignments:
+        vm_assignments_to_delete.append({
+            'vmid': assignment.proxmox_vmid,
+            'node': assignment.node
+        })
+    
+    # Delete class from database (cascades to VM assignments)
     success, msg, vmids = delete_class(class_id)
     
     if not success:
         return jsonify({"ok": False, "error": msg}), 400
     
-    # Delete VMs from Proxmox (best effort)
+    # Delete VMs from Proxmox (best effort, class already deleted)
     deleted_vms = []
     failed_vms = []
-    for assignment in class_.vm_assignments if hasattr(class_, 'vm_assignments') else []:
-        vm_success, vm_msg = delete_vm(assignment.proxmox_vmid, assignment.node)
+    for vm_info in vm_assignments_to_delete:
+        vm_success, vm_msg = delete_vm(vm_info['vmid'], vm_info['node'])
         if vm_success:
-            deleted_vms.append(assignment.proxmox_vmid)
+            deleted_vms.append(vm_info['vmid'])
         else:
-            failed_vms.append((assignment.proxmox_vmid, vm_msg))
+            failed_vms.append({'vmid': vm_info['vmid'], 'error': vm_msg})
     
     return jsonify({
         "ok": True,
         "message": msg,
         "deleted_vms": deleted_vms,
-        "failed_vms": [{"vmid": v[0], "error": v[1]} for v in failed_vms]
+        "failed_vms": failed_vms
     })
 
 

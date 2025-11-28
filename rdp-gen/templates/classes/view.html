@@ -461,9 +461,24 @@ function closeModal(id) {
 
 function copyInviteLink() {
     const input = document.getElementById('invite-url');
-    input.select();
-    document.execCommand('copy');
-    alert('Invite link copied!');
+    const url = input.value;
+    
+    // Use modern Clipboard API
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(url).then(() => {
+            alert('Invite link copied!');
+        }).catch(() => {
+            // Fallback for older browsers
+            input.select();
+            document.execCommand('copy');
+            alert('Invite link copied!');
+        });
+    } else {
+        // Fallback for older browsers
+        input.select();
+        document.execCommand('copy');
+        alert('Invite link copied!');
+    }
 }
 
 async function generateInvite() {
