@@ -234,7 +234,10 @@ def update_class_route(class_id: int):
 @api_classes_bp.route("/<int:class_id>", methods=["DELETE"])
 @login_required
 def delete_class_route(class_id: int):
-    """Delete a class and its VMs (teacher owner or adminer only)."""
+    """Delete a class and its VMs (teacher owner or adminer only).
+    
+    Query param 'force=true' will delete class from DB without deleting VMs from Proxmox.
+    """
     logger.info(f"DELETE request for class {class_id}")
     
     user, error = require_teacher_or_adminer()
@@ -252,6 +255,28 @@ def delete_class_route(class_id: int):
         logger.error(f"User {user.username} not authorized to delete class {class_id}")
         return jsonify({"ok": False, "error": "Access denied"}), 403
     
+    # Check if force delete (skip VM deletion from Proxmox)
+    force_delete = request.args.get('force', 'false').lower() == 'true'
+    
+    if force_delete:
+        logger.warning(f"FORCE DELETE: Deleting class {class_id} ({class_.name}) WITHOUT deleting VMs from Proxmox")
+        # Just delete from database, don't touch Proxmox
+        success, msg, vmids = delete_class(class_id)
+        
+        if not success:
+            logger.error(f"Failed to force delete class {class_id} from database: {msg}")
+            return jsonify({"ok": False, "error": msg}), 400
+        
+        logger.info(f"Class {class_id} force deleted successfully (skipped {len(vmids)} VMs)")
+        return jsonify({
+            "ok": True,
+            "message": "Class deleted (VMs left intact in Proxmox)",
+            "deleted_vms": [],
+            "failed_vms": [],
+            "skipped_vms": vmids
+        })
+    
+    # Normal delete: delete VMs from Proxmox
     logger.info(f"Deleting class {class_id} ({class_.name}) with {len(class_.vm_assignments)} VMs")
     
     # Get VMs to delete BEFORE deleting the class
@@ -261,6 +286,11 @@ def delete_class_route(class_id: int):
             'vmid': assignment.proxmox_vmid,
             'node': assignment.node
         })
+    
+    # Get cluster_ip from template
+    cluster_ip = None
+    if class_.template and class_.template.cluster_ip:
+        cluster_ip = class_.template.cluster_ip
     
     # Delete class from database (cascades to VM assignments)
     success, msg, vmids = delete_class(class_id)
@@ -275,11 +305,6 @@ def delete_class_route(class_id: int):
     deleted_vms = []
     failed_vms = []
     for vm_info in vm_assignments_to_delete:
-        # Need to get cluster_ip for the VM
-        cluster_ip = None
-        if class_.template and class_.template.cluster_ip:
-            cluster_ip = class_.template.cluster_ip
-        
         logger.info(f"Deleting VM {vm_info['vmid']} on node {vm_info['node']} (cluster: {cluster_ip})")
         vm_success, vm_msg = delete_vm(vm_info['vmid'], vm_info['node'], cluster_ip)
         if vm_success:

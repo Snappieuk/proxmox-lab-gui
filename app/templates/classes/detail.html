@@ -63,6 +63,9 @@
         <a class="sidebar-link" href="#" onclick="deleteClass(); return false;" style="color: #dc3545;">
             <i class="bi bi-trash"></i> Delete Class
         </a>
+        <a class="sidebar-link" href="#" onclick="forceDeleteClass(); return false;" style="color: #dc3545;">
+            <i class="bi bi-trash-fill"></i> Force Delete (Skip VM Deletion)
+        </a>
         {% endif %}
     </nav>
 
@@ -86,61 +89,69 @@
                 </div>
                 
                 <div id="template-info" style="display: none;">
-                    <!-- Template Details -->
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem; padding: 1.5rem; background: #f9f9f9; border-radius: 8px;">
+                    <!-- Header Section: Name + Controls -->
+                    <div style="display: flex; justify-content: space-between; align-items: center; padding: 1.5rem; background: #f9f9f9; border-radius: 8px; margin-bottom: 2rem;">
+                        <!-- Left: VM Info -->
                         <div>
-                            <h3 style="margin: 0 0 0.5rem 0; font-size: 1.25rem;" id="template-name">-</h3>
+                            <h3 style="margin: 0 0 0.25rem 0; font-size: 1.5rem; font-weight: 600;" id="template-name">-</h3>
                             <div style="color: #605e5c; font-size: 0.9rem;">
                                 <span><strong>VMID:</strong> <span id="template-vmid">-</span></span>
-                                <span style="margin-left: 1.5rem;"><strong>Node:</strong> <span id="template-node">-</span></span>
+                                <span style="margin: 0 1rem;">•</span>
+                                <span><strong>Node:</strong> <span id="template-node">-</span></span>
                             </div>
-                        </div>
-                        <div style="display: flex; align-items: center; gap: 1rem;">
-                            <div style="display: flex; align-items: center; gap: 0.5rem;">
-                                <span style="font-weight: 600; color: #323130;">Power:</span>
-                                <label class="toggle-switch">
-                                    <input type="checkbox" id="power-toggle" onchange="togglePower()">
-                                    <span class="toggle-slider"></span>
-                                </label>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <!-- Quick Actions -->
-                    <div style="display: flex; gap: 0.5rem; margin-bottom: 2rem;">
-                        <button id="btn-rdp-template" onclick="rdpToTemplate()" class="btn-minimal" style="display: none;" title="Download RDP file">
-                            <i class="bi bi-file-earmark-arrow-down"></i>
-                        </button>
-                        <button id="btn-ssh-template" onclick="sshToTemplate()" class="btn-minimal" title="Open SSH terminal">
-                            <i class="bi bi-terminal-fill"></i>
-                        </button>
-                    </div>
-                    
-                    <!-- Advanced Actions -->
-                    <div style="border-top: 1px solid #e1dfdd; padding-top: 2rem;">
-                        <h3 style="font-size: 1rem; margin-bottom: 1rem; color: #605e5c;">Advanced Actions</h3>
-                        <div class="template-controls-grid">
-                            <button onclick="reimageTemplate()" class="btn-control btn-control-gray">
-                                <i class="bi bi-arrow-counterclockwise"></i>
-                                <span>Reimage</span>
-                            </button>
-                            <button onclick="saveTemplate()" class="btn-control btn-control-blue">
-                                <i class="bi bi-save"></i>
-                                <span>Save</span>
-                            </button>
-                            <button onclick="pushTemplate()" class="btn-control btn-control-orange">
-                                <i class="bi bi-arrow-repeat"></i>
-                                <span>Push to VMs</span>
-                            </button>
                         </div>
                         
-                        <div style="margin-top: 1.5rem; padding: 1rem; background: #fff3cd; border-radius: 6px; border-left: 4px solid #ffc107;">
-                            <strong style="display: block; margin-bottom: 0.5rem;">Template Workflow:</strong>
-                            <ul style="margin: 0; padding-left: 1.5rem; font-size: 0.9rem;">
-                                <li><strong>Reimage:</strong> Revert template to original baseline state</li>
-                                <li><strong>Save:</strong> Save current template state as new baseline</li>
-                                <li><strong>Push:</strong> Delete and recreate all student VMs from current template</li>
-                            </ul>
+                        <!-- Right: Controls -->
+                        <div style="display: flex; align-items: center; gap: 0.75rem;">
+                            <!-- Power Toggle -->
+                            <label class="toggle-switch" title="Power On/Off">
+                                <input type="checkbox" id="power-toggle" onchange="togglePower()">
+                                <span class="toggle-slider"></span>
+                            </label>
+                            
+                            <!-- SSH Button -->
+                            <button id="btn-ssh-template" onclick="sshToTemplate()" class="btn-header" title="SSH Terminal">
+                                <i class="bi bi-terminal-fill"></i>
+                            </button>
+                            
+                            <!-- RDP Button -->
+                            <button id="btn-rdp-template" onclick="rdpToTemplate()" class="btn-header" style="display: none;" title="Download RDP">
+                                <i class="bi bi-file-earmark-arrow-down"></i>
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <!-- Quick Actions Row -->
+                    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin-bottom: 2rem;">
+                        <button onclick="reimageTemplate()" class="btn-action-large btn-gray">
+                            <i class="bi bi-arrow-counterclockwise"></i>
+                            <span>Reimage</span>
+                            <small>Reset to baseline</small>
+                        </button>
+                        <button onclick="saveTemplate()" class="btn-action-large btn-blue">
+                            <i class="bi bi-floppy"></i>
+                            <span>Save Template</span>
+                            <small>Save current state</small>
+                        </button>
+                        <button onclick="pushTemplate()" class="btn-action-large btn-orange">
+                            <i class="bi bi-arrow-repeat"></i>
+                            <span>Push to VMs</span>
+                            <small>Update all students</small>
+                        </button>
+                    </div>
+                    
+                    <!-- Info Box -->
+                    <div style="padding: 1rem; background: #e8f4fd; border-radius: 6px; border-left: 4px solid #0078d4;">
+                        <div style="display: flex; align-items: start; gap: 0.75rem;">
+                            <i class="bi bi-info-circle" style="font-size: 1.25rem; color: #0078d4; margin-top: 0.1rem;"></i>
+                            <div style="font-size: 0.9rem; color: #323130;">
+                                <strong style="display: block; margin-bottom: 0.5rem;">Template Workflow</strong>
+                                <div style="line-height: 1.6;">
+                                    <strong>Reimage:</strong> Revert template to original baseline •
+                                    <strong>Save:</strong> Save current state as new baseline •
+                                    <strong>Push:</strong> Recreate all student VMs from current template
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -630,6 +641,124 @@ input:disabled + .toggle-slider {
 .btn-minimal i {
     font-size: 1rem;
 }
+
+/* Header Buttons - Compact icon buttons for template header */
+.btn-header {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    background: white;
+    border: 1px solid #d1d1d1;
+    border-radius: 4px;
+    color: #605e5c;
+    cursor: pointer;
+    transition: all 0.15s;
+    margin-left: 8px;
+}
+
+.btn-header:hover {
+    background: #f3f2f1;
+    border-color: #8a8886;
+    color: #323130;
+}
+
+.btn-header:active {
+    background: #e1dfdd;
+}
+
+.btn-header i {
+    font-size: 1rem;
+}
+
+.btn-header:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Large Action Buttons - For template management actions */
+.btn-action-large {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 20px 16px;
+    border: 1px solid;
+    border-radius: 6px;
+    background: white;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-family: inherit;
+    text-align: center;
+    min-height: 120px;
+}
+
+.btn-action-large i {
+    font-size: 2rem;
+    margin-bottom: 12px;
+}
+
+.btn-action-large .btn-title {
+    font-size: 1rem;
+    font-weight: 600;
+    margin-bottom: 4px;
+}
+
+.btn-action-large .btn-subtitle {
+    font-size: 0.8125rem;
+    opacity: 0.85;
+}
+
+.btn-action-large:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Gray Action Button */
+.btn-gray {
+    border-color: #8a8886;
+    color: #323130;
+}
+
+.btn-gray:hover:not(:disabled) {
+    background: #f3f2f1;
+    border-color: #605e5c;
+}
+
+.btn-gray:active:not(:disabled) {
+    background: #e1dfdd;
+}
+
+/* Blue Action Button */
+.btn-blue {
+    border-color: #0078d4;
+    color: #0078d4;
+}
+
+.btn-blue:hover:not(:disabled) {
+    background: #f3f9fd;
+    border-color: #005a9e;
+}
+
+.btn-blue:active:not(:disabled) {
+    background: #deecf9;
+}
+
+/* Orange Action Button */
+.btn-orange {
+    border-color: #f7630c;
+    color: #d13200;
+}
+
+.btn-orange:hover:not(:disabled) {
+    background: #fff9f5;
+    border-color: #d13200;
+}
+
+.btn-orange:active:not(:disabled) {
+    background: #feedde;
+}
 </style>
 
 <script>
@@ -999,6 +1128,37 @@ async function deleteClass() {
         }
     } catch (e) {
         showAlert('Failed to delete class', 'error');
+    }
+}
+
+async function forceDeleteClass() {
+    const className = '{{ class_.name }}';
+    const confirmation = prompt(`FORCE DELETE: This will delete the class from the database but SKIP VM deletion from Proxmox.\\n\\nUse this if VMs are already deleted or unreachable.\\n\\nType "${className}" to confirm force deletion:`);
+    
+    if (confirmation !== className) {
+        if (confirmation !== null) {
+            showAlert('Class name did not match. Deletion cancelled.', 'error');
+        }
+        return;
+    }
+    
+    try {
+        const resp = await fetch(`/api/class/${classId}?force=true`, {
+            method: 'DELETE'
+        });
+        
+        const data = await resp.json();
+        
+        if (data.ok) {
+            showAlert('Class force deleted successfully. Redirecting...', 'success');
+            setTimeout(() => {
+                window.location.href = '/classes';
+            }, 2000);
+        } else {
+            showAlert(data.error || 'Failed to force delete class', 'error');
+        }
+    } catch (e) {
+        showAlert('Failed to force delete class', 'error');
     }
 }
 

@@ -1453,9 +1453,8 @@ def get_all_vms(skip_ips: bool = False, force_refresh: bool = False) -> List[Dic
     global _vm_cache_data, _vm_cache_ts
     cache_key = "all_clusters"  # Single cache for all clusters combined
 
-    # Load both caches from disk on first call
+    # Load VM cache from disk on first call
     _load_vm_cache()
-    _load_ip_cache()
 
     now = time.time()
     # Check if we have valid cached data
