@@ -597,14 +597,14 @@ def discover_ips_via_arp(vm_mac_map: Dict[int, str], subnets: Optional[List[str]
     if not vm_mac_map:
         return {}
     
-    logger.info("VM MAC map: %s", vm_mac_map)
+    logger.debug("VM MAC map: %s", vm_mac_map)
     
     # Check if cache is still valid (1 hour TTL)
     cache_age = time.time() - _arp_cache_time
     cache_valid = cache_age < _arp_cache_ttl and not force_refresh
     
     if cache_valid:
-        logger.info("ARP cache is valid (age: %.1f seconds), checking for matches", cache_age)
+        logger.debug("ARP cache is valid (age: %.1f seconds), checking for matches", cache_age)
     else:
         if force_refresh:
             logger.info("Force refresh requested, invalidating cache")
