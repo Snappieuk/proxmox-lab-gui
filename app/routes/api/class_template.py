@@ -60,9 +60,6 @@ def get_template_info(class_id: int):
     template = class_.template
     
     try:
-        # Get VM status from Proxmox
-        vm_status = get_vm_status(template.proxmox_vmid, template.cluster_ip)
-        
         # Get node from Proxmox if not set in template
         node = template.node
         logger.info(f"Fetching VM config for template_id={template.id}, vmid={template.proxmox_vmid}, node={node}")
@@ -92,6 +89,9 @@ def get_template_info(class_id: int):
                 return jsonify({"ok": False, "error": f"Failed to fetch VM node: {e}"}), 500
         
         vm_config = proxmox.nodes(node).qemu(template.proxmox_vmid).config.get()
+        
+        # Get VM status from Proxmox (after node is validated)
+        vm_status = get_vm_status(template.proxmox_vmid, node, template.cluster_ip)
         
         # Extract MAC address from network config
         mac_address = None

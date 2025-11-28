@@ -79,58 +79,70 @@
                 </div>
                 
                 <div id="template-info" style="display: none;">
-                    <!-- Template Info -->
-                    <div style="margin-bottom: 2rem;">
-                        <h3 style="font-size: 1.1rem; margin-bottom: 1rem;">Template Details</h3>
-                        <div class="info-grid">
-                            <div class="info-item">
-                                <span class="info-label">Name:</span>
-                                <span id="template-name">-</span>
-                            </div>
-                            <div class="info-item">
-                                <span class="info-label">VMID:</span>
-                                <span id="template-vmid">-</span>
-                            </div>
-                            <div class="info-item">
-                                <span class="info-label">Status:</span>
+                    <!-- Template Details Grid -->
+                    <div class="template-details-grid" style="margin-bottom: 2rem;">
+                        <div class="template-detail-card">
+                            <div class="template-detail-label">Template Name</div>
+                            <div class="template-detail-value" id="template-name">-</div>
+                        </div>
+                        <div class="template-detail-card">
+                            <div class="template-detail-label">VMID</div>
+                            <div class="template-detail-value" id="template-vmid">-</div>
+                        </div>
+                        <div class="template-detail-card">
+                            <div class="template-detail-label">Status</div>
+                            <div class="template-detail-value">
                                 <span id="template-status" class="status-badge">-</span>
                             </div>
-                            <div class="info-item">
-                                <span class="info-label">Node:</span>
-                                <span id="template-node">-</span>
-                            </div>
+                        </div>
+                        <div class="template-detail-card">
+                            <div class="template-detail-label">Node</div>
+                            <div class="template-detail-value" id="template-node">-</div>
                         </div>
                     </div>
                     
                     <!-- Template Controls -->
-                    <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
-                        <button id="btn-start-template" onclick="startTemplate()" class="btn-primary">
-                            <i class="bi bi-play-fill"></i> Start
+                    <div class="template-controls-grid" style="margin-bottom: 2rem;">
+                        <button id="btn-start-template" onclick="startTemplate()" class="btn-control btn-control-green">
+                            <i class="bi bi-power"></i>
+                            <span>Start</span>
                         </button>
-                        <button id="btn-stop-template" onclick="stopTemplate()" class="btn-secondary">
-                            <i class="bi bi-stop-fill"></i> Stop
+                        <button id="btn-stop-template" onclick="stopTemplate()" class="btn-control btn-control-red">
+                            <i class="bi bi-stop-circle"></i>
+                            <span>Stop</span>
                         </button>
-                        <button id="btn-rdp-template" onclick="rdpToTemplate()" class="btn-primary" style="display: none;">
-                            <i class="bi bi-display"></i> RDP
-                        </button>
-                        <button onclick="reimageTemplate()" class="btn-secondary" style="background: #ff6b6b;">
-                            <i class="bi bi-arrow-counterclockwise"></i> Reimage (Reset to Base)
-                        </button>
-                        <button onclick="saveTemplate()" class="btn-primary" style="background: #51cf66;">
-                            <i class="bi bi-save"></i> Save as New Template
-                        </button>
-                        <button onclick="pushTemplate()" class="btn-primary" style="background: #ff922b;">
-                            <i class="bi bi-arrow-repeat"></i> Push to All VMs
+                        <button id="btn-rdp-template" onclick="rdpToTemplate()" class="btn-control btn-control-blue" style="display: none;">
+                            <i class="bi bi-display"></i>
+                            <span>RDP</span>
                         </button>
                     </div>
                     
-                    <div style="margin-top: 1.5rem; padding: 1rem; background: #fff3cd; border-radius: 6px; border-left: 4px solid #ffc107;">
-                        <strong>Template Workflow:</strong>
-                        <ul style="margin: 0.5rem 0 0 1.5rem;">
-                            <li><strong>Reimage:</strong> Revert template to original baseline state</li>
-                            <li><strong>Save:</strong> Save current template state as new baseline</li>
-                            <li><strong>Push:</strong> Delete and recreate all student VMs from current template</li>
-                        </ul>
+                    <!-- Advanced Actions -->
+                    <div style="border-top: 1px solid #e1dfdd; padding-top: 2rem;">
+                        <h3 style="font-size: 1rem; margin-bottom: 1rem; color: #605e5c;">Advanced Actions</h3>
+                        <div class="template-controls-grid">
+                            <button onclick="reimageTemplate()" class="btn-control btn-control-gray">
+                                <i class="bi bi-arrow-counterclockwise"></i>
+                                <span>Reimage</span>
+                            </button>
+                            <button onclick="saveTemplate()" class="btn-control btn-control-blue">
+                                <i class="bi bi-save"></i>
+                                <span>Save</span>
+                            </button>
+                            <button onclick="pushTemplate()" class="btn-control btn-control-orange">
+                                <i class="bi bi-arrow-repeat"></i>
+                                <span>Push to VMs</span>
+                            </button>
+                        </div>
+                        
+                        <div style="margin-top: 1.5rem; padding: 1rem; background: #fff3cd; border-radius: 6px; border-left: 4px solid #ffc107;">
+                            <strong style="display: block; margin-bottom: 0.5rem;">Template Workflow:</strong>
+                            <ul style="margin: 0; padding-left: 1.5rem; font-size: 0.9rem;">
+                                <li><strong>Reimage:</strong> Revert template to original baseline state</li>
+                                <li><strong>Save:</strong> Save current template state as new baseline</li>
+                                <li><strong>Push:</strong> Delete and recreate all student VMs from current template</li>
+                            </ul>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -185,12 +197,31 @@
             <div class="page-header">
                 <div>
                     <h1><i class="bi bi-people"></i> Students</h1>
-                    <p class="page-subtitle">Manage student enrollment and assignments</p>
+                    <p class="page-subtitle">Manage student enrollment via invite links</p>
+                </div>
+                <div>
+                    <button onclick="generateInviteLink()" class="btn-primary">
+                        <i class="bi bi-link-45deg"></i> Generate Invite Link
+                    </button>
                 </div>
             </div>
             
             <div class="content-card">
-                <p>Student management coming soon...</p>
+                <!-- Current Invite -->
+                <div id="invite-status" style="margin-bottom: 2rem;">
+                    <h3 style="font-size: 1.1rem; margin-bottom: 1rem;">Current Invite Link</h3>
+                    <div id="invite-display" style="padding: 1.5rem; background: #f9f9f9; border-radius: 6px;">
+                        <p style="color: #666;">No active invite link. Generate one to allow students to join this class.</p>
+                    </div>
+                </div>
+                
+                <!-- Enrolled Students List -->
+                <div>
+                    <h3 style="font-size: 1.1rem; margin-bottom: 1rem;">Enrolled Students</h3>
+                    <div id="students-list">
+                        <p style="color: #666;">Loading...</p>
+                    </div>
+                </div>
             </div>
         </div>
         {% endif %}
@@ -357,6 +388,168 @@
 
 .action-btn:hover {
     background: #f3f2f1;
+}
+
+/* Template UI Styles */
+.template-details-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 1rem;
+}
+
+.template-detail-card {
+    background: #f9f9f9;
+    border: 1px solid #e1dfdd;
+    border-radius: 6px;
+    padding: 1rem;
+}
+
+.template-detail-label {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    color: #8a8886;
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+}
+
+.template-detail-value {
+    font-size: 1.1rem;
+    color: #323130;
+    font-weight: 500;
+}
+
+.template-controls-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 1rem;
+}
+
+.btn-control {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 1.25rem;
+    border: 2px solid transparent;
+    border-radius: 8px;
+    background: white;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-weight: 600;
+}
+
+.btn-control i {
+    font-size: 1.5rem;
+}
+
+.btn-control-green {
+    border-color: #28a745;
+    color: #28a745;
+}
+
+.btn-control-green:hover {
+    background: #28a745;
+    color: white;
+}
+
+.btn-control-red {
+    border-color: #dc3545;
+    color: #dc3545;
+}
+
+.btn-control-red:hover {
+    background: #dc3545;
+    color: white;
+}
+
+.btn-control-blue {
+    border-color: #0078d4;
+    color: #0078d4;
+}
+
+.btn-control-blue:hover {
+    background: #0078d4;
+    color: white;
+}
+
+.btn-control-gray {
+    border-color: #6c757d;
+    color: #6c757d;
+}
+
+.btn-control-gray:hover {
+    background: #6c757d;
+    color: white;
+}
+
+.btn-control-orange {
+    border-color: #fd7e14;
+    color: #fd7e14;
+}
+
+.btn-control-orange:hover {
+    background: #fd7e14;
+    color: white;
+}
+
+.invite-link-box {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 1rem;
+    background: white;
+    border: 2px solid #0078d4;
+    border-radius: 6px;
+}
+
+.invite-link-box input {
+    flex: 1;
+    padding: 0.75rem;
+    border: 1px solid #e1dfdd;
+    border-radius: 4px;
+    font-family: monospace;
+    font-size: 0.9rem;
+}
+
+.invite-link-box button {
+    padding: 0.75rem 1.5rem;
+    background: #0078d4;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: 600;
+}
+
+.invite-link-box button:hover {
+    background: #106ebe;
+}
+
+.students-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+    gap: 1rem;
+}
+
+.student-card {
+    padding: 1rem;
+    background: #f9f9f9;
+    border: 1px solid #e1dfdd;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.student-card-name {
+    font-weight: 600;
+    color: #323130;
+}
+
+.student-card-vm {
+    font-size: 0.85rem;
+    color: #605e5c;
 }
 </style>
 
@@ -551,10 +744,98 @@ function showAlert(message, type = 'info') {
     setTimeout(() => alert.remove(), 5000);
 }
 
+async function generateInviteLink() {
+    const neverExpires = confirm('Should this invite link never expire? (Click Cancel for 7-day expiration)');
+    
+    try {
+        const resp = await fetch(`/api/class/${classId}/invite`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ never_expires: neverExpires })
+        });
+        
+        const data = await resp.json();
+        
+        if (data.ok) {
+            displayInviteLink(data.invite_url, data.expires_at);
+            showAlert('Invite link generated successfully!', 'success');
+        } else {
+            showAlert(data.error || 'Failed to generate invite link', 'error');
+        }
+    } catch (e) {
+        showAlert('Failed to generate invite link', 'error');
+    }
+}
+
+function displayInviteLink(url, expiresAt) {
+    const display = document.getElementById('invite-display');
+    const expiry = expiresAt ? new Date(expiresAt).toLocaleString() : 'Never';
+    
+    display.innerHTML = `
+        <div class="invite-link-box">
+            <input type="text" value="${url}" readonly onclick="this.select()">
+            <button onclick="copyInviteLink('${url}')">
+                <i class="bi bi-clipboard"></i> Copy
+            </button>
+        </div>
+        <div style="margin-top: 0.75rem; font-size: 0.85rem; color: #605e5c;">
+            <strong>Expires:</strong> ${expiry}
+        </div>
+    `;
+}
+
+function copyInviteLink(url) {
+    navigator.clipboard.writeText(url).then(() => {
+        showAlert('Invite link copied to clipboard!', 'success');
+    }).catch(() => {
+        showAlert('Failed to copy link', 'error');
+    });
+}
+
+async function loadStudentsList() {
+    try {
+        const resp = await fetch(`/api/class/${classId}`);
+        const data = await resp.json();
+        
+        if (data.ok) {
+            const students = data.class.students || [];
+            const studentsList = document.getElementById('students-list');
+            
+            if (students.length === 0) {
+                studentsList.innerHTML = '<p style="color: #666;">No students enrolled yet.</p>';
+                return;
+            }
+            
+            studentsList.innerHTML = `
+                <div class="students-grid">
+                    ${students.map(s => `
+                        <div class="student-card">
+                            <div>
+                                <div class="student-card-name">${s.username}</div>
+                                <div class="student-card-vm">${s.vmid ? `VM: ${s.vmid}` : 'No VM assigned'}</div>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+            
+            // Also update invite link if exists
+            if (data.class.join_token) {
+                const baseUrl = window.location.origin;
+                const inviteUrl = `${baseUrl}/classes/join/${data.class.join_token}`;
+                displayInviteLink(inviteUrl, data.class.token_expires_at);
+            }
+        }
+    } catch (e) {
+        console.error('Failed to load students:', e);
+    }
+}
+
 // Load template info on page load (for teachers/admins)
 {% if can_manage %}
 document.addEventListener('DOMContentLoaded', () => {
     loadTemplateInfo();
+    loadStudentsList();
 });
 {% endif %}
 </script>

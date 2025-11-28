@@ -252,16 +252,16 @@ def stop_class_vm(vmid: int, node: str, cluster_ip: str = None) -> Tuple[bool, s
         return False, f"Stop failed: {str(e)}"
 
 
-def get_vm_status(vmid: int, node: str, cluster_ip: str = None) -> Dict[str, Any]:
+def get_vm_status(vmid: int, node: str = None, cluster_ip: str = None) -> Dict[str, Any]:
     """Get VM status.
     
     Args:
         vmid: VM ID
-        node: Node name
+        node: Node name (optional, will be auto-discovered if not provided)
         cluster_ip: IP of the Proxmox cluster
     
     Returns:
-        Dict with VM status info
+        Dict with VM status info (just the status string, not full object)
     """
     try:
         cluster_id = None
@@ -271,22 +271,29 @@ def get_vm_status(vmid: int, node: str, cluster_ip: str = None) -> Dict[str, Any
                 break
         
         if not cluster_id:
-            return {"status": "unknown", "error": "Cluster not found"}
+            return "unknown"
         
         proxmox = get_proxmox_admin_for_cluster(cluster_id)
+        
+        # If node not provided, find it from cluster resources
+        if not node or node == "qemu" or node == "None":
+            resources = proxmox.cluster.resources.get(type="vm")
+            for r in resources:
+                if r.get('vmid') == vmid:
+                    node = r.get('node')
+                    break
+        
+        if not node:
+            return "unknown"
+        
         status = proxmox.nodes(node).qemu(vmid).status.current.get()
         
-        return {
-            "status": status.get("status", "unknown"),
-            "uptime": status.get("uptime", 0),
-            "cpu": status.get("cpu", 0),
-            "mem": status.get("mem", 0),
-            "maxmem": status.get("maxmem", 0),
-        }
+        # Return just the status string (running/stopped) not the full object
+        return status.get("status", "unknown")
         
     except Exception as e:
         logger.exception(f"Failed to get VM status: {e}")
-        return {"status": "unknown", "error": str(e)}
+        return "unknown"
 
 
 def create_vm_snapshot(vmid: int, node: str, snapname: str, description: str = "",

@@ -17,8 +17,8 @@
 </div>
 
 <div id="mappings-content" style="display: none;">
-    <div class="mapping-layout" style="display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; max-width: 1400px; margin: 0 auto;">
-        <!-- VM Mappings Card -->
+    <div class="mapping-layout" style="max-width: 800px; margin: 0 auto;">
+        <!-- VM Mappings Card (Centered, Single Column) -->
         <div class="mapping-form-card">
             <h2><i class="bi bi-arrow-left-right"></i> VM Mappings</h2>
 
@@ -67,57 +67,6 @@
                 <!-- Confirm Button -->
                 <button id="confirm-btn" class="btn-primary" style="width: 100%;">
                     Confirm Selection
-                </button>
-            </div>
-        </div>
-        
-        <!-- Class Assignments Card -->
-        <div class="mapping-form-card">
-            <h2><i class="bi bi-mortarboard"></i> Class Assignments</h2>
-            
-            <div id="class-alert-container"></div>
-            
-            <!-- Class Selection -->
-            <label for="class-select">Select Class</label>
-            <select id="class-select" class="form-control">
-                <option value="">Select a class…</option>
-            </select>
-            
-            <!-- Class Info Area -->
-            <div id="class-info-area" style="display: none; margin-top: 1.5rem; padding: 1rem; background: #f9f9f9; border-radius: 6px;">
-                <h3 style="font-size: 16px; margin-bottom: 0.5rem;" id="selected-class-name"></h3>
-                <div style="margin-bottom: 0.5rem; color: #666; font-size: 14px;">
-                    <strong>Teacher:</strong> <span id="class-teacher"></span>
-                </div>
-                <div style="color: #666; font-size: 14px;">
-                    <strong>Current Students:</strong> <span id="class-students-list">None</span>
-                </div>
-            </div>
-            
-            <!-- Student Selection Area -->
-            <div id="student-selection-area" style="display: none; margin-top: 2rem; padding-top: 2rem; border-top: 1px solid #ddd;">
-                <div style="margin-bottom: 1.5rem;">
-                    <label style="display: block; font-weight: 600; margin-bottom: 0.5rem;">
-                        Assign Students
-                        <span style="font-weight: normal; color: #666; font-size: 13px;" id="students-selected-count">(0 selected)</span>
-                    </label>
-                    <p class="help-text" style="margin-bottom: 0.75rem;">
-                        Select students to enroll in this class.
-                    </p>
-                    
-                    <!-- Search/Filter -->
-                    <input type="text" id="student-search" placeholder="Search students..." 
-                           style="width: 100%; padding: 0.5rem; border: 1px solid #ddd; border-radius: 4px; margin-bottom: 0.75rem;">
-                    
-                    <!-- Scrollable Student List -->
-                    <div class="vm-checkbox-container" id="student-checkbox-container">
-                        <!-- Checkboxes populated here -->
-                    </div>
-                </div>
-                
-                <!-- Confirm Button -->
-                <button id="confirm-class-btn" class="btn-primary" style="width: 100%;">
-                    Update Class Enrollment
                 </button>
             </div>
         </div>
@@ -255,8 +204,6 @@ let allUsers = [];
 let currentMappings = {};
 let selectedUser = '';
 let userClasses = {};
-let allClasses = [];
-let selectedClass = '';
 
 async function loadMappingsData() {
     try {
@@ -281,9 +228,8 @@ async function loadMappingsData() {
             userSelect.appendChild(option);
         });
         
-        // Fetch user classes and populate class dropdown
+        // Fetch user classes
         await loadUserClasses();
-        await loadClasses();
         
         // Hide loading, show content
         document.getElementById('mappings-loading').style.display = 'none';
@@ -500,183 +446,6 @@ function updateSelectedCount() {
     const container = document.getElementById('vm-checkbox-container');
     const checked = container.querySelectorAll('input[type="checkbox"]:checked').length;
     document.getElementById('selected-count').textContent = `(${checked} selected)`;
-}
-
-async function loadClasses() {
-    try {
-        const resp = await fetch("/api/classes");
-        if (!resp.ok) return;
-        
-        const data = await resp.json();
-        allClasses = data.classes || [];
-        
-        const classSelect = document.getElementById('class-select');
-        classSelect.innerHTML = '<option value="">Select a class…</option>';
-        allClasses.forEach(cls => {
-            const option = document.createElement('option');
-            option.value = cls.id;
-            option.textContent = `${cls.name} (${cls.enrolled_count || 0} students)`;
-            classSelect.appendChild(option);
-        });
-        
-        // Add class selection handler
-        classSelect.addEventListener('change', handleClassSelection);
-    } catch (e) {
-        console.error("Failed to load classes:", e);
-    }
-}
-
-async function handleClassSelection(e) {
-    selectedClass = e.target.value;
-    
-    if (!selectedClass) {
-        document.getElementById('class-info-area').style.display = 'none';
-        document.getElementById('student-selection-area').style.display = 'none';
-        return;
-    }
-    
-    const cls = allClasses.find(c => c.id == selectedClass);
-    if (!cls) return;
-    
-    // Show class info
-    const classInfoArea = document.getElementById('class-info-area');
-    classInfoArea.style.display = 'block';
-    
-    document.getElementById('selected-class-name').textContent = cls.name;
-    document.getElementById('class-teacher').textContent = cls.teacher_name || 'Unknown';
-    
-    // Fetch full class details including students
-    try {
-        const resp = await fetch(`/api/class/${selectedClass}`);
-        if (!resp.ok) return;
-        
-        const data = await resp.json();
-        const classData = data.class;
-        
-        // Display current students
-        const studentsList = document.getElementById('class-students-list');
-        const students = classData.students || [];
-        if (students.length > 0) {
-            studentsList.textContent = students.map(s => s.username).join(', ');
-        } else {
-            studentsList.textContent = 'None';
-        }
-        
-        // Show student selection area
-        document.getElementById('student-selection-area').style.display = 'block';
-        
-        // Render student checkboxes
-        renderStudentCheckboxes(classData);
-    } catch (e) {
-        console.error('Failed to load class details:', e);
-    }
-}
-
-function renderStudentCheckboxes(classData) {
-    const container = document.getElementById('student-checkbox-container');
-    const searchInput = document.getElementById('student-search');
-    
-    const currentStudents = new Set((classData.students || []).map(s => s.username));
-    
-    // Filter users to only show those with local accounts (can be students)
-    const students = allUsers.map(u => u.userid.split('@')[0]);
-    const uniqueStudents = [...new Set(students)].sort();
-    
-    searchInput.addEventListener('input', () => {
-        const searchTerm = searchInput.value.toLowerCase();
-        const items = container.querySelectorAll('.vm-checkbox-item');
-        items.forEach(item => {
-            const label = item.querySelector('label').textContent.toLowerCase();
-            item.style.display = label.includes(searchTerm) ? 'flex' : 'none';
-        });
-    });
-    
-    container.innerHTML = '';
-    
-    uniqueStudents.forEach(username => {
-        const div = document.createElement('div');
-        div.className = 'vm-checkbox-item';
-        
-        const checkbox = document.createElement('input');
-        checkbox.type = 'checkbox';
-        checkbox.value = username;
-        checkbox.id = `student-${username}`;
-        checkbox.checked = currentStudents.has(username);
-        checkbox.addEventListener('change', updateStudentsSelectedCount);
-        
-        const label = document.createElement('label');
-        label.htmlFor = `student-${username}`;
-        label.innerHTML = `
-            <span>${username}</span>
-            ${userClasses[username] ? `<span class="vm-cluster-badge">${userClasses[username].join(', ')}</span>` : ''}
-        `;
-        
-        div.appendChild(checkbox);
-        div.appendChild(label);
-        container.appendChild(div);
-    });
-    
-    updateStudentsSelectedCount();
-}
-
-function updateStudentsSelectedCount() {
-    const container = document.getElementById('student-checkbox-container');
-    const checked = container.querySelectorAll('input[type="checkbox"]:checked').length;
-    document.getElementById('students-selected-count').textContent = `(${checked} selected)`;
-}
-
-// Add confirm button handler for class enrollment
-document.addEventListener('DOMContentLoaded', () => {
-    const confirmClassBtn = document.getElementById('confirm-class-btn');
-    
-    confirmClassBtn.addEventListener('click', async () => {
-        const container = document.getElementById('student-checkbox-container');
-        const checkboxes = container.querySelectorAll('input[type="checkbox"]:checked');
-        const selectedStudents = Array.from(checkboxes).map(cb => cb.value);
-        
-        confirmClassBtn.disabled = true;
-        confirmClassBtn.textContent = 'Saving...';
-        
-        try {
-            const resp = await fetch(`/api/class/${selectedClass}/students`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ students: selectedStudents })
-            });
-            
-            const data = await resp.json();
-            
-            if (data.ok || resp.ok) {
-                showClassAlert('Successfully updated class enrollment', 'success');
-                
-                // Refresh class details
-                const classSelect = document.getElementById('class-select');
-                handleClassSelection({ target: classSelect });
-                
-                // Reload user classes mapping
-                await loadUserClasses();
-            } else {
-                showClassAlert(`Failed: ${data.error || 'Unknown error'}`, 'error');
-            }
-        } catch (e) {
-            showClassAlert(`Error: ${e.message}`, 'error');
-        } finally {
-            confirmClassBtn.disabled = false;
-            confirmClassBtn.textContent = 'Update Class Enrollment';
-        }
-    });
-});
-
-function showClassAlert(message, type = 'success') {
-    const container = document.getElementById('class-alert-container');
-    const alert = document.createElement('div');
-    alert.className = `alert alert-${type}`;
-    alert.textContent = message;
-    container.appendChild(alert);
-    
-    setTimeout(() => {
-        alert.remove();
-    }, 5000);
 }
 
 window.addEventListener('load', loadMappingsData);
