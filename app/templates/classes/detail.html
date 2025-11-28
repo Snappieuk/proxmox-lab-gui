@@ -63,9 +63,6 @@
         <a class="sidebar-link" href="#" onclick="deleteClass(); return false;" style="color: #dc3545;">
             <i class="bi bi-trash"></i> Delete Class
         </a>
-        <a class="sidebar-link" href="#" onclick="forceDeleteClass(); return false;" style="color: #dc3545;">
-            <i class="bi bi-trash-fill"></i> Force Delete (Skip VM Deletion)
-        </a>
         {% endif %}
     </nav>
 
@@ -1098,7 +1095,7 @@ async function loadStudentsList() {
 
 async function deleteClass() {
     const className = '{{ class_.name }}';
-    const confirmation = prompt(`WARNING: This will delete the class and ALL associated VMs from Proxmox.\\n\\nType "${className}" to confirm deletion:`);
+    const confirmation = prompt(`WARNING: This will delete the class from the database.\n\nVMs in Proxmox will NOT be deleted (clean them up manually if needed).\n\nType "${className}" to confirm deletion:`);
     
     if (confirmation !== className) {
         if (confirmation !== null) {
@@ -1108,7 +1105,8 @@ async function deleteClass() {
     }
     
     try {
-        const resp = await fetch(`/api/class/${classId}`, {
+        // Delete from database only (skip VM deletion from Proxmox)
+        const resp = await fetch(`/api/class/${classId}?force=true`, {
             method: 'DELETE'
         });
         
@@ -1124,37 +1122,6 @@ async function deleteClass() {
         }
     } catch (e) {
         showAlert('Failed to delete class', 'error');
-    }
-}
-
-async function forceDeleteClass() {
-    const className = '{{ class_.name }}';
-    const confirmation = prompt(`FORCE DELETE: This will delete the class from the database but SKIP VM deletion from Proxmox.\\n\\nUse this if VMs are already deleted or unreachable.\\n\\nType "${className}" to confirm force deletion:`);
-    
-    if (confirmation !== className) {
-        if (confirmation !== null) {
-            showAlert('Class name did not match. Deletion cancelled.', 'error');
-        }
-        return;
-    }
-    
-    try {
-        const resp = await fetch(`/api/class/${classId}?force=true`, {
-            method: 'DELETE'
-        });
-        
-        const data = await resp.json();
-        
-        if (data.ok) {
-            showAlert('Class force deleted successfully. Redirecting...', 'success');
-            setTimeout(() => {
-                window.location.href = '/classes';
-            }, 2000);
-        } else {
-            showAlert(data.error || 'Failed to force delete class', 'error');
-        }
-    } catch (e) {
-        showAlert('Failed to force delete class', 'error');
     }
 }
 

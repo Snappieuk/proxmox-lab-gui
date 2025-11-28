@@ -83,10 +83,16 @@ def get_template_info(class_id: int):
                 
                 if not node or node == "qemu" or node == "None":
                     logger.error(f"Could not find valid node for VMID {template.proxmox_vmid}")
-                    return jsonify({"ok": False, "error": f"Could not find VM node for VMID {template.proxmox_vmid}"}), 500
+                    return jsonify({
+                        "ok": False, 
+                        "error": f"Template VM {template.proxmox_vmid} not found in Proxmox. It may have been deleted."
+                    }), 404
             except Exception as e:
                 logger.error(f"Failed to fetch node from Proxmox: {e}")
-                return jsonify({"ok": False, "error": f"Failed to fetch VM node: {e}"}), 500
+                return jsonify({
+                    "ok": False, 
+                    "error": f"Cannot access template VM. It may have been deleted or the cluster is unreachable."
+                }), 500
         
         vm_config = proxmox.nodes(node).qemu(template.proxmox_vmid).config.get()
         

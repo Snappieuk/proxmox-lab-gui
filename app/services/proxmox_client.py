@@ -1369,33 +1369,35 @@ def _background_ip_scan_loop(app):
     import time
     logger.info("Background IP scanner: starting...")
     
-    # Wait 10 seconds for app to fully start
-    time.sleep(10)
+    # Wait 5 seconds for app to fully start
+    time.sleep(5)
+    
+    # Do an immediate scan on startup to populate database
+    try:
+        with app.app_context():
+            logger.info("Background IP scanner: performing initial scan on startup...")
+            vms = get_all_vms(skip_ips=False, force_refresh=True)
+            with_ips = sum(1 for vm in vms if vm.get('status') == 'running' and vm.get('ip') and vm['ip'] not in ('N/A', 'Fetching...', ''))
+            running_count = sum(1 for vm in vms if vm.get('status') == 'running')
+            logger.info(f"Background IP scanner: initial scan complete - {with_ips}/{running_count} running VMs have IPs")
+    except Exception as e:
+        logger.exception(f"Background IP scanner: initial scan failed: {e}")
     
     while _background_scanner_running:
         try:
             # Use Flask app context for database access
             with app.app_context():
-                # Get all VMs (skip IPs for quick status check)
-                vms = get_all_vms(skip_ips=True, force_refresh=True)
+                # Get all VMs with IP check (don't skip IPs anymore - always get fresh data)
+                vms = get_all_vms(skip_ips=False, force_refresh=True)
                 
-                # Check if any running VMs lack IPs
-                running_without_ip = [
-                    vm for vm in vms 
-                    if vm.get('status') == 'running' 
-                    and (not vm.get('ip') or vm['ip'] in ('N/A', 'Fetching...', ''))
-                ]
+                # Count running VMs and those with IPs
+                running_vms = [vm for vm in vms if vm.get('status') == 'running']
+                with_ips = sum(1 for vm in running_vms if vm.get('ip') and vm['ip'] not in ('N/A', 'Fetching...', ''))
                 
-                if running_without_ip:
-                    logger.info(f"Background IP scanner: {len(running_without_ip)} running VMs need IPs, scanning...")
-                    # Force IP discovery for VMs that need it
-                    vms = get_all_vms(skip_ips=False, force_refresh=True)
-                    
-                    # Count results
-                    with_ips = sum(1 for vm in vms if vm.get('ip') and vm['ip'] not in ('N/A', 'Fetching...', ''))
-                    logger.info(f"Background IP scanner: {with_ips}/{len(vms)} VMs now have IPs")
+                if len(running_vms) > 0:
+                    logger.info(f"Background IP scanner: {with_ips}/{len(running_vms)} running VMs have IPs")
                 else:
-                    logger.debug("Background IP scanner: all running VMs have IPs, sleeping...")
+                    logger.debug("Background IP scanner: no running VMs found")
             
             # Sleep for 2 minutes before next check
             time.sleep(120)
