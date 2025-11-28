@@ -1387,8 +1387,8 @@ def _background_ip_scan_loop(app):
     import time
     logger.info("Background IP scanner: starting...")
     
-    # Wait 5 seconds for app to fully start
-    time.sleep(5)
+    # Wait 2 seconds for app to fully start
+    time.sleep(2)
     
     # Do an immediate scan on startup to populate database
     try:
@@ -1417,11 +1417,11 @@ def _background_ip_scan_loop(app):
                 else:
                     logger.debug("Background IP scanner: no running VMs found")
             
-            # Sleep for 2 minutes before next check
-            time.sleep(120)
+            # Sleep for 30 seconds before next check (faster updates)
+            time.sleep(30)
         except Exception as e:
             logger.exception(f"Background IP scanner error: {e}")
-            time.sleep(60)  # Sleep 1 minute on error
+            time.sleep(30)  # Sleep 30 seconds on error
     
     logger.info("Background IP scanner: stopped")
 

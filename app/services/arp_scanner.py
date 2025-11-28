@@ -46,7 +46,7 @@ logger = logging.getLogger(__name__)
 # Module-level cache for ARP results
 _arp_cache: Dict[str, str] = {}  # mac -> ip
 _arp_cache_time: float = 0
-_arp_cache_ttl: int = 3600  # 1 hour - only invalidate on VM operations
+_arp_cache_ttl: int = 300  # 5 minutes - refresh more frequently for faster IP updates
 
 # Scan timeout configuration
 NMAP_SCAN_TIMEOUT_BUFFER: int = 30  # Extra seconds to wait for nmap scan completion
@@ -235,14 +235,14 @@ def _is_root() -> bool:
 def parallel_ping_sweep(subnet_cidr: str, timeout_ms: int = 300, max_workers: int = 300, check_rdp: bool = False, needed_macs: Optional[set] = None) -> tuple:
     """
     Ping every IP in a subnet in parallel to populate ARP table.
-    Optionally check RDP port (3389) on responding hosts.
+    Optionally check RDP port (3389) on responding hosts in parallel.
     Stops early if all needed MACs are found in ARP table.
     
     Args:
         subnet_cidr: CIDR notation (e.g., "10.220.8.0/21")
         timeout_ms: Timeout per ping in milliseconds
         max_workers: Number of concurrent pings
-        check_rdp: If True, check port 3389 on alive hosts
+        check_rdp: If True, check port 3389 on alive hosts (in parallel after ping)
         needed_macs: Optional set of MAC addresses we're looking for (stops early when all found)
     
     Returns:
@@ -260,8 +260,8 @@ def parallel_ping_sweep(subnet_cidr: str, timeout_ms: int = 300, max_workers: in
                    f", looking for {len(needed_macs)} MACs" if needed_macs else "")
         start_time = time.time()
         
-        def ping_and_check(ip: str) -> tuple:
-            """Ping a host and optionally check RDP. Returns (alive, has_rdp)."""
+        def ping_host(ip: str) -> bool:
+            """Ping a host. Returns True if alive."""
             try:
                 # Use -c 1 (one packet), -W timeout (in seconds), -n (numeric, no DNS)
                 timeout_sec = max(1, timeout_ms // 1000)
@@ -270,46 +270,40 @@ def parallel_ping_sweep(subnet_cidr: str, timeout_ms: int = 300, max_workers: in
                     capture_output=True,
                     timeout=timeout_sec + 1
                 )
-                
-                if result.returncode == 0:
-                    # Host is alive
-                    if check_rdp:
-                        # Check if RDP port is open
-                        try:
-                            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                            sock.settimeout(0.5)
-                            rdp_result = sock.connect_ex((str(ip), 3389))
-                            sock.close()
-                            return (True, rdp_result == 0)
-                        except:
-                            return (True, False)
-                    return (True, False)
-                return (False, False)
+                return result.returncode == 0
             except:
-                return (False, False)
+                return False
+        
+        def check_rdp_port(ip: str) -> bool:
+            """Check if RDP port 3389 is open. Returns True if open."""
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(0.5)
+                rdp_result = sock.connect_ex((ip, 3389))
+                sock.close()
+                return rdp_result == 0
+            except:
+                return False
         
         # Ping all IPs in parallel
-        alive_count = 0
-        rdp_hosts = set()
+        alive_hosts = []
         checked_count = 0
         
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             # Submit all ping jobs
             future_to_ip = {
-                executor.submit(ping_and_check, str(ip)): str(ip) 
+                executor.submit(ping_host, str(ip)): str(ip) 
                 for ip in network.hosts()
             }
             
             # Collect results as they complete
             for future in as_completed(future_to_ip):
                 ip = future_to_ip[future]
-                alive, has_rdp = future.result()
+                is_alive = future.result()
                 checked_count += 1
                 
-                if alive:
-                    alive_count += 1
-                    if has_rdp:
-                        rdp_hosts.add(ip)
+                if is_alive:
+                    alive_hosts.append(ip)
                 
                 # Early exit if we've found all needed MACs
                 if needed_macs and checked_count % 50 == 0:  # Check every 50 hosts to avoid overhead
@@ -322,6 +316,32 @@ def parallel_ping_sweep(subnet_cidr: str, timeout_ms: int = 300, max_workers: in
                         for f in future_to_ip.keys():
                             f.cancel()
                         break
+        
+        alive_count = len(alive_hosts)
+        rdp_hosts = set()
+        
+        # If RDP check requested, scan all alive hosts in parallel
+        if check_rdp and alive_hosts:
+            logger.info("Checking RDP ports on %d alive hosts in parallel...", alive_count)
+            rdp_start = time.time()
+            
+            with ThreadPoolExecutor(max_workers=min(100, alive_count)) as rdp_executor:
+                # Submit all RDP checks in parallel
+                rdp_futures = {
+                    rdp_executor.submit(check_rdp_port, ip): ip 
+                    for ip in alive_hosts
+                }
+                
+                # Collect RDP check results
+                for future in as_completed(rdp_futures):
+                    ip = rdp_futures[future]
+                    has_rdp = future.result()
+                    if has_rdp:
+                        rdp_hosts.add(ip)
+            
+            rdp_duration = time.time() - rdp_start
+            logger.info("RDP port check completed in %.2fs: %d/%d hosts have RDP open", 
+                       rdp_duration, len(rdp_hosts), alive_count)
         
         elapsed = time.time() - start_time
         
