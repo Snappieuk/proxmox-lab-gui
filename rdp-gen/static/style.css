@@ -359,6 +359,26 @@ body {
     cursor: not-allowed;
 }
 
+.vm-cluster-badge {
+    display: inline-block;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: #ffffff;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 4px 12px;
+    border-radius: 14px;
+    white-space: nowrap;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    box-shadow: 0 2px 4px rgba(102, 126, 234, 0.2);
+    transition: all 0.2s ease;
+}
+
+.vm-cluster-badge:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 8px rgba(102, 126, 234, 0.3);
+}
+
 .page-banner.success {
     background-color: #d4edda;
     color: #155724;

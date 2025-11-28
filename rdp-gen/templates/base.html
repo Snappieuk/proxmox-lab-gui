@@ -26,12 +26,15 @@
 
 <div class="app-shell">
     <nav class="sidebar">
-        {% if session.get("user") %}
+        {% if session.get("user") and is_admin %}
         <div class="cluster-selector">
-            <label for="cluster-select" class="cluster-label">Cluster:</label>
-            <select id="cluster-select" class="cluster-dropdown" onchange="switchCluster(this.value)">
+            <label for="cluster-select" class="cluster-label">
+                <i class="bi bi-hdd-rack"></i> Cluster
+            </label>
+            <select id="cluster-select" class="cluster-dropdown" onchange="filterByCluster(this.value)">
+                <option value="all">All Clusters</option>
                 {% for cluster in clusters %}
-                <option value="{{ cluster.id }}" {% if cluster.id == current_cluster %}selected{% endif %}>
+                <option value="{{ cluster.id }}">
                     {{ cluster.name }}
                 </option>
                 {% endfor %}
@@ -61,24 +64,32 @@
 
 <script>
 function switchCluster(clusterId) {
+    console.log('Switching to cluster:', clusterId);
+    
     // Post cluster change to server
     fetch('/api/switch-cluster', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({cluster_id: clusterId})
     })
-    .then(response => response.json())
+    .then(response => {
+        console.log('Switch cluster response status:', response.status);
+        return response.json();
+    })
     .then(data => {
+        console.log('Switch cluster response data:', data);
         if (data.ok) {
             // Hard reload with force_refresh to bypass all caches
-            window.location.href = window.location.pathname + '?force_refresh=true&t=' + Date.now();
+            const newUrl = window.location.pathname + '?force_refresh=true&t=' + Date.now();
+            console.log('Redirecting to:', newUrl);
+            window.location.href = newUrl;
         } else {
             alert('Failed to switch cluster: ' + (data.error || 'Unknown error'));
         }
     })
     .catch(err => {
         console.error('Cluster switch error:', err);
-        alert('Failed to switch cluster');
+        alert('Failed to switch cluster: ' + err.message);
     });
 }
 </script>

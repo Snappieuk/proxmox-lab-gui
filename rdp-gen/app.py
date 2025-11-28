@@ -693,15 +693,19 @@ def api_switch_cluster():
     if cluster_id not in valid_cluster_ids:
         return jsonify({"ok": False, "error": "Invalid cluster ID"}), 400
     
-    # Store in session
+    # Store in session and mark as modified
+    old_cluster = session.get("cluster_id", CLUSTERS[0]["id"])
     session["cluster_id"] = cluster_id
-    app.logger.info("User %s switched to cluster %s", user, cluster_id)
+    session.modified = True
+    app.logger.info("User %s switched from cluster %s to %s", user, old_cluster, cluster_id)
     
     # Invalidate all caches to force refresh from new cluster
-    from proxmox_client import switch_cluster
+    from proxmox_client import switch_cluster, _invalidate_vm_cache
     switch_cluster(cluster_id)
     invalidate_cluster_cache()
+    _invalidate_vm_cache()
     
+    app.logger.info("Cache invalidated, returning success for cluster %s", cluster_id)
     return jsonify({"ok": True, "cluster_id": cluster_id})
 
 

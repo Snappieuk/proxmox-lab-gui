@@ -313,6 +313,21 @@
 </div>
 
 <script>
+// Store all VMs globally for filtering
+let allVMs = [];
+
+// Filter VMs by cluster (called from base.html dropdown)
+window.filterVMsByCluster = function(clusterId) {
+    console.log('Filtering', allVMs.length, 'VMs by cluster:', clusterId);
+    if (clusterId === 'all') {
+        populateTables(allVMs);
+    } else {
+        const filtered = allVMs.filter(vm => vm.cluster_id === clusterId);
+        console.log('Filtered to', filtered.length, 'VMs');
+        populateTables(filtered);
+    }
+};
+
 // Populate node filter
 window.addEventListener('load', function() {
     const nodes = new Set();
@@ -387,22 +402,35 @@ async function loadVMs() {
         }
         const data = await resp.json();
         
+        console.log('Received', data.length, 'VMs from all clusters');
+        
+        // Store VMs globally for cluster filtering
+        allVMs = data;
+        
+        // Check if we need to filter by cluster
+        const selectedCluster = sessionStorage.getItem('selected_cluster');
+        const vmsToDisplay = selectedCluster && selectedCluster !== 'all'
+            ? data.filter(vm => vm.cluster_id === selectedCluster)
+            : data;
+        
+        // Restore dropdown selection if exists
+        if (selectedCluster) {
+            const dropdown = document.getElementById('cluster-select');
+            if (dropdown) dropdown.value = selectedCluster;
+        }
+        
         // Mark VMs without IPs as "Fetching..." (unless force refresh)
-        if (Array.isArray(data) && !forceRefresh) {
-            data.forEach(vm => {
+        if (!forceRefresh) {
+            vmsToDisplay.forEach(vm => {
                 if (!vm.ip || vm.ip === 'N/A') {
                     vm.ip = 'Fetching...';
                 }
             });
         }
         
-        // Check if we need to force refresh (cluster switch)
-        const urlParams = new URLSearchParams(window.location.search);
-        const forceRefresh = urlParams.get('force_refresh') === 'true';
-        
         // If tables are empty OR force refresh (cluster switch), populate them
         if (document.querySelectorAll('.vm-table tbody tr').length === 0 || forceRefresh) {
-            populateTables(data);
+            populateTables(vmsToDisplay);
         }
         
         if (loadingIndicator) loadingIndicator.remove();
@@ -478,6 +506,7 @@ function populateTables(vms) {
                     <th>Name</th>
                     <th>VMID</th>
                     <th>Node</th>
+                    <th>Cluster</th>
                     <th>Status</th>
                     <th>IP Address</th>
                     <th>Actions</th>
@@ -542,6 +571,7 @@ function createVMRow(vm, category) {
         <td><strong>${vm.name}</strong></td>
         <td>${vm.vmid}</td>
         <td>${vm.node}</td>
+        <td><span class="vm-cluster-badge" title="${vm.cluster_name || 'Unknown'}">${vm.cluster_name || 'N/A'}</span></td>
         <td>
             <span class="badge ${statusClass}">${statusText}</span>
         </td>

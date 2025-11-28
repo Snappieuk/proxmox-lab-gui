@@ -96,6 +96,37 @@ def switch_cluster(cluster_id: str):
         logger.info("Cleared all cluster connections for switch to: %s", cluster_id)
 
 
+def get_proxmox_admin_for_cluster(cluster_id: str):
+    """Get or create Proxmox connection for a specific cluster.
+    
+    Unlike get_proxmox_admin(), this doesn't rely on Flask session context.
+    Used when fetching VMs from multiple clusters simultaneously.
+    """
+    global _proxmox_connections
+    
+    # Fast path: return existing connection if available
+    if cluster_id in _proxmox_connections:
+        return _proxmox_connections[cluster_id]
+    
+    # Find the cluster config
+    cluster = next((c for c in CLUSTERS if c["id"] == cluster_id), None)
+    if not cluster:
+        raise ValueError(f"Unknown cluster_id: {cluster_id}")
+    
+    with _proxmox_lock:
+        # Double-check inside lock to handle race conditions
+        if cluster_id not in _proxmox_connections:
+            _proxmox_connections[cluster_id] = ProxmoxAPI(
+                cluster["host"],
+                user=cluster["user"],
+                password=cluster["password"],
+                verify_ssl=cluster.get("verify_ssl", False),
+            )
+            logger.info("Connected to Proxmox cluster '%s' at %s", cluster["name"], cluster["host"])
+    
+    return _proxmox_connections[cluster_id]
+
+
 def get_proxmox_admin():
     """Get or create Proxmox connection for current cluster (lazy initialization).
     
@@ -1039,31 +1070,31 @@ def _enrich_vms_with_arp_ips(vms: List[Dict[str, Any]], force_sync: bool = False
 
 def get_all_vms(skip_ips: bool = False, force_refresh: bool = False) -> List[Dict[str, Any]]:
     """
-    Cached list of all VMs/containers visible to the admin user.
+    Cached list of ALL VMs/containers from ALL clusters.
 
-    Each item: { vmid, node, name, status, ip, category, type }
+    Each item: { vmid, node, name, status, ip, category, type, cluster_id, cluster_name }
     
-    Uses /cluster/resources endpoint for fast loading (single API call).
+    Uses /cluster/resources endpoint for fast loading (single API call per cluster).
     Set skip_ips=True to skip ARP scan for fast initial page load.
     Set force_refresh=True to bypass cache and fetch fresh data from Proxmox.
     """
     global _vm_cache_data, _vm_cache_ts
-    cluster_id = get_current_cluster_id()
+    cache_key = "all_clusters"  # Single cache for all clusters combined
 
     # Load both caches from disk on first call
     _load_vm_cache()
     _load_ip_cache()
 
     now = time.time()
-    # Check if we have valid cached data for this cluster
-    cached_vms = _vm_cache_data.get(cluster_id)
-    cached_ts = _vm_cache_ts.get(cluster_id, 0)
+    # Check if we have valid cached data
+    cached_vms = _vm_cache_data.get(cache_key)
+    cached_ts = _vm_cache_ts.get(cache_key, 0)
     cache_valid = cached_vms is not None and (now - cached_ts) < VM_CACHE_TTL
     
     # If cache is valid and not forcing refresh, return cached data
     if not force_refresh and cache_valid and cached_vms is not None:
-        logger.info("get_all_vms: returning cached data for cluster %s (skip_ips=%s, age=%.1fs)", 
-                   cluster_id, skip_ips, now - cached_ts)
+        logger.info("get_all_vms: returning cached data for all clusters (skip_ips=%s, age=%.1fs)", 
+                   skip_ips, now - cached_ts)
         result = []
         for vm in cached_vms:
             result.append({**vm})
@@ -1077,58 +1108,76 @@ def get_all_vms(skip_ips: bool = False, force_refresh: bool = False) -> List[Dic
         
         return result
 
-    # Fast path: use cluster resources API (single call vs N node queries)
+    # Fetch VMs from all clusters
     out: List[Dict[str, Any]] = []
-    try:
-        resources = get_proxmox_admin().cluster.resources.get(type="vm") or []
-        logger.info("get_all_vms: fetched %d resources from cluster API", len(resources))
+    
+    for cluster in CLUSTERS:
+        cluster_id = cluster["id"]
+        cluster_name = cluster["name"]
+        logger.info(f"get_all_vms: Fetching VMs from cluster {cluster_name} ({cluster_id})")
         
-        for vm in resources:
-            # Skip templates (template=1)
-            if vm.get("template") == 1:
-                continue
-            
-            # Filter by VALID_NODES if configured
-            if VALID_NODES and vm.get("node") not in VALID_NODES:
-                continue
-            
-            out.append(_build_vm_dict(vm))
-    except Exception as e:
-        logger.warning("cluster resources API failed, falling back to per-node queries: %s", e)
-        # Fallback: per-node queries (slower)
         try:
-            nodes = get_proxmox_admin().nodes.get() or []
-        except Exception as e2:
-            logger.error("failed to list nodes: %s", e2)
-            nodes = []
-
-        for n in nodes:
-            node = n["node"]
-            if VALID_NODES and node not in VALID_NODES:
-                continue
-            
-            try:
-                # Get QEMU VMs
-                qemu_vms = get_proxmox_admin().nodes(node).qemu.get() or []
-                for vm in qemu_vms:
-                    # Skip templates
-                    if vm.get('template') == 1:
-                        continue
-                    vm['node'] = node
-                    vm['type'] = 'qemu'
-                    out.append(_build_vm_dict(vm))
+            # Get Proxmox API client for this cluster
+            proxmox = get_proxmox_admin_for_cluster(cluster_id)
+            resources = proxmox.cluster.resources.get(type="vm") or []
+            logger.info("get_all_vms: fetched %d resources from cluster %s", len(resources), cluster_name)
+        
+            for vm in resources:
+                # Skip templates (template=1)
+                if vm.get("template") == 1:
+                    continue
                 
-                # Get LXC containers
-                lxc_vms = get_proxmox_admin().nodes(node).lxc.get() or []
-                for vm in lxc_vms:
-                    # Skip templates
-                    if vm.get('template') == 1:
-                        continue
-                    vm['node'] = node
-                    vm['type'] = 'lxc'
-                    out.append(_build_vm_dict(vm))
-            except Exception as e:
-                logger.debug("failed to list VMs on %s: %s", node, e)
+                # Filter by VALID_NODES if configured
+                if VALID_NODES and vm.get("node") not in VALID_NODES:
+                    continue
+                
+                vm_dict = _build_vm_dict(vm)
+                vm_dict["cluster_id"] = cluster_id
+                vm_dict["cluster_name"] = cluster_name
+                out.append(vm_dict)
+        except Exception as e:
+            logger.warning(f"Cluster {cluster_name} resources API failed, falling back to per-node queries: {e}")
+            # Fallback: per-node queries (slower)
+            try:
+                proxmox = get_proxmox_admin_for_cluster(cluster_id)
+                nodes = proxmox.nodes.get() or []
+            except Exception as e2:
+                logger.error(f"Failed to list nodes for cluster {cluster_name}: {e2}")
+                nodes = []
+
+            for n in nodes:
+                node = n["node"]
+                if VALID_NODES and node not in VALID_NODES:
+                    continue
+                
+                try:
+                    # Get QEMU VMs
+                    qemu_vms = proxmox.nodes(node).qemu.get() or []
+                    for vm in qemu_vms:
+                        # Skip templates
+                        if vm.get('template') == 1:
+                            continue
+                        vm['node'] = node
+                        vm['type'] = 'qemu'
+                        vm_dict = _build_vm_dict(vm)
+                        vm_dict["cluster_id"] = cluster_id
+                        vm_dict["cluster_name"] = cluster_name
+                        out.append(vm_dict)
+                    
+                    # Get LXC containers
+                    lxc_vms = proxmox.nodes(node).lxc.get() or []
+                    for vm in lxc_vms:
+                        # Skip templates
+                        if vm.get('template') == 1:
+                            continue
+                        vm['node'] = node
+                        vm['type'] = 'lxc'
+                        vm_dict = _build_vm_dict(vm)
+                        vm_dict["cluster_id"] = cluster_id
+                        vm_dict["cluster_name"] = cluster_name
+                        out.append(vm_dict)
+                except Exception as e:
+                    logger.debug(f"Failed to list VMs on {node} in cluster {cluster_name}: {e}")
 
     # Sort VMs alphabetically by name
     out.sort(key=lambda vm: (vm.get("name") or "").lower())
@@ -1501,21 +1550,22 @@ def get_vm_ip(vmid: int, node: str, vmtype: str) -> Optional[str]:
 
 def get_vms_for_user(user: str, search: Optional[str] = None, skip_ips: bool = False, force_refresh: bool = False) -> List[Dict[str, Any]]:
     """
-    Non-admin: only VMs listed in mappings.
-    Admin: all VMs.
+    Returns VMs for a user. All VMs are fetched from all clusters at once.
+    
+    Admin: sees all VMs from all clusters (can filter by cluster in UI).
+    Non-admin: filtered to only VMs mapped to them.
+    
     Optional search parameter filters by VM name (case-insensitive).
     Set skip_ips=True to skip ARP scan for fast initial page load.
     Set force_refresh=True to bypass cache and fetch fresh data.
-    
-    NOTE: This function now uses cached user_mappings from get_all_vms(),
-    so switching between admin/user views doesn't trigger new Proxmox API calls.
     """
+    # Get all VMs from all clusters
     vms = get_all_vms(skip_ips=skip_ips, force_refresh=force_refresh)
     admin = is_admin_user(user)
     logger.debug("get_vms_for_user: user=%s is_admin=%s all_vms=%d", user, admin, len(vms))
     
     if not admin:
-        # Filter using cached user_mappings (no need to call get_user_vm_map again)
+        # Filter to only mapped VMs
         vms = [vm for vm in vms if user in vm.get("user_mappings", [])]
         logger.debug("get_vms_for_user: user=%s filtered to %d VMs using cached mappings", user, len(vms))
         if not vms:
