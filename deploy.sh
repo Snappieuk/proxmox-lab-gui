@@ -3,9 +3,16 @@ set -e
 
 echo "=== Deploying Proxmox Lab GUI ==="
 
-# Navigate to repository directory
-REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Navigate to repository directory (handle both ~ and absolute paths)
+if [ -f "$HOME/deploy.sh" ]; then
+    # Running from home directory
+    REPO_DIR="$HOME"
+else
+    # Running from repo
+    REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+fi
 cd "$REPO_DIR"
+echo "Repository directory: $REPO_DIR"
 
 # Pull latest changes
 echo "Pulling latest changes from git..."
@@ -19,7 +26,17 @@ lsof -ti:8080 | xargs kill -9 2>/dev/null || true
 sleep 3
 
 echo "Starting Flask app..."
-cd "$REPO_DIR/rdp-gen"
+# Ensure we have the right working directory
+if [ -d "$REPO_DIR/rdp-gen" ]; then
+    cd "$REPO_DIR/rdp-gen"
+elif [ -d "$HOME/rdp-gen" ]; then
+    cd "$HOME/rdp-gen"
+else
+    echo "ERROR: Cannot find rdp-gen directory!"
+    exit 1
+fi
+
+echo "Working directory: $(pwd)"
 nohup python3 app.py > /tmp/flask.log 2>&1 &
 FLASK_PID=$!
 echo "Started Flask with PID: $FLASK_PID"
