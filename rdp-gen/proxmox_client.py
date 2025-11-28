@@ -50,19 +50,25 @@ except ImportError:
 
 # Thread-safe lock for Proxmox connection - prevents race conditions during initialization
 _proxmox_lock = threading.Lock()
-# Lazy connection - only created when first accessed, reused by all threads
-_proxmox_admin = None
-# Current cluster ID (session-based selection)
-_current_cluster_id = None
+# Proxmox connection per cluster - dict mapping cluster_id to ProxmoxAPI instance
+_proxmox_connections: Dict[str, Any] = {}
+
+def get_current_cluster_id():
+    """Get current cluster ID from Flask session or default to first cluster."""
+    try:
+        from flask import session
+        return session.get("cluster_id", CLUSTERS[0]["id"])
+    except (RuntimeError, ImportError):
+        # No Flask context (e.g., background thread or CLI) - use default
+        return CLUSTERS[0]["id"]
+
 
 def get_current_cluster():
-    """Get current cluster configuration."""
-    global _current_cluster_id
-    if _current_cluster_id is None:
-        _current_cluster_id = CLUSTERS[0]["id"]  # Default to first cluster
+    """Get current cluster configuration based on session."""
+    cluster_id = get_current_cluster_id()
     
     for cluster in CLUSTERS:
-        if cluster["id"] == _current_cluster_id:
+        if cluster["id"] == cluster_id:
             return cluster
     
     # Fallback to first cluster if invalid ID somehow
@@ -75,9 +81,9 @@ def switch_cluster(cluster_id: str):
     Args:
         cluster_id: ID of the cluster to switch to
     
-    Invalidates the current connection and forces reconnection on next use.
+    Invalidates all cached connections and forces reconnection on next use.
     """
-    global _proxmox_admin, _current_cluster_id
+    global _proxmox_connections
     
     # Validate cluster ID
     valid = any(c["id"] == cluster_id for c in CLUSTERS)
@@ -85,37 +91,41 @@ def switch_cluster(cluster_id: str):
         raise ValueError(f"Invalid cluster ID: {cluster_id}")
     
     with _proxmox_lock:
-        _current_cluster_id = cluster_id
-        _proxmox_admin = None  # Force reconnection
-        logger.info("Switched to cluster: %s", cluster_id)
+        # Clear all connections to force fresh connections
+        _proxmox_connections = {}
+        logger.info("Cleared all cluster connections for switch to: %s", cluster_id)
 
 
 def get_proxmox_admin():
-    """Get or create Proxmox connection on first use (lazy initialization).
+    """Get or create Proxmox connection for current cluster (lazy initialization).
     
-    Thread-safe singleton pattern: uses double-checked locking to ensure
-    only one Proxmox connection is created even in multi-threaded scenarios.
-    The ProxmoxAPI client is reused for all subsequent calls, avoiding
-    authentication overhead on each request.
+    Thread-safe singleton pattern per cluster: uses double-checked locking to ensure
+    only one Proxmox connection per cluster is created even in multi-threaded scenarios.
+    Each cluster's ProxmoxAPI client is reused for all subsequent calls to that cluster.
     
-    Supports multi-cluster: uses current cluster from session.
+    Supports multi-cluster: uses current cluster from Flask session.
     """
-    global _proxmox_admin
-    if _proxmox_admin is not None:
-        return _proxmox_admin
+    global _proxmox_connections
+    
+    cluster = get_current_cluster()
+    cluster_id = cluster["id"]
+    
+    # Fast path: return existing connection if available
+    if cluster_id in _proxmox_connections:
+        return _proxmox_connections[cluster_id]
     
     with _proxmox_lock:
         # Double-check inside lock to handle race conditions
-        if _proxmox_admin is None:
-            cluster = get_current_cluster()
-            _proxmox_admin = ProxmoxAPI(
+        if cluster_id not in _proxmox_connections:
+            _proxmox_connections[cluster_id] = ProxmoxAPI(
                 cluster["host"],
                 user=cluster["user"],
                 password=cluster["password"],
                 verify_ssl=cluster.get("verify_ssl", False),
             )
             logger.info("Connected to Proxmox cluster '%s' at %s", cluster["name"], cluster["host"])
-    return _proxmox_admin
+    
+    return _proxmox_connections[cluster_id]
 
 
 def _create_proxmox_client():

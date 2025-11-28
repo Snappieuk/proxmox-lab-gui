@@ -90,6 +90,9 @@ def inject_admin_flag():
     current_cluster = session.get("cluster_id", CLUSTERS[0]["id"])
     clusters = [{"id": c["id"], "name": c["name"]} for c in CLUSTERS]
     
+    # NOTE: Don't need to call switch_cluster here because get_proxmox_admin()
+    # now reads directly from session via get_current_cluster_id()
+    
     return {
         "is_admin": is_admin,
         "clusters": clusters,
