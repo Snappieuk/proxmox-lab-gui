@@ -512,6 +512,18 @@ def api_vms():
     
     try:
         vms = get_vms_for_user(user, search=search or None, skip_ips=skip_ips, force_refresh=force_refresh)
+        
+        # Check which VMs can actually generate RDP files
+        # Only show button if build_rdp() would succeed
+        for vm in vms:
+            try:
+                # Try to build RDP - if it succeeds, the button should show
+                build_rdp(vm)
+                vm['rdp_available'] = True
+            except Exception:
+                # build_rdp failed (no IP, wrong format, etc) - no button
+                vm['rdp_available'] = False
+        
         return jsonify(vms)
     except Exception as e:
         app.logger.exception("Failed to get VMs for user %s", user)
@@ -788,13 +800,8 @@ def rdp_file(vmid: int):
         app.logger.warning("rdp_file: VM %s not found for user %s", vmid, user)
         abort(404)
 
-    app.logger.info("rdp_file: Found VM: vmid=%s, name=%s, type=%s, category=%s, ip=%s, rdp_available=%s", 
-                    vm.get('vmid'), vm.get('name'), vm.get('type'), vm.get('category'), vm.get('ip'), vm.get('rdp_available'))
-
-    # Check if RDP is actually available (Windows or has port 3389 open)
-    if not vm.get("rdp_available"):
-        app.logger.warning("rdp_file: VM %s does not have RDP available (rdp_available=%s)", vmid, vm.get("rdp_available"))
-        abort(404)
+    app.logger.info("rdp_file: Found VM: vmid=%s, name=%s, type=%s, category=%s, ip=%s, rdp_available=%s (VM dict keys: %s)", 
+                    vm.get('vmid'), vm.get('name'), vm.get('type'), vm.get('category'), vm.get('ip'), vm.get('rdp_available'), list(vm.keys()))
 
     # Trust cached IP if available (ARP scan keeps it fresh)
     # Skip verify_vm_ip to avoid extra API calls - build_rdp will fail clearly if IP is wrong
