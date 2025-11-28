@@ -88,6 +88,31 @@ def main():
         if add_column_if_missing(cursor, 'vm_assignments', 'mac_address', 'VARCHAR(17)'):
             changes.append('vm_assignments.mac_address')
         
+        # Add cached_ip column to vm_assignments
+        if add_column_if_missing(cursor, 'vm_assignments', 'cached_ip', 'VARCHAR(45)'):
+            changes.append('vm_assignments.cached_ip')
+        
+        # Add ip_updated_at column to vm_assignments
+        if add_column_if_missing(cursor, 'vm_assignments', 'ip_updated_at', 'DATETIME'):
+            changes.append('vm_assignments.ip_updated_at')
+        
+        # Create vm_ip_cache table
+        if not table_exists(cursor, 'vm_ip_cache'):
+            print("Creating table vm_ip_cache...")
+            cursor.execute("""
+                CREATE TABLE vm_ip_cache (
+                    vmid INTEGER PRIMARY KEY,
+                    mac_address VARCHAR(17),
+                    cached_ip VARCHAR(45),
+                    ip_updated_at DATETIME,
+                    cluster_id VARCHAR(50)
+                )
+            """)
+            cursor.execute("CREATE INDEX ix_vm_ip_cache_vmid ON vm_ip_cache (vmid)")
+            cursor.execute("CREATE INDEX ix_vm_ip_cache_mac_address ON vm_ip_cache (mac_address)")
+            print("✓ Created table vm_ip_cache")
+            changes.append('vm_ip_cache table')
+        
         # Create class_enrollments table
         if create_class_enrollments_table(cursor):
             changes.append('class_enrollments table')

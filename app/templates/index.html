@@ -609,39 +609,39 @@ function createVMRow(vm, category) {
                 <button class="btn-icon btn-icon-success btn-power" 
                         data-vmid="${vm.vmid}" 
                         data-action="start"
-                        data-tooltip="Start"
+                        data-tooltip="Start VM"
                         ${vm.status === 'running' ? 'disabled' : ''}>
-                    <i class="bi bi-play-fill"></i>
+                    <i class="bi bi-power"></i>
                 </button>
                 <button class="btn-icon btn-icon-danger btn-power" 
                         data-vmid="${vm.vmid}" 
                         data-action="stop"
-                        data-tooltip="Stop"
+                        data-tooltip="Stop VM"
                         ${vm.status === 'stopped' ? 'disabled' : ''}>
-                    <i class="bi bi-stop-fill"></i>
+                    <i class="bi bi-stop-circle"></i>
                 </button>
                 ${isLinux ? `
                 <button class="btn-icon btn-icon-dark btn-ssh-web" 
                         data-vmid="${vm.vmid}"
                         data-ip="${vm.ip || ''}"
                         data-name="${vm.name}"
-                        data-tooltip="Open Web SSH Terminal"
+                        data-tooltip="SSH Terminal"
                         ${!vm.ip ? 'disabled' : ''}>
-                    <i class="bi bi-terminal"></i>
+                    <i class="bi bi-terminal-fill"></i>
                 </button>
                 <button class="btn-icon btn-icon-dark btn-ssh-copy" 
                         data-vmid="${vm.vmid}"
                         data-ip="${vm.ip || ''}"
-                        data-tooltip="Copy SSH Command"
+                        data-tooltip="Copy SSH"
                         ${!vm.ip ? 'disabled' : ''}>
-                    <i class="bi bi-clipboard"></i>
+                    <i class="bi bi-clipboard-data"></i>
                 </button>
                 ` : ''}
                 ${hasRdp ? `
                 <a class="btn-icon btn-icon-primary" 
                    href="/rdp/${vm.vmid}.rdp"
-                   data-tooltip="Download RDP File">
-                    <i class="bi bi-download"></i>
+                   data-tooltip="RDP File">
+                    <i class="bi bi-file-earmark-arrow-down"></i>
                 </a>
                 ` : ''}
             </div>

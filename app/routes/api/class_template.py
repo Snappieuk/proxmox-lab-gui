@@ -70,7 +70,7 @@ def get_template_info(class_id: int):
         proxmox = get_proxmox_admin_for_cluster(template.cluster_ip)
         
         # If node is missing or invalid, fetch it from Proxmox
-        if not node or node.lower() == "qemu":
+        if not node or node == "qemu" or node == "None":
             logger.warning(f"Template {template.id} has invalid/missing node: '{node}'. Fetching from Proxmox...")
             try:
                 # Get all VMs from cluster to find the node
@@ -84,7 +84,7 @@ def get_template_info(class_id: int):
                         db.session.commit()
                         break
                 
-                if not node or node.lower() == "qemu":
+                if not node or node == "qemu" or node == "None":
                     logger.error(f"Could not find valid node for VMID {template.proxmox_vmid}")
                     return jsonify({"ok": False, "error": f"Could not find VM node for VMID {template.proxmox_vmid}"}), 500
             except Exception as e:

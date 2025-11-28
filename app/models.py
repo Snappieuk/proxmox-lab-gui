@@ -216,6 +216,8 @@ class VMAssignment(db.Model):
     class_id = db.Column(db.Integer, db.ForeignKey('classes.id'), nullable=False, index=True)
     proxmox_vmid = db.Column(db.Integer, nullable=False, index=True)  # Cloned VM's VMID in Proxmox
     mac_address = db.Column(db.String(17), nullable=True, index=True)  # VM's MAC address (e.g., "AA:BB:CC:DD:EE:FF")
+    cached_ip = db.Column(db.String(45), nullable=True)  # Cached IP address (IPv4 or IPv6)
+    ip_updated_at = db.Column(db.DateTime, nullable=True)  # When IP was last updated
     node = db.Column(db.String(80), nullable=True)  # Proxmox node where VM resides
     assigned_user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True, index=True)
     status = db.Column(db.String(20), default='available')  # available, assigned, deleting
@@ -245,6 +247,8 @@ class VMAssignment(db.Model):
             'class_name': self.class_.name if self.class_ else None,
             'proxmox_vmid': self.proxmox_vmid,
             'mac_address': self.mac_address,
+            'cached_ip': self.cached_ip,
+            'ip_updated_at': self.ip_updated_at.isoformat() if self.ip_updated_at else None,
             'node': self.node,
             'assigned_user_id': self.assigned_user_id,
             'assigned_user_name': self.assigned_user.username if self.assigned_user else None,
@@ -255,6 +259,20 @@ class VMAssignment(db.Model):
     
     def __repr__(self):
         return f'<VMAssignment {self.proxmox_vmid} -> {self.assigned_user.username if self.assigned_user else "unassigned"}>'
+
+
+class VMIPCache(db.Model):
+    """IP address cache for VMs (legacy mappings.json VMs)."""
+    __tablename__ = 'vm_ip_cache'
+    
+    vmid = db.Column(db.Integer, primary_key=True, index=True)
+    mac_address = db.Column(db.String(17), nullable=True, index=True)
+    cached_ip = db.Column(db.String(45), nullable=True)
+    ip_updated_at = db.Column(db.DateTime, nullable=True)
+    cluster_id = db.Column(db.String(50), nullable=True)
+    
+    def __repr__(self):
+        return f'<VMIPCache vmid={self.vmid} ip={self.cached_ip}>'
 
 
 def init_db(app):

@@ -553,14 +553,36 @@ def _cache_ip(cluster_id: str, vmid: int, ip: Optional[str]) -> None:
 
 
 def _clear_vm_ip_cache(cluster_id: str, vmid: int) -> None:
-    """Clear IP cache for specific VM. Thread-safe."""
+    """Clear IP cache for specific VM (both memory and database). Thread-safe."""
+    from app.models import db, VMAssignment, VMIPCache
+    
     _load_ip_cache()
     cache_key = f"{cluster_id}:{vmid}"
     with _ip_cache_lock:
         if cache_key in _ip_cache:
             del _ip_cache[cache_key]
-            logger.debug("Cleared IP cache for VM %s:%d", cluster_id, vmid)
+            logger.debug("Cleared memory IP cache for VM %s:%d", cluster_id, vmid)
     _save_ip_cache()
+    
+    # Also clear database cache
+    try:
+        # Clear VMAssignment cache
+        assignment = VMAssignment.query.filter_by(vmid=vmid).first()
+        if assignment and assignment.cached_ip:
+            assignment.cached_ip = None
+            assignment.ip_updated_at = None
+            logger.debug("Cleared VMAssignment IP cache for VM %d", vmid)
+        
+        # Clear VMIPCache
+        cache_entry = VMIPCache.query.filter_by(vmid=vmid).first()
+        if cache_entry:
+            db.session.delete(cache_entry)
+            logger.debug("Deleted VMIPCache entry for VM %d", vmid)
+        
+        db.session.commit()
+    except Exception as e:
+        logger.error("Failed to clear database IP cache for VM %d: %s", vmid, e)
+        db.session.rollback()
 
 def verify_vm_ip(cluster_id: str, node: str, vmid: int, vmtype: str, cached_ip: str) -> Optional[str]:
     """Verify cached IP is still correct, return updated IP if different.
@@ -1012,9 +1034,98 @@ def _enrich_with_user_mappings(vms: List[Dict[str, Any]]) -> None:
     logger.debug("Enriched %d VMs with user mappings", len(vms))
 
 
+def _enrich_from_db_cache(vms: List[Dict[str, Any]]) -> None:
+    """
+    Enrich VMs with cached IP addresses from database (in-place).
+    
+    Checks VMAssignment.cached_ip for class VMs and VMIPCache for legacy VMs.
+    Only uses cached IPs if they're less than 1 hour old.
+    
+    Args:
+        vms: List of VM dictionaries to enrich with cached IPs
+    """
+    from datetime import datetime, timedelta
+    from app.models import db, VMAssignment, VMIPCache
+    
+    logger = logging.getLogger(__name__)
+    cache_ttl = timedelta(hours=1)
+    now = datetime.utcnow()
+    hits = 0
+    misses = 0
+    expired = 0
+    
+    # Build maps: vmid -> cached_ip
+    # Check VMAssignment first (class VMs)
+    class_vm_cache = {}
+    try:
+        assignments = VMAssignment.query.filter(
+            VMAssignment.cached_ip.isnot(None),
+            VMAssignment.ip_updated_at.isnot(None)
+        ).all()
+        
+        for assignment in assignments:
+            age = now - assignment.ip_updated_at
+            if age < cache_ttl:
+                class_vm_cache[assignment.vmid] = assignment.cached_ip
+            else:
+                logger.debug("VM %d: cached IP expired (age=%s)", assignment.vmid, age)
+                expired += 1
+        
+        logger.debug("Loaded %d cached IPs from VMAssignment (expired=%d)", 
+                    len(class_vm_cache), expired)
+    except Exception as e:
+        logger.error("Failed to load VMAssignment cache: %s", e)
+    
+    # Check VMIPCache for legacy/non-class VMs
+    legacy_vm_cache = {}
+    try:
+        cache_entries = VMIPCache.query.filter(
+            VMIPCache.cached_ip.isnot(None),
+            VMIPCache.ip_updated_at.isnot(None)
+        ).all()
+        
+        for entry in cache_entries:
+            age = now - entry.ip_updated_at
+            if age < cache_ttl:
+                legacy_vm_cache[entry.vmid] = entry.cached_ip
+            else:
+                logger.debug("VM %d: legacy cached IP expired (age=%s)", entry.vmid, age)
+                expired += 1
+        
+        logger.debug("Loaded %d cached IPs from VMIPCache (expired=%d)", 
+                    len(legacy_vm_cache), expired)
+    except Exception as e:
+        logger.error("Failed to load VMIPCache: %s", e)
+    
+    # Apply cached IPs to VMs
+    for vm in vms:
+        vmid = vm["vmid"]
+        current_ip = vm.get("ip")
+        
+        # Skip if VM already has an IP from guest agent/interface
+        if current_ip and current_ip not in ("N/A", "Fetching...", ""):
+            continue
+        
+        # Check class VM cache first, then legacy cache
+        cached_ip = class_vm_cache.get(vmid) or legacy_vm_cache.get(vmid)
+        
+        if cached_ip:
+            vm["ip"] = cached_ip
+            hits += 1
+            logger.debug("VM %d (%s): loaded cached IP=%s from database", 
+                        vmid, vm.get("name", "unknown"), cached_ip)
+        else:
+            misses += 1
+    
+    logger.info("Database IP cache: %d hits, %d misses, %d expired", hits, misses, expired)
+
+
 def _enrich_vms_with_arp_ips(vms: List[Dict[str, Any]], force_sync: bool = False) -> None:
     """
     Enrich VM list with IPs discovered via ARP scanning (fast, in-place).
+    
+    First checks database cache (VMAssignment.cached_ip and VMIPCache).
+    Only runs ARP scan for VMs missing IPs or with expired cache (1hr TTL).
     
     Scans ALL running QEMU VMs and LXC containers without IPs.
     This is the PRIMARY method for QEMU VM IP discovery (no guest agent needed).
@@ -1027,8 +1138,20 @@ def _enrich_vms_with_arp_ips(vms: List[Dict[str, Any]], force_sync: bool = False
         vms: List of VM dictionaries to enrich
         force_sync: If True, run scan synchronously (blocks until complete)
     """
+    from datetime import datetime, timedelta
+    from app.models import db, VMAssignment, VMIPCache
+    
     logger.info("=== ARP SCAN START === Total VMs=%d, ARP_SCANNER_AVAILABLE=%s", 
                 len(vms), ARP_SCANNER_AVAILABLE)
+    
+    if not ARP_SCANNER_AVAILABLE:
+        logger.warning("ARP scanner NOT AVAILABLE - checking database cache only")
+        # Still check database cache even if ARP scanner unavailable
+        _enrich_from_db_cache(vms)
+        return
+    
+    # First, enrich all VMs from database cache
+    _enrich_from_db_cache(vms)
     
     if not ARP_SCANNER_AVAILABLE:
         logger.warning("ARP scanner NOT AVAILABLE - skipping ARP discovery")
@@ -1052,17 +1175,8 @@ def _enrich_vms_with_arp_ips(vms: List[Dict[str, Any]], force_sync: bool = False
             continue
 
         vmtype = vm.get("type")
-        # Always check IP cache for this VM
-        cached_ip = None
         mac = _get_vm_mac(vm["node"], vm["vmid"], vm["type"])
-        if mac and mac in _arp_cache:
-            cached_ip = _arp_cache[mac]
-            if cached_ip:
-                vm["ip"] = cached_ip
-                lxc_with_ip_count += 1
-                logger.debug("VM %d (%s) has cached IP=%s - SKIP SCAN", vm["vmid"], vm["name"], cached_ip)
-                continue
-
+        
         has_ip = vm.get("ip") and vm.get("ip") not in ("N/A", "Fetching...", "")
 
         # Include QEMU VMs (always use ARP if no cached IP)
@@ -1127,6 +1241,90 @@ def _enrich_vms_with_arp_ips(vms: List[Dict[str, Any]], force_sync: bool = False
                    updated_count, len(vm_mac_map))
     else:
         logger.info("=== ARP SCAN STARTED (background) === No cached IPs, scanning for %d VMs", len(vm_mac_map))
+    
+    # Save discovered IPs to database for persistence across restarts
+    _save_ips_to_db(vms, vm_mac_map)
+
+
+def _save_ips_to_db(vms: List[Dict[str, Any]], vm_mac_map: Dict[int, str]) -> None:
+    """
+    Save discovered IPs to database for persistence across restarts.
+    
+    Updates VMAssignment.cached_ip for class VMs and VMIPCache for legacy VMs.
+    Only saves IPs that are valid (not N/A, Fetching..., or empty).
+    
+    Args:
+        vms: List of VM dictionaries with discovered IPs
+        vm_mac_map: Map of vmid -> MAC address for IP validation
+    """
+    from datetime import datetime
+    from app.models import db, VMAssignment, VMIPCache
+    
+    logger = logging.getLogger(__name__)
+    now = datetime.utcnow()
+    class_updates = 0
+    legacy_updates = 0
+    
+    try:
+        # Get all class VMs in one query
+        class_vmids = {vm["vmid"] for vm in vms if vm.get("ip") and vm["ip"] not in ("N/A", "Fetching...", "")}
+        assignments = {a.vmid: a for a in VMAssignment.query.filter(VMAssignment.vmid.in_(class_vmids)).all()}
+        
+        for vm in vms:
+            vmid = vm["vmid"]
+            ip = vm.get("ip")
+            
+            # Skip if no valid IP
+            if not ip or ip in ("N/A", "Fetching...", ""):
+                continue
+            
+            # Check if this is a class VM
+            if vmid in assignments:
+                assignment = assignments[vmid]
+                # Only update if IP changed or no cached IP
+                if assignment.cached_ip != ip:
+                    assignment.cached_ip = ip
+                    assignment.ip_updated_at = now
+                    class_updates += 1
+                    logger.debug("Updated VMAssignment %d: cached_ip=%s", vmid, ip)
+            else:
+                # Legacy VM - use VMIPCache
+                mac = vm_mac_map.get(vmid)
+                if not mac:
+                    # Try to get MAC from VM config
+                    mac = _get_vm_mac(vm["node"], vmid, vm["type"])
+                
+                if mac:
+                    # Check if entry exists
+                    cache_entry = VMIPCache.query.filter_by(vmid=vmid).first()
+                    if cache_entry:
+                        # Update existing
+                        if cache_entry.cached_ip != ip:
+                            cache_entry.cached_ip = ip
+                            cache_entry.ip_updated_at = now
+                            cache_entry.mac_address = mac  # Update MAC if changed
+                            legacy_updates += 1
+                            logger.debug("Updated VMIPCache %d: cached_ip=%s", vmid, ip)
+                    else:
+                        # Create new entry
+                        cache_entry = VMIPCache(
+                            vmid=vmid,
+                            mac_address=mac,
+                            cached_ip=ip,
+                            ip_updated_at=now,
+                            cluster_id=vm.get("cluster_id", "default")
+                        )
+                        db.session.add(cache_entry)
+                        legacy_updates += 1
+                        logger.debug("Created VMIPCache %d: cached_ip=%s", vmid, ip)
+        
+        # Commit all updates in one transaction
+        db.session.commit()
+        logger.info("Saved IPs to database: %d class VMs, %d legacy VMs", class_updates, legacy_updates)
+        
+    except Exception as e:
+        logger.error("Failed to save IPs to database: %s", e)
+        db.session.rollback()
 
 def get_all_vms(skip_ips: bool = False, force_refresh: bool = False) -> List[Dict[str, Any]]:
     """
