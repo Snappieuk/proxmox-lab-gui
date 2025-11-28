@@ -852,18 +852,27 @@ def _enrich_vms_with_arp_ips(vms: List[Dict[str, Any]], force_sync: bool = False
         vms: List of VM dictionaries to enrich
         force_sync: If True, run scan synchronously (blocks until complete)
     """
+    logger.info("=== ARP SCAN START === Total VMs=%d, ARP_SCANNER_AVAILABLE=%s", 
+                len(vms), ARP_SCANNER_AVAILABLE)
+    
     if not ARP_SCANNER_AVAILABLE:
-        logger.info("ARP scanner not available, skipping ARP discovery")
+        logger.warning("ARP scanner NOT AVAILABLE - skipping ARP discovery")
         return
     
     # Build map of vmid -> MAC for:
     # 1. ALL running QEMU VMs (primary method)
     # 2. Running LXC containers WITHOUT IPs (DHCP case)
     vm_mac_map = {}
+    qemu_count = 0
+    lxc_dhcp_count = 0
+    stopped_count = 0
+    lxc_with_ip_count = 0
+    
     for vm in vms:
         # Skip if VM is not running (offline VMs won't be in ARP table)
         if vm.get("status") != "running":
-            logger.debug("VM %d (%s) is %s, skipping ARP discovery", 
+            stopped_count += 1
+            logger.debug("VM %d (%s) is %s - SKIPPED", 
                         vm["vmid"], vm["name"], vm.get("status"))
             continue
         
@@ -876,23 +885,42 @@ def _enrich_vms_with_arp_ips(vms: List[Dict[str, Any]], force_sync: bool = False
             mac = _get_vm_mac(vm["node"], vm["vmid"], vm["type"])
             if mac:
                 vm_mac_map[vm["vmid"]] = mac
-                logger.debug("VM %d (%s, %s) has MAC: %s", vm["vmid"], vm["name"], vmtype, mac)
+                if vmtype == "qemu":
+                    qemu_count += 1
+                    logger.debug("VM %d (%s) QEMU: MAC=%s, current_ip=%s - WILL SCAN", 
+                                vm["vmid"], vm["name"], mac, vm.get("ip", "N/A"))
+                else:
+                    lxc_dhcp_count += 1
+                    logger.debug("VM %d (%s) LXC DHCP: MAC=%s - WILL SCAN", 
+                                vm["vmid"], vm["name"], mac)
             else:
-                logger.debug("VM %d (%s, %s) has no MAC found", vm["vmid"], vm["name"], vmtype)
+                logger.warning("VM %d (%s, %s) is running but has NO MAC found in config", 
+                              vm["vmid"], vm["name"], vmtype)
         else:
-            logger.debug("VM %d (%s) is LXC with IP, skipping ARP", vm["vmid"], vm["name"])
+            lxc_with_ip_count += 1
+            logger.debug("VM %d (%s) is LXC with IP=%s - SKIP SCAN", 
+                        vm["vmid"], vm["name"], vm.get("ip"))
+    
+    logger.info("ARP scan candidates: %d QEMU + %d LXC DHCP = %d total (stopped: %d, LXC with IP: %d)", 
+                qemu_count, lxc_dhcp_count, len(vm_mac_map), stopped_count, lxc_with_ip_count)
     
     if not vm_mac_map:
-        logger.info("No running VMs need ARP discovery")
+        logger.info("=== ARP SCAN COMPLETE === No running VMs need ARP discovery")
         return
     
-    logger.info("Starting ARP discovery for %d running VMs", len(vm_mac_map))
+    logger.info("Starting ARP discovery for %d running VMs (synchronous mode)...", len(vm_mac_map))
     
     # Run ARP scan synchronously for immediate results (fast: ~1-2 seconds)
     # This ensures IPs are available on first page load
     discovered_ips = discover_ips_via_arp(vm_mac_map, subnets=ARP_SUBNETS, background=False)
     
+    logger.info("ARP discovery returned %d IPs: %s", len(discovered_ips),
+                {vmid: ip for vmid, ip in list(discovered_ips.items())[:10]})  # Show first 10
+    
     # Update VMs with discovered IPs and cache them
+    updated_count = 0
+    changed_count = 0
+    
     for vm in vms:
         if vm["vmid"] in discovered_ips:
             new_ip = discovered_ips[vm["vmid"]]
@@ -901,16 +929,25 @@ def _enrich_vms_with_arp_ips(vms: List[Dict[str, Any]], force_sync: bool = False
             # Update VM and cache
             vm["ip"] = new_ip
             _cache_ip(vm["vmid"], new_ip)
+            updated_count += 1
             
             # Check RDP port availability for Windows VMs
             if vm.get("category") == "windows" and new_ip:
-                vm["rdp_available"] = _check_rdp_port(new_ip)
+                rdp_available = _check_rdp_port(new_ip)
+                vm["rdp_available"] = rdp_available
+                logger.debug("VM %d (%s): Windows RDP port check = %s", 
+                            vm["vmid"], vm["name"], rdp_available)
             
             # Log IP changes for validation tracking
             if old_ip and old_ip != new_ip:
-                logger.info("VM %d IP changed: %s -> %s", vm["vmid"], old_ip, new_ip)
+                changed_count += 1
+                logger.info("VM %d (%s): IP CHANGED %s -> %s", 
+                           vm["vmid"], vm["name"], old_ip, new_ip)
+            else:
+                logger.info("VM %d (%s): IP FOUND %s", vm["vmid"], vm["name"], new_ip)
     
-    logger.info("ARP discovery completed: found %d IPs", len(discovered_ips))
+    logger.info("=== ARP SCAN COMPLETE === Updated %d VMs, %d changed IPs", 
+                updated_count, changed_count)
 
 
 
@@ -1031,7 +1068,12 @@ def get_all_vms(skip_ips: bool = False, force_refresh: bool = False) -> List[Dic
     # Try ARP-based IP discovery for VMs without IPs (fast batch operation)
     # Only run when not skipping IPs
     if not skip_ips and ARP_SCANNER_AVAILABLE:
+        logger.info("get_all_vms: calling ARP scan enrichment (skip_ips=%s)", skip_ips)
         _enrich_vms_with_arp_ips(out)
+    elif skip_ips:
+        logger.info("get_all_vms: SKIPPING ARP scan (skip_ips=True)")
+    elif not ARP_SCANNER_AVAILABLE:
+        logger.warning("get_all_vms: SKIPPING ARP scan (scanner not available)")
 
     # Cache the VM structure (always cache, even with skip_ips)
     _vm_cache_data = out

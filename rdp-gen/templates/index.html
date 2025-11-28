@@ -498,7 +498,6 @@ function createVMRow(vm, category) {
     
     const isWindows = category === 'windows';
     const isLinux = category === 'linux' || category === 'lxc';
-    const hasRdp = vm.rdp_available === true;
     
     row.innerHTML = `
         <td><strong>${vm.name}</strong></td>
@@ -524,10 +523,10 @@ function createVMRow(vm, category) {
                         ${vm.status === 'stopped' ? 'disabled' : ''}>
                     <i class="bi bi-stop-fill"></i>
                 </button>
-                ${hasRdp ? `
+                ${isWindows ? `
                 <a class="btn-icon btn-icon-primary" 
                    href="/rdp/${vm.vmid}.rdp"
-                   data-tooltip="Download RDP File (Port 3389 Open)">
+                   data-tooltip="Download RDP File">
                     <i class="bi bi-download"></i>
                 </a>
                 ` : ''}
@@ -619,28 +618,6 @@ function updateVMsFromData(data) {
                 btn.setAttribute('data-ip', vm.ip);
             }
         });
-        
-        // Update RDP button visibility based on rdp_available
-        const actionButtons = row.querySelector('.action-buttons');
-        if (actionButtons) {
-            const existingRdpBtn = actionButtons.querySelector('a[href^="/rdp/"]');
-            const hasRdp = vm.rdp_available === true;
-            
-            // If RDP status changed, update the button
-            if (hasRdp && !existingRdpBtn) {
-                // Add RDP button
-                const stopBtn = actionButtons.querySelector('.btn-power[data-action="stop"]');
-                const rdpBtn = document.createElement('a');
-                rdpBtn.className = 'btn-icon btn-icon-primary';
-                rdpBtn.href = `/rdp/${vm.vmid}.rdp`;
-                rdpBtn.setAttribute('data-tooltip', 'Download RDP File (Port 3389 Open)');
-                rdpBtn.innerHTML = '<i class="bi bi-download"></i>';
-                stopBtn.insertAdjacentElement('afterend', rdpBtn);
-            } else if (!hasRdp && existingRdpBtn) {
-                // Remove RDP button if port is no longer open
-                existingRdpBtn.remove();
-            }
-        }
     });
     
     // Update summary tiles
