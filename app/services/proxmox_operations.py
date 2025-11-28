@@ -465,24 +465,60 @@ def clone_template_for_class(template_vmid: int, node: str, name: str,
         
         logger.info(f"Cloning template VMID {template_vmid} from node '{node}' to create '{name}'")
         
-        # Find next available VMID
+        # Find next available VMID - use cluster resources API for complete view
         used_vmids = set()
-        for node_info in proxmox.nodes.get():
-            node_name = node_info["node"]
-            for vm in proxmox.nodes(node_name).qemu.get():
-                used_vmids.add(vm["vmid"])
+        try:
+            # Use cluster resources API to get ALL VMs and containers across all nodes
+            resources = proxmox.cluster.resources.get(type="vm")
+            for r in resources:
+                used_vmids.add(r["vmid"])
+            logger.info(f"Found {len(used_vmids)} existing VMIDs via cluster resources API")
+        except Exception as e:
+            logger.warning(f"Cluster resources API failed, falling back to per-node query: {e}")
+            # Fallback: query each node individually
+            for node_info in proxmox.nodes.get():
+                node_name = node_info["node"]
+                try:
+                    # Get both QEMU VMs and LXC containers
+                    for vm in proxmox.nodes(node_name).qemu.get():
+                        used_vmids.add(vm["vmid"])
+                    for ct in proxmox.nodes(node_name).lxc.get():
+                        used_vmids.add(ct["vmid"])
+                except Exception as node_error:
+                    logger.warning(f"Failed to query node {node_name}: {node_error}")
         
+        # Find next available VMID starting from 100
         new_vmid = 100
         while new_vmid in used_vmids:
             new_vmid += 1
         
+        logger.info(f"Selected new VMID: {new_vmid} (next available after checking {len(used_vmids)} existing VMs)")
+        
         # Clone the template (full clone, not linked)
         logger.info(f"Calling proxmox.nodes('{node}').qemu({template_vmid}).clone.post(newid={new_vmid}, name='{name}', full=1)")
-        proxmox.nodes(node).qemu(template_vmid).clone.post(
-            newid=new_vmid,
-            name=name,
-            full=1  # Full clone
-        )
+        
+        try:
+            proxmox.nodes(node).qemu(template_vmid).clone.post(
+                newid=new_vmid,
+                name=name,
+                full=1  # Full clone
+            )
+        except Exception as clone_error:
+            # If clone fails due to VMID conflict, try once more with next VMID
+            if "already exists" in str(clone_error).lower() or "vmid" in str(clone_error).lower():
+                logger.warning(f"VMID {new_vmid} conflict detected, trying next VMID...")
+                new_vmid += 1
+                while new_vmid in used_vmids:
+                    new_vmid += 1
+                
+                logger.info(f"Retrying clone with VMID {new_vmid}")
+                proxmox.nodes(node).qemu(template_vmid).clone.post(
+                    newid=new_vmid,
+                    name=name,
+                    full=1
+                )
+            else:
+                raise
         
         logger.info(f"Cloned template {template_vmid} → {new_vmid} ({name}) on {node}")
         return True, new_vmid, f"Successfully cloned template to VMID {new_vmid}"
