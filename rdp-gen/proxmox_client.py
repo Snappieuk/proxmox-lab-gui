@@ -499,6 +499,9 @@ def _get_vm_mac(node: str, vmid: int, vmtype: str) -> Optional[str]:
     """
     Get MAC address for a VM.
     
+    Checks all network interfaces (net0, net1, net2, ...) to find the first valid MAC.
+    This handles VMs with multiple NICs or where net0 is not the primary interface.
+    
     Returns normalized MAC (lowercase, no separators) or None.
     """
     try:
@@ -508,38 +511,81 @@ def _get_vm_mac(node: str, vmid: int, vmtype: str) -> Optional[str]:
             if not config:
                 logger.debug("VM %d: No config returned", vmid)
                 return None
-            # LXC net0 format: "name=eth0,bridge=vmbr0,hwaddr=XX:XX:XX:XX:XX:XX,ip=dhcp"
-            net0 = config.get("net0", "")
-            logger.debug("VM %d LXC net0: %s", vmid, net0)
-            mac_match = re.search(r'hwaddr=([0-9a-fA-F:]+)', net0)
-            if mac_match and ARP_SCANNER_AVAILABLE:
-                mac = normalize_mac(mac_match.group(1))
-                logger.debug("VM %d: Extracted MAC %s", vmid, mac)
-                return mac
+            
+            # Check net0-net9 for LXC containers
+            for i in range(10):
+                net_key = f"net{i}"
+                net_config = config.get(net_key, "")
+                if not net_config:
+                    continue
+                
+                # LXC format: "name=eth0,bridge=vmbr0,hwaddr=XX:XX:XX:XX:XX:XX,ip=dhcp"
+                logger.debug("VM %d LXC %s: %s", vmid, net_key, net_config)
+                mac_match = re.search(r'hwaddr=([0-9a-fA-F:]+)', net_config)
+                if mac_match and ARP_SCANNER_AVAILABLE:
+                    mac = normalize_mac(mac_match.group(1))
+                    if mac:
+                        logger.debug("VM %d: Extracted MAC %s from %s", vmid, mac, net_key)
+                        return mac
         
         elif vmtype == "qemu":
-            # QEMU: get config to find MAC from net0
+            # QEMU: get config to find MAC from any net interface
             config = get_proxmox_admin().nodes(node).qemu(vmid).config.get()
             if not config:
                 logger.debug("VM %d: No config returned", vmid)
                 return None
-            # net0 format: "virtio=XX:XX:XX:XX:XX:XX,bridge=vmbr0"
-            # or: "e1000=XX:XX:XX:XX:XX:XX,bridge=vmbr0"
-            net0 = config.get("net0", "")
-            logger.debug("VM %d QEMU net0: %s", vmid, net0)
-            # Match MAC address pattern (6 hex pairs separated by colons)
-            mac_match = re.search(r'([0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2})', net0)
-            if mac_match and ARP_SCANNER_AVAILABLE:
-                mac = normalize_mac(mac_match.group(1))
-                logger.debug("VM %d: Extracted MAC %s", vmid, mac)
-                return mac
-            else:
-                logger.debug("VM %d: No MAC found in net0", vmid)
+            
+            # Check net0-net9 for QEMU VMs
+            for i in range(10):
+                net_key = f"net{i}"
+                net_config = config.get(net_key, "")
+                if not net_config:
+                    continue
+                
+                # QEMU format: "virtio=XX:XX:XX:XX:XX:XX,bridge=vmbr0"
+                # or: "e1000=XX:XX:XX:XX:XX:XX,bridge=vmbr0"
+                logger.debug("VM %d QEMU %s: %s", vmid, net_key, net_config)
+                # Match MAC address pattern (6 hex pairs separated by colons)
+                mac_match = re.search(r'([0-9a-fA-F]{2}[:-]){5}([0-9a-fA-F]{2})', net_config)
+                if mac_match and ARP_SCANNER_AVAILABLE:
+                    mac = normalize_mac(mac_match.group(0))
+                    if mac:
+                        logger.debug("VM %d: Extracted MAC %s from %s", vmid, mac, net_key)
+                        return mac
+            
+            logger.debug("VM %d: No MAC found in any net interface", vmid)
     
     except Exception as e:
         logger.debug("Failed to get MAC for %s/%s: %s", node, vmid, e)
     
     return None
+
+
+def _check_rdp_port(ip: str, timeout: float = 0.5) -> bool:
+    """
+    Check if RDP port (3389) is open on the given IP address.
+    
+    Args:
+        ip: IP address to check
+        timeout: Connection timeout in seconds (default: 0.5)
+    
+    Returns:
+        True if port 3389 is open, False otherwise
+    """
+    if not ip:
+        return False
+    
+    import socket
+    
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(timeout)
+        result = sock.connect_ex((ip, 3389))
+        sock.close()
+        return result == 0
+    except Exception as e:
+        logger.debug("RDP port check failed for %s: %s", ip, e)
+        return False
 
 
 def _guess_category(raw: Dict[str, Any]) -> str:
@@ -581,7 +627,8 @@ def _lookup_vm_ip_thread_safe(node: str, vmid: int, vmtype: str) -> Optional[str
     """
     Thread-safe IP lookup using a new Proxmox client per call.
     
-    ONLY handles LXC containers via network interfaces API.
+    Handles LXC containers via network interfaces API.
+    Returns None if container uses DHCP but no IP assigned yet (needs ARP scan).
     QEMU VMs use ARP scanning instead (no guest agent dependency).
     
     Used by ThreadPoolExecutor workers for parallel IP lookups.
@@ -602,17 +649,24 @@ def _lookup_vm_ip_thread_safe(node: str, vmid: int, vmtype: str) -> Optional[str
             interfaces = client.nodes(node).lxc(vmid).interfaces.get()
             if interfaces:
                 for iface in interfaces:
+                    # Prefer eth0/veth0 interfaces
                     if iface.get("name") in ("eth0", "veth0"):
                         inet = iface.get("inet")
                         if inet:
                             ip = inet.split("/")[0] if "/" in inet else inet
                             if ip and not ip.startswith("127."):
                                 return ip
+                    # Fall back to any interface with IP
                     inet = iface.get("inet")
                     if inet:
                         ip = inet.split("/")[0] if "/" in inet else inet
                         if ip and not ip.startswith("127."):
                             return ip
+                
+                # If we get here, container is running but no IP found in interfaces
+                # This happens with DHCP when IP not yet assigned - needs ARP scan
+                logger.debug("LXC %d has no IP in interfaces (likely DHCP), will use ARP scan", vmid)
+                return None
         except Exception as e:
             logger.debug("lxc interface call failed for %s/%s: %s", node, vmid, e)
             return None
@@ -714,8 +768,8 @@ def _build_vm_dict(raw: Dict[str, Any], skip_ip: bool = False) -> Dict[str, Any]
     
     # IP lookup strategy (prioritized):
     # 1. Memory cache (1-hour TTL) with validation for running VMs
-    # 2. LXC: Direct API interface lookup
-    # 3. QEMU: ARP scanning (handled by _enrich_vms_with_arp_ips after bulk fetch)
+    # 2. LXC: Direct API interface lookup (for static IPs)
+    # 3. ARP scanning for QEMU and LXC with DHCP (handled by _enrich_vms_with_arp_ips)
     ip = None
     if not skip_ip:
         # First: Check memory cache
@@ -729,15 +783,23 @@ def _build_vm_dict(raw: Dict[str, Any], skip_ip: bool = False) -> Dict[str, Any]
                 # For stopped VMs or LXC, trust cache
                 ip = cached_ip
         
-        # Second: For LXC, always try direct API lookup (fast and reliable)
+        # Second: For LXC, try direct API lookup (works for static IPs)
         if not ip and vmtype == "lxc":
-            # LXC containers: network config API is always readable
+            # LXC containers: network config API
             ip = _lookup_vm_ip(node, vmid, vmtype)
             if ip:
                 _cache_ip(vmid, ip)
+            # If no IP from API and container is running, ARP scan will find it (DHCP case)
         
-        # Note: QEMU VM IPs are discovered via ARP scanning in _enrich_vms_with_arp_ips()
-        # This runs after bulk VM fetch for better performance
+        # For running VMs/containers without IPs:
+        # - Don't set to None (frontend shows "N/A")
+        # - ARP scan in _enrich_vms_with_arp_ips() will populate it
+        # - Frontend will show "Fetching..." until scan completes
+    
+    # Check if RDP port is available (Windows VMs only, and only if we have an IP)
+    rdp_available = False
+    if category == "windows" and ip and ip not in ("N/A", "Fetching...", ""):
+        rdp_available = _check_rdp_port(ip)
 
     return {
         "vmid": vmid,
@@ -747,6 +809,7 @@ def _build_vm_dict(raw: Dict[str, Any], skip_ip: bool = False) -> Dict[str, Any]
         "type": vmtype,      # 'qemu' or 'lxc'
         "category": category,
         "ip": ip,
+        "rdp_available": rdp_available,
         "user_mappings": [],  # Will be populated by _enrich_with_user_mappings()
     }
 
@@ -774,53 +837,60 @@ def _enrich_with_user_mappings(vms: List[Dict[str, Any]]) -> None:
     logger.debug("Enriched %d VMs with user mappings", len(vms))
 
 
-def _enrich_vms_with_arp_ips(vms: List[Dict[str, Any]]) -> None:
+def _enrich_vms_with_arp_ips(vms: List[Dict[str, Any]], force_sync: bool = False) -> None:
     """
     Enrich VM list with IPs discovered via ARP scanning (fast, in-place).
     
-    Scans ALL running QEMU VMs to discover/validate IPs.
+    Scans ALL running QEMU VMs and LXC containers without IPs.
     This is the PRIMARY method for QEMU VM IP discovery (no guest agent needed).
-    Also validates cached IPs and updates if changed.
+    Also used for LXC containers with DHCP that don't have IPs in interface API.
+    Validates cached IPs and updates if changed.
     
-    LXC containers get IPs from direct API calls, not ARP.
-    Offline QEMU VMs can't have network presence, so skipped.
+    Offline VMs can't have network presence, so skipped.
+    
+    Args:
+        vms: List of VM dictionaries to enrich
+        force_sync: If True, run scan synchronously (blocks until complete)
     """
     if not ARP_SCANNER_AVAILABLE:
         logger.info("ARP scanner not available, skipping ARP discovery")
         return
     
-    # Build map of vmid -> MAC for ALL RUNNING QEMU VMs
-    # Skip LXC containers - they get IPs directly from network config API
+    # Build map of vmid -> MAC for:
+    # 1. ALL running QEMU VMs (primary method)
+    # 2. Running LXC containers WITHOUT IPs (DHCP case)
     vm_mac_map = {}
     for vm in vms:
-        # Skip LXC containers (handled by direct API call in _build_vm_dict)
-        if vm.get("type") == "lxc":
-            logger.debug("VM %d (%s) is LXC, skipping ARP (uses direct API)", 
-                        vm["vmid"], vm["name"])
-            continue
-        
-        # Skip if QEMU VM is not running (offline VMs won't be in ARP table)
+        # Skip if VM is not running (offline VMs won't be in ARP table)
         if vm.get("status") != "running":
             logger.debug("VM %d (%s) is %s, skipping ARP discovery", 
                         vm["vmid"], vm["name"], vm.get("status"))
             continue
         
-        mac = _get_vm_mac(vm["node"], vm["vmid"], vm["type"])
-        if mac:
-            vm_mac_map[vm["vmid"]] = mac
-            logger.debug("VM %d (%s) has MAC: %s", vm["vmid"], vm["name"], mac)
+        vmtype = vm.get("type")
+        has_ip = vm.get("ip") and vm.get("ip") not in ("N/A", "Fetching...", "")
+        
+        # Include QEMU VMs (always use ARP)
+        # Include LXC without IPs (DHCP case)
+        if vmtype == "qemu" or (vmtype == "lxc" and not has_ip):
+            mac = _get_vm_mac(vm["node"], vm["vmid"], vm["type"])
+            if mac:
+                vm_mac_map[vm["vmid"]] = mac
+                logger.debug("VM %d (%s, %s) has MAC: %s", vm["vmid"], vm["name"], vmtype, mac)
+            else:
+                logger.debug("VM %d (%s, %s) has no MAC found", vm["vmid"], vm["name"], vmtype)
         else:
-            logger.debug("VM %d (%s) has no MAC found", vm["vmid"], vm["name"])
+            logger.debug("VM %d (%s) is LXC with IP, skipping ARP", vm["vmid"], vm["name"])
     
     if not vm_mac_map:
-        logger.info("No running QEMU VMs for ARP discovery")
+        logger.info("No running VMs need ARP discovery")
         return
     
-    logger.info("Starting ARP discovery for %d running QEMU VMs", len(vm_mac_map))
+    logger.info("Starting ARP discovery for %d running VMs", len(vm_mac_map))
     
-    # Discover IPs via ARP in BACKGROUND mode (non-blocking)
-    # This returns immediately with cached results and starts scan in background
-    discovered_ips = discover_ips_via_arp(vm_mac_map, subnets=ARP_SUBNETS, background=True)
+    # Run ARP scan synchronously for immediate results (fast: ~1-2 seconds)
+    # This ensures IPs are available on first page load
+    discovered_ips = discover_ips_via_arp(vm_mac_map, subnets=ARP_SUBNETS, background=False)
     
     # Update VMs with discovered IPs and cache them
     for vm in vms:
@@ -832,11 +902,15 @@ def _enrich_vms_with_arp_ips(vms: List[Dict[str, Any]]) -> None:
             vm["ip"] = new_ip
             _cache_ip(vm["vmid"], new_ip)
             
+            # Check RDP port availability for Windows VMs
+            if vm.get("category") == "windows" and new_ip:
+                vm["rdp_available"] = _check_rdp_port(new_ip)
+            
             # Log IP changes for validation tracking
             if old_ip and old_ip != new_ip:
                 logger.info("VM %d IP changed: %s -> %s", vm["vmid"], old_ip, new_ip)
     
-    logger.info("ARP discovery returned %d IPs (scan running in background)", len(discovered_ips))
+    logger.info("ARP discovery completed: found %d IPs", len(discovered_ips))
 
 
 

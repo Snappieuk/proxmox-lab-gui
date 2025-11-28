@@ -224,7 +224,7 @@ def _is_root() -> bool:
     return os.geteuid() == 0
 
 
-def scan_network_range(subnet_cidr: str = "10.220.8.0/21", timeout: int = 2) -> bool:
+def scan_network_range(subnet_cidr: str = "10.220.8.0/21", timeout: int = 1) -> bool:
     """
     Scan network range to populate ARP table using nmap.
     
@@ -240,7 +240,7 @@ def scan_network_range(subnet_cidr: str = "10.220.8.0/21", timeout: int = 2) -> 
     
     Args:
         subnet_cidr: Network in CIDR notation (e.g., "10.220.8.0/21")
-        timeout: Scan timeout in seconds
+        timeout: Scan timeout in seconds (default: 1)
     
     Returns:
         True if scan succeeded (nmap ran without error)
@@ -248,14 +248,15 @@ def scan_network_range(subnet_cidr: str = "10.220.8.0/21", timeout: int = 2) -> 
     is_root = _is_root()
     
     # Determine nmap arguments based on privileges
+    # Use -T5 (insane timing) for fastest possible scan
     if is_root:
         # ARP ping (-PR) is most reliable but requires root
-        nmap_args = ['-sn', '-PR', '-T4', '--max-retries', '1', subnet_cidr]
+        nmap_args = ['-sn', '-PR', '-T5', '--max-retries', '0', '--host-timeout', '500ms', subnet_cidr]
         scan_type = "ARP ping (root)"
     else:
         # Unprivileged: use standard ping scan without -PR
         # -sn does ICMP echo, TCP SYN to 443, TCP ACK to 80, ICMP timestamp
-        nmap_args = ['-sn', '-T4', '--max-retries', '1', subnet_cidr]
+        nmap_args = ['-sn', '-T5', '--max-retries', '0', '--host-timeout', '500ms', subnet_cidr]
         scan_type = "ICMP/TCP ping (unprivileged)"
     
     logger.info("Starting %s scan on %s", scan_type, subnet_cidr)
@@ -290,7 +291,7 @@ def scan_network_range(subnet_cidr: str = "10.220.8.0/21", timeout: int = 2) -> 
                     logger.warning("nmap -PR requires root privileges, falling back to unprivileged scan")
                     # Retry without -PR
                     result = subprocess.run(
-                        [nmap_cmd, '-sn', '-T4', '--max-retries', '1', subnet_cidr],
+                        [nmap_cmd, '-sn', '-T5', '--max-retries', '0', '--host-timeout', '500ms', subnet_cidr],
                         capture_output=True,
                         text=True,
                         timeout=scan_timeout
@@ -371,7 +372,7 @@ def _background_scan_worker(vm_mac_map: Dict[int, str], subnets: Optional[List[s
         
         # Try network range scan first (more reliable than broadcast ping)
         logger.info("Scanning network range 10.220.8.0/21 to populate ARP")
-        scan_success = scan_network_range("10.220.8.0/21", timeout=3)
+        scan_success = scan_network_range("10.220.8.0/21", timeout=1)
         
         # If scan failed, try broadcast ping as fallback
         if not scan_success:
@@ -480,7 +481,7 @@ def discover_ips_via_arp(vm_mac_map: Dict[int, str], subnets: Optional[List[str]
     
     # Try network range scan first (more reliable than broadcast ping)
     logger.info("Scanning network range 10.220.8.0/21 to populate ARP")
-    scan_success = scan_network_range("10.220.8.0/21", timeout=3)
+    scan_success = scan_network_range("10.220.8.0/21", timeout=1)
     
     # If scan failed, try broadcast ping as fallback
     if not scan_success:
