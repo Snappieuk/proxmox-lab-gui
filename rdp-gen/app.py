@@ -683,20 +683,21 @@ if WEBSOCKET_AVAILABLE:
         app.logger.info("WebSocket SSH connection attempt for VM %d", vmid)
         from ssh_handler import SSHWebSocketHandler
         
-        # Get IP and username from query parameters
+        # Get IP, username, and password from query parameters
         ip = request.args.get('ip')
         username = request.args.get('username')
+        password = request.args.get('password')
         
         app.logger.info("SSH WebSocket: vmid=%d, ip=%s, username=%s", vmid, ip, username)
         
-        if not ip or not username:
-            app.logger.error("SSH WebSocket: IP or username missing")
-            ws.send("\r\n\x1b[1;31mError: IP address or username not provided.\x1b[0m\r\n")
+        if not ip or not username or not password:
+            app.logger.error("SSH WebSocket: IP, username, or password missing")
+            ws.send("\r\n\x1b[1;31mError: IP address, username, or password not provided.\x1b[0m\r\n")
             return
         
-        # Create SSH handler with username
+        # Create SSH handler with credentials
         app.logger.info("Creating SSH handler for %s@%s", username, ip)
-        handler = SSHWebSocketHandler(ws, ip, username=username)
+        handler = SSHWebSocketHandler(ws, ip, username=username, password=password)
         
         # Connect to SSH
         app.logger.info("Attempting SSH connection...")

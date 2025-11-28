@@ -48,65 +48,109 @@
             background: #a1260d;
             color: white;
         }
-        #connect-bar {
+        #terminal-container {
             position: absolute;
             top: 40px;
             left: 0;
             right: 0;
-            height: 50px;
+            bottom: 0;
+            padding: 8px;
+        }
+        #login-modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.7);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+        #login-modal.hidden {
+            display: none;
+        }
+        .modal-content {
             background: #2d2d30;
-            border-bottom: 1px solid #3e3e42;
-            display: flex;
-            align-items: center;
-            padding: 0 16px;
-            gap: 12px;
+            border: 1px solid #3e3e42;
+            border-radius: 6px;
+            padding: 24px;
+            width: 360px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
         }
-        #connect-bar label {
+        .modal-content h2 {
+            margin: 0 0 20px 0;
+            font-size: 18px;
+            font-weight: 600;
+            color: #d4d4d4;
+        }
+        .form-group {
+            margin-bottom: 16px;
+        }
+        .form-group label {
+            display: block;
             font-size: 13px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
+            margin-bottom: 6px;
+            color: #d4d4d4;
         }
-        #ssh-username {
+        .form-group input {
+            width: 100%;
             background: #3c3c3c;
             border: 1px solid #5a5a5a;
             color: #d4d4d4;
-            padding: 6px 10px;
+            padding: 8px 12px;
             border-radius: 3px;
             font-size: 13px;
             font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif;
-            width: 200px;
+            box-sizing: border-box;
         }
-        #ssh-username:focus {
+        .form-group input:focus {
             outline: none;
             border-color: #007acc;
             background: #454545;
         }
-        #ssh-connect-btn {
-            background: #0e639c;
-            border: none;
-            color: white;
-            padding: 6px 16px;
+        .button-group {
+            display: flex;
+            gap: 8px;
+            justify-content: flex-end;
+            margin-top: 20px;
+        }
+        .btn {
+            padding: 8px 16px;
             border-radius: 3px;
             font-size: 13px;
             cursor: pointer;
             font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif;
+            border: none;
         }
-        #ssh-connect-btn:hover {
+        .btn-primary {
+            background: #0e639c;
+            color: white;
+        }
+        .btn-primary:hover {
             background: #1177bb;
         }
-        #ssh-connect-btn:disabled {
+        .btn-primary:disabled {
             background: #3a3d41;
             cursor: not-allowed;
             opacity: 0.6;
         }
-        #terminal-container {
-            position: absolute;
-            top: 90px;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            padding: 8px;
+        .btn-secondary {
+            background: #3a3d41;
+            color: #d4d4d4;
+        }
+        .btn-secondary:hover {
+            background: #4a4d51;
+        }
+        .error-message {
+            color: #f48771;
+            font-size: 12px;
+            margin-top: 8px;
+            display: none;
+        }
+        .error-message.show {
+            display: block;
         }
         #terminal {
             width: 100%;
@@ -125,13 +169,28 @@
         </div>
         <span id="status">Ready</span>
     </div>
-    <div id="connect-bar">
-        <label>
-            Username:
-            <input id="ssh-username" type="text" autocomplete="off" placeholder="Enter username">
-        </label>
-        <button id="ssh-connect-btn">Connect</button>
+    
+    <div id="login-modal">
+        <div class="modal-content">
+            <h2>SSH Login</h2>
+            <form id="login-form">
+                <div class="form-group">
+                    <label for="ssh-username">Username</label>
+                    <input id="ssh-username" type="text" autocomplete="username" placeholder="Enter username" required>
+                </div>
+                <div class="form-group">
+                    <label for="ssh-password">Password</label>
+                    <input id="ssh-password" type="password" autocomplete="current-password" placeholder="Enter password" required>
+                </div>
+                <div class="error-message" id="error-message"></div>
+                <div class="button-group">
+                    <button type="button" class="btn btn-secondary" id="cancel-btn">Cancel</button>
+                    <button type="submit" class="btn btn-primary" id="connect-btn">Connect</button>
+                </div>
+            </form>
+        </div>
     </div>
+    
     <div id="terminal-container">
         <div id="terminal"></div>
     </div>
@@ -188,22 +247,19 @@
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         
         const status = document.getElementById('status');
+        const modal = document.getElementById('login-modal');
+        const loginForm = document.getElementById('login-form');
         const usernameInput = document.getElementById('ssh-username');
-        const connectBtn = document.getElementById('ssh-connect-btn');
+        const passwordInput = document.getElementById('ssh-password');
+        const connectBtn = document.getElementById('connect-btn');
+        const cancelBtn = document.getElementById('cancel-btn');
+        const errorMessage = document.getElementById('error-message');
         let ws = null;
 
-        function connect() {
-            const username = usernameInput.value.trim();
-            if (!username) {
-                term.write('\r\n\x1b[1;33mPlease enter a username\x1b[0m\r\n');
-                usernameInput.focus();
-                return;
-            }
+        function connect(username, password) {
+            modal.classList.add('hidden');
             
-            connectBtn.disabled = true;
-            usernameInput.disabled = true;
-            
-            const wsUrl = `${protocol}//${window.location.host}/ws/ssh/${vmid}?ip=${encodeURIComponent(ip)}&username=${encodeURIComponent(username)}`;
+            const wsUrl = `${protocol}//${window.location.host}/ws/ssh/${vmid}?ip=${encodeURIComponent(ip)}&username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`;
             
             status.textContent = 'Connecting...';
             status.className = '';
@@ -238,13 +294,18 @@
             ws.onclose = (event) => {
                 status.textContent = 'Disconnected';
                 status.className = 'error';
-                connectBtn.disabled = false;
-                usernameInput.disabled = false;
                 console.log('WebSocket closed:', event.code, event.reason, event.wasClean);
                 term.write('\r\n\x1b[1;31mConnection closed\x1b[0m\r\n');
                 if (event.reason) {
                     term.write(`\r\nReason: ${event.reason}\r\n`);
                 }
+                // Show modal again on disconnect
+                setTimeout(() => {
+                    modal.classList.remove('hidden');
+                    passwordInput.value = '';
+                    errorMessage.textContent = 'Connection lost. Please reconnect.';
+                    errorMessage.classList.add('show');
+                }, 1000);
             };
             
             term.onData(data => {
@@ -254,14 +315,27 @@
             });
         }
 
-        // Connect button click
-        connectBtn.addEventListener('click', connect);
-        
-        // Enter key in username field
-        usernameInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') {
-                connect();
+        // Form submit handler
+        loginForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const username = usernameInput.value.trim();
+            const password = passwordInput.value;
+            
+            if (!username || !password) {
+                errorMessage.textContent = 'Please enter both username and password';
+                errorMessage.classList.add('show');
+                return;
             }
+            
+            errorMessage.classList.remove('show');
+            connectBtn.disabled = true;
+            
+            connect(username, password);
+        });
+        
+        // Cancel button
+        cancelBtn.addEventListener('click', () => {
+            window.close();
         });
         
         // Focus username input on load
