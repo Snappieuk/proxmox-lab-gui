@@ -6,7 +6,7 @@ This module provides higher-level operations for class-based VM management.
 """
 
 import logging
-from typing import List, Dict, Tuple, Any
+from typing import List, Dict, Tuple, Any, Optional
 
 from app.services.proxmox_service import get_proxmox_admin_for_cluster
 from app.config import CLUSTERS
