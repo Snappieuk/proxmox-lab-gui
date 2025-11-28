@@ -21,7 +21,6 @@ from app.config import (
     ADMIN_USERS,
     ADMIN_GROUP,
     MAPPINGS_FILE,
-    IP_CACHE_FILE,
     VM_CACHE_FILE,
     VM_CACHE_TTL,
     PROXMOX_CACHE_TTL,
@@ -260,39 +259,6 @@ def shutdown_executor() -> None:
     global _ip_lookup_executor
     _ip_lookup_executor.shutdown(wait=True)
 
-
-def _load_ip_cache() -> None:
-    """Load IP cache from JSON file."""
-    global _ip_cache, _ip_cache_loaded
-    if _ip_cache_loaded:
-        return
-    
-    if not os.path.exists(IP_CACHE_FILE):
-        _ip_cache = {}
-        _ip_cache_loaded = True
-        return
-    
-    try:
-        with open(IP_CACHE_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            # Keys are already strings in 'cluster_id:vmid' format
-            _ip_cache = data
-        logger.info("Loaded IP cache with %d entries", len(_ip_cache))
-    except Exception as e:
-        logger.warning("Failed to load IP cache: %s", e)
-        _ip_cache = {}
-    
-    _ip_cache_loaded = True
-
-def _save_ip_cache() -> None:
-    """Save IP cache to JSON file."""
-    try:
-        # Keys are already strings in 'cluster_id:vmid' format
-        with open(IP_CACHE_FILE, "w", encoding="utf-8") as f:
-            json.dump(_ip_cache, f, indent=2)
-        logger.debug("Saved IP cache with %d entries", len(_ip_cache))
-    except Exception as e:
-        logger.warning("Failed to save IP cache: %s", e)
 
 def _load_vm_cache() -> None:
     """Load VM cache from JSON file on startup for all clusters."""
@@ -1464,14 +1430,11 @@ def get_all_vms(skip_ips: bool = False, force_refresh: bool = False) -> List[Dic
     
     # If cache is valid and not forcing refresh, return cached data
     if not force_refresh and cache_valid and cached_vms is not None:
-        logger.info("get_all_vms: returning cached data for all clusters (age=%.1fs) - IPs already in cache", 
+        logger.info("get_all_vms: returning cached data for all clusters (age=%.1fs)", 
                    now - cached_ts)
         result = []
         for vm in cached_vms:
             result.append({**vm})
-        
-        # VMs from cache already have IPs from previous ARP scan, no need to re-scan
-        # Only re-scan if cache is old or if explicitly requested
         
         return result
 
