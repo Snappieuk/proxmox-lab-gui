@@ -2,6 +2,7 @@ flask
 flask-sock
 flask-sqlalchemy
 proxmoxer
+requests
 python-dotenv
 paramiko
 simple-websocket

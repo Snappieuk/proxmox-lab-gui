@@ -32,14 +32,32 @@ classes_bp = Blueprint('classes', __name__, url_prefix='/classes')
 
 
 def get_current_user():
-    """Get current logged-in user from database."""
+    """Get current logged-in user from database, or create admin user if needed."""
     username = session.get('user')
     if not username:
         return None
+    
     # Remove @pve suffix if present for local user lookup
     if '@' in username:
-        username = username.split('@')[0]
-    return get_user_by_username(username)
+        username_clean = username.split('@')[0]
+    else:
+        username_clean = username
+    
+    user = get_user_by_username(username_clean)
+    
+    # If no local user exists but they're a Proxmox admin, auto-create admin account
+    if not user:
+        from app.services.user_manager import is_admin_user
+        from app.services.class_service import create_local_user
+        
+        if is_admin_user(session.get('user')):
+            # Auto-create local admin account for Proxmox admins
+            logger.info(f"Auto-creating local admin account for Proxmox admin: {username_clean}")
+            user_id = create_local_user(username_clean, None, role='adminer')
+            if user_id:
+                user = get_user_by_username(username_clean)
+    
+    return user
 
 
 @classes_bp.route("")
