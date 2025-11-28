@@ -15,6 +15,10 @@ env/
 ip_cache.json
 vm_cache.json
 
+# Database files
+*.db
+lab_portal.db
+
 # IDE/Editor
 .idea/
 .vscode/

@@ -99,3 +99,42 @@ source venv/bin/activate
 pip install -r requirements.txt
 sudo systemctl restart proxmox-gui
 ```
+
+## Class-Based Lab Management
+
+This system supports a class-based lab management workflow similar to Azure Labs:
+
+### Features
+
+- **User Roles**: Three role types - `adminer` (full admin), `teacher` (can create/manage classes), `user` (student)
+- **Classes**: Teachers create classes linked to Proxmox VM templates
+- **VM Pools**: VMs are cloned from templates and assigned to students
+- **Invite Links**: Generate invite tokens (7-day expiry or never expire) for students to join
+- **Student VM Control**: Students can start/stop their assigned VM and revert to baseline
+- **Fast Revert**: Uses Proxmox snapshots for quick VM restoration
+
+### Database
+
+The system uses SQLite for persistent storage:
+- Users (with password hashing and roles)
+- Classes (linked to templates and teachers)
+- Templates (registered from Proxmox cluster 10.220.15.249)
+- VM Assignments (tracks which VMs belong to which classes/users)
+
+The database file is stored at `rdp-gen/lab_portal.db` and is created automatically on first run.
+
+### Workflow
+
+1. **Setup**: Admin creates teacher accounts by setting `role='teacher'`
+2. **Class Creation**: Teachers create classes and select a template from Proxmox
+3. **VM Pool**: Teachers add VMs to the class pool (clones template to multiple VMs)
+4. **Invite Students**: Generate an invite link and share with students
+5. **Student Join**: Students click invite link to auto-assign a VM
+6. **Lab Use**: Students start/stop their VM and can revert to baseline anytime
+7. **Push Updates**: Teachers can push updates to all class VMs (creates new baseline snapshot)
+
+### Migration from mappings.json
+
+The existing `mappings.json` system continues to work for legacy VM-to-user mappings.
+The new class-based system operates independently and uses the SQLite database.
+To migrate existing users, create local user accounts with matching usernames.

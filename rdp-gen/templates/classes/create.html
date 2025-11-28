@@ -1,0 +1,301 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1><i class="bi bi-plus-circle"></i> Create New Class</h1>
+        <p class="page-subtitle">Set up a new lab class with a VM template</p>
+    </div>
+</div>
+
+<div class="form-container">
+    <form id="create-class-form" class="form-panel">
+        <div class="form-group">
+            <label for="class-name">Class Name *</label>
+            <input type="text" id="class-name" name="name" required 
+                   placeholder="e.g., Introduction to Linux" maxlength="120">
+        </div>
+        
+        <div class="form-group">
+            <label for="class-description">Description</label>
+            <textarea id="class-description" name="description" rows="3"
+                      placeholder="Brief description of this class..."></textarea>
+        </div>
+        
+        <div class="form-group">
+            <label for="pool-size">VM Pool Size</label>
+            <input type="number" id="pool-size" name="pool_size" min="0" value="0"
+                   placeholder="Number of VMs to pre-create">
+            <small class="form-help">VMs can be created later if set to 0</small>
+        </div>
+        
+        <div class="form-group">
+            <label>Template (from cluster 10.220.15.249)</label>
+            <div id="template-loading" class="template-loading">
+                <i class="bi bi-hourglass-split"></i> Loading templates...
+            </div>
+            <div id="templates-container" class="templates-grid" style="display: none;">
+                <!-- Templates will be loaded here -->
+            </div>
+            <input type="hidden" id="template-id" name="template_id">
+        </div>
+        
+        <div class="form-actions">
+            <a href="{{ url_for('classes.classes_list') }}" class="btn-secondary">Cancel</a>
+            <button type="submit" class="btn-primary">
+                <i class="bi bi-check-lg"></i> Create Class
+            </button>
+        </div>
+    </form>
+</div>
+
+<style>
+.form-container {
+    max-width: 700px;
+    margin: 2rem auto;
+}
+
+.form-panel {
+    background: white;
+    border: 1px solid #e1dfdd;
+    border-radius: 8px;
+    padding: 2rem;
+}
+
+.form-group {
+    margin-bottom: 1.5rem;
+}
+
+.form-group label {
+    display: block;
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+    color: #323130;
+}
+
+.form-group input[type="text"],
+.form-group input[type="number"],
+.form-group textarea {
+    width: 100%;
+    padding: 0.75rem;
+    border: 1px solid #8a8886;
+    border-radius: 4px;
+    font-size: 0.95rem;
+}
+
+.form-group input:focus,
+.form-group textarea:focus {
+    outline: none;
+    border-color: #0078d4;
+    box-shadow: 0 0 0 2px rgba(0, 120, 212, 0.1);
+}
+
+.form-help {
+    display: block;
+    margin-top: 0.25rem;
+    font-size: 0.85rem;
+    color: #605e5c;
+}
+
+.form-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 1rem;
+    margin-top: 2rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid #e1dfdd;
+}
+
+.btn-primary, .btn-secondary {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.75rem 1.5rem;
+    border-radius: 4px;
+    font-size: 0.9rem;
+    cursor: pointer;
+    text-decoration: none;
+}
+
+.btn-primary {
+    background: #0078d4;
+    color: white;
+    border: none;
+}
+
+.btn-primary:hover {
+    background: #106ebe;
+}
+
+.btn-secondary {
+    background: #f3f2f1;
+    color: #323130;
+    border: 1px solid #8a8886;
+}
+
+.btn-secondary:hover {
+    background: #e1dfdd;
+}
+
+.template-loading {
+    padding: 2rem;
+    text-align: center;
+    color: #605e5c;
+}
+
+.templates-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 1rem;
+}
+
+.template-card {
+    border: 2px solid #e1dfdd;
+    border-radius: 6px;
+    padding: 1rem;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+}
+
+.template-card:hover {
+    border-color: #0078d4;
+    background: #f3f9fd;
+}
+
+.template-card.selected {
+    border-color: #0078d4;
+    background: #e8f4fd;
+}
+
+.template-card-name {
+    font-weight: 600;
+    margin-bottom: 0.25rem;
+}
+
+.template-card-info {
+    font-size: 0.85rem;
+    color: #605e5c;
+}
+
+.template-card-vmid {
+    font-size: 0.75rem;
+    color: #8a8886;
+}
+</style>
+
+<script>
+// Load templates when page loads
+document.addEventListener('DOMContentLoaded', async function() {
+    try {
+        const resp = await fetch('/api/classes/templates');
+        const data = await resp.json();
+        
+        if (!data.ok) {
+            document.getElementById('template-loading').innerHTML = 
+                '<i class="bi bi-exclamation-triangle"></i> Failed to load templates';
+            return;
+        }
+        
+        const container = document.getElementById('templates-container');
+        const templates = data.proxmox_templates || [];
+        
+        if (templates.length === 0) {
+            container.innerHTML = '<p class="form-help">No templates available on this cluster.</p>';
+        } else {
+            container.innerHTML = templates.map(t => `
+                <div class="template-card" data-vmid="${t.vmid}" onclick="selectTemplate(this, ${t.vmid})">
+                    <div class="template-card-name">${t.name}</div>
+                    <div class="template-card-info">${t.type.toUpperCase()} • ${t.node}</div>
+                    <div class="template-card-vmid">VMID: ${t.vmid}</div>
+                </div>
+            `).join('');
+        }
+        
+        document.getElementById('template-loading').style.display = 'none';
+        container.style.display = 'grid';
+        
+    } catch (e) {
+        console.error('Failed to load templates:', e);
+        document.getElementById('template-loading').innerHTML = 
+            '<i class="bi bi-exclamation-triangle"></i> Error loading templates';
+    }
+});
+
+function selectTemplate(card, vmid) {
+    // Deselect all
+    document.querySelectorAll('.template-card').forEach(c => c.classList.remove('selected'));
+    // Select this one
+    card.classList.add('selected');
+    document.getElementById('template-id').value = vmid;
+}
+
+// Handle form submission
+document.getElementById('create-class-form').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    
+    const name = document.getElementById('class-name').value.trim();
+    const description = document.getElementById('class-description').value.trim();
+    const poolSize = parseInt(document.getElementById('pool-size').value) || 0;
+    const templateVmid = document.getElementById('template-id').value;
+    
+    if (!name) {
+        alert('Please enter a class name.');
+        return;
+    }
+    
+    const submitBtn = this.querySelector('button[type="submit"]');
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Creating...';
+    
+    try {
+        // First register template if selected
+        let templateId = null;
+        if (templateVmid) {
+            const selectedCard = document.querySelector(`.template-card[data-vmid="${templateVmid}"]`);
+            const templateName = selectedCard ? selectedCard.querySelector('.template-card-name').textContent : `Template ${templateVmid}`;
+            
+            const templateResp = await fetch('/api/classes/templates', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    name: templateName,
+                    proxmox_vmid: parseInt(templateVmid)
+                })
+            });
+            const templateData = await templateResp.json();
+            if (templateData.ok && templateData.template) {
+                templateId = templateData.template.id;
+            }
+        }
+        
+        // Create the class
+        const resp = await fetch('/api/classes', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                name: name,
+                description: description,
+                pool_size: poolSize,
+                template_id: templateId
+            })
+        });
+        
+        const data = await resp.json();
+        
+        if (data.ok) {
+            window.location.href = '/classes/' + data.class.id;
+        } else {
+            alert('Failed to create class: ' + (data.error || 'Unknown error'));
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = '<i class="bi bi-check-lg"></i> Create Class';
+        }
+    } catch (e) {
+        console.error('Error creating class:', e);
+        alert('Error creating class: ' + e.message);
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = '<i class="bi bi-check-lg"></i> Create Class';
+    }
+});
+</script>
+
+{% endblock %}
