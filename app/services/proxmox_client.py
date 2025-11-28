@@ -1050,14 +1050,24 @@ def _enrich_vms_with_arp_ips(vms: List[Dict[str, Any]], force_sync: bool = False
             logger.debug("VM %d (%s) is %s - SKIPPED", 
                         vm["vmid"], vm["name"], vm.get("status"))
             continue
-        
+
         vmtype = vm.get("type")
+        # Always check IP cache for this VM
+        cached_ip = None
+        mac = _get_vm_mac(vm["node"], vm["vmid"], vm["type"])
+        if mac and mac in _arp_cache:
+            cached_ip = _arp_cache[mac]
+            if cached_ip:
+                vm["ip"] = cached_ip
+                lxc_with_ip_count += 1
+                logger.debug("VM %d (%s) has cached IP=%s - SKIP SCAN", vm["vmid"], vm["name"], cached_ip)
+                continue
+
         has_ip = vm.get("ip") and vm.get("ip") not in ("N/A", "Fetching...", "")
-        
-        # Include QEMU VMs (always use ARP)
+
+        # Include QEMU VMs (always use ARP if no cached IP)
         # Include LXC without IPs (DHCP case)
         if vmtype == "qemu" or (vmtype == "lxc" and not has_ip):
-            mac = _get_vm_mac(vm["node"], vm["vmid"], vm["type"])
             if mac:
                 vm_mac_map[vm["vmid"]] = mac
                 if vmtype == "qemu":
