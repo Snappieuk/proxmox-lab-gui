@@ -56,6 +56,10 @@ class SSHWebSocketHandler:
                 '-o', 'UserKnownHostsFile=/dev/null',
                 '-o', 'NumberOfPasswordPrompts=3',
                 '-o', 'PubkeyAuthentication=no',  # Disable key auth to force password
+                '-o', 'PreferredAuthentications=password',  # Only use password auth
+                '-o', 'PasswordAuthentication=yes',  # Enable password auth
+                '-o', 'BatchMode=no',  # Interactive mode
+                '-v',  # Verbose for debugging
                 f'{self.username}@{self.ip}'
             ]
             logger.info("Starting SSH with command: %s", ' '.join(ssh_cmd))
@@ -112,7 +116,7 @@ class SSHWebSocketHandler:
         """
         Background thread to read from SSH PTY and send to WebSocket.
         """
-        logger.debug("SSH read thread started")
+        logger.info("SSH read thread started")
         while self.running and self.master_fd:
             try:
                 # Use select to wait for data with timeout
@@ -123,7 +127,7 @@ class SSHWebSocketHandler:
                     if data:
                         # Send to WebSocket client
                         decoded = data.decode('utf-8', errors='replace')
-                        logger.debug("SSH output (%d bytes): %r", len(data), decoded[:100])
+                        logger.info("SSH output (%d bytes): %r", len(data), decoded[:200])
                         self.send_to_client(decoded)
                     else:
                         # EOF - SSH process closed
@@ -131,14 +135,15 @@ class SSHWebSocketHandler:
                         self.running = False
                         break
                         
-            except OSError:
+            except OSError as e:
                 # PTY closed
+                logger.info("OSError reading from SSH: %s", e)
                 break
             except Exception as e:
-                logger.debug("Error reading from SSH: %s", e)
+                logger.error("Error reading from SSH: %s", e, exc_info=True)
                 break
         
-        logger.debug("SSH read thread exiting")
+        logger.info("SSH read thread exiting")
     
     def send_to_client(self, data: str):
         """
