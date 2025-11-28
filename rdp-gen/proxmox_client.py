@@ -537,7 +537,6 @@ def _guess_category(raw: Dict[str, Any]) -> str:
     Determine OS category based on VM ostype field.
     
     - Checks 'ostype' field in VM data (from config)
-    - Falls back to name-based guessing if ostype not available
     - LXC: always 'linux'
     - QEMU with ostype containing 'win': 'windows'
     - Other QEMU: 'linux'
@@ -549,11 +548,6 @@ def _guess_category(raw: Dict[str, Any]) -> str:
     # Check ostype field from VM config
     ostype = (raw.get("ostype") or "").lower()
     if ostype and "win" in ostype:
-        return "windows"
-    
-    # Fallback to name-based detection if ostype not available
-    name = (raw.get("name") or "").lower()
-    if "win" in name or "windows" in name:
         return "windows"
 
     if vmtype == "qemu":
