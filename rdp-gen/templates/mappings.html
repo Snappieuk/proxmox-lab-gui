@@ -3,19 +3,82 @@
 {% block content %}
 <div class="page-header">
     <div>
-        <h1>User ↔ VM mappings</h1>
+        <h1>User ↔ VM Mappings</h1>
         <p class="page-subtitle">
-            Assign which VMs each Proxmox user (pve realm) is allowed to see/control.
+            Assign which VMs each Proxmox user can see and control.
         </p>
     </div>
 </div>
 
-{% if progressive_load %}
 <!-- Loading indicator -->
 <div id="mappings-loading" style="padding: 3rem 0; text-align: center;">
     <div class="spinner" style="margin: 0 auto 1rem;"></div>
     <p style="color: #666; font-size: 16px;">Loading mappings data...</p>
 </div>
+
+<div id="mappings-content" style="display: none;">
+    <div class="mapping-layout">
+        <!-- Left side: User selection + VM assignment -->
+        <div class="mapping-form-card">
+            <h2>Manage User Access</h2>
+
+            <div id="alert-container"></div>
+
+            <!-- User Selection -->
+            <label for="user-select">Select User</label>
+            <select id="user-select" class="form-control">
+                <option value="">Select a user…</option>
+            </select>
+
+            <!-- VM Selection Area (shown when user selected) -->
+            <div id="vm-selection-area" style="display: none; margin-top: 2rem; padding-top: 2rem; border-top: 1px solid #ddd;">
+                <h3 style="font-size: 16px; margin-bottom: 1rem;" id="selected-user-name"></h3>
+                
+                <!-- VM Checkboxes -->
+                <div style="margin-bottom: 1.5rem;">
+                    <label style="display: block; font-weight: 600; margin-bottom: 0.5rem;">
+                        Assign VMs
+                        <span style="font-weight: normal; color: #666; font-size: 13px;" id="selected-count">(0 selected)</span>
+                    </label>
+                    <p class="help-text" style="margin-bottom: 0.75rem;">
+                        Select VMs this user can access.
+                    </p>
+                    
+                    <!-- Search/Filter -->
+                    <input type="text" id="vm-search" placeholder="Search VMs by ID or name..." 
+                           style="width: 100%; padding: 0.5rem; border: 1px solid #ddd; border-radius: 4px; margin-bottom: 0.75rem;">
+                    
+                    <!-- Scrollable VM List -->
+                    <div class="vm-checkbox-container" id="vm-checkbox-container">
+                        <!-- Checkboxes populated here -->
+                    </div>
+                </div>
+
+                <!-- Confirm Button -->
+                <button id="confirm-btn" class="btn-primary" style="width: 100%;">
+                    Confirm Selection
+                </button>
+            </div>
+        </div>
+
+        <!-- Right side: Current mappings table -->
+        <div class="mapping-table-card">
+            <h2>Current Mappings</h2>
+            <table class="mapping-table">
+                <thead>
+                    <tr>
+                        <th>User</th>
+                        <th>Assigned VMs</th>
+                    </tr>
+                </thead>
+                <tbody id="mappings-tbody">
+                    <tr><td colspan="2">Loading...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
 <style>
 .spinner {
     width: 40px;
@@ -25,154 +88,104 @@
     border-radius: 50%;
     animation: spin 1s linear infinite;
 }
+
 @keyframes spin {
     0% { transform: rotate(0deg); }
     100% { transform: rotate(360deg); }
 }
+
+.form-control {
+    width: 100%;
+    padding: 0.5rem;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 14px;
+}
+
+.vm-checkbox-container {
+    max-height: 400px;
+    overflow-y: auto;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    padding: 0.75rem;
+    background: #fafafa;
+}
+
+.vm-checkbox-item {
+    display: flex;
+    align-items: center;
+    padding: 0.5rem;
+    margin-bottom: 0.25rem;
+    background: white;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.vm-checkbox-item:hover {
+    background: #f0f7ff;
+}
+
+.vm-checkbox-item input[type="checkbox"] {
+    margin-right: 0.75rem;
+    cursor: pointer;
+}
+
+.vm-checkbox-item label {
+    margin: 0;
+    cursor: pointer;
+    flex: 1;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.vm-id-badge {
+    display: inline-block;
+    background: #e3f2fd;
+    color: #1976d2;
+    padding: 0.15rem 0.5rem;
+    border-radius: 3px;
+    font-weight: 600;
+    font-size: 13px;
+    margin-right: 0.5rem;
+}
+
+.vm-cluster-badge {
+    display: inline-block;
+    background: #f3e5f5;
+    color: #7b1fa2;
+    padding: 0.15rem 0.4rem;
+    border-radius: 3px;
+    font-size: 11px;
+    margin-left: 0.5rem;
+}
+
+.alert {
+    padding: 0.75rem 1rem;
+    border-radius: 4px;
+    margin-bottom: 1rem;
+}
+
+.alert-success {
+    background: #d4edda;
+    border: 1px solid #c3e6cb;
+    color: #155724;
+}
+
+.alert-error {
+    background: #f8d7da;
+    border: 1px solid #f5c6cb;
+    color: #721c24;
+}
 </style>
 
-<div id="mappings-content" style="display: none;">
-{% endif %}
-
-<div class="mapping-layout">
-
-    <div class="mapping-form-card">
-        <h2>Manage User Access</h2>
-
-        {% if message %}
-            <div class="mapping-message">{{ message }}</div>
-        {% endif %}
-        {% if error %}
-            <div class="mapping-error">{{ error }}</div>
-        {% endif %}
-
-        <form method="post">
-            <label for="user">Select User</label>
-            <select id="user" name="user" onchange="this.form.submit()" required>
-                <option value="">Select a user…</option>
-                {% if not progressive_load %}
-                {% for u in users %}
-                    <option value="{{ u.userid }}" {% if selected_user == u.userid %}selected{% endif %}>{{ u.userid }}</option>
-                {% endfor %}
-                {% endif %}
-            </select>
-        </form>
-
-        {% if selected_user and not progressive_load %}
-        <div style="margin-top: 2rem; padding-top: 2rem; border-top: 1px solid #ddd;">
-            <h3 style="font-size: 16px; margin-bottom: 1rem;">{{ selected_user }}</h3>
-            
-            <!-- Admin Status -->
-            <div style="margin-bottom: 1.5rem;">
-                <label style="display: block; font-weight: 600; margin-bottom: 0.5rem;">Admin Access</label>
-                {% if selected_user in current_admins %}
-                    <div style="display: flex; align-items: center; gap: 0.5rem;">
-                        <span class="admin-badge">Admin User</span>
-                        {% if selected_user not in protected_admins %}
-                        <form method="post" action="/admin/mappings/remove-admin-form" style="margin: 0;">
-                            <input type="hidden" name="user" value="{{ selected_user }}">
-                            <button type="submit" class="btn-secondary" style="padding: 0.35rem 0.75rem; font-size: 13px;" onclick="return confirm('Remove admin access from {{ selected_user }}?')">Remove Admin Access</button>
-                        </form>
-                        {% else %}
-                        <span style="color: #666; font-size: 13px;">(Protected - defined in config)</span>
-                        {% endif %}
-                    </div>
-                {% else %}
-                    <form method="post" action="/admin/mappings/grant-admin-form" style="margin: 0;">
-                        <input type="hidden" name="user" value="{{ selected_user }}">
-                        <button type="submit" class="btn-primary" style="padding: 0.5rem 1rem;">Grant Admin Access</button>
-                        <p class="help-text" style="margin-top: 0.5rem;">Admin users can see and control all VMs</p>
-                    </form>
-                {% endif %}
-            </div>
-
-            <!-- VM Mappings -->
-            <div>
-                <label style="display: block; font-weight: 600; margin-bottom: 0.5rem;">Assigned VMs</label>
-                {% if selected_user in current_admins %}
-                    <p style="color: #666; font-size: 13px; margin-bottom: 1rem;">Admin users have access to all VMs. Specific VM assignments are not needed.</p>
-                {% endif %}
-                
-                <form method="post" action="/admin/mappings/update-vms">
-                    <input type="hidden" name="user" value="{{ selected_user }}">
-                    <input type="text" id="vmids" name="vmids"
-                           placeholder="e.g. 101,102,103"
-                           value="{% if mapping.get(selected_user) %}{{ mapping.get(selected_user)|join(',') }}{% endif %}"
-                           style="width: 100%; padding: 0.5rem; border: 1px solid #ddd; border-radius: 4px; margin-bottom: 0.5rem;">
-                    <p class="help-text">Enter VM IDs separated by commas. Leave empty to remove all mappings.</p>
-                    <button type="submit" class="btn-primary mapping-btn">Update VM Assignments</button>
-                </form>
-
-                {% if mapping.get(selected_user) %}
-                <div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid #eee;">
-                    <p style="font-size: 13px; color: #666; margin-bottom: 0.5rem;">Currently assigned VMs:</p>
-                    <div style="display: flex; flex-wrap: wrap; gap: 0.5rem;">
-                    {% for vmid in mapping.get(selected_user) %}
-                        <span class="vm-mapping-item">
-                            {{ vmid }} ({{ vm_id_to_name.get(vmid, 'unknown') }})
-                            <form method="post" action="/admin/mappings/unassign-form" style="display: inline; margin: 0;">
-                                <input type="hidden" name="user" value="{{ selected_user }}">
-                                <input type="hidden" name="vmid" value="{{ vmid }}">
-                                <button type="submit" class="vm-remove-btn" title="Remove this VM" onclick="return confirm('Remove VM {{ vmid }} from {{ selected_user }}?')">&times;</button>
-                            </form>
-                        </span>
-                    {% endfor %}
-                    </div>
-                </div>
-                {% endif %}
-            </div>
-        </div>
-        {% endif %}
-    </div>
-
-    <div class="mapping-table-card">
-        <h2>Current mappings</h2>
-        <table class="mapping-table">
-            <thead>
-            <tr>
-                <th>User</th>
-                <th>VM IDs</th>
-            </tr>
-            </thead>
-            <tbody id="mappings-tbody">
-            {% if not progressive_load %}
-            {% if mapping %}
-                {% for user_id, vmids in mapping.items() %}
-                    <tr>
-                        <td>{{ user_id }}</td>
-                        <td>
-                            {% for vmid in vmids %}
-                                <span class="vm-mapping-item">
-                                    {{ vmid }} ({{ vm_id_to_name.get(vmid, 'unknown') }})
-                                    <button class="vm-remove-btn" onclick="unassignVM('{{ user_id }}', {{ vmid }})" title="Remove this VM">&times;</button>
-                                </span>{% if not loop.last %}, {% endif %}
-                            {% endfor %}
-                        </td>
-                    </tr>
-                {% endfor %}
-            {% else %}
-                <tr><td colspan="2">No mappings defined.</td></tr>
-            {% endif %}
-            {% endif %}
-            </tbody>
-        </table>
-
-        <p class="help-text" id="vm-list">
-            {% if not progressive_load %}
-            Existing VMs:
-            {% for vmid in all_vm_ids %}
-                {{ vmid }} ({{ vm_id_to_name.get(vmid, 'unknown') }}){% if not loop.last %}, {% endif %}
-            {% endfor %}
-            {% endif %}
-        </p>
-    </div>
-
-</div>
-
-{% if progressive_load %}
-</div>
-
 <script>
+let allVMs = [];
+let allUsers = [];
+let currentMappings = {};
+let selectedUser = '';
+
 async function loadMappingsData() {
     try {
         const resp = await fetch("/api/mappings");
@@ -182,58 +195,67 @@ async function loadMappingsData() {
         }
         const data = await resp.json();
         
+        allVMs = data.vms || [];
+        allUsers = data.users || [];
+        currentMappings = data.mapping || {};
+        
         // Populate user dropdown
-        const userSelect = document.getElementById('user');
-        data.users.forEach(u => {
+        const userSelect = document.getElementById('user-select');
+        userSelect.innerHTML = '<option value="">Select a user…</option>';
+        allUsers.forEach(u => {
             const option = document.createElement('option');
             option.value = u.userid;
             option.textContent = u.userid;
             userSelect.appendChild(option);
         });
         
-        // Populate mappings table
-        const tbody = document.getElementById('mappings-tbody');
-        tbody.innerHTML = '';
-        
-        if (Object.keys(data.mapping).length > 0) {
-            Object.entries(data.mapping).forEach(([userId, vmids]) => {
-                const tr = document.createElement('tr');
-                const tdUser = document.createElement('td');
-                tdUser.textContent = userId;
-                
-                const tdVMs = document.createElement('td');
-                const vmNames = vmids.map(vmid => 
-                    `${vmid} (${data.vm_id_to_name[vmid] || 'unknown'})`
-                ).join(', ');
-                tdVMs.textContent = vmNames;
-                
-                tr.appendChild(tdUser);
-                tr.appendChild(tdVMs);
-                tbody.appendChild(tr);
-            });
-        } else {
-            const tr = document.createElement('tr');
-            const td = document.createElement('td');
-            td.colSpan = 2;
-            td.textContent = 'No mappings defined.';
-            tr.appendChild(td);
-            tbody.appendChild(tr);
-        }
-        
-        // Populate VM list
-        const vmList = document.getElementById('vm-list');
-        const vmListText = 'Existing VMs: ' + data.all_vm_ids.map(vmid => 
-            `${vmid} (${data.vm_id_to_name[vmid] || 'unknown'})`
-        ).join(', ');
-        vmList.textContent = vmListText;
+        // Render mappings table
+        renderMappingsTable();
         
         // Hide loading, show content
         document.getElementById('mappings-loading').style.display = 'none';
         document.getElementById('mappings-content').style.display = 'block';
     } catch (e) {
         console.error("Failed to load mappings:", e);
-        showError("Error loading mappings data");
+        showError("Error loading mappings data: " + e.message);
     }
+}
+
+function renderMappingsTable() {
+    const tbody = document.getElementById('mappings-tbody');
+    tbody.innerHTML = '';
+    
+    if (Object.keys(currentMappings).length === 0) {
+        tbody.innerHTML = '<tr><td colspan="2" style="text-align: center; color: #666;">No mappings defined.</td></tr>';
+        return;
+    }
+    
+    Object.entries(currentMappings).forEach(([userId, vmids]) => {
+        const tr = document.createElement('tr');
+        
+        const tdUser = document.createElement('td');
+        tdUser.textContent = userId;
+        tr.appendChild(tdUser);
+        
+        const tdVMs = document.createElement('td');
+        vmids.forEach((vmid, idx) => {
+            const vm = allVMs.find(v => v.vmid === vmid);
+            const vmName = vm ? vm.name : 'unknown';
+            const clusterName = vm ? vm.cluster_name : '';
+            
+            const span = document.createElement('span');
+            span.className = 'vm-mapping-item';
+            span.innerHTML = `${vmid} (${vmName})${clusterName ? ` <span class="vm-cluster-badge">${clusterName}</span>` : ''}`;
+            tdVMs.appendChild(span);
+            
+            if (idx < vmids.length - 1) {
+                tdVMs.appendChild(document.createTextNode(', '));
+            }
+        });
+        tr.appendChild(tdVMs);
+        
+        tbody.appendChild(tr);
+    });
 }
 
 function showError(message) {
@@ -241,85 +263,139 @@ function showError(message) {
     loading.innerHTML = `<p style="color: #d32f2f; font-size: 16px;">${message}</p>`;
 }
 
+function showAlert(message, type = 'success') {
+    const container = document.getElementById('alert-container');
+    const alert = document.createElement('div');
+    alert.className = `alert alert-${type}`;
+    alert.textContent = message;
+    container.appendChild(alert);
+    
+    setTimeout(() => {
+        alert.remove();
+    }, 5000);
+}
+
+// User selection handler
+document.addEventListener('DOMContentLoaded', () => {
+    const userSelect = document.getElementById('user-select');
+    const vmSelectionArea = document.getElementById('vm-selection-area');
+    const selectedUserName = document.getElementById('selected-user-name');
+    const vmCheckboxContainer = document.getElementById('vm-checkbox-container');
+    const vmSearch = document.getElementById('vm-search');
+    const confirmBtn = document.getElementById('confirm-btn');
+    const selectedCount = document.getElementById('selected-count');
+    
+    userSelect.addEventListener('change', (e) => {
+        selectedUser = e.target.value;
+        
+        if (!selectedUser) {
+            vmSelectionArea.style.display = 'none';
+            return;
+        }
+        
+        selectedUserName.textContent = selectedUser;
+        vmSelectionArea.style.display = 'block';
+        
+        // Render VM checkboxes
+        renderVMCheckboxes();
+        updateSelectedCount();
+    });
+    
+    vmSearch.addEventListener('input', (e) => {
+        renderVMCheckboxes(e.target.value.toLowerCase());
+    });
+    
+    confirmBtn.addEventListener('click', async () => {
+        const checkboxes = vmCheckboxContainer.querySelectorAll('input[type="checkbox"]:checked');
+        const selectedVMIds = Array.from(checkboxes).map(cb => parseInt(cb.value));
+        
+        confirmBtn.disabled = true;
+        confirmBtn.textContent = 'Saving...';
+        
+        try {
+            const resp = await fetch('/api/mappings/update', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    user: selectedUser,
+                    vmids: selectedVMIds
+                })
+            });
+            
+            const data = await resp.json();
+            
+            if (data.ok) {
+                currentMappings[selectedUser] = data.mapping;
+                if (data.mapping.length === 0) {
+                    delete currentMappings[selectedUser];
+                }
+                renderMappingsTable();
+                showAlert(`Successfully updated mappings for ${selectedUser}`, 'success');
+            } else {
+                showAlert(`Failed: ${data.error}`, 'error');
+            }
+        } catch (e) {
+            showAlert(`Error: ${e.message}`, 'error');
+        } finally {
+            confirmBtn.disabled = false;
+            confirmBtn.textContent = 'Confirm Selection';
+        }
+    });
+});
+
+function renderVMCheckboxes(searchTerm = '') {
+    const container = document.getElementById('vm-checkbox-container');
+    const userMappings = currentMappings[selectedUser] || [];
+    
+    container.innerHTML = '';
+    
+    // Filter VMs by search term
+    const filteredVMs = allVMs.filter(vm => {
+        if (!searchTerm) return true;
+        const vmidStr = vm.vmid.toString();
+        const vmName = (vm.name || '').toLowerCase();
+        return vmidStr.includes(searchTerm) || vmName.includes(searchTerm);
+    });
+    
+    if (filteredVMs.length === 0) {
+        container.innerHTML = '<p style="color: #666; text-align: center; padding: 1rem;">No VMs found.</p>';
+        return;
+    }
+    
+    filteredVMs.forEach(vm => {
+        const div = document.createElement('div');
+        div.className = 'vm-checkbox-item';
+        
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.value = vm.vmid;
+        checkbox.id = `vm-${vm.vmid}`;
+        checkbox.checked = userMappings.includes(vm.vmid);
+        checkbox.addEventListener('change', updateSelectedCount);
+        
+        const label = document.createElement('label');
+        label.htmlFor = `vm-${vm.vmid}`;
+        label.innerHTML = `
+            <span>
+                <span class="vm-id-badge">${vm.vmid}</span>
+                ${vm.name}
+            </span>
+            <span class="vm-cluster-badge">${vm.cluster_name || vm.cluster_id}</span>
+        `;
+        
+        div.appendChild(checkbox);
+        div.appendChild(label);
+        container.appendChild(div);
+    });
+}
+
+function updateSelectedCount() {
+    const container = document.getElementById('vm-checkbox-container');
+    const checked = container.querySelectorAll('input[type="checkbox"]:checked').length;
+    document.getElementById('selected-count').textContent = `(${checked} selected)`;
+}
+
 window.addEventListener('load', loadMappingsData);
-</script>
-{% endif %}
-<script>
-function unassignVM(user, vmid) {
-    if (!confirm(`Remove VM ${vmid} from ${user}?`)) {
-        return;
-    }
-    
-    fetch('/admin/mappings/unassign', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ user: user, vmid: vmid })
-    })
-    .then(resp => resp.json())
-    .then(data => {
-        if (data.ok) {
-            location.reload();
-        } else {
-            alert('Failed to unassign VM: ' + (data.error || 'Unknown error'));
-        }
-    })
-    .catch(err => {
-        alert('Failed to unassign VM: ' + err);
-    });
-}
-
-function unassignVM(user, vmid) {
-    if (!confirm(`Remove VM ${vmid} from ${user}?`)) {
-        return;
-    }
-    
-    fetch('/admin/mappings/unassign', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ user: user, vmid: vmid })
-    })
-    .then(resp => resp.json())
-    .then(data => {
-        if (data.ok) {
-            location.reload();
-        } else {
-            alert('Failed to unassign VM: ' + (data.error || 'Unknown error'));
-        }
-    })
-    .catch(err => {
-        alert('Failed to unassign VM: ' + err);
-    });
-}
-
-function removeAdmin(user) {
-    if (!confirm(`Remove admin access from ${user}?`)) {
-        return;
-    }
-    
-    fetch('/admin/mappings/remove-admin', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ user: user })
-    })
-    .then(resp => resp.json())
-    .then(data => {
-        if (data.ok) {
-            location.reload();
-        } else {
-            alert('Failed to remove admin: ' + (data.error || 'Unknown error'));
-        }
-    })
-    .catch(err => {
-        alert('Failed to remove admin: ' + err);
-    });
-}
 </script>
 
 {% endblock %}
-

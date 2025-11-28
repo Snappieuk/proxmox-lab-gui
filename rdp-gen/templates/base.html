@@ -54,6 +54,15 @@
                    href="{{ url_for('admin_probe') }}">Proxmox probe</a>
             {% endif %}
     {% endif %}
+    
+    {% if session.get("user") and is_admin %}
+    <div class="sidebar-settings">
+        <a class="sidebar-link sidebar-link-settings {% if request.endpoint == 'admin_settings' %}sidebar-link-active{% endif %}"
+           href="{{ url_for('admin_settings') }}">
+            <i class="bi bi-gear-fill"></i> Settings
+        </a>
+    </div>
+    {% endif %}
 </nav>
 
 

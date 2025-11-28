@@ -159,6 +159,42 @@ def get_proxmox_admin():
     return _proxmox_connections[cluster_id]
 
 
+def get_cluster_config() -> List[Dict[str, Any]]:
+    """Get current cluster configuration."""
+    return CLUSTERS
+
+
+def save_cluster_config(clusters: List[Dict[str, Any]]) -> None:
+    """Save cluster configuration to JSON file and update runtime config.
+    
+    Persists changes across restarts by writing to clusters.json.
+    """
+    global CLUSTERS
+    import config
+    from config import CLUSTER_CONFIG_FILE
+    
+    # Update runtime config
+    CLUSTERS.clear()
+    CLUSTERS.extend(clusters)
+    config.CLUSTERS = CLUSTERS
+    
+    # Write to JSON file for persistence
+    try:
+        with open(CLUSTER_CONFIG_FILE, "w", encoding="utf-8") as f:
+            json.dump(clusters, f, indent=2)
+        logger.info(f"Saved cluster configuration to {CLUSTER_CONFIG_FILE}")
+    except Exception as e:
+        logger.error(f"Failed to write cluster config file: {e}")
+        raise
+    
+    # Clear all existing connections to force reconnection with new config
+    global _proxmox_connections
+    with _proxmox_lock:
+        _proxmox_connections.clear()
+    
+    logger.info(f"Updated cluster configuration with {len(clusters)} cluster(s)")
+
+
 def _create_proxmox_client():
     """Create a new Proxmox client for thread-local use.
     
@@ -197,9 +233,10 @@ _cluster_cache_data: Dict[str, Optional[List[Dict[str, Any]]]] = {}
 _cluster_cache_ts: Dict[str, float] = {}
 _cluster_cache_lock = threading.Lock()
 
-# IP address cache: vmid -> {"ip": "x.x.x.x", "timestamp": unix_time}
+# IP address cache: "cluster_id:vmid" -> {"ip": "x.x.x.x", "timestamp": unix_time}
 # Stored in JSON file for persistence across restarts
-_ip_cache: Dict[int, Dict[str, Any]] = {}
+# Cache key format changed to include cluster_id to avoid VMID collisions between clusters
+_ip_cache: Dict[str, Dict[str, Any]] = {}
 _ip_cache_loaded = False
 IP_CACHE_TTL = 3600  # 1 hour (much longer since we validate on use)
 
@@ -246,8 +283,8 @@ def _load_ip_cache() -> None:
     try:
         with open(IP_CACHE_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
-            # Convert string keys back to int
-            _ip_cache = {int(k): v for k, v in data.items()}
+            # Keys are already strings in 'cluster_id:vmid' format
+            _ip_cache = data
         logger.info("Loaded IP cache with %d entries", len(_ip_cache))
     except Exception as e:
         logger.warning("Failed to load IP cache: %s", e)
@@ -258,10 +295,9 @@ def _load_ip_cache() -> None:
 def _save_ip_cache() -> None:
     """Save IP cache to JSON file."""
     try:
-        # Convert int keys to strings for JSON
-        data = {str(k): v for k, v in _ip_cache.items()}
+        # Keys are already strings in 'cluster_id:vmid' format
         with open(IP_CACHE_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
+            json.dump(_ip_cache, f, indent=2)
         logger.debug("Saved IP cache with %d entries", len(_ip_cache))
     except Exception as e:
         logger.warning("Failed to save IP cache: %s", e)
@@ -461,12 +497,13 @@ def invalidate_cluster_cache() -> None:
         _cluster_cache_ts[cluster_id] = 0.0
     logger.debug("Invalidated cluster cache for %s", cluster_id)
 
-def _get_cached_ip(vmid: int) -> Optional[str]:
+def _get_cached_ip(cluster_id: str, vmid: int) -> Optional[str]:
     """Get IP from persistent cache if not expired. Thread-safe."""
     _load_ip_cache()
+    cache_key = f"{cluster_id}:{vmid}"
     with _ip_cache_lock:
-        if vmid in _ip_cache:
-            entry = _ip_cache[vmid]
+        if cache_key in _ip_cache:
+            entry = _ip_cache[cache_key]
             ip = entry.get("ip")
             ts = entry.get("timestamp", 0)
             if time.time() - ts < IP_CACHE_TTL:
@@ -474,7 +511,7 @@ def _get_cached_ip(vmid: int) -> Optional[str]:
     return None
 
 
-def _get_cached_ips_batch(vmids: List[int]) -> Dict[int, str]:
+def _get_cached_ips_batch(cluster_id: str, vmids: List[int]) -> Dict[int, str]:
     """Get multiple IPs from cache in a single lock acquisition.
     
     More efficient than calling _get_cached_ip() in a loop for many VMs.
@@ -489,8 +526,9 @@ def _get_cached_ips_batch(vmids: List[int]) -> Dict[int, str]:
     
     with _ip_cache_lock:
         for vmid in vmids:
-            if vmid in _ip_cache:
-                entry = _ip_cache[vmid]
+            cache_key = f"{cluster_id}:{vmid}"
+            if cache_key in _ip_cache:
+                entry = _ip_cache[cache_key]
                 ip = entry.get("ip")
                 ts = entry.get("timestamp", 0)
                 if ip and now - ts < IP_CACHE_TTL:
@@ -499,28 +537,30 @@ def _get_cached_ips_batch(vmids: List[int]) -> Dict[int, str]:
     return results
 
 
-def _cache_ip(vmid: int, ip: Optional[str]) -> None:
+def _cache_ip(cluster_id: str, vmid: int, ip: Optional[str]) -> None:
     """Store IP in persistent cache. Thread-safe."""
     _load_ip_cache()
     if ip:
+        cache_key = f"{cluster_id}:{vmid}"
         with _ip_cache_lock:
-            _ip_cache[vmid] = {
+            _ip_cache[cache_key] = {
                 "ip": ip,
                 "timestamp": time.time()
             }
         _save_ip_cache()
 
 
-def _clear_vm_ip_cache(vmid: int) -> None:
+def _clear_vm_ip_cache(cluster_id: str, vmid: int) -> None:
     """Clear IP cache for specific VM. Thread-safe."""
     _load_ip_cache()
+    cache_key = f"{cluster_id}:{vmid}"
     with _ip_cache_lock:
-        if vmid in _ip_cache:
-            del _ip_cache[vmid]
-            logger.debug("Cleared IP cache for VM %d", vmid)
+        if cache_key in _ip_cache:
+            del _ip_cache[cache_key]
+            logger.debug("Cleared IP cache for VM %s:%d", cluster_id, vmid)
     _save_ip_cache()
 
-def verify_vm_ip(node: str, vmid: int, vmtype: str, cached_ip: str) -> Optional[str]:
+def verify_vm_ip(cluster_id: str, node: str, vmid: int, vmtype: str, cached_ip: str) -> Optional[str]:
     """Verify cached IP is still correct, return updated IP if different.
     
     This does a quick check without blocking. Returns:
@@ -531,12 +571,12 @@ def verify_vm_ip(node: str, vmid: int, vmtype: str, cached_ip: str) -> Optional[
     try:
         current_ip = _lookup_vm_ip(node, vmid, vmtype)
         if current_ip and current_ip != cached_ip:
-            logger.info("VM %d IP changed: %s -> %s", vmid, cached_ip, current_ip)
-            _cache_ip(vmid, current_ip)
+            logger.info("VM %s:%d IP changed: %s -> %s", cluster_id, vmid, cached_ip, current_ip)
+            _cache_ip(cluster_id, vmid, current_ip)
             return current_ip
         return cached_ip
     except Exception as e:
-        logger.debug("Failed to verify IP for VM %d: %s", vmid, e)
+        logger.debug("Failed to verify IP for VM %s:%d: %s", cluster_id, vmid, e)
         return cached_ip  # Return cached IP if verification fails
 
 def _save_ip_to_proxmox(node: str, vmid: int, vmtype: str, ip: Optional[str]) -> None:
@@ -813,7 +853,10 @@ def lookup_ips_parallel(vms: List[Dict[str, Any]]) -> Dict[int, str]:
     """
     # Get all vmids and batch-check cache (more efficient than per-VM checks)
     all_vmids = [int(vm["vmid"]) for vm in vms if vm.get("vmid") is not None]
-    cached_ips = _get_cached_ips_batch(all_vmids)
+    
+    # Get cluster_id from first VM (all VMs in batch should be from same cluster)
+    cluster_id = vms[0].get("cluster_id", "cluster1") if vms else "cluster1"
+    cached_ips = _get_cached_ips_batch(cluster_id, all_vmids)
     
     # Filter VMs that need IP lookup (running QEMU VMs or all LXC containers)
     vms_needing_lookup = []
@@ -856,7 +899,10 @@ def lookup_ips_parallel(vms: List[Dict[str, Any]]) -> Dict[int, str]:
             vmid, ip = future.result(timeout=30)
             if ip:
                 results[vmid] = ip
-                _cache_ip(vmid, ip)
+                # Extract cluster_id from the vm dict
+                vm = futures[future]
+                cluster_id = vm.get("cluster_id", "cluster1")
+                _cache_ip(cluster_id, vmid, ip)
         except Exception as e:
             vm = futures[future]
             logger.debug("Parallel IP lookup failed for VM %s: %s", vm.get("vmid"), e)
@@ -893,7 +939,9 @@ def _build_vm_dict(raw: Dict[str, Any], skip_ip: bool = False) -> Dict[str, Any]
     ip = None
     if not skip_ip:
         # First: Check memory cache
-        cached_ip = _get_cached_ip(vmid)
+        # Note: cluster_id should be in raw dict, fallback to cluster1 for backward compat
+        cluster_id = raw.get("cluster_id", "cluster1")
+        cached_ip = _get_cached_ip(cluster_id, vmid)
         if cached_ip:
             # Validate cached IP for running VMs to detect IP changes
             if status == "running" and vmtype == "qemu":
@@ -908,7 +956,7 @@ def _build_vm_dict(raw: Dict[str, Any], skip_ip: bool = False) -> Dict[str, Any]
             # LXC containers: network config API
             ip = _lookup_vm_ip(node, vmid, vmtype)
             if ip:
-                _cache_ip(vmid, ip)
+                _cache_ip(cluster_id, vmid, ip)
             # If no IP from API and container is running, ARP scan will find it (DHCP case)
         
         # For running VMs/containers without IPs:
@@ -1280,6 +1328,103 @@ def get_user_vm_map() -> Dict[str, List[int]]:
     return _load_mapping()
 
 
+def save_user_vm_map(mapping: Dict[str, List[int]]) -> None:
+    """
+    Save the entire user-VM mapping dictionary.
+    
+    Thread-safe write-through to disk.
+    """
+    _save_mapping(mapping)
+
+
+def get_all_vm_ids_and_names() -> List[Dict[str, Any]]:
+    """
+    Get lightweight VM list (ID, name, cluster, node only - no IP lookups).
+    
+    Much faster than get_all_vms() because it skips expensive IP address lookups.
+    Used by the mappings page where we only need to display VM IDs and names.
+    
+    Returns: List of {vmid, name, cluster_id, node}
+    """
+    results = []
+    
+    for cluster in CLUSTERS:
+        cluster_id = cluster["id"]
+        cluster_name = cluster["name"]
+        try:
+            proxmox = get_proxmox_admin_for_cluster(cluster_id)
+            
+            # Try cluster resources API first (fastest)
+            try:
+                resources = proxmox.cluster.resources.get(type="vm") or []
+                for vm in resources:
+                    # Skip templates
+                    if vm.get("template") == 1:
+                        continue
+                    
+                    node = vm.get("node")
+                    if VALID_NODES and node not in VALID_NODES:
+                        continue
+                    
+                    results.append({
+                        "vmid": int(vm["vmid"]),
+                        "name": vm.get("name", f"vm-{vm['vmid']}"),
+                        "cluster_id": cluster_id,
+                        "cluster_name": cluster_name,
+                        "node": node,
+                    })
+                continue
+            except Exception as e:
+                logger.warning("Cluster resources API failed for %s, using node queries: %s", cluster_name, e)
+            
+            # Fallback: per-node queries
+            nodes = proxmox.nodes.get() or []
+            for node_data in nodes:
+                node_name = node_data["node"]
+                
+                # Skip nodes not in VALID_NODES filter
+                if VALID_NODES and node_name not in VALID_NODES:
+                    continue
+                
+                # Get QEMU VMs
+                try:
+                    qemu_vms = proxmox.nodes(node_name).qemu.get()
+                    for vm in qemu_vms:
+                        # Skip templates
+                        if vm.get("template") == 1:
+                            continue
+                        results.append({
+                            "vmid": int(vm["vmid"]),
+                            "name": vm.get("name", f"vm-{vm['vmid']}"),
+                            "cluster_id": cluster_id,
+                            "cluster_name": cluster_name,
+                            "node": node_name,
+                        })
+                except Exception as e:
+                    logger.warning("Failed to fetch QEMU VMs from %s/%s: %s", cluster_id, node_name, e)
+                
+                # Get LXC containers
+                try:
+                    lxc_vms = proxmox.nodes(node_name).lxc.get()
+                    for vm in lxc_vms:
+                        results.append({
+                            "vmid": int(vm["vmid"]),
+                            "name": vm.get("name", f"ct-{vm['vmid']}"),
+                            "cluster_id": cluster_id,
+                            "cluster_name": cluster_name,
+                            "node": node_name,
+                        })
+                except Exception as e:
+                    logger.warning("Failed to fetch LXC containers from %s/%s: %s", cluster_id, node_name, e)
+        
+        except Exception as e:
+            logger.error("Failed to fetch VMs from cluster %s: %s", cluster_id, e)
+    
+    # Sort by vmid
+    results.sort(key=lambda x: x["vmid"])
+    return results
+
+
 def set_user_vm_mapping(user: str, vmids: List[int]) -> None:
     """
     Update mapping for one user. Empty list removes mapping.
@@ -1529,21 +1674,21 @@ def remove_user_from_admin_group(user: str) -> bool:
         return False
 
 
-def get_vm_ip(vmid: int, node: str, vmtype: str) -> Optional[str]:
+def get_vm_ip(cluster_id: str, vmid: int, node: str, vmtype: str) -> Optional[str]:
     """
     Get IP address for a specific VM (for lazy loading).
     
     Returns IP from cache if available, otherwise performs API lookup.
     """
     # Check cache first
-    ip = _get_cached_ip(vmid)
+    ip = _get_cached_ip(cluster_id, vmid)
     if ip:
         return ip
     
     # Lookup from API
     ip = _lookup_vm_ip(node, vmid, vmtype)
     if ip:
-        _cache_ip(vmid, ip)
+        _cache_ip(cluster_id, vmid, ip)
     
     return ip
 
@@ -1683,6 +1828,7 @@ def start_vm(vm: Dict[str, Any]) -> None:
     vmid = int(vm["vmid"])
     node = vm["node"]
     vmtype = vm.get("type", "qemu")
+    cluster_id = vm.get("cluster_id", "cluster1")
 
     try:
         if vmtype == "lxc":
@@ -1693,7 +1839,7 @@ def start_vm(vm: Dict[str, Any]) -> None:
         logger.exception("failed to start vm %s/%s: %s", node, vmid, e)
 
     _invalidate_vm_cache()
-    _clear_vm_ip_cache(vmid)  # Clear IP cache - VM might get new IP on boot
+    _clear_vm_ip_cache(cluster_id, vmid)  # Clear IP cache - VM might get new IP on boot
     invalidate_arp_cache()  # Force fresh network scan to discover new IP
 
 
@@ -1701,6 +1847,7 @@ def shutdown_vm(vm: Dict[str, Any]) -> None:
     vmid = int(vm["vmid"])
     node = vm["node"]
     vmtype = vm.get("type", "qemu")
+    cluster_id = vm.get("cluster_id", "cluster1")
 
     try:
         if vmtype == "lxc":
@@ -1713,7 +1860,7 @@ def shutdown_vm(vm: Dict[str, Any]) -> None:
         logger.exception("failed to shutdown vm %s/%s: %s", node, vmid, e)
 
     _invalidate_vm_cache()
-    _clear_vm_ip_cache(vmid)  # Clear IP cache - VM no longer has IP when stopped
+    _clear_vm_ip_cache(cluster_id, vmid)  # Clear IP cache - VM no longer has IP when stopped
     invalidate_arp_cache()  # Force fresh network scan to update ARP table
 
 

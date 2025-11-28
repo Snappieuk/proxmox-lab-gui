@@ -22,6 +22,17 @@ CLUSTERS = [
     },
 ]
 
+# Load cluster config from JSON file if it exists (overrides defaults above)
+CLUSTER_CONFIG_FILE = os.getenv("CLUSTER_CONFIG_FILE") or os.path.join(os.path.dirname(__file__), "clusters.json")
+if os.path.exists(CLUSTER_CONFIG_FILE):
+    try:
+        import json
+        with open(CLUSTER_CONFIG_FILE, "r", encoding="utf-8") as f:
+            CLUSTERS = json.load(f)
+    except Exception as e:
+        print(f"Warning: Failed to load cluster config from {CLUSTER_CONFIG_FILE}: {e}")
+        # Keep defaults if loading fails
+
 # Legacy single-cluster config (deprecated - kept for backwards compatibility)
 PVE_HOST        = os.getenv("PVE_HOST", "10.220.15.249")
 PVE_ADMIN_USER  = os.getenv("PVE_ADMIN_USER", "root@pam")  # admin/service account
@@ -50,6 +61,9 @@ ADMIN_GROUP = os.getenv("ADMIN_GROUP", "adminers")   # set to None to disable gr
 
 # Where per-user VM mappings are stored (JSON file on disk)
 MAPPINGS_FILE = os.getenv("MAPPINGS_FILE") or os.path.join(os.path.dirname(__file__), "mappings.json")
+
+# Cluster configuration file (JSON file on disk)
+CLUSTER_CONFIG_FILE = os.getenv("CLUSTER_CONFIG_FILE") or os.path.join(os.path.dirname(__file__), "clusters.json")
 
 # IP address cache file (persistent storage)
 IP_CACHE_FILE = os.getenv("IP_CACHE_FILE") or os.path.join(os.path.dirname(__file__), "ip_cache.json")

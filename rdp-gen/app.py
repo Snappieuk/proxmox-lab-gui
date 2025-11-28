@@ -47,6 +47,8 @@ from proxmox_client import (
     create_pve_user,
     verify_vm_ip,
     invalidate_cluster_cache,
+    save_cluster_config,
+    get_cluster_config,
 )
 
 import re
@@ -501,6 +503,13 @@ def admin_probe():
     return jsonify(info)
 
 
+@app.route("/admin/settings")
+@admin_required
+def admin_settings():
+    """Settings page for cluster configuration."""
+    return render_template("settings.html")
+
+
 # ---------------------------------------------------------------------------
 # JSON API: VM list + power actions
 # ---------------------------------------------------------------------------
@@ -592,7 +601,8 @@ def api_vm_ip(vmid: int):
         
         # Direct IP lookup (guest agent/interfaces)
         # This is the fallback if ARP scan hasn't found it yet or failed
-        ip = get_vm_ip(vmid, vm["node"], vm["type"])
+        cluster_id = vm.get("cluster_id", "cluster1")
+        ip = get_vm_ip(cluster_id, vmid, vm["node"], vm["type"])
         
         # If we found an IP via direct lookup, return it
         if ip:
@@ -616,22 +626,19 @@ def api_vm_ip(vmid: int):
 @app.route("/api/mappings")
 @admin_required
 def api_mappings():
-    """Return mappings data for progressive loading."""
+    """Return mappings data for progressive loading (lightweight - no IP lookups)."""
     try:
+        from proxmox_client import get_all_vm_ids_and_names
+        
         mapping = get_user_vm_map()
         users = get_pve_users()
-        # Get all VMs - IPs will be fetched via ARP scan
-        all_vms = get_all_vms()
-        
-        # Create vmid to name mapping for display
-        vm_id_to_name = {v["vmid"]: v.get("name", f"vm-{v['vmid']}") for v in all_vms}
-        all_vm_ids = sorted({v["vmid"] for v in all_vms})
+        # Get only VM IDs and names (no IP lookups - much faster)
+        vm_list = get_all_vm_ids_and_names()
         
         return jsonify({
             "mapping": mapping,
             "users": users,
-            "all_vm_ids": all_vm_ids,
-            "vm_id_to_name": vm_id_to_name,
+            "vms": vm_list,  # List of {vmid, name, cluster_id, node}
         })
     except Exception as e:
         app.logger.exception("Failed to get mappings data")
@@ -640,6 +647,55 @@ def api_mappings():
             "message": f"Failed to load mappings: {str(e)}"
         }), 500
 
+
+
+@app.route("/api/mappings/update", methods=["POST"])
+@admin_required
+def api_mappings_update():
+    """Update VM mappings for a user (JSON API - no page reload)."""
+    try:
+        data = request.get_json()
+        user = data.get("user", "").strip()
+        vmids = data.get("vmids", [])  # List of integers
+        
+        if not user:
+            return jsonify({
+                "ok": False,
+                "error": "User is required"
+            }), 400
+        
+        # Validate vmids are integers
+        try:
+            vmids = [int(v) for v in vmids]
+        except (ValueError, TypeError):
+            return jsonify({
+                "ok": False,
+                "error": "Invalid VM IDs"
+            }), 400
+        
+        # Update mappings
+        from proxmox_client import save_user_vm_map, get_user_vm_map
+        mapping = get_user_vm_map()
+        
+        if vmids:
+            mapping[user] = vmids
+        else:
+            # Remove user if no VMs assigned
+            mapping.pop(user, None)
+        
+        save_user_vm_map(mapping)
+        app.logger.info("Admin %s updated mappings for %s: %s", require_user(), user, vmids)
+        
+        return jsonify({
+            "ok": True,
+            "mapping": mapping.get(user, [])
+        })
+    except Exception as e:
+        app.logger.exception("Failed to update mappings")
+        return jsonify({
+            "ok": False,
+            "error": str(e)
+        }), 500
 
 
 @app.route("/api/vm/<int:vmid>/start", methods=["POST"])
@@ -709,6 +765,40 @@ def api_switch_cluster():
     return jsonify({"ok": True, "cluster_id": cluster_id})
 
 
+@app.route("/api/cluster-config", methods=["GET"])
+@admin_required
+def api_get_cluster_config():
+    """Get current cluster configuration."""
+    from proxmox_client import get_cluster_config
+    return jsonify({"ok": True, "clusters": get_cluster_config()})
+
+
+@app.route("/api/cluster-config", methods=["POST"])
+@admin_required
+def api_save_cluster_config():
+    """Save updated cluster configuration."""
+    from proxmox_client import save_cluster_config
+    
+    data = request.get_json()
+    clusters = data.get("clusters", [])
+    
+    if not clusters:
+        return jsonify({"ok": False, "error": "No clusters provided"}), 400
+    
+    # Validate cluster structure
+    for cluster in clusters:
+        required = ["id", "name", "host", "user", "password"]
+        if not all(k in cluster for k in required):
+            return jsonify({"ok": False, "error": f"Cluster missing required fields: {required}"}), 400
+    
+    try:
+        save_cluster_config(clusters)
+        return jsonify({"ok": True, "message": "Cluster configuration saved. Refresh the page to see changes."})
+    except Exception as e:
+        app.logger.error(f"Failed to save cluster config: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 # ---------------------------------------------------------------------------
 # SSH Web Terminal
 # ---------------------------------------------------------------------------
@@ -728,7 +818,8 @@ def ssh_terminal(vmid: int):
     
     # Verify cached IP is still correct
     if ip:
-        verified_ip = verify_vm_ip(vm['node'], vmid, vm['type'], ip)
+        cluster_id = vm.get('cluster_id', 'cluster1')
+        verified_ip = verify_vm_ip(cluster_id, vm['node'], vmid, vm['type'], ip)
         if verified_ip and verified_ip != ip:
             ip = verified_ip
             app.logger.info("Updated IP for VM %d: %s", vmid, ip)
@@ -873,7 +964,8 @@ def rdp_file(vmid: int):
         # Only verify if IP is missing - last resort
         app.logger.info("rdp_file: No cached IP for VM %s, attempting verification", vmid)
         try:
-            verified_ip = verify_vm_ip(vm['node'], vmid, vm.get('type', 'qemu'), cached_ip or "")
+            cluster_id = vm.get('cluster_id', 'cluster1')
+            verified_ip = verify_vm_ip(cluster_id, vm['node'], vmid, vm.get('type', 'qemu'), cached_ip or "")
             if verified_ip:
                 vm['ip'] = verified_ip
                 app.logger.info("rdp_file: Verified IP %s for VM %s", verified_ip, vmid)

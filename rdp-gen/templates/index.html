@@ -335,7 +335,7 @@ window.filterVMsByCluster = function(clusterId) {
         console.log(`Filtered to cluster ${clusterId}:`, filtered.length, 'VMs');
     }
     
-    // Repopulate tables with filtered VMs
+    // Repopulate tables with filtered VMs (IPs are already loaded in allVMs)
     populateTables(filtered);
     
     // Update summary tiles with filtered data
@@ -344,7 +344,7 @@ window.filterVMsByCluster = function(clusterId) {
     // Update node filter dropdown with filtered nodes
     populateNodeFilter(filtered);
     
-    console.log('Cluster filter applied successfully');
+    console.log('Cluster filter applied successfully - no IP refetch needed');
 };
 
 // Populate node filter

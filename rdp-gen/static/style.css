@@ -134,6 +134,30 @@ body {
     color: #004578;
 }
 
+.sidebar-settings {
+    margin-top: auto;
+    padding-top: 20px;
+    border-top: 1px solid #e2e8f0;
+}
+
+.sidebar-link-settings {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 600;
+    color: #667eea;
+}
+
+.sidebar-link-settings:hover {
+    background: linear-gradient(135deg, rgba(102, 126, 234, 0.1), rgba(118, 75, 162, 0.1));
+    color: #764ba2;
+}
+
+.sidebar-link-settings.sidebar-link-active {
+    background: linear-gradient(135deg, rgba(102, 126, 234, 0.15), rgba(118, 75, 162, 0.15));
+    color: #667eea;
+}
+
 /* Main */
 .main {
     flex: 1;

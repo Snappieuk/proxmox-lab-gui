@@ -1,0 +1,370 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="admin-container">
+    <h2 class="page-title">⚙️ Settings</h2>
+    
+    <div class="settings-section">
+        <h3 class="section-title">Cluster Configuration</h3>
+        <p class="section-description">Manage Proxmox cluster connections. Changes take effect immediately but are not persisted across restarts (stored in memory only).</p>
+        
+        <div id="clusters-list"></div>
+        
+        <button class="btn btn-secondary" onclick="addCluster()">
+            <i class="bi bi-plus-circle"></i> Add Cluster
+        </button>
+        
+        <div class="settings-actions">
+            <button class="btn btn-primary" onclick="saveSettings()">
+                <i class="bi bi-save"></i> Save Changes
+            </button>
+            <button class="btn btn-secondary" onclick="location.reload()">
+                <i class="bi bi-x-circle"></i> Cancel
+            </button>
+        </div>
+    </div>
+</div>
+
+<style>
+.admin-container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 30px;
+}
+
+.page-title {
+    font-size: 28px;
+    font-weight: 600;
+    margin-bottom: 30px;
+    color: #1e293b;
+}
+
+.settings-section {
+    background: white;
+    border-radius: 12px;
+    padding: 30px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    margin-bottom: 30px;
+}
+
+.section-title {
+    font-size: 20px;
+    font-weight: 600;
+    margin-bottom: 10px;
+    color: #334155;
+}
+
+.section-description {
+    color: #64748b;
+    margin-bottom: 25px;
+    line-height: 1.6;
+}
+
+.cluster-card {
+    background: #f8fafc;
+    border: 2px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 15px;
+    position: relative;
+}
+
+.cluster-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+}
+
+.cluster-card-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: #1e293b;
+}
+
+.cluster-remove-btn {
+    background: #ef4444;
+    color: white;
+    border: none;
+    padding: 6px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    transition: background 0.2s;
+}
+
+.cluster-remove-btn:hover {
+    background: #dc2626;
+}
+
+.form-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 15px;
+}
+
+.form-group {
+    display: flex;
+    flex-direction: column;
+}
+
+.form-group label {
+    font-weight: 600;
+    color: #475569;
+    margin-bottom: 6px;
+    font-size: 13px;
+}
+
+.form-group input {
+    padding: 10px 12px;
+    border: 2px solid #cbd5e1;
+    border-radius: 6px;
+    font-size: 14px;
+    transition: border-color 0.2s;
+}
+
+.form-group input:focus {
+    outline: none;
+    border-color: #3b82f6;
+}
+
+.form-group-full {
+    grid-column: 1 / -1;
+}
+
+.checkbox-group {
+    display: flex;
+    align-items: center;
+    margin-top: 10px;
+}
+
+.checkbox-group input[type="checkbox"] {
+    margin-right: 8px;
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+}
+
+.checkbox-group label {
+    margin-bottom: 0;
+    cursor: pointer;
+}
+
+.settings-actions {
+    display: flex;
+    gap: 12px;
+    margin-top: 25px;
+    padding-top: 25px;
+    border-top: 2px solid #e2e8f0;
+}
+
+.btn {
+    padding: 12px 24px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    border: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    transition: all 0.2s;
+}
+
+.btn-primary {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+}
+
+.btn-primary:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+}
+
+.btn-secondary {
+    background: #f1f5f9;
+    color: #475569;
+}
+
+.btn-secondary:hover {
+    background: #e2e8f0;
+}
+
+.alert {
+    padding: 15px 20px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.alert-success {
+    background: #dcfce7;
+    color: #166534;
+    border: 1px solid #bbf7d0;
+}
+
+.alert-error {
+    background: #fee2e2;
+    color: #991b1b;
+    border: 1px solid #fecaca;
+}
+</style>
+
+<script>
+let clusters = [];
+
+// Load existing cluster configuration
+async function loadClusters() {
+    try {
+        const resp = await fetch('/api/cluster-config');
+        const data = await resp.json();
+        if (data.ok) {
+            clusters = data.clusters;
+            renderClusters();
+        }
+    } catch (e) {
+        console.error('Failed to load clusters:', e);
+        showAlert('Failed to load cluster configuration', 'error');
+    }
+}
+
+function renderClusters() {
+    const container = document.getElementById('clusters-list');
+    container.innerHTML = '';
+    
+    clusters.forEach((cluster, index) => {
+        const card = document.createElement('div');
+        card.className = 'cluster-card';
+        card.innerHTML = `
+            <div class="cluster-card-header">
+                <div class="cluster-card-title">Cluster ${index + 1}</div>
+                <button class="cluster-remove-btn" onclick="removeCluster(${index})">
+                    <i class="bi bi-trash"></i> Remove
+                </button>
+            </div>
+            <div class="form-grid">
+                <div class="form-group">
+                    <label for="cluster-${index}-id">Cluster ID</label>
+                    <input type="text" id="cluster-${index}-id" value="${cluster.id}" 
+                           onchange="updateCluster(${index}, 'id', this.value)" 
+                           placeholder="e.g., cluster1">
+                </div>
+                <div class="form-group">
+                    <label for="cluster-${index}-name">Display Name</label>
+                    <input type="text" id="cluster-${index}-name" value="${cluster.name}" 
+                           onchange="updateCluster(${index}, 'name', this.value)" 
+                           placeholder="e.g., Main Cluster">
+                </div>
+                <div class="form-group">
+                    <label for="cluster-${index}-host">Proxmox Host</label>
+                    <input type="text" id="cluster-${index}-host" value="${cluster.host}" 
+                           onchange="updateCluster(${index}, 'host', this.value)" 
+                           placeholder="e.g., 10.220.15.249">
+                </div>
+                <div class="form-group">
+                    <label for="cluster-${index}-user">Admin User</label>
+                    <input type="text" id="cluster-${index}-user" value="${cluster.user}" 
+                           onchange="updateCluster(${index}, 'user', this.value)" 
+                           placeholder="e.g., root@pam">
+                </div>
+                <div class="form-group form-group-full">
+                    <label for="cluster-${index}-password">Admin Password</label>
+                    <input type="password" id="cluster-${index}-password" value="${cluster.password}" 
+                           onchange="updateCluster(${index}, 'password', this.value)" 
+                           placeholder="••••••••">
+                </div>
+                <div class="form-group form-group-full">
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="cluster-${index}-verify" 
+                               ${cluster.verify_ssl ? 'checked' : ''} 
+                               onchange="updateCluster(${index}, 'verify_ssl', this.checked)">
+                        <label for="cluster-${index}-verify">Verify SSL Certificate</label>
+                    </div>
+                </div>
+            </div>
+        `;
+        container.appendChild(card);
+    });
+}
+
+function updateCluster(index, field, value) {
+    clusters[index][field] = value;
+}
+
+function addCluster() {
+    clusters.push({
+        id: `cluster${clusters.length + 1}`,
+        name: `New Cluster ${clusters.length + 1}`,
+        host: '',
+        user: 'root@pam',
+        password: '',
+        verify_ssl: false
+    });
+    renderClusters();
+}
+
+function removeCluster(index) {
+    if (clusters.length === 1) {
+        showAlert('Cannot remove the last cluster. At least one cluster is required.', 'error');
+        return;
+    }
+    if (confirm('Are you sure you want to remove this cluster?')) {
+        clusters.splice(index, 1);
+        renderClusters();
+    }
+}
+
+async function saveSettings() {
+    // Validate
+    for (let i = 0; i < clusters.length; i++) {
+        const c = clusters[i];
+        if (!c.id || !c.name || !c.host || !c.user || !c.password) {
+            showAlert(`Cluster ${i + 1} is missing required fields`, 'error');
+            return;
+        }
+    }
+    
+    try {
+        const resp = await fetch('/api/cluster-config', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({clusters: clusters})
+        });
+        
+        const data = await resp.json();
+        if (data.ok) {
+            showAlert(data.message, 'success');
+            setTimeout(() => location.reload(), 2000);
+        } else {
+            showAlert('Failed to save: ' + data.error, 'error');
+        }
+    } catch (e) {
+        console.error('Save failed:', e);
+        showAlert('Failed to save configuration: ' + e.message, 'error');
+    }
+}
+
+function showAlert(message, type) {
+    const existing = document.querySelector('.alert');
+    if (existing) existing.remove();
+    
+    const alert = document.createElement('div');
+    alert.className = `alert alert-${type}`;
+    alert.innerHTML = `
+        <i class="bi bi-${type === 'success' ? 'check-circle-fill' : 'exclamation-triangle-fill'}"></i>
+        ${message}
+    `;
+    
+    document.querySelector('.settings-section').insertBefore(alert, document.querySelector('.settings-section').firstChild);
+    
+    if (type === 'success') {
+        setTimeout(() => alert.remove(), 5000);
+    }
+}
+
+// Load on page load
+window.addEventListener('DOMContentLoaded', loadClusters);
+</script>
+{% endblock %}
