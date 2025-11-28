@@ -9,7 +9,7 @@ import logging
 
 from flask import Blueprint, jsonify, request, session, current_app
 
-from app.utils.decorators import login_required
+from app.utils.decorators import login_required, admin_required
 
 # Import path setup is no longer needed
 import app.utils.paths
