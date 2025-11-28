@@ -132,13 +132,14 @@ def test_ip_cache_thread_safety():
     )
     
     errors = []
+    test_cluster_id = "test_cluster"
     
     def worker(thread_id):
         try:
             for i in range(100):
                 vmid = 1000 + thread_id * 100 + i
-                _cache_ip(vmid, f"10.0.{thread_id}.{i % 256}")
-                ip = _get_cached_ip(vmid)
+                _cache_ip(test_cluster_id, vmid, f"10.0.{thread_id}.{i % 256}")
+                ip = _get_cached_ip(test_cluster_id, vmid)
                 # IP should match or be None (if expired)
         except Exception as e:
             errors.append(f"Thread {thread_id} error: {e}")
@@ -191,13 +192,15 @@ def test_batch_ip_cache():
         _get_cached_ips_batch,
     )
     
+    test_cluster_id = "test_cluster"
+    
     # Cache some test IPs
     test_vmids = [9901, 9902, 9903, 9904]
     for i, vmid in enumerate(test_vmids):
-        _cache_ip(vmid, f"10.99.0.{i+1}")
+        _cache_ip(test_cluster_id, vmid, f"10.99.0.{i+1}")
     
     # Batch retrieve
-    cached = _get_cached_ips_batch(test_vmids + [9999])  # Include non-existent
+    cached = _get_cached_ips_batch(test_cluster_id, test_vmids + [9999])  # Include non-existent
     
     # Verify we got the cached IPs
     assert 9901 in cached

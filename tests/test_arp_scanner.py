@@ -128,8 +128,8 @@ def test_module_level_cache_exists():
     assert hasattr(arp_scanner, '_scan_in_progress')
     assert hasattr(arp_scanner, '_scan_lock')
     
-    # Check default TTL is 300 seconds (5 minutes)
-    assert arp_scanner._arp_cache_ttl == 300
+    # Check default TTL is 3600 seconds (1 hour)
+    assert arp_scanner._arp_cache_ttl == 3600
     
     print("✓ Module-level cache variables exist with correct defaults")
 

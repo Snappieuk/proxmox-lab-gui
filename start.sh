@@ -13,9 +13,5 @@ if [ -f ".env" ]; then
     export $(cat .env | grep -v '^#' | xargs)
 fi
 
-# Start Flask directly (multithreaded, production-ready enough for lab use)
-cd rdp-gen
-exec python3 -c "
-from app import app
-app.run(host='0.0.0.0', port=8080, threaded=True, debug=False)
-"
+# Start Flask using the new modular entry point
+exec python3 run.py
