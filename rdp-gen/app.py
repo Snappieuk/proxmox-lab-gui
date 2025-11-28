@@ -838,6 +838,77 @@ def rdp_file(vmid: int):
 
 
 # ---------------------------------------------------------------------------
+# Debug Endpoints
+# ---------------------------------------------------------------------------
+
+@app.route("/api/debug/arp")
+@login_required
+@admin_required
+def api_debug_arp():
+    """
+    Debug endpoint to show ARP scan details for troubleshooting.
+    Only accessible to admins.
+    """
+    from arp_scanner import get_arp_table
+    from proxmox_client import _get_vm_mac, get_all_vms
+    
+    try:
+        # Get all VMs
+        vms = get_all_vms(skip_ips=True)
+        
+        # Get ARP table
+        arp_table = get_arp_table()
+        
+        # Build debug info
+        debug_info = {
+            "arp_table_size": len(arp_table),
+            "arp_table_sample": list(arp_table.items())[:20],
+            "vms": []
+        }
+        
+        # For each running VM, show MAC extraction and ARP lookup
+        for vm in vms:
+            if vm.get("status") != "running":
+                continue
+                
+            vmid = vm["vmid"]
+            node = vm["node"]
+            vmtype = vm.get("type", "qemu")
+            
+            # Try to get MAC
+            mac = _get_vm_mac(node, vmid, vmtype)
+            
+            # Check if MAC is in ARP table
+            ip_from_arp = arp_table.get(mac) if mac else None
+            
+            vm_debug = {
+                "vmid": vmid,
+                "name": vm.get("name"),
+                "type": vmtype,
+                "node": node,
+                "status": vm.get("status"),
+                "extracted_mac": mac,
+                "ip_from_arp": ip_from_arp,
+                "cached_ip": vm.get("ip"),
+                "in_arp_table": mac in arp_table if mac else False
+            }
+            
+            # Check for partial MAC matches
+            if mac and mac not in arp_table:
+                partial = [k for k in arp_table.keys() if mac[:8] in k or k[:8] in mac]
+                if partial:
+                    vm_debug["partial_mac_matches"] = partial
+            
+            debug_info["vms"].append(vm_debug)
+        
+        return jsonify(debug_info)
+        
+    except Exception as e:
+        app.logger.exception("Debug ARP endpoint failed")
+        return jsonify({"error": str(e)}), 500
+
+
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)

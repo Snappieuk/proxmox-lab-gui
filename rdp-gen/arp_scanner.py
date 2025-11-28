@@ -226,7 +226,7 @@ def _is_root() -> bool:
     return os.geteuid() == 0
 
 
-def scan_network_range(subnet_cidr: str = "10.220.8.0/21", timeout: int = 1) -> bool:
+def scan_network_range(subnet_cidr: str = "10.220.8.0/21", timeout: int = 3) -> bool:
     """
     Scan network range to populate ARP table using nmap.
     
@@ -242,7 +242,7 @@ def scan_network_range(subnet_cidr: str = "10.220.8.0/21", timeout: int = 1) -> 
     
     Args:
         subnet_cidr: Network in CIDR notation (e.g., "10.220.8.0/21")
-        timeout: Scan timeout in seconds (default: 1)
+        timeout: Scan timeout in seconds (default: 3)
     
     Returns:
         True if scan succeeded (nmap ran without error)
@@ -250,18 +250,19 @@ def scan_network_range(subnet_cidr: str = "10.220.8.0/21", timeout: int = 1) -> 
     is_root = _is_root()
     
     # Determine nmap arguments based on privileges
-    # Use -T5 (insane timing) for fastest possible scan
+    # Use -T4 (aggressive but not insane) for better reliability
     if is_root:
         # ARP ping (-PR) is most reliable but requires root
-        nmap_args = ['-sn', '-PR', '-T5', '--max-retries', '0', '--host-timeout', '500ms', subnet_cidr]
+        # Increased host timeout to 2s to ensure hosts have time to respond
+        nmap_args = ['-sn', '-PR', '-T4', '--max-retries', '1', '--host-timeout', '2s', subnet_cidr]
         scan_type = "ARP ping (root)"
     else:
         # Unprivileged: use standard ping scan without -PR
         # -sn does ICMP echo, TCP SYN to 443, TCP ACK to 80, ICMP timestamp
-        nmap_args = ['-sn', '-T5', '--max-retries', '0', '--host-timeout', '500ms', subnet_cidr]
+        nmap_args = ['-sn', '-T4', '--max-retries', '1', '--host-timeout', '2s', subnet_cidr]
         scan_type = "ICMP/TCP ping (unprivileged)"
     
-    logger.info("Starting %s scan on %s", scan_type, subnet_cidr)
+    logger.info("Starting %s scan on %s (timeout: %ds)", scan_type, subnet_cidr, timeout)
     
     # Try nmap with different paths
     for nmap_cmd in ['/usr/bin/nmap', '/usr/local/bin/nmap', 'nmap']:
@@ -293,7 +294,7 @@ def scan_network_range(subnet_cidr: str = "10.220.8.0/21", timeout: int = 1) -> 
                     logger.warning("nmap -PR requires root privileges, falling back to unprivileged scan")
                     # Retry without -PR
                     result = subprocess.run(
-                        [nmap_cmd, '-sn', '-T5', '--max-retries', '0', '--host-timeout', '500ms', subnet_cidr],
+                        [nmap_cmd, '-sn', '-T4', '--max-retries', '1', '--host-timeout', '2s', subnet_cidr],
                         capture_output=True,
                         text=True,
                         timeout=scan_timeout
@@ -483,7 +484,7 @@ def discover_ips_via_arp(vm_mac_map: Dict[int, str], subnets: Optional[List[str]
     
     # Try network range scan first (more reliable than broadcast ping)
     logger.info("Scanning network range 10.220.8.0/21 to populate ARP")
-    scan_success = scan_network_range("10.220.8.0/21", timeout=1)
+    scan_success = scan_network_range("10.220.8.0/21", timeout=5)
     
     # If scan failed, try broadcast ping as fallback
     if not scan_success:
@@ -491,10 +492,16 @@ def discover_ips_via_arp(vm_mac_map: Dict[int, str], subnets: Optional[List[str]
         logger.info("Falling back to broadcast ping to %d subnets", len(subnets))
         for subnet in subnets:
             broadcast_ping(subnet)
+    else:
+        # Even if scan succeeded, do broadcast ping to catch any stragglers
+        logger.info("Supplementing nmap scan with broadcast ping")
+        subnets = subnets or ["10.220.15.255"]
+        for subnet in subnets:
+            broadcast_ping(subnet, count=3)
     
     # Get updated ARP table
     arp_table = get_arp_table()
-    logger.info("Post-ping ARP table has %d entries, looking for %d VM MACs", len(arp_table), len(vm_mac_map))
+    logger.info("Post-scan ARP table has %d entries, looking for %d VM MACs", len(arp_table), len(vm_mac_map))
     
     # Map remaining VM MACs to IPs
     for vmid, mac in vm_mac_map.items():
