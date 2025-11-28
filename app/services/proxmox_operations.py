@@ -430,3 +430,55 @@ def convert_vm_to_template(vmid: int, node: str, cluster_ip: str = None) -> Tupl
     except Exception as e:
         logger.exception(f"Failed to convert VM to template: {e}")
         return False, f"Conversion failed: {str(e)}"
+
+
+def clone_template_for_class(template_vmid: int, node: str, name: str,
+                             cluster_ip: str = None) -> Tuple[bool, Optional[int], str]:
+    """Clone a template to create a working copy for a class.
+    
+    Args:
+        template_vmid: VMID of the template to clone
+        node: Node where template exists
+        name: Name for the cloned VM
+        cluster_ip: IP of the Proxmox cluster
+    
+    Returns:
+        Tuple of (success, new_vmid, message)
+    """
+    try:
+        target_ip = cluster_ip or CLASS_CLUSTER_IP
+        cluster_id = None
+        for cluster in CLUSTERS:
+            if cluster["host"] == target_ip:
+                cluster_id = cluster["id"]
+                break
+        
+        if not cluster_id:
+            return False, None, f"Cluster not found for IP: {target_ip}"
+        
+        proxmox = get_proxmox_admin_for_cluster(cluster_id)
+        
+        # Find next available VMID
+        used_vmids = set()
+        for node_info in proxmox.nodes.get():
+            node_name = node_info["node"]
+            for vm in proxmox.nodes(node_name).qemu.get():
+                used_vmids.add(vm["vmid"])
+        
+        new_vmid = 100
+        while new_vmid in used_vmids:
+            new_vmid += 1
+        
+        # Clone the template (full clone, not linked)
+        proxmox.nodes(node).qemu(template_vmid).clone.post(
+            newid=new_vmid,
+            name=name,
+            full=1  # Full clone
+        )
+        
+        logger.info(f"Cloned template {template_vmid} → {new_vmid} ({name}) on {node}")
+        return True, new_vmid, f"Successfully cloned template to VMID {new_vmid}"
+        
+    except Exception as e:
+        logger.exception(f"Failed to clone template: {e}")
+        return False, None, f"Clone failed: {str(e)}"

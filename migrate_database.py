@@ -117,6 +117,10 @@ def main():
         if create_class_enrollments_table(cursor):
             changes.append('class_enrollments table')
         
+        # Add original_template_id column to templates
+        if add_column_if_missing(cursor, 'templates', 'original_template_id', 'INTEGER REFERENCES templates(id)'):
+            changes.append('templates.original_template_id')
+        
         # Commit changes
         if changes:
             conn.commit()

@@ -162,21 +162,51 @@ def create_class(name: str, teacher_id: int, description: str = None,
         return None, "User must be a teacher or adminer to create classes"
     
     # Verify template exists if specified
+    original_template = None
     if template_id:
-        template = Template.query.get(template_id)
-        if not template:
+        original_template = Template.query.get(template_id)
+        if not original_template:
             return None, "Template not found"
     
     class_ = Class(
         name=name,
         description=description,
         teacher_id=teacher_id,
-        template_id=template_id,
+        template_id=None,  # Will be set after cloning
         pool_size=pool_size
     )
     
     try:
         db.session.add(class_)
+        db.session.flush()  # Get class ID without committing
+        
+        # Clone the original template to create a working copy for this class
+        if original_template:
+            from app.services.proxmox_operations import clone_template_for_class
+            clone_success, clone_vmid, clone_msg = clone_template_for_class(
+                original_template.proxmox_vmid,
+                original_template.node,
+                f"{name}-template",
+                original_template.cluster_ip
+            )
+            
+            if clone_success and clone_vmid:
+                # Create new template record for the cloned template
+                cloned_template = Template(
+                    name=f"{name} Template",
+                    proxmox_vmid=clone_vmid,
+                    node=original_template.node,
+                    cluster_ip=original_template.cluster_ip,
+                    original_template_id=original_template.id  # Track the source
+                )
+                db.session.add(cloned_template)
+                db.session.flush()
+                
+                class_.template_id = cloned_template.id
+                logger.info(f"Cloned template {original_template.proxmox_vmid} → {clone_vmid} for class {name}")
+            else:
+                logger.warning(f"Failed to clone template for class {name}: {clone_msg}")
+        
         db.session.commit()
         logger.info("Created class: %s by teacher %s", name, teacher.username)
         return class_, "Class created successfully"

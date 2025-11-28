@@ -57,6 +57,13 @@
         <a class="sidebar-link" href="{{ url_for('classes.classes_list') }}">
             <i class="bi bi-arrow-left"></i> Back to Classes
         </a>
+        
+        {% if can_manage %}
+        <div class="sidebar-section-title" style="margin-top: 1rem;">Danger Zone</div>
+        <a class="sidebar-link" href="#" onclick="deleteClass(); return false;" style="color: #dc3545;">
+            <i class="bi bi-trash"></i> Delete Class
+        </a>
+        {% endif %}
     </nav>
 
     <main class="main">
@@ -828,6 +835,37 @@ async function loadStudentsList() {
         }
     } catch (e) {
         console.error('Failed to load students:', e);
+    }
+}
+
+async function deleteClass() {
+    const className = '{{ class_.name }}';
+    const confirmation = prompt(`WARNING: This will delete the class and ALL associated VMs from Proxmox.\\n\\nType "${className}" to confirm deletion:`);
+    
+    if (confirmation !== className) {
+        if (confirmation !== null) {
+            showAlert('Class name did not match. Deletion cancelled.', 'error');
+        }
+        return;
+    }
+    
+    try {
+        const resp = await fetch(`/api/class/${classId}`, {
+            method: 'DELETE'
+        });
+        
+        const data = await resp.json();
+        
+        if (data.ok) {
+            showAlert('Class deleted successfully. Redirecting...', 'success');
+            setTimeout(() => {
+                window.location.href = '/classes';
+            }, 2000);
+        } else {
+            showAlert(data.error || 'Failed to delete class', 'error');
+        }
+    } catch (e) {
+        showAlert('Failed to delete class', 'error');
     }
 }
 

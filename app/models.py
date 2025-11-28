@@ -183,6 +183,7 @@ class Template(db.Model):
     created_by_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
     is_class_template = db.Column(db.Boolean, default=False)  # True if created for a specific class
     class_id = db.Column(db.Integer, db.ForeignKey('classes.id'), nullable=True)  # Scoped to class if set
+    original_template_id = db.Column(db.Integer, db.ForeignKey('templates.id'), nullable=True)  # Track source template
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     
     # Relationships

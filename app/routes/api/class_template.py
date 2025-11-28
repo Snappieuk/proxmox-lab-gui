@@ -173,7 +173,7 @@ def stop_template(class_id: int):
 @api_class_template_bp.route("/<int:class_id>/template/reimage", methods=['POST'])
 @login_required
 def reimage_template(class_id: int):
-    """Revert template VM to base snapshot."""
+    """Delete current template VM and recreate from original template (fresh copy)."""
     class_, error_response, status_code = require_teacher_or_admin(class_id)
     if error_response:
         return error_response, status_code
@@ -182,21 +182,45 @@ def reimage_template(class_id: int):
         return jsonify({'ok': False, 'error': 'No template assigned'}), 404
     
     try:
-        template = class_.template
-        snapshot_name = 'baseline'
+        from app.services.proxmox_operations import delete_vm, clone_template_for_class
+        from app.models import db
         
-        # Revert to baseline snapshot
-        success = revert_vm_to_snapshot(
-            template.proxmox_vmid,
-            template.cluster_ip,
-            snapshot_name
+        template = class_.template
+        old_vmid = template.proxmox_vmid
+        
+        # Get original template if this template was cloned
+        original_template_id = template.original_template_id
+        if not original_template_id:
+            return jsonify({'ok': False, 'error': 'No original template found for reimage'}), 404
+        
+        original_template = Template.query.get(original_template_id)
+        if not original_template:
+            return jsonify({'ok': False, 'error': 'Original template not found'}), 404
+        
+        # Delete current template VM
+        logger.info(f"Deleting current template VM {old_vmid} for reimage")
+        delete_success, delete_msg = delete_vm(old_vmid, template.cluster_ip)
+        
+        if not delete_success:
+            return jsonify({'ok': False, 'error': f'Failed to delete old template: {delete_msg}'}), 500
+        
+        # Clone from original template again
+        clone_success, new_vmid, clone_msg = clone_template_for_class(
+            original_template.proxmox_vmid,
+            original_template.node,
+            f"{class_.name}-template-reimaged",
+            original_template.cluster_ip
         )
         
-        if success:
-            logger.info(f"Re-imaged template {template.proxmox_vmid} to baseline snapshot")
-            return jsonify({'ok': True, 'message': 'Template reverted to baseline'})
+        if clone_success and new_vmid:
+            # Update template record with new VMID
+            template.proxmox_vmid = new_vmid
+            db.session.commit()
+            
+            logger.info(f"Re-imaged template: deleted {old_vmid}, created {new_vmid} from original")
+            return jsonify({'ok': True, 'message': f'Template re-imaged successfully (new VMID: {new_vmid})'})
         else:
-            return jsonify({'ok': False, 'error': 'Failed to revert to baseline snapshot'}), 500
+            return jsonify({'ok': False, 'error': f'Failed to clone new template: {clone_msg}'}), 500
     except Exception as e:
         logger.exception(f"Failed to reimage template: {e}")
         return jsonify({'ok': False, 'error': str(e)}), 500
@@ -205,7 +229,7 @@ def reimage_template(class_id: int):
 @api_class_template_bp.route("/<int:class_id>/template/save", methods=['POST'])
 @login_required
 def save_template(class_id: int):
-    """Save current template VM state as new baseline."""
+    """Convert current working VM to a template (Proxmox template conversion)."""
     class_, error_response, status_code = require_teacher_or_admin(class_id)
     if error_response:
         return error_response, status_code
@@ -214,23 +238,30 @@ def save_template(class_id: int):
         return jsonify({'ok': False, 'error': 'No template assigned'}), 404
     
     try:
-        template = class_.template
-        snapshot_name = 'baseline'
-        description = f"Baseline snapshot for class {class_.name}"
+        from app.services.proxmox_operations import stop_class_vm, convert_vm_to_template
         
-        # Create/replace baseline snapshot
-        success = create_vm_snapshot(
+        template = class_.template
+        
+        # Stop the VM first (required for template conversion)
+        logger.info(f"Stopping VM {template.proxmox_vmid} before template conversion")
+        stop_success = stop_class_vm(template.proxmox_vmid, template.cluster_ip)
+        
+        # Wait a moment for shutdown
+        import time
+        time.sleep(3)
+        
+        # Convert to template
+        success, msg = convert_vm_to_template(
             template.proxmox_vmid,
-            template.cluster_ip,
-            snapshot_name,
-            description
+            template.node,
+            template.cluster_ip
         )
         
         if success:
-            logger.info(f"Saved template {template.proxmox_vmid} as new baseline")
-            return jsonify({'ok': True, 'message': 'Template baseline saved'})
+            logger.info(f"Converted VM {template.proxmox_vmid} to template for class {class_.name}")
+            return jsonify({'ok': True, 'message': 'VM converted to template successfully'})
         else:
-            return jsonify({'ok': False, 'error': 'Failed to create snapshot'}), 500
+            return jsonify({'ok': False, 'error': f'Failed to convert to template: {msg}'}), 500
     except Exception as e:
         logger.exception(f"Failed to save template: {e}")
         return jsonify({'ok': False, 'error': str(e)}), 500
