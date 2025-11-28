@@ -182,6 +182,12 @@ def create_class(name: str, teacher_id: int, description: str = None,
         
         # Clone the original template to create a working copy for this class
         if original_template:
+            # Validate that template has required fields
+            if not original_template.node:
+                db.session.rollback()
+                logger.error(f"Template {original_template.id} ({original_template.name}) has no node specified")
+                return None, "Template configuration error: node not set. Please ensure the template has a valid Proxmox node."
+            
             from app.services.proxmox_operations import clone_template_for_class
             clone_success, clone_vmid, clone_msg = clone_template_for_class(
                 original_template.proxmox_vmid,
@@ -440,10 +446,44 @@ def create_template(name: str, proxmox_vmid: int, cluster_ip: str = '10.220.15.2
                    is_class_template: bool = False, class_id: int = None) -> Tuple[Optional[Template], str]:
     """Register a Proxmox template in the database.
     
+    If node is not provided, will attempt to fetch it from Proxmox.
+    
     Returns: (template, message/error)
     """
     if not name or not proxmox_vmid:
         return None, "Name and Proxmox VMID are required"
+    
+    # If node not provided, try to fetch it from Proxmox
+    if not node:
+        try:
+            from app.services.proxmox_service import get_proxmox_admin_for_cluster
+            from app.config import CLUSTERS
+            
+            # Find cluster by IP
+            cluster_id = None
+            for cluster in CLUSTERS:
+                if cluster["host"] == cluster_ip:
+                    cluster_id = cluster["id"]
+                    break
+            
+            if cluster_id:
+                proxmox = get_proxmox_admin_for_cluster(cluster_id)
+                # Search all nodes for this VMID
+                for node_info in proxmox.nodes.get():
+                    node_name = node_info["node"]
+                    try:
+                        vm = proxmox.nodes(node_name).qemu(proxmox_vmid).status.current.get()
+                        if vm:
+                            node = node_name
+                            logger.info(f"Auto-detected node '{node_name}' for template VMID {proxmox_vmid}")
+                            break
+                    except Exception:
+                        continue
+            
+            if not node:
+                logger.warning(f"Could not auto-detect node for template VMID {proxmox_vmid}")
+        except Exception as e:
+            logger.warning(f"Failed to auto-detect node for template: {e}")
     
     template = Template(
         name=name,
@@ -458,7 +498,8 @@ def create_template(name: str, proxmox_vmid: int, cluster_ip: str = '10.220.15.2
     try:
         db.session.add(template)
         db.session.commit()
-        logger.info("Registered template: %s (VMID: %d)", name, proxmox_vmid)
+        node_info = f" on node {node}" if node else " (node not detected)"
+        logger.info(f"Registered template: {name} (VMID: {proxmox_vmid}){node_info}")
         return template, "Template registered successfully"
     except Exception as e:
         db.session.rollback()

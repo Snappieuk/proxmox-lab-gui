@@ -49,6 +49,36 @@ body {
     font-size: 13px;
 }
 
+/* Role badges - consistent styling across all pages */
+.role-badge {
+    display: inline-block;
+    padding: 0.15rem 0.5rem;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    border-radius: 3px;
+    margin-left: 0.5rem;
+    border: 1px solid transparent;
+}
+
+.role-adminer {
+    background: #ffd4d4;
+    color: #a80000;
+    border-color: #ff9999;
+}
+
+.role-teacher {
+    background: #d4e5ff;
+    color: #0050a0;
+    border-color: #a3c9ff;
+}
+
+.role-user {
+    background: #e0e0e0;
+    color: #505050;
+    border-color: #c0c0c0;
+}
+
 .topbar-link {
     color: white;
     text-decoration: none;

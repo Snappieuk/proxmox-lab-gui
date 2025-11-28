@@ -446,6 +446,11 @@ def clone_template_for_class(template_vmid: int, node: str, name: str,
         Tuple of (success, new_vmid, message)
     """
     try:
+        # Validate node parameter
+        if not node:
+            logger.error(f"clone_template_for_class: node parameter is empty or None")
+            return False, None, "Template node is not set. Please ensure the template has a valid node."
+        
         target_ip = cluster_ip or CLASS_CLUSTER_IP
         cluster_id = None
         for cluster in CLUSTERS:
@@ -457,6 +462,8 @@ def clone_template_for_class(template_vmid: int, node: str, name: str,
             return False, None, f"Cluster not found for IP: {target_ip}"
         
         proxmox = get_proxmox_admin_for_cluster(cluster_id)
+        
+        logger.info(f"Cloning template VMID {template_vmid} from node '{node}' to create '{name}'")
         
         # Find next available VMID
         used_vmids = set()
@@ -470,6 +477,7 @@ def clone_template_for_class(template_vmid: int, node: str, name: str,
             new_vmid += 1
         
         # Clone the template (full clone, not linked)
+        logger.info(f"Calling proxmox.nodes('{node}').qemu({template_vmid}).clone.post(newid={new_vmid}, name='{name}', full=1)")
         proxmox.nodes(node).qemu(template_vmid).clone.post(
             newid=new_vmid,
             name=name,

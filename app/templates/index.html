@@ -413,8 +413,8 @@ async function loadVMs() {
         const urlParams = new URLSearchParams(window.location.search);
         const forceRefresh = urlParams.get('force_refresh') === 'true';
         
-        // Use force_refresh if coming from cluster switch, otherwise fast load with skip_ips
-        const url = forceRefresh ? '/api/vms?force_refresh=true' : '/api/vms?skip_ips=true';
+        // Always fetch IPs properly - removed skip_ips optimization that was causing missing IPs
+        const url = forceRefresh ? '/api/vms?force_refresh=true' : '/api/vms';
         
         const resp = await fetch(url);
         if (!resp.ok) {
@@ -445,14 +445,7 @@ async function loadVMs() {
             }
         }
         
-        // Mark VMs without IPs as "Fetching..." (unless force refresh)
-        if (!forceRefresh) {
-            vmsToDisplay.forEach(vm => {
-                if (!vm.ip || vm.ip === 'N/A') {
-                    vm.ip = 'Fetching...';
-                }
-            });
-        }
+        // No longer mark as "Fetching..." - IPs are fetched on initial load now
         
         // If tables are empty OR force refresh (cluster switch), populate them
         if (document.querySelectorAll('.vm-table tbody tr').length === 0 || forceRefresh) {
@@ -463,12 +456,7 @@ async function loadVMs() {
         
         if (loadingIndicator) loadingIndicator.remove();
         
-        // Only fetch IPs in background if initial load was fast (skip_ips=true)
-        // Don't fetch if we just did a force_refresh (IPs already loaded)
-        const needsIPFetch = vmsToDisplay.some(vm => vm.ip === 'Fetching...' || vm.ip === 'N/A');
-        if (!forceRefresh && needsIPFetch) {
-            setTimeout(fetchIPsInBackground, 500);
-        }
+        // IPs are now fetched on initial load, no need for background fetch
     } catch (e) {
         console.error('Failed to load VMs:', e);
         if (loadingIndicator) loadingIndicator.remove();

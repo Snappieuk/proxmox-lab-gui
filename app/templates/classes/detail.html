@@ -115,7 +115,7 @@
                             </button>
                             
                             <!-- RDP Button -->
-                            <button id="btn-rdp-template" onclick="rdpToTemplate()" class="btn-header" style="display: none;" title="Download RDP">
+                            <button id="btn-rdp-template" onclick="rdpToTemplate()" class="btn-header" title="Download RDP">
                                 <i class="bi bi-file-earmark-arrow-down"></i>
                             </button>
                         </div>
@@ -811,13 +811,9 @@ function updateTemplateDisplay() {
     const isRunning = currentTemplateInfo.status === 'running';
     powerToggle.checked = isRunning;
     
-    // Show/hide RDP button based on status
+    // Always show RDP button for templates
     const rdpBtn = document.getElementById('btn-rdp-template');
-    if (isRunning) {
-        rdpBtn.style.display = 'inline-flex';
-    } else {
-        rdpBtn.style.display = 'none';
-    }
+    rdpBtn.style.display = 'inline-flex';
 }
 
 async function togglePower() {
