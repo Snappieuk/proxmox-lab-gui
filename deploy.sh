@@ -11,28 +11,16 @@ cd "$REPO_DIR"
 echo "Pulling latest changes from git..."
 git pull
 
-# Check if running as systemd service and restart it
-if systemctl is-active --quiet proxmox-gui 2>/dev/null; then
-    echo "Updating systemd service file..."
-    sudo cp "$REPO_DIR/proxmox-gui.service" /etc/systemd/system/
-    sudo systemctl daemon-reload
-    
-    echo "Restarting systemd service..."
-    sudo systemctl restart proxmox-gui
-    sleep 3
-    sudo systemctl status proxmox-gui --no-pager -l
-    echo "✓ Service restarted successfully"
-    
-elif pgrep -f "rdp-gen/app.py" > /dev/null; then
-    # Flask is running standalone - restart it
+# Check if Flask app is running and restart it
+if pgrep -f "python.*app.py" > /dev/null; then
     echo "Found running Flask app, stopping it..."
-    pkill -f "rdp-gen/app.py"
+    pkill -f "python.*app.py"
     sleep 3
     
     # Verify it stopped
-    if pgrep -f "rdp-gen/app.py" > /dev/null; then
+    if pgrep -f "python.*app.py" > /dev/null; then
         echo "Process still running, force killing..."
-        pkill -9 -f "rdp-gen/app.py"
+        pkill -9 -f "python.*app.py"
         sleep 2
     fi
     
@@ -42,7 +30,7 @@ elif pgrep -f "rdp-gen/app.py" > /dev/null; then
     sleep 2
     
     # Verify it started
-    if pgrep -f "rdp-gen/app.py" > /dev/null; then
+    if pgrep -f "python.*app.py" > /dev/null; then
         echo "✓ Flask app restarted successfully"
         echo "Logs: tail -f /tmp/flask.log"
     else
@@ -54,14 +42,10 @@ elif pgrep -f "rdp-gen/app.py" > /dev/null; then
 else
     echo "ERROR: No running instance found!"
     echo ""
-    echo "Checking for Flask processes:"
+    echo "Checking for Flask/Python processes:"
     ps aux | grep -i "[p]ython.*app.py" || echo "  (none found)"
     echo ""
-    echo "Checking systemd service:"
-    systemctl status proxmox-gui 2>/dev/null || echo "  (service not found or not running)"
-    echo ""
-    echo "Start the app with: ./start.sh"
-    echo "Or enable systemd service: sudo systemctl enable --now proxmox-gui"
+    echo "Start the app with: cd rdp-gen && python3 app.py"
     exit 1
 fi
 
