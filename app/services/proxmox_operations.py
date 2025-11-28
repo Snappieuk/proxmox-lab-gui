@@ -147,12 +147,27 @@ def clone_vms_for_class(template_vmid: int, node: str, count: int, name_prefix: 
         
         proxmox = get_proxmox_admin_for_cluster(cluster_id)
         
-        # Get next available VMID
+        # Get next available VMID - use cluster resources API for complete view
         used_vmids = set()
-        for node_info in proxmox.nodes.get():
-            node_name = node_info["node"]
-            for vm in proxmox.nodes(node_name).qemu.get():
-                used_vmids.add(vm["vmid"])
+        try:
+            # Use cluster resources API to get ALL VMs and containers across all nodes
+            resources = proxmox.cluster.resources.get(type="vm")
+            for r in resources:
+                used_vmids.add(r["vmid"])
+            logger.info(f"Found {len(used_vmids)} existing VMIDs via cluster resources API")
+        except Exception as e:
+            logger.warning(f"Cluster resources API failed, falling back to per-node query: {e}")
+            # Fallback: query each node individually
+            for node_info in proxmox.nodes.get():
+                node_name = node_info["node"]
+                try:
+                    # Get both QEMU VMs and LXC containers
+                    for vm in proxmox.nodes(node_name).qemu.get():
+                        used_vmids.add(vm["vmid"])
+                    for ct in proxmox.nodes(node_name).lxc.get():
+                        used_vmids.add(ct["vmid"])
+                except Exception as node_error:
+                    logger.warning(f"Failed to query node {node_name}: {node_error}")
         
         next_vmid = 200  # Start from 200 for class VMs
         

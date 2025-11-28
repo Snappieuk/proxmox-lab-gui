@@ -99,6 +99,7 @@ ARP_SUBNETS = os.getenv("ARP_SUBNETS")
 if ARP_SUBNETS:
     ARP_SUBNETS = [s.strip() for s in ARP_SUBNETS.split(",") if s.strip()]
 else:
-    # Default: 10.220.8.0/21 network (broadcast: 10.220.15.255)
-    # This covers all IPs from 10.220.8.0 to 10.220.15.255
+    # Default: Scan both primary and secondary cluster networks
+    # 10.220.8.0/21 network (broadcast: 10.220.15.255) - covers 10.220.8.0 to 10.220.15.255
+    # This includes both 10.220.15.x (cluster1) and 10.220.12.x (cluster2)
     ARP_SUBNETS = ["10.220.15.255"]

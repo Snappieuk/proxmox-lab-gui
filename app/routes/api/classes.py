@@ -551,19 +551,25 @@ def create_class_vms(class_id: int):
             return jsonify({"ok": False, "error": "No template specified and class has no default template"}), 400
         template_vmid = class_.template.proxmox_vmid
     
+    # Get node from template or use target_node
+    if not target_node and class_.template:
+        target_node = class_.template.node
+    if not target_node:
+        return jsonify({"ok": False, "error": "No node specified and class template has no node"}), 400
+    
     # Clone VMs
     created_vms = clone_vms_for_class(
         template_vmid=template_vmid,
-        class_name=class_.name,
+        node=target_node,
         count=count,
-        target_node=target_node,
+        name_prefix=class_.name,
         cluster_ip=CLASS_CLUSTER_IP
     )
     
     # Register created VMs in database
     registered = []
-    for vmid, node in created_vms:
-        assignment, msg = create_vm_assignment(class_id, vmid, node)
+    for vm_info in created_vms:
+        assignment, msg = create_vm_assignment(class_id, vm_info["vmid"], vm_info["node"])
         if assignment:
             registered.append(assignment.to_dict())
     

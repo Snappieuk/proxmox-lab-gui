@@ -676,19 +676,32 @@ def _get_ip_from_proxmox_notes(raw: Dict[str, Any]) -> Optional[str]:
     return None
 
 
-def _get_vm_mac(node: str, vmid: int, vmtype: str) -> Optional[str]:
+def _get_vm_mac(node: str, vmid: int, vmtype: str, cluster_id: str = None) -> Optional[str]:
     """
     Get MAC address for a VM.
     
     Checks all network interfaces (net0, net1, net2, ...) to find the first valid MAC.
     This handles VMs with multiple NICs or where net0 is not the primary interface.
     
+    Args:
+        node: Proxmox node name
+        vmid: VM ID
+        vmtype: VM type ('qemu' or 'lxc')
+        cluster_id: Cluster ID to use for connection (defaults to first cluster)
+    
     Returns normalized MAC (lowercase, no separators) or None.
     """
     try:
+        # Get cluster-specific Proxmox connection
+        if cluster_id:
+            from app.services.proxmox_service import get_proxmox_admin_for_cluster
+            proxmox = get_proxmox_admin_for_cluster(cluster_id)
+        else:
+            proxmox = get_proxmox_admin()
+        
         if vmtype == "lxc":
             # LXC: get config to find MAC
-            config = get_proxmox_admin().nodes(node).lxc(vmid).config.get()
+            config = proxmox.nodes(node).lxc(vmid).config.get()
             if not config:
                 logger.debug("VM %d: No config returned", vmid)
                 return None
@@ -711,7 +724,7 @@ def _get_vm_mac(node: str, vmid: int, vmtype: str) -> Optional[str]:
         
         elif vmtype == "qemu":
             # QEMU: get config to find MAC from any net interface
-            config = get_proxmox_admin().nodes(node).qemu(vmid).config.get()
+            config = proxmox.nodes(node).qemu(vmid).config.get()
             if not config:
                 logger.debug("VM %d: No config returned", vmid)
                 return None
@@ -943,7 +956,7 @@ def lookup_ips_parallel(vms: List[Dict[str, Any]]) -> Dict[int, str]:
     return results
 
 
-def _build_vm_dict(raw: Dict[str, Any], skip_ip: bool = False) -> Dict[str, Any]:
+def _build_vm_dict(raw: Dict[str, Any], skip_ips: bool = False) -> Dict[str, Any]:
     vmid = int(raw["vmid"])
     node = raw["node"]
     name = raw.get("name", f"vm-{vmid}")
@@ -965,11 +978,11 @@ def _build_vm_dict(raw: Dict[str, Any], skip_ip: bool = False) -> Dict[str, Any]
     category = _guess_category(raw)
     
     # IP lookup strategy (prioritized):
-    # 1. Memory cache (1-hour TTL) with validation for running VMs
+    # 1. Database cache (1-hour TTL) with validation for running VMs
     # 2. LXC: Direct API interface lookup (for static IPs)
     # 3. ARP scanning for QEMU and LXC with DHCP (handled by _enrich_vms_with_arp_ips)
     ip = None
-    if not skip_ip:
+    if not skip_ips:
         # First: Check database cache
         # Note: cluster_id should be in raw dict, fallback to cluster1 for backward compat
         cluster_id = raw.get("cluster_id", "cluster1")
@@ -988,7 +1001,10 @@ def _build_vm_dict(raw: Dict[str, Any], skip_ip: bool = False) -> Dict[str, Any]
             # LXC containers: network config API
             ip = _lookup_vm_ip(node, vmid, vmtype)
             if ip:
+                logger.debug(f"LXC {vmid} ({cluster_id}): Found IP via API: {ip}")
                 _cache_ip_to_db(cluster_id, vmid, ip)
+            else:
+                logger.debug(f"LXC {vmid} ({cluster_id}): No IP from API, will use ARP scan")
             # If no IP from API and container is running, ARP scan will find it (DHCP case)
         
         # For running VMs/containers without IPs:
@@ -1183,7 +1199,8 @@ def _enrich_vms_with_arp_ips(vms: List[Dict[str, Any]], force_sync: bool = False
             continue
 
         vmtype = vm.get("type")
-        mac = _get_vm_mac(vm["node"], vm["vmid"], vm["type"])
+        cluster_id = vm.get("cluster_id")
+        mac = _get_vm_mac(vm["node"], vm["vmid"], vm["type"], cluster_id=cluster_id)
         
         has_ip = vm.get("ip") and vm.get("ip") not in ("N/A", "Fetching...", "")
 
@@ -1300,7 +1317,8 @@ def _save_ips_to_db(vms: List[Dict[str, Any]], vm_mac_map: Dict[int, str]) -> No
                 mac = vm_mac_map.get(vmid)
                 if not mac:
                     # Try to get MAC from VM config
-                    mac = _get_vm_mac(vm["node"], vmid, vm["type"])
+                    cluster_id = vm.get("cluster_id")
+                    mac = _get_vm_mac(vm["node"], vmid, vm["type"], cluster_id=cluster_id)
                 
                 if mac:
                     # Check if entry exists
@@ -1463,9 +1481,10 @@ def get_all_vms(skip_ips: bool = False, force_refresh: bool = False) -> List[Dic
                 if VALID_NODES and vm.get("node") not in VALID_NODES:
                     continue
                 
-                vm_dict = _build_vm_dict(vm)
-                vm_dict["cluster_id"] = cluster_id
-                vm_dict["cluster_name"] = cluster_name
+                # Add cluster info to raw VM data for IP caching
+                vm["cluster_id"] = cluster_id
+                vm["cluster_name"] = cluster_name
+                vm_dict = _build_vm_dict(vm, skip_ips=skip_ips)
                 out.append(vm_dict)
         except Exception as e:
             logger.warning(f"Cluster {cluster_name} resources API failed, falling back to per-node queries: {e}")
@@ -1491,9 +1510,9 @@ def get_all_vms(skip_ips: bool = False, force_refresh: bool = False) -> List[Dic
                             continue
                         vm['node'] = node
                         vm['type'] = 'qemu'
-                        vm_dict = _build_vm_dict(vm)
-                        vm_dict["cluster_id"] = cluster_id
-                        vm_dict["cluster_name"] = cluster_name
+                        vm['cluster_id'] = cluster_id
+                        vm['cluster_name'] = cluster_name
+                        vm_dict = _build_vm_dict(vm, skip_ips=skip_ips)
                         out.append(vm_dict)
                     
                     # Get LXC containers
@@ -1504,9 +1523,9 @@ def get_all_vms(skip_ips: bool = False, force_refresh: bool = False) -> List[Dic
                             continue
                         vm['node'] = node
                         vm['type'] = 'lxc'
-                        vm_dict = _build_vm_dict(vm)
-                        vm_dict["cluster_id"] = cluster_id
-                        vm_dict["cluster_name"] = cluster_name
+                        vm['cluster_id'] = cluster_id
+                        vm['cluster_name'] = cluster_name
+                        vm_dict = _build_vm_dict(vm, skip_ips=skip_ips)
                         out.append(vm_dict)
                 except Exception as e:
                     logger.debug(f"Failed to list VMs on {node} in cluster {cluster_name}: {e}")
