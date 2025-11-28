@@ -286,6 +286,12 @@ def scan_network_range(subnet_cidr: str = "10.220.8.0/21", timeout: int = 3) -> 
             elapsed = time.time() - start_time
             logger.info("nmap completed in %.2f seconds (returncode=%d)", elapsed, result.returncode)
             
+            # Log nmap output for debugging
+            if result.stdout:
+                logger.info("nmap stdout: %s", result.stdout[:500])  # First 500 chars
+            if result.stderr:
+                logger.info("nmap stderr: %s", result.stderr[:500])
+            
             if result.returncode != 0:
                 logger.warning("nmap returned non-zero: %d, stderr: %s", 
                              result.returncode, result.stderr[:200] if result.stderr else "")
