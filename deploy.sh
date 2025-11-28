@@ -13,9 +13,13 @@ git pull
 
 # Check if running as systemd service and restart it
 if systemctl is-active --quiet proxmox-gui 2>/dev/null; then
+    echo "Updating systemd service file..."
+    sudo cp "$REPO_DIR/proxmox-gui.service" /etc/systemd/system/
+    sudo systemctl daemon-reload
+    
     echo "Restarting systemd service..."
     sudo systemctl restart proxmox-gui
-    sleep 2
+    sleep 3
     sudo systemctl status proxmox-gui --no-pager -l
     echo "✓ Service restarted successfully"
     
