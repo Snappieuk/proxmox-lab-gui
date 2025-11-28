@@ -486,6 +486,17 @@ def has_rdp_port_open(ip: str) -> bool:
     return ip in _rdp_hosts_cache
 
 
+def get_rdp_cache_time() -> float:
+    """
+    Get the timestamp of the last RDP port scan.
+    
+    Returns:
+        Timestamp of last scan, or 0 if no scan has completed
+    """
+    global _rdp_hosts_cache_time
+    return _rdp_hosts_cache_time
+
+
 def invalidate_arp_cache():
     """
     Invalidate the ARP cache to force a fresh scan on next request.

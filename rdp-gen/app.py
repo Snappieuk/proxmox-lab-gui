@@ -515,7 +515,10 @@ def api_vms():
         
         # Check which VMs can actually generate RDP files
         # Show button only if: (1) build_rdp() would succeed AND (2) Windows or port 3389 open
-        from arp_scanner import has_rdp_port_open
+        from arp_scanner import has_rdp_port_open, get_rdp_cache_time
+        
+        rdp_cache_valid = get_rdp_cache_time() > 0  # Has the port scan completed?
+        
         for vm in vms:
             rdp_can_build = False
             rdp_port_available = False
@@ -529,9 +532,11 @@ def api_vms():
             
             # Check if this is Windows OR has port 3389 open
             if vm.get('category') == 'windows':
-                rdp_port_available = True
-            elif vm.get('ip') and vm['ip'] not in ('N/A', 'Fetching...', ''):
+                rdp_port_available = True  # Windows always assumed to have RDP
+            elif rdp_cache_valid and vm.get('ip') and vm['ip'] not in ('N/A', 'Fetching...', ''):
+                # Only check port scan cache if scan has completed
                 rdp_port_available = has_rdp_port_open(vm['ip'])
+            # else: non-Windows with no scan results = no RDP button
             
             # Only show button if BOTH conditions met
             vm['rdp_available'] = rdp_can_build and rdp_port_available
