@@ -17,18 +17,18 @@ jobs:
           
       - name: Pull latest changes
         run: |
-          cd ~/proxmox-lab-gui
+          cd ~/
           git pull
           
       - name: Install dependencies
         run: |
-          cd ~/proxmox-lab-gui
+          cd ~/
           source venv/bin/activate
           pip install -r requirements.txt
           
       - name: Start Flask app
         run: |
-          cd ~/proxmox-lab-gui
+          cd ~/
           source venv/bin/activate
           nohup python3 run.py > /tmp/flask.log 2>&1 &
           sleep 3
