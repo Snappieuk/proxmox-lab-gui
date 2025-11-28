@@ -36,8 +36,10 @@ import logging
 import os
 import threading
 import time
+import ipaddress
 from typing import Dict, Optional, List
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 logger = logging.getLogger(__name__)
 
@@ -226,6 +228,65 @@ def _is_root() -> bool:
     return os.geteuid() == 0
 
 
+def parallel_ping_sweep(subnet_cidr: str, timeout_ms: int = 300, max_workers: int = 300) -> int:
+    """
+    Ping every IP in a subnet in parallel to populate ARP table.
+    
+    Args:
+        subnet_cidr: CIDR notation (e.g., "10.220.8.0/21")
+        timeout_ms: Timeout per ping in milliseconds
+        max_workers: Number of concurrent pings
+    
+    Returns:
+        Number of hosts that responded
+    """
+    try:
+        network = ipaddress.ip_network(subnet_cidr, strict=False)
+        total_hosts = network.num_addresses - 2  # Exclude network and broadcast
+        
+        logger.info("Starting parallel ping sweep of %s (%d hosts, %d workers)", 
+                   subnet_cidr, total_hosts, max_workers)
+        start_time = time.time()
+        
+        def ping_host(ip: str) -> bool:
+            """Ping a single host. Returns True if responds."""
+            try:
+                # Use -c 1 (one packet), -W timeout (in seconds), -n (numeric, no DNS)
+                timeout_sec = max(1, timeout_ms // 1000)
+                result = subprocess.run(
+                    ['ping', '-c', '1', '-W', str(timeout_sec), '-n', str(ip)],
+                    capture_output=True,
+                    timeout=timeout_sec + 1
+                )
+                return result.returncode == 0
+            except:
+                return False
+        
+        # Ping all IPs in parallel
+        alive_count = 0
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all ping jobs
+            future_to_ip = {
+                executor.submit(ping_host, str(ip)): str(ip) 
+                for ip in network.hosts()
+            }
+            
+            # Collect results as they complete
+            for future in as_completed(future_to_ip):
+                if future.result():
+                    alive_count += 1
+        
+        elapsed = time.time() - start_time
+        logger.info("Parallel ping sweep completed in %.2f seconds: %d/%d hosts alive", 
+                   elapsed, alive_count, total_hosts)
+        
+        return alive_count
+        
+    except Exception as e:
+        logger.error("Parallel ping sweep failed: %s", e)
+        return 0
+
+
 def scan_network_range(subnet_cidr: str = "10.220.8.0/21", timeout: int = 3) -> bool:
     """
     Scan network range to populate ARP table using nmap.
@@ -390,19 +451,14 @@ def _background_scan_worker(vm_mac_map: Dict[int, str], subnets: Optional[List[s
             for vmid in vm_mac_map.keys():
                 _scan_status[vmid] = "Scanning network..."
         
-        # Try network range scan first (more reliable than broadcast ping)
-        logger.info("Scanning network range 10.220.8.0/21 to populate ARP")
-        scan_success = scan_network_range("10.220.8.0/21", timeout=1)
+        # Try parallel ping sweep first (most reliable for ARP population)
+        logger.info("Background: Scanning network range 10.220.8.0/21 with parallel ping sweep")
+        alive_count = parallel_ping_sweep("10.220.8.0/21", timeout_ms=300, max_workers=300)
         
-        # If scan failed, try broadcast ping as fallback
-        if not scan_success:
-            subnets = subnets or ["10.220.15.255"]  # Default to 10.220.8.0/21 broadcast
-            logger.info("Falling back to broadcast ping to %d subnets", len(subnets))
-            with _scan_lock:
-                for vmid in vm_mac_map.keys():
-                    _scan_status[vmid] = "Broadcast ping..."
-            for subnet in subnets:
-                broadcast_ping(subnet)
+        if alive_count == 0:
+            # Fallback to nmap if parallel ping found nothing
+            logger.info("Background: Parallel ping found no hosts, trying nmap")
+            scan_success = scan_network_range("10.220.8.0/21", timeout=1)
         
         # Get updated ARP table
         arp_table = get_arp_table()
@@ -499,26 +555,22 @@ def discover_ips_via_arp(vm_mac_map: Dict[int, str], subnets: Optional[List[str]
     # Synchronous mode (old behavior)
     logger.info("Running synchronous network scan")
     
-    # Try network range scan first (more reliable than broadcast ping)
-    logger.info("Scanning network range 10.220.8.0/21 to populate ARP")
-    scan_success = scan_network_range("10.220.8.0/21", timeout=5)
+    # Try parallel ping sweep first (most reliable for ARP population)
+    logger.info("Scanning network range 10.220.8.0/21 with parallel ping sweep")
+    alive_count = parallel_ping_sweep("10.220.8.0/21", timeout_ms=300, max_workers=300)
     
-    # If scan failed, try broadcast ping as fallback
-    if not scan_success:
-        subnets = subnets or ["10.220.15.255"]  # Default to 10.220.8.0/21 broadcast
-        logger.info("Falling back to broadcast ping to %d subnets", len(subnets))
-        for subnet in subnets:
-            broadcast_ping(subnet)
-    else:
-        # Even if scan succeeded, do broadcast ping to catch any stragglers
-        logger.info("Supplementing nmap scan with broadcast ping")
-        subnets = subnets or ["10.220.15.255"]
-        for subnet in subnets:
-            broadcast_ping(subnet, count=3)
+    if alive_count == 0:
+        # Fallback to nmap if parallel ping found nothing
+        logger.info("Parallel ping found no hosts, trying nmap")
+        scan_success = scan_network_range("10.220.8.0/21", timeout=5)
     
     # Get updated ARP table
     arp_table = get_arp_table()
     logger.info("Post-scan ARP table has %d entries, looking for %d VM MACs", len(arp_table), len(vm_mac_map))
+    
+    # Show what MACs we're looking for vs what's in ARP table
+    logger.info("VM MACs we're looking for: %s", list(vm_mac_map.values()))
+    logger.info("Sample ARP table MACs (first 10): %s", list(arp_table.keys())[:10])
     
     # Map remaining VM MACs to IPs
     for vmid, mac in vm_mac_map.items():
