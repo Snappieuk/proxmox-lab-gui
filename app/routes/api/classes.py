@@ -265,7 +265,12 @@ def delete_class_route(class_id: int):
     deleted_vms = []
     failed_vms = []
     for vm_info in vm_assignments_to_delete:
-        vm_success, vm_msg = delete_vm(vm_info['vmid'], vm_info['node'])
+        # Need to get cluster_ip for the VM
+        cluster_ip = None
+        if class_.template and class_.template.cluster_ip:
+            cluster_ip = class_.template.cluster_ip
+        
+        vm_success, vm_msg = delete_vm(vm_info['vmid'], vm_info['node'], cluster_ip)
         if vm_success:
             deleted_vms.append(vm_info['vmid'])
         else:
