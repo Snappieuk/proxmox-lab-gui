@@ -53,9 +53,13 @@ def get_current_user():
         if is_admin_user(session.get('user')):
             # Auto-create local admin account for Proxmox admins
             logger.info(f"Auto-creating local admin account for Proxmox admin: {username_clean}")
-            user_id = create_local_user(username_clean, None, role='adminer')
-            if user_id:
+            # Use a placeholder password since admins authenticate via Proxmox
+            success, msg = create_local_user(username_clean, 'proxmox-admin-placeholder', role='adminer')
+            if success:
                 user = get_user_by_username(username_clean)
+                logger.info(f"Successfully created local admin account for: {username_clean}")
+            else:
+                logger.error(f"Failed to create local admin account: {msg}")
     
     return user
 

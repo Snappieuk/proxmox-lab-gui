@@ -873,3 +873,24 @@ body {
     z-index: 1000;
 }
 
+/* Fallback for Bootstrap Icons when CDN is blocked */
+.bi::before {
+    font-family: Arial, sans-serif;
+    font-weight: normal;
+    font-style: normal;
+}
+
+.bi-play-fill::before { content: "▶"; }
+.bi-stop-fill::before { content: "■"; }
+.bi-download::before { content: "⬇"; }
+.bi-terminal::before { content: "⌨"; }
+.bi-clipboard::before { content: "📋"; }
+.bi-arrow-clockwise::before { content: "↻"; }
+.bi-trash::before { content: "🗑"; }
+.bi-plus-circle::before { content: "➕"; }
+.bi-save::before { content: "💾"; }
+.bi-x-circle::before { content: "❌"; }
+.bi-check-circle-fill::before { content: "✓"; }
+.bi-exclamation-triangle-fill::before { content: "⚠"; }
+
+

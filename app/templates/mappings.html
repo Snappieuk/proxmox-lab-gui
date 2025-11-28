@@ -18,7 +18,23 @@
 
 <div id="mappings-content" style="display: none;">
     <div class="mapping-layout">
-        <!-- Left side: User selection + VM assignment -->
+        <!-- Left side: Current mappings table -->
+        <div class="mapping-table-card">
+            <h2>Current Mappings</h2>
+            <table class="mapping-table">
+                <thead>
+                    <tr>
+                        <th>User</th>
+                        <th>Assigned VMs</th>
+                    </tr>
+                </thead>
+                <tbody id="mappings-tbody">
+                    <tr><td colspan="2">Loading...</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Right side: User selection + VM assignment -->
         <div class="mapping-form-card">
             <h2>Manage User Access</h2>
 
@@ -59,22 +75,6 @@
                     Confirm Selection
                 </button>
             </div>
-        </div>
-
-        <!-- Right side: Current mappings table -->
-        <div class="mapping-table-card">
-            <h2>Current Mappings</h2>
-            <table class="mapping-table">
-                <thead>
-                    <tr>
-                        <th>User</th>
-                        <th>Assigned VMs</th>
-                    </tr>
-                </thead>
-                <tbody id="mappings-tbody">
-                    <tr><td colspan="2">Loading...</td></tr>
-                </tbody>
-            </table>
         </div>
     </div>
 </div>

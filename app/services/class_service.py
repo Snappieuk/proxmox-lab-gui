@@ -34,8 +34,12 @@ def create_local_user(username: str, password: str, role: str = 'user') -> Tuple
     
     Returns: (success, message/error)
     """
-    if not username or not password:
-        return False, "Username and password are required"
+    if not username:
+        return False, "Username is required"
+    
+    # Allow None/empty password for admin accounts (they auth via Proxmox)
+    if not password and role != 'adminer':
+        return False, "Password is required"
     
     # Validate role
     if role not in ('adminer', 'teacher', 'user'):

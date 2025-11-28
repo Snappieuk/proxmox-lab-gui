@@ -4,7 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SSH - {{ vm_name }}</title>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css">
+    <!-- xterm.js CSS - Note: May be blocked by SSL VPN proxies -->
+    <!-- <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css"> -->
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -195,13 +196,24 @@
         <div id="terminal"></div>
     </div>
 
-    <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
+    <!-- xterm.js scripts - Note: May be blocked by SSL VPN proxies. Access directly instead. -->
+    <!-- <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script> -->
     <script>
-        const term = new Terminal({
-            cursorBlink: true,
-            fontSize: 14,
-            fontFamily: '"Cascadia Code", "Consolas", "Courier New", monospace',
+        // Check if xterm.js loaded (will fail through SSL VPN)
+        if (typeof Terminal === 'undefined') {
+            document.getElementById('terminal').innerHTML = '<div style="padding: 20px; color: #e74c3c;">' +
+                '<h2>⚠ SSH Terminal Unavailable</h2>' +
+                '<p>The SSH terminal requires direct access to the server.</p>' +
+                '<p>Please access this site directly (not through SSL VPN) to use the SSH terminal.</p>' +
+                '<p>Alternatively, use RDP to connect to your VM.</p>' +
+                '</div>';
+        } else {
+            // Original xterm.js initialization code
+            const term = new Terminal({
+                cursorBlink: true,
+                fontSize: 14,
+                fontFamily: '"Cascadia Code", "Consolas", "Courier New", monospace',
             theme: {
                 background: '#1e1e1e',
                 foreground: '#d4d4d4',
@@ -352,6 +364,7 @@
         
         // Focus username input on load
         usernameInput.focus();
+        } // End of xterm.js check
     </script>
 </body>
 </html>

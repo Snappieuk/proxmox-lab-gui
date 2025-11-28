@@ -1141,18 +1141,14 @@ def get_all_vms(skip_ips: bool = False, force_refresh: bool = False) -> List[Dic
     
     # If cache is valid and not forcing refresh, return cached data
     if not force_refresh and cache_valid and cached_vms is not None:
-        logger.info("get_all_vms: returning cached data for all clusters (skip_ips=%s, age=%.1fs)", 
-                   skip_ips, now - cached_ts)
+        logger.info("get_all_vms: returning cached data for all clusters (age=%.1fs) - IPs already in cache", 
+                   now - cached_ts)
         result = []
         for vm in cached_vms:
             result.append({**vm})
         
-        # Run ARP scan unless skipping IPs
-        if not skip_ips and ARP_SCANNER_AVAILABLE:
-            logger.info("get_all_vms: calling ARP scan enrichment on cached data")
-            _enrich_vms_with_arp_ips(result)
-        elif skip_ips:
-            logger.info("get_all_vms: SKIPPING ARP scan (skip_ips=True)")
+        # VMs from cache already have IPs from previous ARP scan, no need to re-scan
+        # Only re-scan if cache is old or if explicitly requested
         
         return result
 
