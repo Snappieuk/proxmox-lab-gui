@@ -19,7 +19,7 @@ from app.services.proxmox_client import (
     get_all_vms,
     _get_vm_mac,
 )
-from arp_scanner import get_arp_table
+from app.services.arp_scanner import get_arp_table
 
 logger = logging.getLogger(__name__)
 

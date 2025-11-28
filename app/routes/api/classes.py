@@ -65,7 +65,7 @@ from app.services.proxmox_operations import (
     CLASS_CLUSTER_IP
 )
 
-from models import User, VMAssignment
+from app.models import User, VMAssignment
 
 logger = logging.getLogger(__name__)
 

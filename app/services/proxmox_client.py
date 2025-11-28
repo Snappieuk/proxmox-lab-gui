@@ -170,8 +170,8 @@ def save_cluster_config(clusters: List[Dict[str, Any]]) -> None:
     Persists changes across restarts by writing to clusters.json.
     """
     global CLUSTERS
-    import config
-    from config import CLUSTER_CONFIG_FILE
+    import app.config as config
+    from app.config import CLUSTER_CONFIG_FILE
     
     # Update runtime config
     CLUSTERS.clear()

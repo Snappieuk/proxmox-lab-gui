@@ -141,7 +141,7 @@ def create_proxmox_client() -> ProxmoxAPI:
 
 def probe_proxmox() -> Dict[str, Any]:
     """Return diagnostics information helpful for admin troubleshooting."""
-    from config import VALID_NODES, ADMIN_USERS, ADMIN_GROUP
+    from app.config import VALID_NODES, ADMIN_USERS, ADMIN_GROUP
     
     info: Dict[str, Any] = {
         "ok": True,

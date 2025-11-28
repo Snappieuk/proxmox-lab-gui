@@ -24,7 +24,7 @@ from app.services.proxmox_client import (
     invalidate_cluster_cache,
     verify_vm_ip,
 )
-from arp_scanner import get_scan_status, has_rdp_port_open, get_rdp_cache_time
+from app.services.arp_scanner import get_scan_status, has_rdp_port_open, get_rdp_cache_time
 
 logger = logging.getLogger(__name__)
 
