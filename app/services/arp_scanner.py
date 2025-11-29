@@ -583,15 +583,15 @@ def _background_scan_worker(vm_mac_map: Dict[str, str], subnets: Optional[List[s
         found_count = 0
         with _scan_lock:
             for key, mac in vm_mac_map.items():
-                    if mac in arp_table:
-                        ip = arp_table[mac]
-                        _arp_cache[mac] = ip
-                        _scan_status[key] = ip
+                if mac in arp_table:
+                    ip = arp_table[mac]
+                    _arp_cache[mac] = ip
+                    _scan_status[key] = ip
                     found_count += 1
-                        logger.info("SCAN key %s (MAC %s) -> IP %s", key, mac, ip)
+                    logger.info("SCAN key %s (MAC %s) -> IP %s", key, mac, ip)
                 else:
-                        _scan_status[key] = "Not found in ARP"
-                        logger.warning("SCAN key %s (MAC %s) not found in ARP table", key, mac)
+                    _scan_status[key] = "Not found in ARP"
+                    logger.warning("SCAN key %s (MAC %s) not found in ARP table", key, mac)
             
             _arp_cache_time = time.time()
         
