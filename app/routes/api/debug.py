@@ -6,21 +6,20 @@ Debug API endpoint for troubleshooting admin detection.
 import logging
 from flask import Blueprint, jsonify, session
 
-from app.utils.decorators import login_required
-from app.services.proxmox_client import is_admin_user, _user_in_group, _get_admin_group_members_cached
-from app.config import ADMIN_USERS, ADMIN_GROUP
-
 logger = logging.getLogger(__name__)
 
 debug_bp = Blueprint('api_debug', __name__, url_prefix='/api/debug')
 
 
 @debug_bp.route('/admin-status', methods=['GET'])
-@login_required
 def admin_status():
     """
     Returns detailed admin detection information for current user.
     """
+    from app.utils.decorators import require_user
+    from app.services.proxmox_client import is_admin_user, _user_in_group, _get_admin_group_members_cached
+    from app.config import ADMIN_USERS, ADMIN_GROUP
+    
     user = session.get('user')
     if not user:
         return jsonify({"error": "Not logged in"}), 401
@@ -37,6 +36,7 @@ def admin_status():
             in_admin_group = _user_in_group(user, ADMIN_GROUP)
         except Exception as e:
             logger.error(f"Failed to check admin group: {e}")
+            group_members = [f"Error: {str(e)}"]
     
     # Check admin users list
     in_admin_list = user in ADMIN_USERS
