@@ -11,8 +11,6 @@ from flask import Blueprint, render_template, jsonify, request
 
 from app.utils.decorators import login_required, admin_required
 
-# Import path setup is no longer needed
-import app.utils.paths
 
 from app.services.user_manager import (
     get_pve_users,

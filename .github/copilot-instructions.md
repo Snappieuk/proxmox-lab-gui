@@ -7,18 +7,21 @@ A Flask webapp providing a lab VM portal similar to Azure Labs for self-service 
 
 **Entry point**: `run.py` - imports `create_app()` factory from `app/` package and runs Flask with threaded mode.
 
+**Deployment model**: This code is NOT run locally or in a codespace. It is pushed to a remote Proxmox server (typically via git) and runs there as a systemd service or standalone Flask process. The server has direct network access to Proxmox clusters.
+
 ## Current state & architecture decisions (READ THIS FIRST!)
 - **VMInventory + background_sync system**: **Core architecture** - database-first design where all VM reads come from `VMInventory` table (see `DATABASE_FIRST_ARCHITECTURE.md`). Background sync daemon updates DB every 5min (full) and 30sec (quick). Provides 100x faster page loads vs direct Proxmox API calls. Code in `app/__init__.py` (lines 114-115), `app/routes/api/vms.py`, `app/services/inventory_service.py`, `app/services/background_sync.py`.
 - **Terraform VM deployment**: Primary deployment method (see `TERRAFORM_MIGRATION.md`) replaces legacy Python cloning. Provides 10x speed improvement, parallel deployment, automatic VMID allocation, idempotency. Located at `app/services/terraform_service.py`.
-- **Legacy Python cloning**: Old `clone_vms_for_class()` function (~800 lines in `app/services/proxmox_operations.py`) still exists but superseded by Terraform. Preserved for rollback only.
-- **Mappings.json system**: Legacy admin-managed user→VM assignments coexist with class-based system for backwards compatibility.
+- **Legacy Python cloning**: Old `clone_vms_for_class()` function (~800 lines in `app/services/proxmox_operations.py`) exists but is NOT used - Terraform handles all VM deployment. May be removed in future cleanup.
+- **Mappings.json system**: **DEPRECATED - Should be migrated to database**. Currently reads `app/mappings.json` to map Proxmox users → VMIDs. This should be replaced with database-backed VMAssignment records. The User model already has `vm_assignments` relationship - mappings.json is redundant.
+- **Authentication model**: **Proxmox users = Admins only**. Going forward, no application users (students/teachers) should have Proxmox accounts. All non-admin users managed via SQLite database.
 
 ## Architecture patterns
-
-**Dual system coexistence** (user access):
-- **Legacy mappings.json system**: Admins manually map Proxmox users → VMIDs in JSON file at `app/mappings.json`. Still active for backwards compatibility.
-- **Class-based system**: Teachers create classes linked to Proxmox templates, VMs auto-cloned and assigned to students via invite links. SQLite-backed (`app/lab_portal.db`).
-- Both systems query same Proxmox clusters via `app/services/proxmox_client.py` and render same templates. User sees combined VM list (mappings.json + class assignments).
+**Dual system coexistence** (user access - MIGRATION IN PROGRESS):
+- **Legacy mappings.json system**: **DEPRECATED** - Admins manually map Proxmox users → VMIDs in JSON file at `app/mappings.json`. Read by `_resolve_user_owned_vmids()` function. Should be migrated to VMAssignment table in database.
+- **Class-based system**: Teachers create classes linked to Proxmox templates, VMs auto-cloned and assigned to students via invite links. SQLite-backed (`app/lab_portal.db`). Uses VMAssignment table.
+- **Future state**: Only class-based system. All VM→user mappings in database via VMAssignment records. No JSON files. Function `_resolve_user_owned_vmids()` should only query database.
+- Both systems query same Proxmox clusters via `app/services/proxmox_client.py` and render same templates. User sees combined VM list (mappings.json + class assignments). Function `_resolve_user_owned_vmids()` merges both sources.
 
 **Multi-cluster support** (`app/config.py` + `app/services/cluster_manager.py`):
 - `CLUSTERS` list defines multiple Proxmox clusters (can load from `clusters.json` for persistence)
@@ -47,11 +50,12 @@ A Flask webapp providing a lab VM portal similar to Azure Labs for self-service 
 3. **ARP scanner fallback** (`app/services/arp_scanner.py`): Uses `nmap -sn -PR` (requires root/CAP_NET_RAW) to populate kernel ARP table, matches VM MAC → IP. Cached 1hr, runs in background thread.
 4. **RDP port scan**: Optional validation that discovered IP has port 3389 open (Windows VMs only)
 
-**Authentication & authorization** (dual-mode):
-- **Proxmox auth** (`app/services/user_manager.py`): Validates credentials via `ProxmoxAPI(...).version.get()` call. Session stores full userid (`student1@pve`).
-- **Local auth** (`app/services/class_service.py`): SQLite users with password hashing (Werkzeug) for class system. Three roles: `adminer` (full admin), `teacher` (create/manage classes), `user` (student).
-- Login flow: Try Proxmox auth first, then local auth fallback. Session sets `user` key to username (with or without realm suffix).
-- Admin detection: `is_admin_user(userid)` checks (a) `ADMIN_USERS` list OR (b) membership in `ADMIN_GROUP` Proxmox group OR (c) local user role == 'adminer'.
+**Authentication & authorization** (simplified model):
+- **Proxmox auth**: Any user who can authenticate via Proxmox API is automatically considered an **admin**. No student/teacher accounts should be created in Proxmox.
+- **Local auth** (`app/services/class_service.py`): SQLite users with password hashing (Werkzeug) for all non-admin users. Three roles: `adminer` (full admin), `teacher` (create/manage classes), `user` (student).
+- Login flow: Try Proxmox auth first (grants admin), then local auth fallback (grants role from database).
+- Admin detection: `is_admin_user(userid)` checks (a) successful Proxmox authentication OR (b) local user role == 'adminer'.
+- **Design principle**: Going forward, NO users created in the application should have accounts in Proxmox. Proxmox is admin-only.
 
 **Blueprint-based routing** (`app/routes/__init__.py`):
 ```
@@ -74,10 +78,9 @@ api/
 
 ## Key files
 
-**`run.py`** (Application entry point, ~60 lines):
+**`run.py`** (Application entry point, ~30 lines):
 - Imports `create_app` factory from `app/` package, runs Flask app with `threaded=True`
 - Disables SSL warnings if `PVE_VERIFY=False` (before any imports)
-- Adds `rdp-gen/` to sys.path for legacy imports (done in `app/utils/paths.py`)
 
 **`app/__init__.py`** (Application factory, ~110 lines):
 - `create_app()` function: configures Flask, initializes SQLAlchemy (`models.init_db()`), registers blueprints
@@ -94,7 +97,7 @@ api/
 
 **`app/services/proxmox_operations.py`** (VM cloning & template operations, ~410 lines):
 - Template management: `list_proxmox_templates()` (scans clusters for template VMs)
-- **VM cloning (DEPRECATED)**: `clone_vm_from_template()`, `clone_vms_for_class()` – replaced by Terraform, kept for rollback only
+- **VM cloning (UNUSED)**: `clone_vm_from_template()`, `clone_vms_for_class()` – replaced by Terraform, not imported anywhere
 - VM lifecycle: `start_class_vm()`, `stop_class_vm()`, `delete_vm()`, `get_vm_status()`
 - Snapshot operations: `create_vm_snapshot()`, `revert_vm_to_snapshot()` – still used
 - Template conversion: `convert_vm_to_template()` (converts VM → template)
@@ -171,6 +174,8 @@ api/
 
 **Local dev setup**:
 ```bash
+# WARNING: This is for testing code only, NOT for production use
+# The app needs to run on a server with network access to Proxmox clusters
 cd /workspaces/proxmox-lab-gui
 python3 -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate
@@ -181,6 +186,8 @@ python3 run.py  # Runs on http://0.0.0.0:8080
 
 **Production deployment**:
 ```bash
+# On the remote Proxmox server (not local machine):
+
 # Quick start with Flask
 ./start.sh  # Activates venv, loads .env, runs run.py with threaded mode
 
@@ -191,18 +198,34 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now proxmox-gui
 sudo systemctl status proxmox-gui
 
-# Deploy after git pull
+# Deploy after git pull (on remote server)
 ./deploy.sh  # Auto-detects systemd or standalone Flask, restarts
 ```
 
+**Development workflow**:
+```bash
+# Local development (testing only - won't connect to real Proxmox):
+cd /workspaces/proxmox-lab-gui
+python3 -m venv venv
+source venv/bin/activate  # Windows: venv\Scripts\activate
+pip install -r requirements.txt
+cp .env.example .env  # Edit with your Proxmox credentials
+python3 run.py  # Runs on http://0.0.0.0:8080
+
+# Push to remote server for actual deployment:
+git add . && git commit -m "Changes" && git push
+# SSH to remote server, git pull, and restart service
+```
+
 **Class-based lab workflow**:
-1. **Initial setup**: Admin creates local teacher accounts via `create_local_user(username, password, role='teacher')` or direct DB insert
+1. **Initial setup**: Admin creates local teacher accounts via `/admin/users` UI or `create_local_user(username, password, role='teacher')`
 2. **Register templates**: Teacher visits `/admin/probe` to see available templates, registers them via API or DB
 3. **Create class**: Teacher creates class at `/classes/create`, selects template, sets pool size
 4. **Generate invite**: Teacher generates never-expiring or time-limited invite link (7-day default)
-5. **Clone VMs**: Teacher adds VMs to pool (clones template N times, creates `VMAssignment` records)
-6. **Student enrollment**: Students visit invite link, auto-assigned first available VM in class pool
+5. **Clone VMs**: Teacher adds VMs to pool via Terraform (deploys teacher + student VMs in parallel)
+6. **Student enrollment**: Students visit invite link, auto-assigned first available VM in class pool (creates VMAssignment record)
 7. **Student access**: Student sees assigned VM in `/portal`, can start/stop/revert to baseline snapshot
+**Note**: All users (teachers and students) are local database accounts. No Proxmox accounts needed except for admins.
 
 **Database migrations** (no formal tool, manual process):
 - Schema changes: edit `app/models.py`, then in Python shell:
@@ -258,10 +281,10 @@ sudo systemctl status proxmox-gui
 - IP lookups have separate `_ip_cache` (5min TTL) to avoid guest agent timeout storms
 - Cache invalidation: `start_vm()` and `shutdown_vm()` call `_invalidate_vm_cache()` to clear module-level cache
 
-**Admin group membership API quirks**:
-- Proxmox returns `members` as either `["user@pve", ...]` OR `[{"userid": "user@pve"}, ...]` (two formats!)
-- `_user_in_group()` handles both, checks all realm variants (user@pam, user@pve, user without realm)
-- Set `ADMIN_GROUP=None` to disable group-based admin (rely only on `ADMIN_USERS` list)
+**Admin group membership API quirks** (DEPRECATED):
+- Legacy code checks `ADMIN_USERS` list and `ADMIN_GROUP` Proxmox group membership
+- **Going forward**: Any Proxmox authentication = admin. Group membership checks unnecessary.
+- Set `ADMIN_GROUP=None` to disable (or remove this logic entirely)
 
 **LXC vs QEMU differences** (both exposed as "VMs"):
 - LXC: `nodes(node).lxc(vmid)`, IP via `.interfaces.get()` (fast, works when stopped)
@@ -271,10 +294,11 @@ sudo systemctl status proxmox-gui
 **RDP file generation failures**:
 - `build_rdp(vm)` raises `ValueError` if VM has no IP address (stopped VMs, missing guest agent)
 - `app.py` catches this in `/rdp/<vmid>.rdp` route, renders `error.html` with 503 status
-- Frontend: `index.html` hides RDP button if `vm.ip` is falsy or placeholder string
-
-**mappings.json path resolution**:
-- Defaults to `app/mappings.json` (relative to `config.py`)
+**mappings.json path resolution** (DEPRECATED - MIGRATE TO DATABASE):
+- File at `app/mappings.json` currently read by `_resolve_user_owned_vmids()` to determine VM access
+- **Should be removed**: All VM assignments should use VMAssignment table in database
+- User model already has `vm_assignments` relationship - JSON file is redundant
+- Migration path: Create VMAssignment records for any mappings in JSON, then delete JSON file and related code
 - Override with `MAPPINGS_FILE` env var (absolute path recommended for production)
 - Auto-created on first write if missing – parent dir must exist!
 
@@ -309,10 +333,10 @@ def api_vm_reboot(vmid: int):
 2. Add to return dict: `"cores": cores`
 3. In `index.html`, add display: `<div>Cores: {{ vm.cores }}</div>`
 
-**Debug admin access**:
+**Admin detection**:
 - Check `is_admin_user(user)` returns True (logs to INFO level)
-- Verify user in `ADMIN_USERS` list or member of `ADMIN_GROUP` Proxmox group
-- Use `/admin/probe` endpoint (admin-only) to see node/resource diagnostics
+- Admin if: (a) authenticated via Proxmox OR (b) local user with role='adminer'
+- **Design principle**: Any Proxmox user is automatically admin. No ADMIN_USERS list or ADMIN_GROUP checks needed.
 
 **Manually test authentication**:
 ```python

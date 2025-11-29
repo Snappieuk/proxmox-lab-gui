@@ -8,8 +8,9 @@
             <div class="login-error">{{ error }}</div>
         {% endif %}
         <form method="post">
-            <label for="username">Proxmox user (pve realm)</label>
-            <input type="text" id="username" name="username" placeholder="e.g. student1" required>
+            <label for="username">Username</label>
+            <input type="text" id="username" name="username" placeholder="e.g. teacher1 or root@pam" required>
+            <p style="color: #666; font-size: 12px; margin: 0.25rem 0 0.5rem 0;">Admin: Use Proxmox user (e.g., root@pam, admin@pve)</p>
 
             <label for="password">Password</label>
             <input type="password" id="password" name="password" required>

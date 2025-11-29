@@ -118,9 +118,9 @@ def api_vm_ip(vmid: int):
 
 
 def _resolve_user_owned_vmids(username: str) -> set:
-    """Resolve VMIDs the user should see without performing a live Proxmox fetch.
+    """Resolve VMIDs the user should see from database VMAssignments.
 
-    Combines class-based assignments (VMAssignment) and legacy mappings.json.
+    Only uses class-based assignments from database (VMAssignment table).
     Accepts realm-suffixed usernames (e.g., student1@pve) and normalizes variants.
     """
     variants = {username}
@@ -133,32 +133,14 @@ def _resolve_user_owned_vmids(username: str) -> set:
 
     owned = set()
     try:
-        # Class-based assignments
+        # Database-based assignments (VMAssignment table)
         user_row = User.query.filter(User.username.in_(variants)).first()
         if user_row:
             for assign in user_row.vm_assignments:
                 if assign.proxmox_vmid:
                     owned.add(assign.proxmox_vmid)
     except Exception:
-        logger.exception("Failed to gather class assignments for %s", username)
-
-    # Legacy mappings.json
-    try:
-        import os, json
-        if os.path.exists(MAPPINGS_FILE):
-            with open(MAPPINGS_FILE, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            # Data may be {"user@pve": [100,101]} or similar
-            for name_variant in variants:
-                vm_list = data.get(name_variant)
-                if isinstance(vm_list, list):
-                    for vmid in vm_list:
-                        try:
-                            owned.add(int(vmid))
-                        except Exception:
-                            continue
-    except Exception:
-        logger.exception("Failed to parse mappings.json for %s", username)
+        logger.exception("Failed to gather VM assignments for %s", username)
 
     return owned
 

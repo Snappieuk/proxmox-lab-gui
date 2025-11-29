@@ -10,8 +10,6 @@ import logging
 import threading
 from typing import Dict, List, Any
 
-# Import path setup (adds rdp-gen to sys.path)
-import app.utils.paths
 
 from app.config import CLUSTERS, CLUSTER_CONFIG_FILE
 

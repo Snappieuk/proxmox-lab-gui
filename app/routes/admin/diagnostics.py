@@ -11,8 +11,6 @@ from flask import Blueprint, render_template, jsonify, session
 
 from app.utils.decorators import login_required, admin_required
 
-# Import path setup (adds rdp-gen to sys.path)
-import app.utils.paths
 
 from app.services.proxmox_client import (
     probe_proxmox,

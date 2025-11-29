@@ -9,8 +9,6 @@ import logging
 
 from flask import Blueprint, render_template, request, redirect, url_for, session
 
-# Import path setup (adds rdp-gen to sys.path)
-import app.utils.paths
 
 from app.config import CLUSTERS
 

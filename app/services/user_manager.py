@@ -12,8 +12,6 @@ from typing import Dict, List, Any, Optional
 
 from flask import session, abort
 
-# Import path setup (adds rdp-gen to sys.path)
-import app.utils.paths
 
 from app.config import ADMIN_USERS, ADMIN_GROUP, CLUSTERS
 from proxmoxer import ProxmoxAPI
@@ -37,21 +35,42 @@ def require_user() -> str:
 
 def authenticate_proxmox_user(username: str, password: str) -> Optional[str]:
     """
-    Try to authenticate a PVE realm user: '<username>@pve'.
+    Try to authenticate a Proxmox user (admin).
     
-    Returns the full user id on success (e.g. 'student1@pve'),
+    Accepts formats:
+    - 'root@pam' - full user@realm format (tries as-is)
+    - 'admin@pve' - full user@realm format (tries as-is) 
+    - 'admin' - bare username (tries with @pve realm)
+    
+    Returns the full user id on success (e.g. 'root@pam'),
     or None on failure.
     """
     username = (username or "").strip()
     if not username or not password:
         return None
 
-    full_user = f"{username}@pve"
-    
     # Get cluster config from session or default to first cluster
     cluster_id = session.get("cluster_id", CLUSTERS[0]["id"])
     cluster = next((c for c in CLUSTERS if c["id"] == cluster_id), CLUSTERS[0])
     
+    # If username already has realm suffix, try as-is
+    if '@' in username:
+        try:
+            prox = ProxmoxAPI(
+                cluster["host"],
+                user=username,
+                password=password,
+                verify_ssl=cluster.get("verify_ssl", False),
+            )
+            prox.version.get()
+            logger.debug("Proxmox auth succeeded for %s", username)
+            return username
+        except Exception as e:
+            logger.debug("Proxmox auth failed for %s on cluster %s: %s", username, cluster["name"], e)
+            return None
+    
+    # Try with @pve realm for bare username (backwards compatibility)
+    full_user = f"{username}@pve"
     try:
         prox = ProxmoxAPI(
             cluster["host"],
@@ -59,11 +78,11 @@ def authenticate_proxmox_user(username: str, password: str) -> Optional[str]:
             password=password,
             verify_ssl=cluster.get("verify_ssl", False),
         )
-        # Simple cheap call to verify credentials
         prox.version.get()
+        logger.debug("Proxmox auth succeeded for %s", full_user)
         return full_user
     except Exception as e:
-        logger.debug("proxmox auth failed for %s on cluster %s: %s", full_user, cluster["name"], e)
+        logger.debug("Proxmox auth failed for %s on cluster %s: %s", full_user, cluster["name"], e)
         return None
 
 
@@ -148,16 +167,31 @@ def _user_in_group(user: str, groupid: str) -> bool:
 
 
 def is_admin_user(user: str) -> bool:
-    """Check if user is an admin."""
+    """Check if user is an admin.
+    
+    Admin if:
+    1. User authenticated via Proxmox (any Proxmox user = admin)
+    2. Local database user with role='adminer'
+    """
     if not user:
         return False
-    if user in ADMIN_USERS:
+    
+    # Check if user has Proxmox realm suffix (authenticated via Proxmox)
+    if '@' in user and (user.endswith('@pve') or user.endswith('@pam')):
+        logger.debug("is_admin_user(%s) -> True (Proxmox user)", user)
         return True
-    if ADMIN_GROUP:
-        res = _user_in_group(user, ADMIN_GROUP)
-        logger.debug("is_admin_user(%s) -> %s (ADMIN_USERS=%s, ADMIN_GROUP=%s)", 
-                    user, res, ADMIN_USERS, ADMIN_GROUP)
-        return res
+    
+    # Check if local database user with adminer role
+    try:
+        from app.services.class_service import get_user_by_username
+        username = user.split('@')[0] if '@' in user else user
+        local_user = get_user_by_username(username)
+        if local_user and local_user.role == 'adminer':
+            logger.debug("is_admin_user(%s) -> True (local adminer)", user)
+            return True
+    except Exception as e:
+        logger.debug("is_admin_user(%s) -> False (error checking local user: %s)", user, e)
+    
     return False
 
 

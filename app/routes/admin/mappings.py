@@ -11,8 +11,6 @@ from flask import Blueprint, render_template
 
 from app.utils.decorators import admin_required
 
-# Import path setup (adds rdp-gen to sys.path)
-import app.utils.paths
 
 logger = logging.getLogger(__name__)
 

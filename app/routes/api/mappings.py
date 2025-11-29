@@ -14,8 +14,6 @@ from flask import Blueprint, jsonify, request
 
 from app.utils.decorators import admin_required
 
-# Ensure legacy paths available
-import app.utils.paths  # noqa: F401
 
 from app.services.proxmox_client import (
     get_user_vm_map,

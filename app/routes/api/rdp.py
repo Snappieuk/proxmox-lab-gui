@@ -12,8 +12,6 @@ from flask import Blueprint, Response, render_template, url_for, abort, current_
 from app.utils.decorators import login_required
 from app.services.rdp_service import build_rdp
 
-# Import path setup (adds rdp-gen to sys.path)
-import app.utils.paths
 
 from app.services.proxmox_client import find_vm_for_user, verify_vm_ip
 

@@ -12,8 +12,6 @@ from flask import Blueprint, render_template, request, url_for, abort, current_a
 
 from app.utils.decorators import login_required
 
-# Import path setup is no longer needed
-import app.utils.paths
 
 from app.services.proxmox_client import find_vm_for_user, verify_vm_ip
 

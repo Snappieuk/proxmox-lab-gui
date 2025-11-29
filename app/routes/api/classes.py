@@ -15,9 +15,6 @@ from flask import Blueprint, jsonify, request, session
 from app.utils.decorators import login_required
 from app.models import User, VMAssignment, Class, db
 
-# Import path setup is no longer needed
-import app.utils.paths
-
 from app.services.class_service import (
     # Class management
     create_class,
@@ -65,7 +62,6 @@ from app.services.proxmox_operations import (
     start_class_vm,
     stop_class_vm,
     get_vm_status,
-    clone_vms_for_class,
     CLASS_CLUSTER_IP
 )
 from app.config import CLUSTERS

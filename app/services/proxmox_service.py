@@ -20,8 +20,6 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # Create unverified SSL context for self-signed certificates
 ssl._create_default_https_context = ssl._create_unverified_context
 
-# Import path setup (adds rdp-gen to sys.path)
-import app.utils.paths
 
 from app.config import CLUSTERS
 
