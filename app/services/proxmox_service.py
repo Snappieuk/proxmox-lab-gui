@@ -8,6 +8,7 @@ with support for multiple clusters.
 
 import logging
 import threading
+import ssl
 from typing import Dict, List, Any, Optional
 
 from proxmoxer import ProxmoxAPI
@@ -15,6 +16,9 @@ from proxmoxer import ProxmoxAPI
 # Suppress SSL warnings for self-signed certificates
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# Create unverified SSL context for self-signed certificates
+ssl._create_default_https_context = ssl._create_unverified_context
 
 # Import path setup (adds rdp-gen to sys.path)
 import app.utils.paths
