@@ -3,9 +3,15 @@
 ## What this repo is
 A Flask webapp providing a lab VM portal similar to Azure Labs for self-service student VM access.
 
-**Architecture**: Modular blueprint-based Flask application with all code under `app/` directory. Uses SQLite for class management and Proxmox API for VM control.
+**Architecture**: Modular blueprint-based Flask application with all code under `app/` directory. Uses SQLite for class management, Proxmox API for VM control, and Terraform for VM deployment.
 
 **Entry point**: `run.py` - imports `create_app()` factory from `app/` package and runs Flask with threaded mode.
+
+## Current state & architecture decisions (READ THIS FIRST!)
+- **VMInventory + background_sync system**: **Core architecture** - database-first design where all VM reads come from `VMInventory` table (see `DATABASE_FIRST_ARCHITECTURE.md`). Background sync daemon updates DB every 5min (full) and 30sec (quick). Provides 100x faster page loads vs direct Proxmox API calls. Code in `app/__init__.py` (lines 114-115), `app/routes/api/vms.py`, `app/services/inventory_service.py`, `app/services/background_sync.py`.
+- **Terraform VM deployment**: Primary deployment method (see `TERRAFORM_MIGRATION.md`) replaces legacy Python cloning. Provides 10x speed improvement, parallel deployment, automatic VMID allocation, idempotency. Located at `app/services/terraform_service.py`.
+- **Legacy Python cloning**: Old `clone_vms_for_class()` function (~800 lines in `app/services/proxmox_operations.py`) still exists but superseded by Terraform. Preserved for rollback only.
+- **Mappings.json system**: Legacy admin-managed user→VM assignments coexist with class-based system for backwards compatibility.
 
 ## Architecture patterns
 
@@ -27,10 +33,13 @@ A Flask webapp providing a lab VM portal similar to Azure Labs for self-service 
 - Prevents timeout on initial page load while Proxmox API is queried (can take 30s+ with many VMs)
 - See `templates/index.html` for fetch pattern, `app/routes/api/vms.py` for API
 
-**Three-tier caching strategy** (complex, easy to confuse):
-1. **VM list cache** (`app/services/proxmox_client.py` module-level `_vm_cache_data` dict): TTL from `VM_CACHE_TTL` (300s default), caches full VM list per cluster. Invalidated on VM start/stop.
-2. **IP lookup cache** (`_ip_cache` in `app/services/proxmox_client.py`): Separate 5min TTL for guest agent IP queries – **critical** to avoid timeout storms (guest agent calls are SLOW).
-3. **Persistent cache** (`app/utils/caching.py` `PersistentCache` class): Optional JSON-backed cache for VM data/IPs across restarts (files: `vm_cache.json`, `ip_cache.json`).
+**Database-first caching architecture** (see `DATABASE_FIRST_ARCHITECTURE.md`):
+1. **VMInventory table** (`app/models.py`): Single source of truth for all VM data shown in GUI. Stores identity, status, network, resources, metadata, and sync tracking.
+2. **Background sync daemon** (`app/services/background_sync.py`): Auto-starts on app init, keeps VMInventory synchronized with Proxmox. Full sync every 5min, quick sync every 30sec for running VMs.
+3. **Inventory service** (`app/services/inventory_service.py`): Database operations layer - `persist_vm_inventory()`, `fetch_vm_inventory()`, `update_vm_status()`.
+4. **Performance benefit**: Database queries <100ms vs Proxmox API 5-30 seconds = **100x faster page loads**. GUI never blocked by slow Proxmox API.
+5. **VM list cache** (legacy fallback in `app/services/proxmox_client.py`): Module-level `_vm_cache_data` dict with 5min TTL. Used only when VMInventory unavailable.
+6. **IP lookup cache** (`_ip_cache` in `app/services/proxmox_client.py`): Separate 5min TTL for guest agent IP queries – **critical** to avoid timeout storms (guest agent calls are SLOW).
 
 **IP discovery hierarchy** (most complex subsystem):
 1. **LXC containers**: Fast via `.interfaces.get()` API (works even when stopped)
@@ -85,11 +94,20 @@ api/
 
 **`app/services/proxmox_operations.py`** (VM cloning & template operations, ~410 lines):
 - Template management: `list_proxmox_templates()` (scans clusters for template VMs)
-- VM cloning: `clone_vm_from_template()`, `clone_vms_for_class()` (multi-VM batch cloning)
+- **VM cloning (DEPRECATED)**: `clone_vm_from_template()`, `clone_vms_for_class()` – replaced by Terraform, kept for rollback only
 - VM lifecycle: `start_class_vm()`, `stop_class_vm()`, `delete_vm()`, `get_vm_status()`
-- Snapshot operations: `create_vm_snapshot()`, `revert_vm_to_snapshot()`
+- Snapshot operations: `create_vm_snapshot()`, `revert_vm_to_snapshot()` – still used
 - Template conversion: `convert_vm_to_template()` (converts VM → template)
+- **Template replication**: `replicate_templates_to_all_nodes()` – still useful for multi-node clusters
 - Multi-cluster aware: Takes `cluster_ip` param, looks up cluster by IP in `CLUSTERS` config
+
+**`app/services/terraform_service.py`** (NEW - Terraform-based VM deployment, ~480 lines):
+- **Primary deployment method**: `deploy_class_vms()` – deploys teacher + student VMs in parallel using Terraform
+- **Node selection**: `_get_best_nodes()` – queries Proxmox for least-loaded nodes
+- **Workspace isolation**: Each class gets isolated Terraform workspace in `terraform/classes/<class_id>/`
+- **State management**: `get_class_vms()` reads Terraform state, `destroy_class_vms()` removes all VMs
+- **Idempotent**: Safe to re-run deployment (creates only missing VMs)
+- **Benefits**: 10x faster than Python cloning, automatic VMID allocation, built-in error handling
 
 **`app/services/class_service.py`** (Class management logic, ~560 lines):
 - User CRUD: `create_local_user()`, `authenticate_local_user()`, `update_user_role()`
@@ -124,6 +142,7 @@ api/
 - **Performance**: `VM_CACHE_TTL` (300s), `PROXMOX_CACHE_TTL` (30s), `ENABLE_IP_LOOKUP` (bool), `ENABLE_IP_PERSISTENCE` (slow, disabled by default)
 - **Persistence files**: `MAPPINGS_FILE` (JSON), `CLUSTER_CONFIG_FILE` (JSON), `IP_CACHE_FILE` (JSON), `VM_CACHE_FILE` (JSON)
 - **ARP scanner**: `ARP_SUBNETS` (broadcast addresses, default `["10.220.15.255"]` for 10.220.8.0/21 network)
+- **Template replication**: `ENABLE_TEMPLATE_REPLICATION` (bool, default False) – auto-replicate templates at startup
 
 **`app/services/arp_scanner.py`** (ARP-based IP discovery, ~740 lines):
 - `discover_ips_via_arp(vm_mac_map, subnets, background=True)`: Runs nmap ARP probe, matches MAC→IP
@@ -141,6 +160,11 @@ api/
 - `start.sh` – Activates venv, loads `.env`, runs `python3 run.py`
 - `deploy.sh` – Git pull, pip install, restart systemd service or standalone Flask
 - `proxmox-gui.service` – Systemd unit (edit User/Group/paths, then `systemctl enable/start`)
+- **Terraform config** (`terraform/` directory):
+  - `main.tf` – VM resource definitions (QEMU VMs with linked/full clones)
+  - `variables.tf` – Input variables (cluster connection, VM specs, node list)
+  - `terraform.tfvars.example` – Example configuration
+  - `classes/` – Per-class Terraform workspaces (isolated state)
 
 
 ## Developer workflows
