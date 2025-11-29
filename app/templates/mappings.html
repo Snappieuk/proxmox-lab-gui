@@ -1,6 +1,14 @@
 {% extends "base.html" %}
 
 {% block content %}
+<style>
+/* Override main container to be full width for mappings page */
+.main {
+    max-width: none !important;
+    padding: 20px 40px 40px 40px;
+}
+</style>
+
 <div class="page-header" style="max-width: 100%;">
     <div>
         <h1>User ↔ VM Mappings</h1>
@@ -84,7 +92,7 @@
     border: 1px solid #e1dfdd;
     border-radius: 8px;
     padding: 2rem;
-    max-width: 100%;
+    max-width: none;
     width: 100%;
 }
 .spinner {
