@@ -893,12 +893,12 @@ def create_class_vms(class_id: int):
             # Re-fetch class in thread context
             class_obj = Class.query.get(class_id_val)
             if not class_obj:
-                update_clone_progress(task_id, status="failed", errors=["Class not found"])
+                update_clone_progress(task_id, status="failed", error="Class not found")
                 return
             
             # Get template info
             if not class_obj.template:
-                update_clone_progress(task_id, status="failed", errors=["No template assigned to class"])
+                update_clone_progress(task_id, status="failed", error="No template assigned to class")
                 return
             
             template_obj = class_obj.template
@@ -932,7 +932,7 @@ def create_class_vms(class_id: int):
             )
             
             if not clone_success:
-                update_clone_progress(task_id, status="failed", errors=[f"Failed to clone template: {clone_msg}"])
+                update_clone_progress(task_id, status="failed", error=f"Failed to clone template: {clone_msg}")
                 return
             
             update_clone_progress(task_id, completed=1, message=f"Class template created: VMID {class_template_vmid}")
@@ -945,7 +945,7 @@ def create_class_vms(class_id: int):
             )
             
             if not convert_success:
-                update_clone_progress(task_id, status="failed", errors=[f"Failed to convert to template: {convert_msg}"])
+                update_clone_progress(task_id, status="failed", error=f"Failed to convert to template: {convert_msg}")
                 # Clean up the clone
                 delete_vm(class_template_vmid, template_obj.node, CLASS_CLUSTER_IP)
                 return
@@ -1041,7 +1041,7 @@ def create_class_vms(class_id: int):
             
         except Exception as e:
             logger.exception(f"Terraform deployment failed for class {class_id}: {e}")
-            update_clone_progress(task_id, status="failed", errors=[str(e)])
+            update_clone_progress(task_id, status="failed", error=str(e))
     
     threading.Thread(target=_background_terraform_deploy, daemon=True).start()
     
@@ -1129,7 +1129,7 @@ def promote_editable_to_base_template(class_id: int):
 
             class_obj = Class.query.get(class_id)
             if not class_obj:
-                update_clone_progress(task_id, status="failed", errors=["Class not found in DB"])
+                update_clone_progress(task_id, status="failed", error="Class not found in DB")
                 return
 
             # Step 1: Clone teacher editable VM to new base template
@@ -1158,7 +1158,7 @@ def promote_editable_to_base_template(class_id: int):
             )
 
             if not clone_success:
-                update_clone_progress(task_id, status="failed", errors=[f"Clone failed: {clone_msg}"])
+                update_clone_progress(task_id, status="failed", error=f"Clone failed: {clone_msg}")
                 return
 
             convert_success, convert_msg = convert_vm_to_template(
@@ -1168,7 +1168,7 @@ def promote_editable_to_base_template(class_id: int):
             )
 
             if not convert_success:
-                update_clone_progress(task_id, status="failed", errors=[f"Convert to template failed: {convert_msg}"])
+                update_clone_progress(task_id, status="failed", error=f"Convert to template failed: {convert_msg}")
                 # cleanup clone
                 delete_vm(new_base_vmid, teacher_vm_node, CLASS_CLUSTER_IP)
                 return
@@ -1190,7 +1190,7 @@ def promote_editable_to_base_template(class_id: int):
                 db.session.commit()
                 update_clone_progress(task_id, completed=1, message=f"Promoted editable VM to new base template (VMID {new_base_vmid})")
             else:
-                update_clone_progress(task_id, status="failed", errors=["Failed to register new base template in DB"])
+                update_clone_progress(task_id, status="failed", error="Failed to register new base template in DB")
                 return
 
             # Step 2: (Simplified) No teacher template recreation – students will clone from the new base
@@ -1208,7 +1208,7 @@ def promote_editable_to_base_template(class_id: int):
 
         except Exception as e:
             logger.exception(f"Promote editable failed for class {class_id}: {e}")
-            update_clone_progress(task_id, status="failed", errors=[str(e)])
+            update_clone_progress(task_id, status="failed", error=str(e))
 
     threading.Thread(target=_background_promote, daemon=True).start()
 
@@ -1501,7 +1501,7 @@ def push_updates(class_id: int):
             )
             
             if not success:
-                update_clone_progress(task_id, status="failed", errors=[f"Clone failed: {msg}"])
+                update_clone_progress(task_id, status="failed", error=f"Clone failed: {msg}")
                 return
             
             update_clone_progress(task_id, completed=1, message=f"Teacher VM cloned to VMID {next_vmid}")
@@ -1516,7 +1516,7 @@ def push_updates(class_id: int):
             )
             
             if not success:
-                update_clone_progress(task_id, status="failed", errors=[f"Template conversion failed: {msg}"])
+                update_clone_progress(task_id, status="failed", error=f"Template conversion failed: {msg}")
                 # Clean up the failed clone
                 delete_vm(next_vmid, teacher_vm.node)
                 return
@@ -1548,7 +1548,7 @@ def push_updates(class_id: int):
             
         except Exception as e:
             logger.exception(f"Push updates failed for class {class_id}: {e}")
-            update_clone_progress(task_id, status="failed", errors=[str(e)])
+            update_clone_progress(task_id, status="failed", error=str(e))
     
     threading.Thread(target=_background_push_updates, daemon=True).start()
     
