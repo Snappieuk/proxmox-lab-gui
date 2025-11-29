@@ -193,6 +193,10 @@ def create_new_class():
     task_id = str(uuid.uuid4())
     start_clone_progress(task_id, pool_size + 3)
     
+    # Store task_id in class for progress tracking
+    class_.clone_task_id = task_id
+    db.session.commit()
+    
     # Capture Flask app context BEFORE starting thread
     from flask import current_app
     app = current_app._get_current_object()
@@ -356,7 +360,7 @@ def create_new_class():
                 student_name = f"{class_prefix}-student{i}"
                 
                 clone_success, clone_msg = clone_vm_from_template(
-                    template_vmid=teacher_template_vmid,  # Clone from teacher template
+                    template_vmid=class_template_vmid,  # Clone from class template (not teacher template!)
                     new_vmid=student_vmid,
                     name=student_name,
                     node=source_node,
@@ -390,6 +394,10 @@ def create_new_class():
             
             logger.info(f"Step 5 complete: Created {pool_size} student VMs")
             
+            # Clear task_id from class - creation complete
+            class_obj.clone_task_id = None
+            db.session.commit()
+            
             update_clone_progress(
                 task_id,
                 status="completed",
@@ -399,6 +407,14 @@ def create_new_class():
         except Exception as e:
             logger.exception(f"Template cloning and deployment failed for class {class_id_val}: {e}")
             update_clone_progress(task_id, status="failed", error=str(e))
+            # Clear task_id on failure too
+            try:
+                class_obj = Class.query.get(class_id_val)
+                if class_obj:
+                    class_obj.clone_task_id = None
+                    db.session.commit()
+            except Exception:
+                pass
         finally:
             try:
                 app_ctx.pop()

@@ -937,9 +937,16 @@ async function pollTemplateInfo() {
     }
     try {
         const resp = await fetch(`/api/class/${classId}/template/info?v=${Date.now()}`);
-        if (!resp.ok) throw new Error('HTTP ' + resp.status);
         const data = await resp.json();
-        if (data.ok) {
+        
+        // Check if class is still being created (202 status with progress)
+        if (resp.status === 202 && data.progress) {
+            // Switch to progress polling
+            handleTemplateCreationInProgress(data.progress);
+            return;
+        }
+        
+        if (data.ok && resp.ok) {
             currentTemplateInfo = data.template;
             updateTemplateDisplay();
             templatePollingActive = false;
@@ -959,6 +966,58 @@ async function pollTemplateInfo() {
         if (spinner) spinner.style.display = 'none';
         showAlert('Template initialization timed out. Try refresh.', 'error');
         templatePollingActive = false;
+    }
+}
+
+function handleTemplateCreationInProgress(progress) {
+    // Show progress details instead of generic waiting message
+    const statusEl = document.getElementById('template-status-text');
+    if (!statusEl) return;
+    
+    const percent = progress.completed ? Math.round((progress.completed / 5) * 100) : 0;
+    statusEl.textContent = progress.message || `Creating class VMs... ${percent}%`;
+    
+    // Continue polling but switch to progress endpoint if we have task_id
+    if (progress.task_id) {
+        setTimeout(() => pollCreationProgress(progress.task_id), 3000);
+    } else {
+        setTimeout(pollTemplateInfo, 5000);
+    }
+}
+
+async function pollCreationProgress(taskId) {
+    try {
+        const resp = await fetch(`/api/classes/clone/progress/${taskId}`);
+        const progress = await resp.json();
+        
+        const statusEl = document.getElementById('template-status-text');
+        if (!statusEl) return;
+        
+        if (progress.status === 'completed') {
+            statusEl.textContent = 'Class creation complete! Loading template...';
+            // Switch back to template info polling
+            setTimeout(pollTemplateInfo, 2000);
+            return;
+        }
+        
+        if (progress.status === 'failed') {
+            const spinner = document.getElementById('template-spinner');
+            if (spinner) spinner.style.display = 'none';
+            statusEl.textContent = `Class creation failed: ${progress.error || 'Unknown error'}`;
+            showAlert(progress.error || 'Class creation failed', 'error');
+            templatePollingActive = false;
+            return;
+        }
+        
+        // Still running - show progress
+        const percent = progress.completed ? Math.round((progress.completed / 5) * 100) : 0;
+        statusEl.textContent = progress.message || `Creating class VMs... ${percent}%`;
+        
+        // Continue polling progress
+        setTimeout(() => pollCreationProgress(taskId), 3000);
+    } catch (e) {
+        // Fallback to template info polling on error
+        setTimeout(pollTemplateInfo, 5000);
     }
 }
 

@@ -95,6 +95,7 @@ class Class(db.Model):
     token_expires_at = db.Column(db.DateTime, nullable=True)
     token_never_expires = db.Column(db.Boolean, default=False)
     pool_size = db.Column(db.Integer, default=0)  # Target number of VMs in pool
+    clone_task_id = db.Column(db.String(64), nullable=True)  # Track ongoing class creation
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     

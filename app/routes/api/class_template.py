@@ -54,6 +54,17 @@ def get_template_info(class_id: int):
     if error_response:
         return error_response, status_code
     
+    # Check if class creation is still in progress
+    if hasattr(class_, 'clone_task_id') and class_.clone_task_id:
+        from app.services.class_service import get_clone_progress
+        progress = get_clone_progress(class_.clone_task_id)
+        if progress.get('status') == 'running':
+            return jsonify({
+                'ok': False,
+                'error': 'Class is still being created',
+                'progress': progress
+            }), 202  # 202 Accepted - still processing
+    
     # Find the teacher usable VM (is_template_vm=False, assigned to teacher)
     teacher_vm = None
     for assignment in class_.vm_assignments:
