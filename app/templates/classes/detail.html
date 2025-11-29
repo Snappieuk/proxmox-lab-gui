@@ -1333,23 +1333,22 @@ async function loadStudentsList() {
             
             if (students.length === 0) {
                 studentsList.innerHTML = '<p style="color: #666;">No students enrolled yet.</p>';
-                return;
+            } else {
+                studentsList.innerHTML = `
+                    <div class="students-grid">
+                        ${students.map(s => `
+                            <div class="student-card">
+                                <div>
+                                    <div class="student-card-name">${s.username}</div>
+                                    <div class="student-card-vm">${s.vmid ? `VM: ${s.vmid}` : 'No VM assigned'}</div>
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                `;
             }
             
-            studentsList.innerHTML = `
-                <div class="students-grid">
-                    ${students.map(s => `
-                        <div class="student-card">
-                            <div>
-                                <div class="student-card-name">${s.username}</div>
-                                <div class="student-card-vm">${s.vmid ? `VM: ${s.vmid}` : 'No VM assigned'}</div>
-                            </div>
-                        </div>
-                    `).join('')}
-                </div>
-            `;
-            
-            // Update invite link display
+            // Update invite link display (always, regardless of student count)
             if (data.class.join_token) {
                 const baseUrl = window.location.origin;
                 const inviteUrl = `${baseUrl}/classes/join/${data.class.join_token}`;

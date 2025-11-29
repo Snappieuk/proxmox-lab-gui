@@ -192,16 +192,22 @@ def create_new_class():
         try:
             from app.services.terraform_service import deploy_class_with_terraform
             
-            update_clone_progress(task_id, message=f"Deploying teacher VMs and converting one to template...")
+            update_clone_progress(task_id, message=f"Deploying {pool_size} student VMs + 2 teacher VMs from template '{template_name}'...")
+            
+            # Sanitize class name for Proxmox (alphanumeric and hyphens only)
+            import re
+            class_prefix = re.sub(r'[^a-z0-9-]', '', class_.name.lower().replace(' ', '-').replace('_', '-'))
+            if not class_prefix:
+                class_prefix = f"class-{class_.id}"
             
             result = deploy_class_with_terraform(
                 class_id=str(class_.id),
-                class_prefix=class_.name.lower().replace(' ', '-'),
+                class_prefix=class_prefix,
                 students=students,
                 template_name=template_name,
                 use_full_clone=False,  # Linked clones for speed
                 create_teacher_vm=True,  # Teacher VM (editable)
-                create_teacher_template=True,  # Teacher VM 2 (converted to template for students)
+                create_teacher_template=True,  # Teacher template (for teacher to customize)
                 target_node=None,  # Auto-distribute
                 auto_select_best_node=True,  # Query Proxmox for best nodes
             )
@@ -221,17 +227,17 @@ def create_new_class():
                 )
                 update_clone_progress(task_id, completed=1, message=f"Teacher VM (editable) created: {teacher_vm['name']}")
             
-            # Register teacher template VM (converted to template, students clone from this)
+            # Register teacher template VM (converted to template for teacher use)
             if teacher_template_vm:
                 assignment, _ = create_vm_assignment(
                     class_id=class_.id,
                     proxmox_vmid=teacher_template_vm['id'],
                     node=teacher_template_vm['node'],
-                    is_template_vm=True  # This is the class template
+                    is_template_vm=True  # This is the class-specific template
                 )
-                update_clone_progress(task_id, completed=2, message=f"Teacher template VM (class template) created: {teacher_template_vm['name']}")
+                update_clone_progress(task_id, completed=2, message=f"Class template VM created: {teacher_template_vm['name']} (converted to template)")
             
-            # Register student VMs (cloned from teacher template, unassigned)
+            # Register student VMs (cloned from original template, unassigned)
             registered_count = 0
             for student_name, vm_info in student_vms.items():
                 assignment, _ = create_vm_assignment(
@@ -250,7 +256,7 @@ def create_new_class():
             update_clone_progress(
                 task_id,
                 status="completed",
-                message=f"Successfully deployed {len(student_vms)} student VMs (from class template) + 1 editable teacher VM + 1 class template VM"
+                message=f"Successfully deployed {len(student_vms)} student VMs + 1 editable teacher VM + 1 class template VM (all from original template)"
             )
             
         except Exception as e:

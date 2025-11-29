@@ -48,10 +48,10 @@ class TerraformService:
             class_id: Unique class identifier
             class_prefix: Prefix for VM names (e.g., 'cs101')
             students: List of student usernames
-            template_name: Proxmox template name to clone (uses template's CPU/RAM/disk)
+            template_name: Proxmox template name to clone (all VMs clone from this)
             use_full_clone: Use full clone instead of linked
             create_teacher_vm: Create separate teacher VM (editable)
-            create_teacher_template: Create teacher template VM (converted to template for students)
+            create_teacher_template: Create teacher template VM (class-specific, converted to template)
             node_distribution: List of nodes to distribute across
             target_node: Deploy all to this node (overrides distribution)
             auto_select_best_node: Query Proxmox for least loaded nodes
@@ -63,6 +63,33 @@ class TerraformService:
             RuntimeError: If Terraform apply fails
         """
         logger.info(f"Deploying class {class_id} with {len(students)} students via Terraform")
+        
+        # Validate template exists in Proxmox before proceeding
+        try:
+            from app.services.proxmox_service import get_proxmox_admin
+            proxmox = get_proxmox_admin()
+            
+            # Search for template across all nodes
+            template_found = False
+            for node_data in proxmox.nodes.get():
+                node_name = node_data['node']
+                try:
+                    vms = proxmox.nodes(node_name).qemu.get()
+                    for vm in vms:
+                        if vm.get('name') == template_name and vm.get('template') == 1:
+                            template_found = True
+                            logger.info(f"Found template '{template_name}' on node '{node_name}' (VMID: {vm.get('vmid')})")
+                            break
+                except:
+                    continue
+                if template_found:
+                    break
+            
+            if not template_found:
+                raise ValueError(f"Template '{template_name}' not found in Proxmox. Please verify the template exists and is accessible.")
+        except Exception as e:
+            logger.error(f"Failed to validate template: {e}")
+            raise RuntimeError(f"Template validation failed: {e}")
         
         # Auto-select best nodes if requested and no specific node set
         if auto_select_best_node and not target_node and not node_distribution:
@@ -195,18 +222,21 @@ class TerraformService:
             return [name for name, score in node_scores]
             
         except Exception as e:
-            logger.warning(f"Failed to query node resources: {e}, using default nodes")
-            from app.config import CLUSTERS
-            # Fallback to configured nodes
-            if CLUSTERS:
-                # Try to get nodes from first cluster
-                try:
-                    proxmox = get_proxmox_admin()
-                    nodes = proxmox.nodes.get()
-                    return [n['node'] for n in nodes if n.get('status') == 'online']
-                except:
-                    pass
-            return ["pve1", "pve2"]  # Hard-coded fallback
+            logger.warning(f"Failed to query node resources: {e}, falling back to all online nodes")
+            # Fallback: get any online nodes from cluster
+            try:
+                from app.services.proxmox_service import get_proxmox_admin
+                proxmox = get_proxmox_admin()
+                nodes = proxmox.nodes.get()
+                online_nodes = [n['node'] for n in nodes if n.get('status') == 'online']
+                if online_nodes:
+                    logger.info(f"Using online nodes: {online_nodes}")
+                    return online_nodes
+                else:
+                    raise RuntimeError("No online nodes found in cluster!")
+            except Exception as fallback_error:
+                logger.error(f"Failed to get any nodes from cluster: {fallback_error}")
+                raise RuntimeError(f"Cannot determine cluster nodes: {fallback_error}")
     
     def _copy_terraform_files(self, dest_dir: Path) -> None:
         """Copy main Terraform files to class directory."""
@@ -280,7 +310,8 @@ class TerraformService:
             ["terraform", "init"],
             cwd=working_dir,
             capture_output=True,
-            text=True
+            text=True,
+            timeout=300  # 5 minutes max for init
         )
         
         if result.returncode != 0:
@@ -291,12 +322,17 @@ class TerraformService:
         """Apply Terraform configuration."""
         logger.info(f"Running terraform apply in {working_dir}")
         
-        result = subprocess.run(
-            ["terraform", "apply", "-auto-approve"],
-            cwd=working_dir,
-            capture_output=True,
-            text=True
-        )
+        try:
+            result = subprocess.run(
+                ["terraform", "apply", "-auto-approve"],
+                cwd=working_dir,
+                capture_output=True,
+                text=True,
+                timeout=1800  # 30 minutes max for apply
+            )
+        except subprocess.TimeoutExpired:
+            logger.error(f"Terraform apply timed out after 30 minutes")
+            raise RuntimeError(f"Terraform apply timed out after 30 minutes")
         
         if result.returncode != 0:
             logger.error(f"Terraform apply failed: {result.stderr}")
@@ -312,7 +348,8 @@ class TerraformService:
             ["terraform", "destroy", "-auto-approve"],
             cwd=working_dir,
             capture_output=True,
-            text=True
+            text=True,
+            timeout=1800  # 30 minutes max for destroy
         )
         
         if result.returncode != 0:
@@ -325,7 +362,8 @@ class TerraformService:
             ["terraform", "output", "-json"],
             cwd=working_dir,
             capture_output=True,
-            text=True
+            text=True,
+            timeout=60  # 1 minute max for output
         )
         
         if result.returncode != 0:
@@ -351,33 +389,56 @@ class TerraformService:
             node: Node where VM is located
         """
         from app.services.proxmox_service import get_proxmox_admin
+        import time
         
         try:
             proxmox = get_proxmox_admin()
             
-            # Stop VM if running
-            try:
-                status = proxmox.nodes(node).qemu(vmid).status.current.get()
-                if status.get('status') == 'running':
-                    logger.info(f"Stopping VM {vmid} before template conversion")
-                    proxmox.nodes(node).qemu(vmid).status.stop.post()
-                    import time
-                    time.sleep(5)  # Wait for VM to stop
-            except Exception as e:
-                logger.warning(f"Failed to check/stop VM {vmid}: {e}")
+            # Stop VM if running (with retry)
+            max_stop_attempts = 3
+            for attempt in range(max_stop_attempts):
+                try:
+                    status = proxmox.nodes(node).qemu(vmid).status.current.get()
+                    if status.get('status') == 'running':
+                        logger.info(f"Stopping VM {vmid} before template conversion (attempt {attempt+1}/{max_stop_attempts})")
+                        proxmox.nodes(node).qemu(vmid).status.stop.post()
+                        
+                        # Wait for VM to actually stop
+                        for wait_attempt in range(10):  # Wait up to 30 seconds
+                            time.sleep(3)
+                            status = proxmox.nodes(node).qemu(vmid).status.current.get()
+                            if status.get('status') == 'stopped':
+                                logger.info(f"VM {vmid} stopped successfully")
+                                break
+                        else:
+                            if attempt < max_stop_attempts - 1:
+                                logger.warning(f"VM {vmid} didn't stop in time, retrying...")
+                                continue
+                            else:
+                                raise RuntimeError(f"VM {vmid} failed to stop after {max_stop_attempts} attempts")
+                    break
+                except Exception as e:
+                    if attempt < max_stop_attempts - 1:
+                        logger.warning(f"Failed to check/stop VM {vmid} (attempt {attempt+1}): {e}, retrying...")
+                        time.sleep(5)
+                    else:
+                        logger.warning(f"Failed to check/stop VM {vmid} after {max_stop_attempts} attempts: {e}, proceeding anyway")
+                        break
             
             # Convert to template
+            logger.info(f"Converting VM {vmid} to template")
             proxmox.nodes(node).qemu(vmid).template.post()
-            logger.info(f"VM {vmid} converted to template")
             
-            # Verify conversion
-            import time
-            time.sleep(3)
-            config = proxmox.nodes(node).qemu(vmid).config.get()
-            if config.get('template') == 1:
-                logger.info(f"Verified VM {vmid} is now a template")
-            else:
-                logger.warning(f"VM {vmid} template flag not set after conversion")
+            # Verify conversion (with retry)
+            for verify_attempt in range(5):
+                time.sleep(2)
+                config = proxmox.nodes(node).qemu(vmid).config.get()
+                if config.get('template') == 1:
+                    logger.info(f"Verified VM {vmid} is now a template")
+                    return
+                logger.debug(f"Waiting for template flag to be set (attempt {verify_attempt+1}/5)")
+            
+            logger.warning(f"VM {vmid} template flag not set after conversion, but API call succeeded")
                 
         except Exception as e:
             logger.error(f"Failed to convert VM {vmid} to template: {e}")

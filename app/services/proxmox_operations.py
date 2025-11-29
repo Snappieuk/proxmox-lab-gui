@@ -675,7 +675,6 @@ def clone_vms_for_class(template_vmid: int, node: str, count: int, name_prefix: 
     """
     from app.services.clone_progress import update_clone_progress
     from concurrent.futures import ThreadPoolExecutor, as_completed
-    from app.services.node_selector import select_best_node, distribute_vms_across_nodes
     import time
     
     created_vms = []
@@ -846,13 +845,17 @@ def clone_vms_for_class(template_vmid: int, node: str, count: int, name_prefix: 
             except Exception as e:
                 logger.warning(f"Failed to get template resource estimates: {e}, using defaults")
             
-            # Get node assignments with dynamic re-scoring based on estimated resources
-            node_assignments = distribute_vms_across_nodes(
-                cluster_id, 
-                total_vms,
-                estimated_ram_mb=estimated_ram_mb,
-                estimated_cpu_cores=estimated_cores
-            )
+            # Get available nodes and distribute VMs round-robin
+            try:
+                nodes_list = [n['node'] for n in proxmox.nodes.get() if n.get('status') == 'online']
+                if not nodes_list:
+                    logger.warning("No online nodes found, using default node")
+                    nodes_list = [node]
+                logger.info(f"Distributing {total_vms} VMs across {len(nodes_list)} nodes: {nodes_list}")
+                node_assignments = [nodes_list[i % len(nodes_list)] for i in range(total_vms)]
+            except Exception as e:
+                logger.warning(f"Failed to get node list: {e}, falling back to single node")
+                node_assignments = [node] * total_vms
             
             if not node_assignments:
                 logger.warning("Smart placement failed, falling back to single node")
