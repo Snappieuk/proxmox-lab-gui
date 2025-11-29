@@ -43,16 +43,17 @@ def persist_vm_inventory(vms: List[Dict], cleanup_missing: bool = True) -> int:
             if not vmid:
                 continue
             
-            # Find or create inventory record with proper error handling
+            # Use upsert pattern to handle concurrent inserts
             from sqlalchemy.exc import IntegrityError
             
+            # Try to fetch existing record first
             inventory = VMInventory.query.filter_by(
                 cluster_id=cluster_id,
                 vmid=vmid
             ).first()
             
             if not inventory:
-                # Try to create new record
+                # Record doesn't exist - try to create it
                 inventory = VMInventory(
                     cluster_id=cluster_id,
                     vmid=vmid,
@@ -64,26 +65,25 @@ def persist_vm_inventory(vms: List[Dict], cleanup_missing: bool = True) -> int:
                 db.session.add(inventory)
                 
                 try:
-                    # Flush to catch unique constraint violations immediately
-                    db.session.flush()
+                    # Commit immediately to avoid holding locks
+                    db.session.commit()
                 except IntegrityError:
-                    # Duplicate key - another process created it simultaneously
-                    # Rollback this transaction and try to fetch again
+                    # Another thread created it between our query and commit
                     db.session.rollback()
                     
-                    # Re-query without locking (SQLite doesn't handle locks well)
+                    # Fetch the record that was created by the other thread
                     inventory = VMInventory.query.filter_by(
                         cluster_id=cluster_id,
                         vmid=vmid
                     ).first()
                     
                     if not inventory:
-                        # Race condition or constraint issue - skip this VM
-                        logger.warning(f"IntegrityError for {cluster_id}/{vmid} but record not found after rollback - skipping")
+                        # Extremely rare - skip this VM
+                        logger.warning(f"Could not create or fetch {cluster_id}/{vmid} after race condition")
                         continue
                 except Exception as e:
-                    # Unexpected error during flush
-                    logger.error(f"Unexpected error creating VMInventory for {cluster_id}/{vmid}: {e}")
+                    # Unexpected database error
+                    logger.error(f"Database error for {cluster_id}/{vmid}: {e}")
                     db.session.rollback()
                     continue
             
