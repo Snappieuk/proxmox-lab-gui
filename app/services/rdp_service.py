@@ -14,24 +14,25 @@ logger = logging.getLogger(__name__)
 def build_rdp(vm: Dict[str, Any]) -> str:
     """
     Build a minimal .rdp file content for a Windows VM.
-    Raises ValueError if VM is missing required fields or has no IP.
+    Always returns an RDP file, even if IP is unknown.
+    If IP is missing, falls back to VM name/hostname as the address.
     """
     if not vm:
         raise ValueError("VM dict is None or empty")
-    
+
     vmid = vm.get("vmid")
     if not vmid:
         raise ValueError("VM missing vmid field")
-    
+
     ip = vm.get("ip")
-    if not ip or ip == "<ip>":
-        raise ValueError(f"VM {vmid} has no IP address - ensure guest agent is installed and VM is running")
-    
-    name = vm.get("name") or f"vm-{vmid}"
-    
+    name = vm.get("hostname") or vm.get("name") or f"vm-{vmid}"
+
+    # Prefer IP if available; otherwise use name/hostname so download always works
+    address = ip if (ip and ip != "<ip>") else name
+
     # Minimal valid RDP file format that Windows Remote Desktop will accept
     return (
-        f"full address:s:{ip}:3389\r\n"
+        f"full address:s:{address}:3389\r\n"
         f"prompt for credentials:i:1\r\n"
         f"administrative session:i:0\r\n"
         f"authentication level:i:2\r\n"

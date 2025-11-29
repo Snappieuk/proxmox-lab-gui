@@ -128,6 +128,21 @@ def create_app(config=None):
     
     import threading
     threading.Thread(target=_populate_database, daemon=True).start()
+
+    # Ensure templates are replicated across all nodes at startup (background)
+    def _replicate_templates_startup():
+        import time
+        time.sleep(2)
+        try:
+            with app.app_context():
+                from app.services.proxmox_operations import replicate_templates_to_all_nodes
+                logger.info("Starting template replication check across nodes...")
+                replicate_templates_to_all_nodes()
+                logger.info("Template replication check completed")
+        except Exception as e:
+            logger.warning(f"Template replication startup failed: {e}")
+
+    threading.Thread(target=_replicate_templates_startup, daemon=True).start()
     
     logger.info("Flask app created successfully")
     return app

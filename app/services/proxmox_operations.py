@@ -16,6 +16,97 @@ logger = logging.getLogger(__name__)
 
 # Default cluster IP for class operations (restricted to single cluster)
 CLASS_CLUSTER_IP = "10.220.15.249"
+def replicate_templates_to_all_nodes(cluster_ip: str = None) -> None:
+    """Ensure every QEMU template exists on every node. Missing replicas are cloned and converted.
+
+    Runs best as a background task. Adds a 60s delay per replica to avoid locks.
+    """
+    try:
+        target_ip = cluster_ip or CLASS_CLUSTER_IP
+        cluster_id = None
+        for cluster in CLUSTERS:
+            if cluster["host"] == target_ip:
+                cluster_id = cluster["id"]
+                break
+        if not cluster_id:
+            logger.warning(f"replicate_templates_to_all_nodes: Cluster not found for IP {target_ip}")
+            return
+
+        proxmox = get_proxmox_admin_for_cluster(cluster_id)
+        nodes = [n.get('node') for n in proxmox.nodes.get()]
+        logger.info(f"Template replication startup: nodes={nodes}")
+
+        # Collect all templates across nodes
+        templates = []
+        for node in nodes:
+            try:
+                vms = proxmox.nodes(node).qemu.get()
+                for vm in vms:
+                    if vm.get('template') == 1:
+                        templates.append({
+                            'vmid': vm.get('vmid'),
+                            'name': vm.get('name') or f"tpl-{vm.get('vmid')}",
+                            'node': node
+                        })
+            except Exception as e:
+                logger.warning(f"Failed to query templates on {node}: {e}")
+
+        # Build a map of template name -> nodes where present
+        tpl_by_name = {}
+        for t in templates:
+            tpl_by_name.setdefault(t['name'], []).append(t)
+
+        # Get used VMIDs
+        used_vmids = set()
+        try:
+            resources = proxmox.cluster.resources.get(type="vm")
+            for r in resources:
+                used_vmids.add(r.get('vmid'))
+        except Exception:
+            for node in nodes:
+                try:
+                    for vm in proxmox.nodes(node).qemu.get():
+                        used_vmids.add(vm.get('vmid'))
+                except Exception:
+                    pass
+        next_vmid = max(used_vmids) + 1 if used_vmids else 200
+
+        import time
+        # For each template, ensure a replica exists on each node
+        for tpl_name, instances in tpl_by_name.items():
+            present_nodes = {i['node'] for i in instances}
+            source = instances[0]
+            missing_nodes = [n for n in nodes if n not in present_nodes]
+            if not missing_nodes:
+                continue
+            logger.info(f"Replicating template '{tpl_name}' from {source['node']} to nodes: {missing_nodes}")
+            for target in missing_nodes:
+                # Allocate VMID
+                while next_vmid in used_vmids:
+                    next_vmid += 1
+                replica_vmid = next_vmid
+                used_vmids.add(replica_vmid)
+                next_vmid += 1
+                replica_name = sanitize_vm_name(f"{tpl_name}-replica-{target}", fallback="tpl-replica")
+                try:
+                    proxmox.nodes(source['node']).qemu(source['vmid']).clone.post(
+                        newid=replica_vmid,
+                        name=replica_name,
+                        target=target,
+                        full=1
+                    )
+                    logger.info(f"Clone started for '{tpl_name}' -> {target} as {replica_name} ({replica_vmid})")
+                    time.sleep(60)
+                    ok, msg = convert_vm_to_template(replica_vmid, target, target_ip)
+                    if ok:
+                        logger.info(f"Replica template ready on {target}: {replica_vmid}")
+                    else:
+                        logger.warning(f"Replica conversion failed on {target}: {msg}")
+                except Exception as e:
+                    logger.warning(f"Failed to replicate '{tpl_name}' to {target}: {e}")
+    except Exception as e:
+        logger.exception(f"replicate_templates_to_all_nodes failed: {e}")
+
 
 
 def _clone_vm_via_disk_api(proxmox, node: str, template_vmid: int, new_vmid: int, 
@@ -270,6 +361,31 @@ def clone_vm_from_template(template_vmid: int, new_vmid: int, name: str, node: s
                                          storage, create_baseline, wait_timeout_sec)
 
         # Standard Proxmox clone method (subject to VM locks)
+
+        # Detect storage/template compatibility for linked clones; fall back to full clone when unsupported
+        try:
+            if not full_clone:
+                tpl_cfg = proxmox.nodes(node).qemu(template_vmid).config.get()
+                # Determine boot disk entry (scsi0/virtio0/sata0/ide0)
+                boot_key = None
+                for key in ['scsi0','virtio0','sata0','ide0']:
+                    if key in tpl_cfg:
+                        boot_key = key
+                        break
+                disk_str = tpl_cfg.get(boot_key, '') if boot_key else ''
+                # Example: 'TRUENAS-NFS:112/vm-112-disk-0.qcow2,size=32G'
+                backing = disk_str.split(',')[0]
+                stor = backing.split(':',1)[0] if ':' in backing else ''
+                vol = backing.split(':',1)[1] if ':' in backing else ''
+                is_qcow2 = vol.endswith('.qcow2') if vol else False
+                # Linked clones typically require qcow2 on storage that supports COW (e.g., local-lvm not supported, NFS may not support)
+                # If not qcow2 or storage string hints remote/NFS, force full clone
+                if not is_qcow2 or ('nfs' in stor.lower() or 'truenas' in stor.lower()):
+                    logger.warning(f"Linked clone not supported on storage '{stor}' for volume '{vol}'. Falling back to full clone.")
+                    full_clone = True
+        except Exception as e:
+            # If we cannot determine, keep requested behavior
+            logger.debug(f"Linked clone capability detection failed: {e}")
 
         import time
         attempt = 0
@@ -680,8 +796,8 @@ def clone_vms_for_class(template_vmid: int, node: str, count: int, name_prefix: 
                     update_clone_progress(task_id, failed=1, error=msg, message="Failed to create teacher VM")
                 # Don't proceed to base template if teacher VM failed
                 return created_vms
-
-        # If teacher VM was precreated, record it and reuse its node
+        
+        # If teacher VM was precreated via API route, record it
         if precreated_teacher_vmid:
             teacher_vm_vmid = precreated_teacher_vmid
             teacher_vm_node = precreated_teacher_node or node
@@ -692,7 +808,21 @@ def clone_vms_for_class(template_vmid: int, node: str, count: int, name_prefix: 
                 "is_template_vm": True
             })
             used_vmids.add(teacher_vm_vmid)
-            
+        # If teacher VM was precreated via API route, record it
+        if precreated_teacher_vmid:
+            teacher_vm_vmid = precreated_teacher_vmid
+            teacher_vm_node = precreated_teacher_node or node
+            created_vms.append({
+                "vmid": teacher_vm_vmid,
+                "name": f"{name_prefix}-Teacher",
+                "node": teacher_vm_node,
+                "is_template_vm": True
+            })
+            used_vmids.add(teacher_vm_vmid)
+        
+        # Create VM 2: Base template (converted to template for student linked clones)
+        # This happens whether teacher was created here or precreated
+        if include_template_vm:
             # Create VM 2: Another full clone that will be converted to template for student linked clones
             while next_vmid in used_vmids:
                 next_vmid += 1
@@ -705,6 +835,14 @@ def clone_vms_for_class(template_vmid: int, node: str, count: int, name_prefix: 
             logger.info(f"Creating base template VM for student linked clones: {class_template_name} (VMID {next_vmid}) on node {class_template_node}")
             if task_id:
                 update_clone_progress(task_id, current_vm=class_template_name, message="Creating base template VM (2/3)")
+
+            # Buffer to avoid concurrent lock: wait ~60s after first clone
+            try:
+                import time
+                logger.info("Waiting 60s buffer before starting base template clone to avoid lock contention")
+                time.sleep(60)
+            except Exception:
+                pass
             
             # Full clone that will become the template
             success, msg = clone_vm_from_template(
@@ -729,60 +867,150 @@ def clone_vms_for_class(template_vmid: int, node: str, count: int, name_prefix: 
                 logger.info(f"Converting VM {class_template_vmid} to Proxmox template for linked cloning")
                 if task_id:
                     update_clone_progress(task_id, message="Converting base template...")
+                
+                conversion_success = False
                 try:
+                    # Ensure VM is stopped before conversion (Proxmox requirement for some storages)
+                    try:
+                        vm_status = proxmox.nodes(class_template_node).qemu(class_template_vmid).status.current.get()
+                        if vm_status.get('status') == 'running':
+                            logger.info(f"Stopping VM {class_template_vmid} before template conversion")
+                            proxmox.nodes(class_template_node).qemu(class_template_vmid).status.shutdown.post()
+                            time.sleep(5)  # Wait for shutdown
+                    except Exception as stop_err:
+                        logger.debug(f"VM stop check/action: {stop_err}")
+                    
                     proxmox.nodes(class_template_node).qemu(class_template_vmid).template.post()
-                    logger.info(f"Successfully converted VM {class_template_vmid} to template")
-                    if task_id:
-                        update_clone_progress(task_id, message="Base template converted successfully")
+                    logger.info(f"Successfully called template.post() for VM {class_template_vmid}")
+                    
+                    # Wait a moment for conversion to apply
+                    time.sleep(3)
+                    
+                    # Verify conversion immediately
+                    try:
+                        cfg = proxmox.nodes(class_template_node).qemu(class_template_vmid).config.get()
+                        if cfg.get('template') == 1:
+                            conversion_success = True
+                            logger.info(f"Confirmed VM {class_template_vmid} is now a template")
+                            if task_id:
+                                update_clone_progress(task_id, message="Base template converted successfully")
+                        else:
+                            logger.error(f"VM {class_template_vmid} config shows template={cfg.get('template')}, conversion may have failed")
+                    except Exception as verify_err:
+                        logger.warning(f"Failed to verify template conversion: {verify_err}")
+                    
+                    if not conversion_success:
+                        raise RuntimeError(f"Template conversion did not confirm (template flag not set)")
+                        
                 except Exception as e:
-                    logger.error(f"Failed to convert VM to template: {e}")
+                    logger.error(f"Failed to convert VM {class_template_vmid} to template: {e}")
                     if task_id:
-                        update_clone_progress(task_id, message=f"Template conversion failed: {e}")
+                        update_clone_progress(task_id, message=f"Template conversion failed: {e}. Using original template for students.")
                     # Fall back to using original template
+                    logger.warning(f"Falling back to original template {template_vmid} on {node} for student clones")
                     class_template_vmid = template_vmid
                     class_template_node = node
+                    conversion_success = False
                 
-                # Wait for template conversion to complete
-                if task_id:
-                    update_clone_progress(task_id, message="Verifying template is ready...")
-                try:
-                    proxmox = get_proxmox_admin_for_cluster(cluster_id)
-                    max_wait_seconds = 30
-                    interval = 2
-                    waited = 0
-                    while waited < max_wait_seconds:
-                        try:
-                            status = proxmox.nodes(class_template_node).qemu(class_template_vmid).status.current.get()
-                            # Template flag should be set and no locks
-                            if status.get('template') == 1 and not status.get('lock'):
-                                logger.info(f"Template {class_template_vmid} ready after {waited}s")
-                                if task_id:
-                                    update_clone_progress(task_id, completed=2, message="Template ready, starting student VM deployment...")
+                # Only wait for locks to clear if conversion succeeded
+                if conversion_success:
+                    if task_id:
+                        update_clone_progress(task_id, message="Waiting for template locks to clear...")
+                    try:
+                        proxmox = get_proxmox_admin_for_cluster(cluster_id)
+                        max_wait_seconds = 30
+                        interval = 2
+                        waited = 0
+                        while waited < max_wait_seconds:
+                            try:
+                                cfg = proxmox.nodes(class_template_node).qemu(class_template_vmid).config.get()
+                                lock = cfg.get('lock')
+                                if not lock:
+                                    logger.info(f"Template {class_template_vmid} locks cleared after {waited}s")
+                                    break
+                            except Exception as e:
+                                logger.debug(f"Lock polling error: {e}")
                                 break
-                        except Exception as e:
-                            logger.debug(f"Polling template status error: {e}")
-                            break
-                        time.sleep(interval)
-                        waited += interval
-                except Exception as e:
-                    logger.warning(f"Failed to poll template status: {e}")
+                            time.sleep(interval)
+                            waited += interval
+                    except Exception as e:
+                        logger.warning(f"Failed to poll template lock status: {e}")
                 
                 if task_id:
-                    update_clone_progress(task_id, completed=2)
-            else:
-                logger.error(f"Failed to create base template VM: {msg}")
-                if task_id:
-                    update_clone_progress(task_id, failed=1, error=msg, message="Failed to create base template")
-                # Fall back to using original template
-                class_template_vmid = template_vmid
-                class_template_node = node
+                    update_clone_progress(task_id, completed=2, message=f"Using template {class_template_vmid} for student VMs")
+
+                # Replicate the base template to all other nodes to enable linked clones anywhere
+                try:
+                    nodes_list = proxmox.nodes.get()
+                    node_names = [n.get('node') for n in nodes_list]
+                    # Safety: ensure proxmox object is available
+                    proxmox = get_proxmox_admin_for_cluster(cluster_id)
+                    for target_node in node_names:
+                        if target_node == class_template_node:
+                            continue
+                        replica_name = sanitize_vm_name(f"{class_template_name}-replica-{target_node}", fallback="classtpl-replica")
+                        # Allocate VMID
+                        while next_vmid in used_vmids:
+                            next_vmid += 1
+                        replica_vmid = next_vmid
+                        used_vmids.add(replica_vmid)
+                        next_vmid += 1
+                        logger.info(f"Replicating template {class_template_vmid} to node {target_node} as {replica_name} (VMID {replica_vmid})")
+                        if task_id:
+                            update_clone_progress(task_id, message=f"Replicating template to node {target_node}...")
+                        # Full clone across nodes
+                        proxmox.nodes(class_template_node).qemu(class_template_vmid).clone.post(
+                            newid=replica_vmid,
+                            name=replica_name,
+                            target=target_node,
+                            full=1
+                        )
+                        # Wait 60s to avoid lock/content timing issues before conversion
+                        time.sleep(60)
+                        ok_rep, msg_rep = convert_vm_to_template(replica_vmid, target_node, cluster_ip)
+                        if not ok_rep:
+                            logger.warning(f"Failed to convert replica on {target_node}: {msg_rep}")
+                        else:
+                            logger.info(f"Replica template ready on {target_node}: VMID {replica_vmid}")
+                except Exception as e:
+                    logger.warning(f"Template replication across nodes failed or partially completed: {e}")
+        else:
+            # No base template creation, use original template
+            logger.info(f"No base template requested, using original template {template_vmid} on {node}")
+            class_template_vmid = template_vmid
+            class_template_node = node
         
         # Step 2: Prepare student VM specifications
-        # Student VMs will be linked clones from the class template (not the teacher's editable VM)
-        # IMPORTANT: Linked clones MUST be on the same node as the template
-        logger.info(f"Student VMs will be linked clones from class template {class_template_vmid} on {class_template_node}")
+        # Student VMs will be linked clones from the class template (or its replicas)
+        # IMPORTANT: Linked clones MUST be on the same node as the template they reference
+        # Build map of template replicas per node (including base template node)
+        template_map_by_node: Dict[str, int] = {}
+        try:
+            proxmox = get_proxmox_admin_for_cluster(cluster_id)
+            nodes_list = proxmox.nodes.get()
+            # Collect templates that match base template name or its replica naming
+            candidate_names = set([
+                sanitize_vm_name(f"{name_prefix}-BaseTemplate", fallback="classvm-base")
+            ])
+            for node_info in nodes_list:
+                n = node_info.get('node')
+                try:
+                    for vm in proxmox.nodes(n).qemu.get():
+                        if vm.get('template') == 1:
+                            vm_name = vm.get('name') or ''
+                            if vm_name.startswith(f"{name_prefix.lower()}-basetemplate") or f"-replica-{n}" in vm_name:
+                                template_map_by_node[n] = vm.get('vmid')
+                except Exception:
+                    continue
+            # Ensure base template node is present
+            template_map_by_node.setdefault(class_template_node, class_template_vmid)
+        except Exception as e:
+            logger.warning(f"Failed to build template replica map; using base template only: {e}")
+            template_map_by_node = {class_template_node: class_template_vmid}
+
+        logger.info(f"Template map per node for student clones: {template_map_by_node}")
         if task_id:
-            update_clone_progress(task_id, message=f"Preparing to deploy {count} student VMs as linked clones on {class_template_node}...")
+            update_clone_progress(task_id, message=f"Preparing to deploy {count} student VMs using per-node templates...")
         
         vm_specs = []
         for i in range(count):
@@ -792,8 +1020,12 @@ def clone_vms_for_class(template_vmid: int, node: str, count: int, name_prefix: 
             
             vm_name = f"{name_prefix}-{i+1}"
             vm_name = sanitize_vm_name(vm_name, fallback="classvm")
-            # Linked clones must use same node as template - no smart placement for linked clones
-            vm_node = class_template_node
+            # Prefer smart placement node, but ensure we have a template on that node
+            preferred_node = None
+            if smart_placement and assignment_index < len(node_assignments):
+                preferred_node = node_assignments[assignment_index]
+                assignment_index += 1
+            vm_node = preferred_node if preferred_node in template_map_by_node else class_template_node
             
             vm_specs.append({
                 "index": i,
@@ -814,8 +1046,10 @@ def clone_vms_for_class(template_vmid: int, node: str, count: int, name_prefix: 
                 if task_id:
                     update_clone_progress(task_id, current_vm=spec["name"])
                 
+                # Choose correct template per node
+                tpl_vmid = template_map_by_node.get(spec["node"], class_template_vmid)
                 success, msg = clone_vm_from_template(
-                    template_vmid=class_template_vmid,  # Use the converted class template
+                    template_vmid=tpl_vmid,
                     new_vmid=spec["vmid"],
                     name=spec["name"],
                     node=spec["node"],  # Use assigned node from smart placement
@@ -876,8 +1110,9 @@ def clone_vms_for_class(template_vmid: int, node: str, count: int, name_prefix: 
                 if task_id:
                     update_clone_progress(task_id, current_vm=spec["name"])
                 
+                tpl_vmid = template_map_by_node.get(spec["node"], class_template_vmid)
                 success, msg = clone_vm_from_template(
-                    template_vmid=class_template_vmid,  # Use the converted class template
+                    template_vmid=tpl_vmid,
                     new_vmid=spec["vmid"],
                     name=spec["name"],
                     node=spec["node"],  # Use assigned node from smart placement
