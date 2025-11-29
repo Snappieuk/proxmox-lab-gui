@@ -313,18 +313,31 @@ def push_template(class_id: int):
         
         proxmox = get_proxmox_admin_for_cluster(cluster_id)
         
-        # Step 1: Delete all existing VMs
-        logger.info(f"Deleting {len(assignments)} existing VMs for class {class_.name}")
+        # SAFETY CHECK: Verify all assignments belong to this class
+        assignment_vmids = {a.proxmox_vmid for a in assignments}
+        logger.info(f"Class {class_id} has {len(assignment_vmids)} VMs in database: {sorted(assignment_vmids)}")
+        
+        # Step 1: Delete ONLY VMs that belong to this class (via VMAssignment records)
+        logger.info(f"Deleting {len(assignments)} existing VMs for class {class_.name} (class_id={class_id})")
         for assignment in assignments:
+            # Double-check this assignment belongs to this class
+            if assignment.class_id != class_id:
+                logger.error(f"SAFETY VIOLATION: Assignment {assignment.id} (VMID {assignment.proxmox_vmid}) does not belong to class {class_id}!")
+                errors.append(f"VM {assignment.proxmox_vmid} does not belong to this class (skipped)")
+                continue
+            
             try:
+                logger.info(f"Deleting VM {assignment.proxmox_vmid} (assignment_id={assignment.id}, class_id={assignment.class_id})")
                 delete_success = delete_vm(assignment.proxmox_vmid, template.cluster_ip)
                 if delete_success:
                     deleted_count += 1
-                    logger.info(f"Deleted VM {assignment.proxmox_vmid}")
+                    logger.info(f"Successfully deleted VM {assignment.proxmox_vmid} from class {class_id}")
                 else:
-                    logger.warning(f"Failed to delete VM {assignment.proxmox_vmid}")
+                    logger.warning(f"Failed to delete VM {assignment.proxmox_vmid} from class {class_id}")
+                    errors.append(f"Failed to delete VM {assignment.proxmox_vmid}")
             except Exception as e:
-                logger.warning(f"Error deleting VM {assignment.proxmox_vmid}: {e}")
+                logger.warning(f"Error deleting VM {assignment.proxmox_vmid} from class {class_id}: {e}")
+                errors.append(f"Error deleting VM {assignment.proxmox_vmid}: {str(e)}")
         
         # Step 2: Delete all assignment records (will recreate them)
         vm_count = len(assignments)

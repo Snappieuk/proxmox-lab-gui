@@ -282,12 +282,23 @@ def delete_class_route(class_id: int):
     logger.info(f"Deleting class {class_id} ({class_.name}) with {len(class_.vm_assignments)} VMs")
     
     # Get VMs to delete BEFORE deleting the class
+    # SAFETY CHECK: Only collect VMs that explicitly belong to THIS class
     vm_assignments_to_delete = []
     for assignment in class_.vm_assignments:
+        # Verify assignment belongs to this class (should always be true, but check anyway)
+        if assignment.class_id != class_id:
+            logger.error(f"SAFETY VIOLATION: Assignment {assignment.id} (VMID {assignment.proxmox_vmid}) has class_id={assignment.class_id} but we're deleting class {class_id}!")
+            continue
+        
         vm_assignments_to_delete.append({
             'vmid': assignment.proxmox_vmid,
-            'node': assignment.node
+            'node': assignment.node,
+            'assignment_id': assignment.id,
+            'class_id': assignment.class_id
         })
+        logger.info(f"Queued VM {assignment.proxmox_vmid} for deletion (assignment_id={assignment.id}, class_id={assignment.class_id})")
+    
+    logger.info(f"Class {class_id} has {len(vm_assignments_to_delete)} VMs to delete from Proxmox")
     
     # Get cluster_ip from template
     cluster_ip = None
@@ -307,14 +318,14 @@ def delete_class_route(class_id: int):
     deleted_vms = []
     failed_vms = []
     for vm_info in vm_assignments_to_delete:
-        logger.info(f"Deleting VM {vm_info['vmid']} on node {vm_info['node']} (cluster: {cluster_ip})")
+        logger.info(f"Deleting VM {vm_info['vmid']} on node {vm_info['node']} (cluster: {cluster_ip}, was in class {vm_info['class_id']}, assignment {vm_info['assignment_id']})")
         vm_success, vm_msg = delete_vm(vm_info['vmid'], vm_info['node'], cluster_ip)
         if vm_success:
             deleted_vms.append(vm_info['vmid'])
-            logger.info(f"Successfully deleted VM {vm_info['vmid']}")
+            logger.info(f"Successfully deleted VM {vm_info['vmid']} that belonged to class {class_id}")
         else:
             failed_vms.append({'vmid': vm_info['vmid'], 'error': vm_msg})
-            logger.warning(f"Failed to delete VM {vm_info['vmid']}: {vm_msg}")
+            logger.warning(f"Failed to delete VM {vm_info['vmid']} from class {class_id}: {vm_msg}")
     
     logger.info(f"Class deletion complete: {len(deleted_vms)} VMs deleted, {len(failed_vms)} failed")
     
