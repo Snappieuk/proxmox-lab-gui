@@ -60,10 +60,16 @@ def persist_vm_inventory(vms: List[Dict], cleanup_missing: bool = True) -> int:
             inventory.name = vm.get('name')
             inventory.node = vm.get('node')
             inventory.status = vm.get('status')
-            # Preserve existing IP if new value is missing or a placeholder
+            # Update IP from sync (always update to capture changes, but preserve if missing)
             new_ip = vm.get('ip')
+            logger.info(f"persist_vm_inventory: VM {vmid} ({vm.get('name')}): new_ip={new_ip}, existing_ip={inventory.ip}")
             if new_ip and new_ip not in ('N/A', 'Fetching...', ''):
                 inventory.ip = new_ip
+                logger.info(f"Updated IP for VM {vmid} to: {new_ip}")
+            elif not inventory.ip:
+                # First time seeing this VM - set placeholder
+                inventory.ip = vm.get('ip') or 'N/A'
+                logger.info(f"Set placeholder IP for VM {vmid}: {inventory.ip}")
             inventory.type = vm.get('type')
             inventory.category = vm.get('category')
             
