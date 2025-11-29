@@ -52,7 +52,8 @@ def api_vms():
     from app.services.user_manager import require_user
     
     user = require_user()
-    skip_ips = request.args.get('skip_ips', 'false').lower() == 'true'
+    # skip_ips now ignored (always false for consistent IP visibility)
+    skip_ips = False
     force_refresh = request.args.get('force_refresh', 'false').lower() == 'true'
     search = request.args.get('search', '')
     
@@ -93,7 +94,7 @@ def api_vms():
 
             return jsonify({"vms": vms, "stale": stale})
         else:
-            vms = get_vms_for_user(user, search=search or None, skip_ips=skip_ips, force_refresh=force_refresh)
+            vms = get_vms_for_user(user, search=search or None, skip_ips=False, force_refresh=force_refresh)
         
         # Check which VMs can actually generate RDP files
         rdp_cache_valid = get_rdp_cache_time() > 0  # Has the port scan completed?

@@ -202,9 +202,11 @@
             </div>
             
             <div class="content-card">
-                <div id="template-info-loading" style="padding: 2rem; text-align: center;">
-                    <div class="spinner" style="margin: 0 auto 1rem;"></div>
-                    <p>Loading template information...</p>
+                <!-- Dynamic status area -->
+                <div id="template-status" style="padding: 2rem; text-align: center;">
+                    <div class="spinner" id="template-spinner" style="margin: 0 auto 1rem;"></div>
+                    <p id="template-status-text">Initializing template...</p>
+                    <p id="template-retry-text" style="display:none; font-size:0.8rem; color:#605e5c;">Retrying <span id="template-retry-count">1</span> / <span id="template-retry-max">10</span>...</p>
                 </div>
                 
                 <div id="template-info" style="display: none;">
@@ -217,6 +219,8 @@
                                 <span><strong>VMID:</strong> <span id="template-vmid">-</span></span>
                                 <span style="margin: 0 1rem;">•</span>
                                 <span><strong>Node:</strong> <span id="template-node">-</span></span>
+                                <span style="margin: 0 1rem;">•</span>
+                                <span><strong>IP:</strong> <span id="template-ip" class="mono">(pending)</span></span>
                             </div>
                         </div>
                         
@@ -901,25 +905,70 @@ function showSection(section) {
     event.target.closest('.sidebar-link').classList.add('sidebar-link-active');
 }
 
-async function loadTemplateInfo() {
+let templateLoadAttempts = 0;
+const TEMPLATE_MAX_ATTEMPTS = 12; // ~60s if interval 5s
+let templatePollingActive = false;
+
+function startTemplatePolling() {
+    if (templatePollingActive) return;
+    templatePollingActive = true;
+    templateLoadAttempts = 0;
+    document.getElementById('template-status-text').textContent = 'Initializing template...';
+    pollTemplateInfo();
+}
+
+async function pollTemplateInfo() {
+    templateLoadAttempts++;
+    const attemptEl = document.getElementById('template-retry-count');
+    const maxEl = document.getElementById('template-retry-max');
+    const retryText = document.getElementById('template-retry-text');
+    if (attemptEl && maxEl) {
+        attemptEl.textContent = templateLoadAttempts;
+        maxEl.textContent = TEMPLATE_MAX_ATTEMPTS;
+        retryText.style.display = templateLoadAttempts > 1 ? 'block' : 'none';
+    }
     try {
-        const resp = await fetch(`/api/classes/${classId}/template/info`);
+        const resp = await fetch(`/api/class/${classId}/template/info?v=${Date.now()}`);
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
         const data = await resp.json();
-        
         if (data.ok) {
             currentTemplateInfo = data.template;
             updateTemplateDisplay();
-        } else {
-            showAlert(data.error || 'Failed to load template', 'error');
+            templatePollingActive = false;
+            return;
         }
+        // Not ready yet, keep polling
+        handleTemplatePending(data.error || 'Template not ready');
     } catch (e) {
-        console.error('Failed to load template:', e);
-        showAlert('Failed to load template information', 'error');
+        handleTemplatePending(e.message || 'Waiting for template');
+    }
+    if (templateLoadAttempts < TEMPLATE_MAX_ATTEMPTS) {
+        setTimeout(pollTemplateInfo, 5000); // 5s interval
+    } else {
+        // Give up
+        document.getElementById('template-status-text').textContent = 'Template load timed out. You can retry manually.';
+        const spinner = document.getElementById('template-spinner');
+        if (spinner) spinner.style.display = 'none';
+        showAlert('Template initialization timed out. Try refresh.', 'error');
+        templatePollingActive = false;
     }
 }
 
+function handleTemplatePending(reason) {
+    const statusEl = document.getElementById('template-status-text');
+    if (!statusEl) return;
+    statusEl.textContent = `Waiting for template... (${reason})`;
+}
+
+function loadTemplateInfo() {
+    // Begin polling sequence
+    startTemplatePolling();
+}
+
 function updateTemplateDisplay() {
-    document.getElementById('template-info-loading').style.display = 'none';
+    // Hide status block, show info
+    const statusBlock = document.getElementById('template-status');
+    if (statusBlock) statusBlock.style.display = 'none';
     document.getElementById('template-info').style.display = 'block';
     
     if (!currentTemplateInfo) return;
@@ -927,6 +976,16 @@ function updateTemplateDisplay() {
     document.getElementById('template-name').textContent = currentTemplateInfo.name;
     document.getElementById('template-vmid').textContent = currentTemplateInfo.proxmox_vmid;
     document.getElementById('template-node').textContent = currentTemplateInfo.node || 'N/A';
+    const ipEl = document.getElementById('template-ip');
+    if (ipEl) {
+        if (currentTemplateInfo.ip) {
+            ipEl.textContent = currentTemplateInfo.ip;
+            ipEl.style.color = '#0b6a0b';
+        } else {
+            ipEl.textContent = '(no IP)';
+            ipEl.style.color = '#a80000';
+        }
+    }
     
     // Update power toggle
     const powerToggle = document.getElementById('power-toggle');
@@ -935,7 +994,14 @@ function updateTemplateDisplay() {
     
     // Always show RDP button for templates
     const rdpBtn = document.getElementById('btn-rdp-template');
-    rdpBtn.style.display = 'inline-flex';
+    if (currentTemplateInfo.rdp_available) {
+        rdpBtn.style.display = 'inline-flex';
+        rdpBtn.disabled = false;
+    } else {
+        rdpBtn.style.display = 'inline-flex';
+        rdpBtn.disabled = true;
+        rdpBtn.title = 'RDP unavailable (no IP or port closed)';
+    }
 }
 
 async function togglePower() {
@@ -1025,7 +1091,7 @@ async function saveTemplate() {
     if (!confirm('Save current template state as new baseline? This will replace the existing baseline snapshot.')) return;
     
     try {
-        const resp = await fetch(`/api/classes/${classId}/template/save`, { method: 'POST' });
+        const resp = await fetch(`/api/class/${classId}/template/save`, { method: 'POST' });
         const data = await resp.json();
         
         if (data.ok) {
@@ -1044,7 +1110,7 @@ async function pushTemplate() {
     showAlert('Pushing template to all VMs... This may take several minutes.', 'info');
     
     try {
-        const resp = await fetch(`/api/classes/${classId}/template/push`, { method: 'POST' });
+        const resp = await fetch(`/api/class/${classId}/template/push`, { method: 'POST' });
         const data = await resp.json();
         
         if (data.ok) {

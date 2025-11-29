@@ -257,7 +257,23 @@ def delete_class_route(class_id: int):
         logger.error(f"User {user.username} not authorized to delete class {class_id}")
         return jsonify({"ok": False, "error": "Access denied"}), 403
     
-    # Check if force delete (skip VM deletion from Proxmox)
+    # Capture template info BEFORE deletion so we can optionally delete the class-scoped template VM
+    template_info = None
+    if class_.template:
+        tpl = class_.template
+        # Consider a template deletable if it is explicitly marked class-scoped or has original_template_id
+        if getattr(tpl, 'is_class_template', False) or tpl.original_template_id or tpl.class_id == class_.id:
+            template_info = {
+                'vmid': tpl.proxmox_vmid,
+                'node': tpl.node,
+                'cluster_ip': tpl.cluster_ip,
+                'db_id': tpl.id,
+            }
+            logger.info(f"Class {class_id}: will delete cloned template VM {tpl.proxmox_vmid} (template_id={tpl.id})")
+        else:
+            logger.info(f"Class {class_id}: template {tpl.proxmox_vmid} not marked class-specific; leaving intact")
+
+    # Check if force delete (skip VM deletion from Proxmox including template)
     force_delete = request.args.get('force', 'false').lower() == 'true'
     
     if force_delete:
@@ -278,7 +294,7 @@ def delete_class_route(class_id: int):
             "skipped_vms": vmids
         })
     
-    # Normal delete: delete VMs from Proxmox
+    # Normal delete: delete VMs from Proxmox (plus class template VM if applicable)
     logger.info(f"Deleting class {class_id} ({class_.name}) with {len(class_.vm_assignments)} VMs")
     
     # Get VMs to delete BEFORE deleting the class
@@ -327,13 +343,41 @@ def delete_class_route(class_id: int):
             failed_vms.append({'vmid': vm_info['vmid'], 'error': vm_msg})
             logger.warning(f"Failed to delete VM {vm_info['vmid']} from class {class_id}: {vm_msg}")
     
-    logger.info(f"Class deletion complete: {len(deleted_vms)} VMs deleted, {len(failed_vms)} failed")
-    
+    # Delete template VM after class deletion (foreign key broken) if we captured info and not force deleted
+    template_deleted = False
+    template_delete_error = None
+    if template_info and not force_delete:
+        from app.services.proxmox_operations import delete_vm
+        from app.models import Template
+        try:
+            logger.info(f"Deleting class template VM {template_info['vmid']} (template_id={template_info['db_id']})")
+            t_success, t_msg = delete_vm(template_info['vmid'], template_info['node'], template_info['cluster_ip'])
+            if t_success:
+                template_deleted = True
+                logger.info(f"Deleted class template VM {template_info['vmid']}")
+            else:
+                template_delete_error = t_msg
+                logger.warning(f"Failed to delete class template VM {template_info['vmid']}: {t_msg}")
+            # Remove template DB record if still present
+            tpl_row = Template.query.get(template_info['db_id'])
+            if tpl_row:
+                db.session.delete(tpl_row)
+                db.session.commit()
+                logger.info(f"Deleted template DB record id={template_info['db_id']}")
+        except Exception as e:
+            template_delete_error = str(e)
+            logger.exception(f"Error deleting class template VM {template_info['vmid']}: {e}")
+
+    logger.info(f"Class deletion complete: {len(deleted_vms)} VMs deleted, {len(failed_vms)} failed; template_deleted={template_deleted}")
+
     return jsonify({
         "ok": True,
         "message": msg,
         "deleted_vms": deleted_vms,
-        "failed_vms": failed_vms
+        "failed_vms": failed_vms,
+        "template_deleted": template_deleted,
+        "template_vmid": template_info['vmid'] if template_info else None,
+        "template_delete_error": template_delete_error
     })
 
 

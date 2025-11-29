@@ -95,10 +95,10 @@ def get_template_info(class_id: int):
                 }), 500
         
         vm_config = proxmox.nodes(node).qemu(template.proxmox_vmid).config.get()
-        
+
         # Get VM status from Proxmox (after node is validated)
         vm_status = get_vm_status(template.proxmox_vmid, node, template.cluster_ip)
-        
+
         # Extract MAC address from network config
         mac_address = None
         for key in vm_config.keys():
@@ -114,13 +114,43 @@ def get_template_info(class_id: int):
                                 break
                 if mac_address:
                     break
-        
+
+        # Attempt fast IP discovery for template VM
+        ip_address = None
+        rdp_available = False
+        try:
+            from app.services import proxmox_client as pc
+            # Use existing internal lookup (guest agent if running)
+            if vm_status == 'running':
+                ip_address = pc._lookup_vm_ip(node, template.proxmox_vmid, 'qemu')  # private helper
+                if not ip_address and mac_address:
+                    # Fallback: synchronous ARP scan for this single MAC
+                    from app.services.arp_scanner import discover_ips_via_arp
+                    from app.config import ARP_SUBNETS, CLUSTERS
+                    cluster_id = None
+                    for c in CLUSTERS:
+                        if c['host'] == template.cluster_ip:
+                            cluster_id = c['id']
+                            break
+                    if cluster_id:
+                        composite_key = f"{cluster_id}:{template.proxmox_vmid}"
+                        discovered = discover_ips_via_arp({composite_key: mac_address}, subnets=ARP_SUBNETS, background=False)
+                        ip_address = discovered.get(composite_key)
+                if ip_address:
+                    # Basic RDP availability heuristic: Windows category or port open
+                    # We don't have ostype here; attempt port check
+                    rdp_available = pc.has_rdp_port_open(ip_address)
+        except Exception as ip_err:
+            logger.debug(f"Template IP discovery failed: {ip_err}")
+
         return jsonify({
             'ok': True,
             'template': {
                 **template.to_dict(),
                 'status': vm_status,
-                'mac_address': mac_address
+                'mac_address': mac_address,
+                'ip': ip_address,
+                'rdp_available': rdp_available
             }
         })
     except Exception as e:

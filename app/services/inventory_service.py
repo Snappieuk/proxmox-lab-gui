@@ -100,9 +100,17 @@ def persist_vm_inventory(vms: List[Dict[str, object]]) -> None:
         row.last_updated = now
 
     try:
+        before = datetime.utcnow()
         db.session.commit()
-    except Exception:
+        after = datetime.utcnow()
+        import logging
+        logging.getLogger(__name__).debug(
+            "persist_vm_inventory: committed %d rows (batch=%d) in %.3fs",
+            len(existing_map), len(vms), (after - before).total_seconds()
+        )
+    except Exception as e:
         db.session.rollback()
+        logging.getLogger(__name__).warning(f"persist_vm_inventory: commit failed: {e}")
         raise
 
 
