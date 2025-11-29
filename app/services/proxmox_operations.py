@@ -1628,6 +1628,15 @@ def convert_vm_to_template(vmid: int, node: str, cluster_ip: str = None) -> Tupl
             return False, "Cluster not found"
         
         proxmox = get_proxmox_admin_for_cluster(cluster_id)
+
+        # Verify VM exists on the target node before conversion to prevent 500 errors
+        try:
+            proxmox.nodes(node).qemu(vmid).config.get()
+        except Exception as cfg_err:
+            logger.error(
+                f"Template conversion aborted: VMID {vmid} not found on node {node} (config missing): {cfg_err}"
+            )
+            return False, f"VM {vmid} not found on node {node}; cannot convert to template"
         
         # Ensure VM is stopped before conversion (required for some storages)
         try:

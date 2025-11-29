@@ -33,32 +33,49 @@ def find_available_port(start_port: int, max_attempts: int = 10) -> int:
     return start_port
 
 
-def is_depl0y_running() -> bool:
+def is_depl0y_running(host: str = '127.0.0.1') -> bool:
     """Check if Depl0y is already running."""
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.settimeout(1)
-            result = s.connect_ex(('localhost', DEPL0Y_PORT))
+            result = s.connect_ex((host, DEPL0Y_PORT))
             return result == 0
     except Exception:
         return False
 
 
+def _detect_host_ip() -> str:
+    """Detect the server's primary IP address reliably (non-loopback)."""
+    # Prefer explicit env override
+    host_env = os.getenv('HOST')
+    if host_env and host_env not in ('0.0.0.0', '127.0.0.1', 'localhost'):
+        return host_env
+    try:
+        # UDP connect trick to determine outbound interface IP
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(('8.8.8.8', 80))
+            return s.getsockname()[0]
+    except Exception:
+        pass
+    try:
+        # Fallback to hostname resolution
+        ip = socket.gethostbyname(socket.gethostname())
+        if ip and ip != '127.0.0.1':
+            return ip
+    except Exception:
+        pass
+    # Last resort
+    return '127.0.0.1'
+
+
 def get_depl0y_url() -> str:
     """Get the URL where Depl0y is running."""
-    if is_depl0y_running():
-        # Try to get the actual hostname
-        try:
-            hostname = socket.gethostname()
-            # Try to get IP address
-            import subprocess
-            result = subprocess.run(['hostname', '-I'], capture_output=True, text=True, timeout=2)
-            if result.returncode == 0:
-                ip = result.stdout.strip().split()[0]
-                return f"http://{ip}:{DEPL0Y_PORT}"
-        except:
-            pass
-        return f"http://localhost:{DEPL0Y_PORT}"
+    host_ip = _detect_host_ip()
+    # Check on detected host IP first, then localhost
+    if is_depl0y_running(host_ip):
+        return f"http://{host_ip}:{DEPL0Y_PORT}"
+    if is_depl0y_running('127.0.0.1'):
+        return f"http://{host_ip}:{DEPL0Y_PORT}"
     return None
 
 
@@ -212,6 +229,7 @@ def initialize_depl0y(background: bool = True) -> str:
         import threading
         thread = threading.Thread(target=_init, daemon=True, name="Depl0yInit")
         thread.start()
-        return f"http://localhost:{DEPL0Y_PORT}"  # Return expected URL immediately
+        # In background mode, avoid returning a localhost placeholder; caller should update later
+        return None
     else:
         return _init()

@@ -145,11 +145,23 @@ def create_app(config=None):
     elif ENABLE_DEPL0Y:
         # Auto-install and start Depl0y
         try:
-            from app.services.depl0y_manager import initialize_depl0y
-            depl0y_url = initialize_depl0y(background=True)
-            if depl0y_url:
-                app.config['DEPL0Y_URL'] = depl0y_url
-                logger.info(f"Depl0y service initializing at {depl0y_url}")
+            from app.services.depl0y_manager import initialize_depl0y, get_depl0y_url
+            # Start in background; don't set placeholder URL
+            initialize_depl0y(background=True)
+            # Poll for a short time to get actual URL
+            import time
+            depl_url = None
+            for _ in range(5):
+                url = get_depl0y_url()
+                if url:
+                    depl_url = url
+                    break
+                time.sleep(1)
+            app.config['DEPL0Y_URL'] = depl_url
+            if depl_url:
+                logger.info(f"Depl0y service initializing at {depl_url}")
+            else:
+                logger.info("Depl0y started in background; URL not yet available")
         except Exception as e:
             logger.warning(f"Depl0y initialization failed: {e}")
             app.config['DEPL0Y_URL'] = None
