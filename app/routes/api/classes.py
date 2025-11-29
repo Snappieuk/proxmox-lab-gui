@@ -582,7 +582,7 @@ def list_class_vms(class_id: int):
 @api_classes_bp.route("/<int:class_id>/vms", methods=["POST"])
 @login_required
 def create_class_vms(class_id: int):
-    """Create VM pool for a class by cloning from template."""
+    """Create VM pool for a class using Terraform (much simpler than Python cloning)."""
     user, error = require_teacher_or_adminer()
     if error:
         return jsonify(error[0]), error[1]
@@ -596,90 +596,92 @@ def create_class_vms(class_id: int):
     
     data = request.get_json()
     count = data.get('count', 1)
-    template_vmid = data.get('template_vmid')
-    target_node = data.get('target_node')
+    template_name = data.get('template_name')
+    target_node = data.get('target_node')  # Optional: force specific node
     
-    if not template_vmid:
+    if not template_name:
         # Use class template if no specific one provided
         if not class_.template:
             return jsonify({"ok": False, "error": "No template specified and class has no default template"}), 400
-        template_vmid = class_.template.proxmox_vmid
-        logger.info(f"Using class template VMID {template_vmid} (from class {class_.name}, template ID {class_.template.id})")
+        template_name = class_.template.name
+        logger.info(f"Using class template '{template_name}' (from class {class_.name})")
     else:
-        logger.info(f"Using override template VMID {template_vmid} (from API request)")
+        logger.info(f"Using override template '{template_name}' (from API request)")
     
-    # Get node from template or use target_node
-    if not target_node and class_.template:
-        target_node = class_.template.node
-    if not target_node:
-        return jsonify({"ok": False, "error": "No node specified and class template has no node"}), 400
+    # Generate student usernames
+    students = [f"student{i}" for i in range(1, count + 1)]
     
     # Generate task ID for progress tracking
     import uuid
     task_id = str(uuid.uuid4())
-    # Total includes teacher VM + base template VM + student VMs (2 initial full clones + students)
-    start_clone_progress(task_id, count + 2)
-
-    # STEP 1: Clone teacher VM synchronously so the page can proceed
-    from app.services.proxmox_operations import clone_vm_from_template
-    teacher_name = f"{class_.name}-Teacher"
-    # Find next available VMID by asking Proxmox resources
-    from app.services.proxmox_service import get_proxmox_admin_for_cluster
-    proxmox = get_proxmox_admin_for_cluster(next(c["id"] for c in CLUSTERS if c["host"] == CLASS_CLUSTER_IP))
-    used_vmids = set(r.get('vmid') for r in proxmox.cluster.resources.get(type="vm"))
-    next_vmid = 200
-    while next_vmid in used_vmids:
-        next_vmid += 1
-
-    update_clone_progress(task_id, current_vm=teacher_name, status="running", message="Creating teacher VM (1/3)")
-    success, msg = clone_vm_from_template(
-        template_vmid=template_vmid,
-        new_vmid=next_vmid,
-        name=teacher_name,
-        node=target_node,
-        cluster_ip=CLASS_CLUSTER_IP,
-        max_retries=10,
-        full_clone=True,
-        create_baseline=False
-    )
-    if not success:
-        update_clone_progress(task_id, failed=1, error=msg)
-        return jsonify({"ok": False, "error": msg}), 500
-
-    # Register teacher VM immediately
-    assignment, _ = create_vm_assignment(class_id, next_vmid, target_node, is_template_vm=True)
-    registered = [assignment.to_dict()] if assignment else []
-    template_vm = assignment.to_dict() if assignment else None
-    update_clone_progress(task_id, completed=1, message="Teacher VM created. Continuing in background...")
-
-    # STEP 2: Background thread for base template + student VMs
+    start_clone_progress(task_id, count + 1)  # Students + teacher
+    
+    # Deploy VMs using Terraform in background thread
     import threading
-    def _background_clone():
+    def _background_terraform_deploy():
         try:
-            clone_vms_for_class(
-                template_vmid=template_vmid,
-                node=target_node,
-                count=count,
-                name_prefix=class_.name,
-                cluster_ip=CLASS_CLUSTER_IP,
-                task_id=task_id,
-                include_template_vm=True,
-                precreated_teacher_vmid=next_vmid,
-                precreated_teacher_node=target_node
+            from app.services.terraform_service import deploy_class_with_terraform
+            
+            update_clone_progress(task_id, message="Deploying VMs with Terraform...")
+            
+            result = deploy_class_with_terraform(
+                class_id=str(class_id),
+                class_prefix=class_.name.lower().replace(' ', '-'),
+                students=students,
+                template_name=template_name,
+                use_full_clone=False,  # Linked clones for speed
+                create_teacher_vm=True,
+                target_node=target_node,  # None = auto-distribute
+                auto_select_best_node=True,  # Query Proxmox for best nodes
             )
-            update_clone_progress(task_id, status="completed")
+            
+            # Register VMs in database
+            student_vms = result.get('student_vms', {})
+            teacher_vm = result.get('teacher_vm')
+            
+            # Register teacher VM
+            if teacher_vm:
+                assignment, _ = create_vm_assignment(
+                    class_id=class_id,
+                    proxmox_vmid=teacher_vm['id'],
+                    node=teacher_vm['node'],
+                    is_template_vm=True
+                )
+                update_clone_progress(task_id, completed=1, message=f"Teacher VM created: {teacher_vm['name']}")
+            
+            # Register student VMs (unassigned, ready for students to claim)
+            registered_count = 0
+            for student_name, vm_info in student_vms.items():
+                assignment, _ = create_vm_assignment(
+                    class_id=class_id,
+                    proxmox_vmid=vm_info['id'],
+                    node=vm_info['node'],
+                    is_template_vm=False
+                )
+                registered_count += 1
+                update_clone_progress(
+                    task_id,
+                    completed=registered_count + 1,
+                    message=f"Registered {registered_count}/{len(student_vms)} student VMs"
+                )
+            
+            update_clone_progress(
+                task_id,
+                status="completed",
+                message=f"Successfully deployed {len(student_vms)} student VMs + 1 teacher VM"
+            )
+            
         except Exception as e:
+            logger.exception(f"Terraform deployment failed for class {class_id}: {e}")
             update_clone_progress(task_id, status="failed", errors=[str(e)])
-
-    threading.Thread(target=_background_clone, daemon=True).start()
-
-    # Return immediately with teacher VM info and task id
+    
+    threading.Thread(target=_background_terraform_deploy, daemon=True).start()
+    
     return jsonify({
         "ok": True,
-        "message": f"Teacher VM created; base template and {count} student VMs will be prepared in the background.",
-        "vms": registered,
-        "template_vm": template_vm,
-        "task_id": task_id
+        "message": f"Terraform is deploying {count} student VMs + 1 teacher VM in parallel (much faster than sequential Python cloning).",
+        "task_id": task_id,
+        "info": "Terraform handles node selection, storage compatibility, VMID allocation, and error handling automatically."
     })
 
 
