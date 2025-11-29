@@ -289,7 +289,7 @@ async function deleteClass(classId, className) {
     }
     
     try {
-        const resp = await fetch(`/api/class/${classId}`, {
+        const resp = await fetch(`/api/classes/${classId}`, {
             method: 'DELETE'
         });
         

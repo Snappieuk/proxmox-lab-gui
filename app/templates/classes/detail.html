@@ -8,6 +8,128 @@
     <link href="https://fonts.googleapis.com/css2?family=Segoe+UI:wght@400;600&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <style>
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .modal-content {
+            background-color: white;
+            padding: 0;
+            border-radius: 8px;
+            width: 90%;
+            max-width: 500px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+        }
+        
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px;
+            border-bottom: 1px solid #e0e0e0;
+        }
+        
+        .modal-header h3 {
+            margin: 0;
+            font-size: 1.25rem;
+            color: #333;
+        }
+        
+        .modal-close {
+            background: none;
+            border: none;
+            font-size: 1.5rem;
+            cursor: pointer;
+            color: #666;
+            padding: 0;
+            width: 30px;
+            height: 30px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .modal-close:hover {
+            color: #333;
+        }
+        
+        .modal-body {
+            padding: 20px;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #333;
+        }
+        
+        .form-control {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 1rem;
+            box-sizing: border-box;
+        }
+        
+        .form-control:focus {
+            outline: none;
+            border-color: #2196F3;
+        }
+        
+        .form-actions {
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+            margin-top: 20px;
+        }
+        
+        .btn-secondary {
+            padding: 10px 20px;
+            background-color: #f0f0f0;
+            color: #333;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 1rem;
+        }
+        
+        .btn-secondary:hover {
+            background-color: #e0e0e0;
+        }
+        
+        .btn-primary {
+            padding: 10px 20px;
+            background-color: #2196F3;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .btn-primary:hover {
+            background-color: #1976D2;
+        }
+    </style>
 </head>
 <body>
 <header class="topbar">
@@ -162,7 +284,10 @@
                     <h1><i class="bi bi-hdd-rack"></i> Virtual Machines</h1>
                     <p class="page-subtitle">Manage student VMs for this class</p>
                 </div>
-                <div>
+                <div style="display: flex; gap: 0.5rem;">
+                    <button onclick="showAddVMsModal()" class="btn-secondary">
+                        <i class="bi bi-plus-circle"></i> Add VMs
+                    </button>
                     <button onclick="refreshVMs()" class="btn-primary">
                         <i class="bi bi-arrow-clockwise"></i> Refresh
                     </button>
@@ -778,7 +903,7 @@ function showSection(section) {
 
 async function loadTemplateInfo() {
     try {
-        const resp = await fetch(`/api/class/${classId}/template/info`);
+        const resp = await fetch(`/api/classes/${classId}/template/info`);
         const data = await resp.json();
         
         if (data.ok) {
@@ -842,7 +967,7 @@ async function startTemplate() {
     if (!confirm('Start the template VM?')) return;
     
     try {
-        const resp = await fetch(`/api/class/${classId}/template/start`, { method: 'POST' });
+        const resp = await fetch(`/api/classes/${classId}/template/start`, { method: 'POST' });
         const data = await resp.json();
         
         if (data.ok) {
@@ -860,7 +985,7 @@ async function stopTemplate() {
     if (!confirm('Stop the template VM?')) return;
     
     try {
-        const resp = await fetch(`/api/class/${classId}/template/stop`, { method: 'POST' });
+        const resp = await fetch(`/api/classes/${classId}/template/stop`, { method: 'POST' });
         const data = await resp.json();
         
         if (data.ok) {
@@ -883,7 +1008,7 @@ async function reimageTemplate() {
     if (!confirm('Revert template to baseline? This will reset all changes made to the template VM.')) return;
     
     try {
-        const resp = await fetch(`/api/class/${classId}/template/reimage`, { method: 'POST' });
+        const resp = await fetch(`/api/classes/${classId}/template/reimage`, { method: 'POST' });
         const data = await resp.json();
         
         if (data.ok) {
@@ -900,7 +1025,7 @@ async function saveTemplate() {
     if (!confirm('Save current template state as new baseline? This will replace the existing baseline snapshot.')) return;
     
     try {
-        const resp = await fetch(`/api/class/${classId}/template/save`, { method: 'POST' });
+        const resp = await fetch(`/api/classes/${classId}/template/save`, { method: 'POST' });
         const data = await resp.json();
         
         if (data.ok) {
@@ -919,7 +1044,7 @@ async function pushTemplate() {
     showAlert('Pushing template to all VMs... This may take several minutes.', 'info');
     
     try {
-        const resp = await fetch(`/api/class/${classId}/template/push`, { method: 'POST' });
+        const resp = await fetch(`/api/classes/${classId}/template/push`, { method: 'POST' });
         const data = await resp.json();
         
         if (data.ok) {
@@ -973,7 +1098,7 @@ function showAlert(message, type = 'info') {
 
 async function generateInviteLink() {
     try {
-        const resp = await fetch(`/api/class/${classId}/invite`, {
+        const resp = await fetch(`/api/classes/${classId}/invite`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ never_expires: true })
@@ -996,7 +1121,7 @@ async function deleteInviteLink() {
     if (!confirm('Delete the invite link? Students will no longer be able to join using this link.')) return;
     
     try {
-        const resp = await fetch(`/api/class/${classId}/invite`, {
+        const resp = await fetch(`/api/classes/${classId}/invite`, {
             method: 'DELETE'
         });
         
@@ -1054,7 +1179,7 @@ function copyInviteLink(url) {
 
 async function loadStudentsList() {
     try {
-        const resp = await fetch(`/api/class/${classId}`);
+        const resp = await fetch(`/api/classes/${classId}`);
         const data = await resp.json();
         
         if (data.ok) {
@@ -1106,7 +1231,7 @@ async function deleteClass() {
     
     try {
         // Delete from database only (skip VM deletion from Proxmox)
-        const resp = await fetch(`/api/class/${classId}?force=true`, {
+        const resp = await fetch(`/api/classes/${classId}?force=true`, {
             method: 'DELETE'
         });
         
@@ -1122,6 +1247,86 @@ async function deleteClass() {
         }
     } catch (e) {
         showAlert('Failed to delete class', 'error');
+    }
+}
+
+function showAddVMsModal() {
+    const modal = document.getElementById('add-vms-modal');
+    if (!modal) {
+        // Create modal if it doesn't exist
+        createAddVMsModal();
+    }
+    document.getElementById('add-vms-modal').style.display = 'flex';
+}
+
+function createAddVMsModal() {
+    const modalHTML = `
+        <div id="add-vms-modal" class="modal" style="display: none;">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>Add VMs to Class</h3>
+                    <button class="modal-close" onclick="closeAddVMsModal()">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label>Number of VMs to create</label>
+                        <input type="number" id="vm-count-input" value="1" min="1" max="50" class="form-control">
+                    </div>
+                    <div class="form-actions">
+                        <button class="btn-secondary" onclick="closeAddVMsModal()">Cancel</button>
+                        <button class="btn-primary" onclick="createVMs()">
+                            <i class="bi bi-plus-circle"></i> Create VMs
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+    document.body.insertAdjacentHTML('beforeend', modalHTML);
+}
+
+function closeAddVMsModal() {
+    document.getElementById('add-vms-modal').style.display = 'none';
+}
+
+async function createVMs() {
+    const count = parseInt(document.getElementById('vm-count-input').value);
+    
+    if (!count || count < 1) {
+        showAlert('Please enter a valid number of VMs', 'error');
+        return;
+    }
+    
+    if (!currentTemplateInfo) {
+        showAlert('No template configured for this class', 'error');
+        return;
+    }
+    
+    try {
+        closeAddVMsModal();
+        showAlert(`Creating ${count} VMs... This may take a few minutes.`, 'info');
+        
+        const resp = await fetch(`/api/classes/${classId}/vms`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+                count: count,
+                template_vmid: currentTemplateInfo.proxmox_vmid
+            })
+        });
+        
+        const data = await resp.json();
+        
+        if (data.ok) {
+            showAlert(`Successfully created ${data.vms.length} VMs`, 'success');
+            // Refresh the VMs section
+            setTimeout(() => location.reload(), 2000);
+        } else {
+            showAlert('Failed to create VMs: ' + data.error, 'error');
+        }
+    } catch (e) {
+        console.error('Failed to create VMs:', e);
+        showAlert('Failed to create VMs', 'error');
     }
 }
 
