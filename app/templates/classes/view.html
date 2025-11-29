@@ -183,8 +183,11 @@
         </div>
         <div class="modal-body">
             <div class="form-group">
-                <label>Number of VMs to create</label>
+                <label>Number of student VMs to create</label>
                 <input type="number" id="vm-count" value="1" min="1" max="50">
+                <p class="help-text" style="margin-top: 0.5rem; font-size: 0.9rem; color: #605e5c;">
+                    Enter the number of student VMs. A template reference VM will also be created automatically (shown in Templates tab).
+                </p>
             </div>
             <div class="form-group">
                 <label>Template</label>
@@ -501,6 +504,20 @@ async function generateInvite() {
         });
         const data = await resp.json();
         if (data.ok) {
+            // Update the invite link display immediately
+            const inviteUrl = `${window.location.origin}${data.invite_url}`;
+            const inviteUrlInput = document.getElementById('invite-url');
+            if (inviteUrlInput) {
+                inviteUrlInput.value = inviteUrl;
+            }
+            
+            // Show success message
+            const inviteActive = document.querySelector('.invite-active');
+            if (inviteActive) {
+                inviteActive.style.display = 'block';
+            }
+            
+            alert('Invite link generated successfully!\n\n' + inviteUrl);
             location.reload();
         } else {
             alert('Failed to generate invite: ' + data.error);

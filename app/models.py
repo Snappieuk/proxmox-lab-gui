@@ -226,6 +226,7 @@ class VMAssignment(db.Model):
     node = db.Column(db.String(80), nullable=True)  # Proxmox node where VM resides
     assigned_user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True, index=True)
     status = db.Column(db.String(20), default='available')  # available, assigned, deleting
+    is_template_vm = db.Column(db.Boolean, default=False)  # True if this is the template reference VM
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     assigned_at = db.Column(db.DateTime, nullable=True)
     
@@ -258,6 +259,7 @@ class VMAssignment(db.Model):
             'assigned_user_id': self.assigned_user_id,
             'assigned_user_name': self.assigned_user.username if self.assigned_user else None,
             'status': self.status,
+            'is_template_vm': self.is_template_vm,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'assigned_at': self.assigned_at.isoformat() if self.assigned_at else None,
         }

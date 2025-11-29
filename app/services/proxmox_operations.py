@@ -184,21 +184,30 @@ def clone_vm_from_template(template_vmid: int, new_vmid: int, name: str, node: s
 
 
 def clone_vms_for_class(template_vmid: int, node: str, count: int, name_prefix: str,
-                        cluster_ip: str = None, task_id: str = None, per_vm_retry: int = 5) -> List[Dict[str, Any]]:
+                        cluster_ip: str = None, task_id: str = None, per_vm_retry: int = 5, 
+                        concurrent: bool = True, max_workers: int = 3,
+                        include_template_vm: bool = True, smart_placement: bool = True) -> List[Dict[str, Any]]:
     """Clone multiple VMs from a template for a class.
     
     Args:
         template_vmid: VMID of the template
-        node: Node to create VMs on
-        count: Number of VMs to clone
+        node: Fallback node if smart placement disabled or fails
+        count: Number of student VMs to clone
         name_prefix: Prefix for VM names (will append number)
         cluster_ip: IP of the Proxmox cluster (restricted to 10.220.15.249)
         task_id: Optional task ID for progress tracking
+        concurrent: If True, clone VMs in parallel (default: True)
+        max_workers: Maximum parallel clones (default: 3)
+        include_template_vm: If True, create a reference VM from template (default: True)
+        smart_placement: If True, distribute VMs across nodes based on resources (default: True)
     
     Returns:
-        List of dicts with keys: vmid, name, node
+        List of dicts with keys: vmid, name, node, is_template_vm (bool)
     """
     from app.services.clone_progress import update_clone_progress
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from app.services.node_selector import select_best_node, distribute_vms_across_nodes
+    import time
     
     created_vms = []
     
@@ -245,6 +254,69 @@ def clone_vms_for_class(template_vmid: int, node: str, count: int, name_prefix: 
         
         next_vmid = 200  # Start from 200 for class VMs
         
+        # Smart node selection: distribute VMs across nodes based on resources
+        node_assignments = []
+        if smart_placement:
+            logger.info(f"Using smart placement to distribute {count + (1 if include_template_vm else 0)} VMs across cluster")
+            total_vms = (1 if include_template_vm else 0) + count
+            node_assignments = distribute_vms_across_nodes(cluster_id, total_vms)
+            
+            if not node_assignments:
+                logger.warning("Smart placement failed, falling back to single node")
+                node_assignments = [node] * total_vms
+        else:
+            logger.info(f"Smart placement disabled, using node: {node}")
+            total_vms = (1 if include_template_vm else 0) + count
+            node_assignments = [node] * total_vms
+        
+        assignment_index = 0  # Track which node to use next
+        
+        # Step 1: Create template reference VM if requested
+        template_vm_info = None
+        if include_template_vm:
+            # Find VMID for template VM
+            while next_vmid in used_vmids:
+                next_vmid += 1
+            
+            template_vm_name = f"{name_prefix}-Template"
+            template_vm_name = sanitize_vm_name(template_vm_name, fallback="classvm-template")
+            template_vm_node = node_assignments[assignment_index]
+            assignment_index += 1
+            
+            logger.info(f"Creating template reference VM: {template_vm_name} (VMID {next_vmid}) on node {template_vm_node}")
+            if task_id:
+                update_clone_progress(task_id, current_vm=template_vm_name)
+            
+            success, msg = clone_vm_from_template(
+                template_vmid=template_vmid,
+                new_vmid=next_vmid,
+                name=template_vm_name,
+                node=template_vm_node,
+                cluster_ip=cluster_ip,
+                max_retries=per_vm_retry
+            )
+            
+            if success:
+                template_vm_info = {
+                    "vmid": next_vmid,
+                    "name": template_vm_name,
+                    "node": template_vm_node,
+                    "is_template_vm": True  # Mark as the template reference VM
+                }
+                created_vms.append(template_vm_info)
+                used_vmids.add(next_vmid)
+                next_vmid += 1
+                logger.info(f"Created template reference VM {template_vm_name} (VMID {next_vmid-1}) on {template_vm_node}")
+                
+                if task_id:
+                    update_clone_progress(task_id, completed=1)
+            else:
+                logger.error(f"Failed to create template VM: {msg}")
+                if task_id:
+                    update_clone_progress(task_id, failed=1, error=msg)
+        
+        # Step 2: Prepare student VM specifications
+        vm_specs = []
         for i in range(count):
             # Find next available VMID
             while next_vmid in used_vmids:
@@ -252,36 +324,116 @@ def clone_vms_for_class(template_vmid: int, node: str, count: int, name_prefix: 
             
             vm_name = f"{name_prefix}-{i+1}"
             vm_name = sanitize_vm_name(vm_name, fallback="classvm")
+            vm_node = node_assignments[assignment_index]
+            assignment_index += 1
             
-            # Update progress
-            if task_id:
-                update_clone_progress(task_id, current_vm=vm_name)
+            vm_specs.append({
+                "index": i,
+                "vmid": next_vmid,
+                "name": vm_name,
+                "node": vm_node,
+                "is_template_vm": False
+            })
+            used_vmids.add(next_vmid)
+            next_vmid += 1
+        
+        if concurrent and count > 1:
+            # Parallel cloning with ThreadPoolExecutor
+            logger.info(f"Starting concurrent clone of {count} VMs with {max_workers} workers")
             
-            success, msg = clone_vm_from_template(
-                template_vmid=template_vmid,
-                new_vmid=next_vmid,
-                name=vm_name,
-                node=node,
-                cluster_ip=cluster_ip,
-                max_retries=per_vm_retry
-            )
-            
-            if success:
-                created_vms.append({
-                    "vmid": next_vmid,
-                    "name": vm_name,
-                    "node": node
-                })
-                used_vmids.add(next_vmid)
-                next_vmid += 1
+            def clone_single_vm(spec):
+                """Clone a single VM - used in thread pool"""
+                if task_id:
+                    update_clone_progress(task_id, current_vm=spec["name"])
                 
+                success, msg = clone_vm_from_template(
+                    template_vmid=template_vmid,
+                    new_vmid=spec["vmid"],
+                    name=spec["name"],
+                    node=spec["node"],  # Use assigned node from smart placement
+                    cluster_ip=cluster_ip,
+                    max_retries=per_vm_retry
+                )
+                
+                if success:
+                    return {
+                        "success": True,
+                        "vmid": spec["vmid"],
+                        "name": spec["name"],
+                        "node": spec["node"],  # Return actual node used
+                        "is_template_vm": spec.get("is_template_vm", False)
+                    }
+                else:
+                    logger.error(f"Failed to clone VM {spec['name']}: {msg}")
+                    return {
+                        "success": False,
+                        "name": spec["name"],
+                        "error": msg
+                    }
+            
+            # Execute clones in parallel
+            with ThreadPoolExecutor(max_workers=min(max_workers, count)) as executor:
+                # Submit all clone jobs
+                future_to_spec = {
+                    executor.submit(clone_single_vm, spec): spec 
+                    for spec in vm_specs
+                }
+                
+                # Collect results as they complete
+                for future in as_completed(future_to_spec):
+                    result = future.result()
+                    if result["success"]:
+                        created_vms.append({
+                            "vmid": result["vmid"],
+                            "name": result["name"],
+                            "node": result["node"],
+                            "is_template_vm": result.get("is_template_vm", False)
+                        })
+                        if task_id:
+                            update_clone_progress(task_id, completed=len(created_vms))
+                        logger.info(f"Successfully cloned VM {result['name']} (VMID {result['vmid']})")
+                    else:
+                        if task_id:
+                            update_clone_progress(task_id, failed=1, error=result["error"])
+            
+            logger.info(f"Concurrent cloning completed: {len(created_vms)}/{count + (1 if include_template_vm else 0)} VMs created")
+        else:
+            # Sequential cloning (original behavior)
+            logger.info(f"Starting sequential clone of {count} VMs")
+            for spec in vm_specs:
                 # Update progress
                 if task_id:
-                    update_clone_progress(task_id, completed=len(created_vms))
-            else:
-                logger.error(f"Failed to clone VM {vm_name}: {msg}")
-                if task_id:
-                    update_clone_progress(task_id, failed=i+1-len(created_vms), error=msg)
+                    update_clone_progress(task_id, current_vm=spec["name"])
+                
+                success, msg = clone_vm_from_template(
+                    template_vmid=template_vmid,
+                    new_vmid=spec["vmid"],
+                    name=spec["name"],
+                    node=spec["node"],  # Use assigned node from smart placement
+                    cluster_ip=cluster_ip,
+                    max_retries=per_vm_retry
+                )
+                
+                if success:
+                    created_vms.append({
+                        "vmid": spec["vmid"],
+                        "name": spec["name"],
+                        "node": spec["node"],  # Return actual node used
+                        "is_template_vm": spec.get("is_template_vm", False)
+                    })
+                    
+                    # Update progress
+                    if task_id:
+                        update_clone_progress(task_id, completed=len(created_vms))
+                    
+                    # Add delay between clones to prevent template locking (except for last VM)
+                    if spec["index"] < count - 1:
+                        time.sleep(3)  # 3-second delay between clones
+                        logger.debug(f"Waiting 3s before next clone to avoid template lock")
+                else:
+                    logger.error(f"Failed to clone VM {spec['name']}: {msg}")
+                    if task_id:
+                        update_clone_progress(task_id, failed=1, error=msg)
         
         return created_vms
         
@@ -534,6 +686,66 @@ def convert_vm_to_template(vmid: int, node: str, cluster_ip: str = None) -> Tupl
     except Exception as e:
         logger.exception(f"Failed to convert VM to template: {e}")
         return False, f"Conversion failed: {str(e)}"
+
+
+def convert_template_to_vm(template_vmid: int, new_vmid: int, name: str, node: str,
+                           cluster_ip: str = None) -> Tuple[bool, Optional[int], str]:
+    """Convert a template to a regular VM by cloning it.
+    
+    Since Proxmox templates can't be directly converted back to VMs,
+    we clone the template and return the new VM.
+    
+    Args:
+        template_vmid: VMID of the template
+        new_vmid: VMID for the new VM
+        name: Name for the VM
+        node: Node name
+        cluster_ip: IP of the Proxmox cluster
+    
+    Returns:
+        Tuple of (success, new_vmid, message)
+    """
+    try:
+        cluster_id = None
+        for cluster in CLUSTERS:
+            if cluster["host"] == (cluster_ip or CLASS_CLUSTER_IP):
+                cluster_id = cluster["id"]
+                break
+        
+        if not cluster_id:
+            return False, None, "Cluster not found"
+        
+        proxmox = get_proxmox_admin_for_cluster(cluster_id)
+        safe_name = sanitize_vm_name(name)
+        
+        # Clone template to create a regular VM
+        proxmox.nodes(node).qemu(template_vmid).clone.post(
+            newid=new_vmid,
+            name=safe_name,
+            full=1  # Full clone
+        )
+        
+        logger.info(f"Converted template {template_vmid} to VM {new_vmid} ({safe_name}) on {node}")
+        
+        # Wait for clone to complete
+        import time
+        time.sleep(5)
+        
+        # Create baseline snapshot
+        try:
+            proxmox.nodes(node).qemu(new_vmid).snapshot.post(
+                snapname='baseline',
+                description='Initial baseline snapshot for reimage'
+            )
+            logger.info(f"Created baseline snapshot for VM {new_vmid}")
+        except Exception as e:
+            logger.warning(f"Failed to create baseline snapshot for VM {new_vmid}: {e}")
+        
+        return True, new_vmid, f"Template converted to VM {safe_name}"
+        
+    except Exception as e:
+        logger.exception(f"Failed to convert template to VM: {e}")
+        return False, None, f"Conversion failed: {str(e)}"
 
 
 def clone_template_for_class(template_vmid: int, node: str, name: str,

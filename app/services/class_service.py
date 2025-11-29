@@ -590,8 +590,14 @@ def delete_template(template_id: int) -> Tuple[bool, str]:
 # VM Assignment Management
 # ---------------------------------------------------------------------------
 
-def create_vm_assignment(class_id: int, proxmox_vmid: int, node: str = None) -> Tuple[Optional[VMAssignment], str]:
+def create_vm_assignment(class_id: int, proxmox_vmid: int, node: str = None, is_template_vm: bool = False) -> Tuple[Optional[VMAssignment], str]:
     """Create a VM assignment record for a cloned VM.
+    
+    Args:
+        class_id: Class ID
+        proxmox_vmid: VM ID in Proxmox
+        node: Proxmox node name
+        is_template_vm: True if this is the template reference VM
     
     Returns: (assignment, message/error)
     """
@@ -608,7 +614,8 @@ def create_vm_assignment(class_id: int, proxmox_vmid: int, node: str = None) -> 
         class_id=class_id,
         proxmox_vmid=proxmox_vmid,
         node=node,
-        status='available'
+        status='available',
+        is_template_vm=is_template_vm
     )
     
     try:

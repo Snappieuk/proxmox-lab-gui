@@ -617,31 +617,45 @@ def create_class_vms(class_id: int):
     # Generate task ID for progress tracking
     import uuid
     task_id = str(uuid.uuid4())
-    start_clone_progress(task_id, count)
+    # Total includes template VM + student VMs
+    start_clone_progress(task_id, count + 1)
     
-    # Clone VMs
+    # Clone VMs (includes 1 template VM + count student VMs)
     created_vms = clone_vms_for_class(
         template_vmid=template_vmid,
         node=target_node,
         count=count,
         name_prefix=class_.name,
         cluster_ip=CLASS_CLUSTER_IP,
-        task_id=task_id
+        task_id=task_id,
+        include_template_vm=True  # Always create template reference VM
     )
     
     # Register created VMs in database
+    # Separate template VM from student VMs
     registered = []
+    template_vm = None
+    
     for vm_info in created_vms:
-        assignment, msg = create_vm_assignment(class_id, vm_info["vmid"], vm_info["node"])
+        is_template = vm_info.get("is_template_vm", False)
+        assignment, msg = create_vm_assignment(
+            class_id, 
+            vm_info["vmid"], 
+            vm_info["node"],
+            is_template_vm=is_template
+        )
         if assignment:
             registered.append(assignment.to_dict())
+            if is_template:
+                template_vm = assignment.to_dict()
     
     update_clone_progress(task_id, status="completed")
     
     return jsonify({
         "ok": True,
-        "message": f"Created {len(created_vms)} VMs",
+        "message": f"Created {len(created_vms)} VMs (1 template + {count} student VMs)",
         "vms": registered,
+        "template_vm": template_vm,
         "task_id": task_id
     })
 
