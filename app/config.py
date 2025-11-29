@@ -106,7 +106,7 @@ else:
 
 # Depl0y Integration
 # Set to False to disable automatic Depl0y installation and startup
-ENABLE_DEPL0Y = os.getenv("ENABLE_DEPL0Y", "true").lower() in ("true", "1", "yes")
+ENABLE_DEPL0Y = os.getenv("ENABLE_DEPL0Y", "false").lower() in ("true", "1", "yes")
 # Custom Depl0y URL if you've manually installed it elsewhere
 DEPL0Y_URL = os.getenv("DEPL0Y_URL", None)
 
