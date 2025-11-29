@@ -495,11 +495,12 @@ def _get_cached_ip_from_db(cluster_id: str, vmid: int) -> Optional[str]:
     except Exception as e:
         logger.debug(f"Failed to get cached IP from DB for VM {vmid}: {e}")
     
-    # Fallback to persistent JSON cache
+    # Final fallback: check VMInventory table for persisted IP
     try:
-        ip = _get_persistent_ip(cluster_id, vmid)
-        if ip:
-            return ip
+        from app.models import VMInventory
+        inventory = VMInventory.query.filter_by(cluster_id=cluster_id, vmid=vmid).first()
+        if inventory and inventory.ip and inventory.ip not in ('N/A', 'Fetching...', ''):
+            return inventory.ip
     except Exception:
         pass
     return None
@@ -550,15 +551,22 @@ def _get_cached_ips_batch(cluster_id: str, vmids: List[int]) -> Dict[int, str]:
     except Exception as e:
         logger.debug(f"Failed to batch fetch cached IPs from DB: {e}")
     
-    # Merge persistent JSON cache
+    # Final fallback: check VMInventory table for remaining VMs
     try:
-        for vmid in vmids:
-            if vmid not in results:
-                ip = _get_persistent_ip(cluster_id, vmid)
-                if ip:
-                    results[vmid] = ip
-    except Exception:
-        pass
+        from app.models import VMInventory
+        remaining_vmids = [v for v in vmids if v not in results]
+        if remaining_vmids:
+            inventory_entries = VMInventory.query.filter(
+                VMInventory.cluster_id == cluster_id,
+                VMInventory.vmid.in_(remaining_vmids),
+                VMInventory.ip.isnot(None)
+            ).all()
+            for entry in inventory_entries:
+                if entry.ip and entry.ip not in ('N/A', 'Fetching...', ''):
+                    results[entry.vmid] = entry.ip
+    except Exception as e:
+        logger.debug(f"Failed to fetch IPs from VMInventory: {e}")
+    
     return results
 
 
