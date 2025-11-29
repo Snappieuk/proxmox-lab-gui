@@ -268,21 +268,30 @@ def _load_vm_cache() -> None:
     if _vm_cache_loaded.get(cache_key, False):
         return
     
-    if not os.path.exists(VM_CACHE_FILE):
-        _vm_cache_data[cache_key] = None
-        _vm_cache_ts[cache_key] = 0.0
-        _vm_cache_loaded[cache_key] = True
-        return
+    # DISABLED: JSON cache replaced by database (VMInventory table)
+    # Database is loaded on-demand via fetch_vm_inventory() in API routes
+    _vm_cache_data[cache_key] = None
+    _vm_cache_ts[cache_key] = 0.0
+    _vm_cache_loaded[cache_key] = True
+    logger.info("VM cache loading from JSON disabled - using database (VMInventory) instead")
+    return
     
-    try:
-        with open(VM_CACHE_FILE, "r", encoding="utf-8") as f:
-            all_data = json.load(f)
-            cluster_data = all_data.get(cache_key, {})
-            _vm_cache_data[cache_key] = cluster_data.get("vms", [])
-            _vm_cache_ts[cache_key] = cluster_data.get("timestamp", 0.0)
-        cache_count = len(_vm_cache_data.get(cache_key) or [])
-        logger.info("Loaded VM cache for all clusters with %d VMs from %s", 
-                   cache_count, VM_CACHE_FILE)
+    # OLD CODE (disabled):
+    # if not os.path.exists(VM_CACHE_FILE):
+    #     _vm_cache_data[cache_key] = None
+    #     _vm_cache_ts[cache_key] = 0.0
+    #     _vm_cache_loaded[cache_key] = True
+    #     return
+    # 
+    # try:
+    #     with open(VM_CACHE_FILE, "r", encoding="utf-8") as f:
+    #         all_data = json.load(f)
+    #         cluster_data = all_data.get(cache_key, {})
+    #         _vm_cache_data[cache_key] = cluster_data.get("vms", [])
+    #         _vm_cache_ts[cache_key] = cluster_data.get("timestamp", 0.0)
+    #     cache_count = len(_vm_cache_data.get(cache_key) or [])
+    #     logger.info("Loaded VM cache for all clusters with %d VMs from %s", 
+    #                cache_count, VM_CACHE_FILE)
     except Exception as e:
         logger.warning("Failed to load VM cache: %s", e)
         _vm_cache_data[cache_key] = None
@@ -1621,7 +1630,7 @@ def get_all_vms(skip_ips: bool = False, force_refresh: bool = False) -> List[Dic
     # Cache the VM structure for all clusters using consistent key
     _vm_cache_data[cache_key] = out
     _vm_cache_ts[cache_key] = now
-    _save_vm_cache()  # Persist to disk for fast restart
+    # _save_vm_cache()  # DISABLED: Now using database persistence via persist_vm_inventory()
 
     # Persist to database inventory (best-effort; avoid hard failure)
     try:
