@@ -65,6 +65,8 @@ from app.services.proxmox_operations import (
     CLASS_CLUSTER_IP
 )
 
+from app.services.clone_progress import start_clone_progress, get_clone_progress, update_clone_progress
+
 from app.models import User, VMAssignment
 
 logger = logging.getLogger(__name__)
@@ -557,13 +559,19 @@ def create_class_vms(class_id: int):
     if not target_node:
         return jsonify({"ok": False, "error": "No node specified and class template has no node"}), 400
     
+    # Generate task ID for progress tracking
+    import uuid
+    task_id = str(uuid.uuid4())
+    start_clone_progress(task_id, count)
+    
     # Clone VMs
     created_vms = clone_vms_for_class(
         template_vmid=template_vmid,
         node=target_node,
         count=count,
         name_prefix=class_.name,
-        cluster_ip=CLASS_CLUSTER_IP
+        cluster_ip=CLASS_CLUSTER_IP,
+        task_id=task_id
     )
     
     # Register created VMs in database
@@ -573,11 +581,22 @@ def create_class_vms(class_id: int):
         if assignment:
             registered.append(assignment.to_dict())
     
+    update_clone_progress(task_id, status="completed")
+    
     return jsonify({
         "ok": True,
         "message": f"Created {len(created_vms)} VMs",
-        "vms": registered
+        "vms": registered,
+        "task_id": task_id
     })
+
+
+@api_classes_bp.route("/clone/progress/<task_id>", methods=["GET"])
+@login_required
+def clone_progress_route(task_id: str):
+    """Check progress of a VM cloning task."""
+    progress = get_clone_progress(task_id)
+    return jsonify(progress)
 
 
 @api_classes_bp.route("/<int:class_id>/vms/<int:assignment_id>/assign", methods=["POST"])

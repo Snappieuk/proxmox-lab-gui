@@ -12,6 +12,10 @@ from typing import Dict, List, Any, Optional
 
 from proxmoxer import ProxmoxAPI
 
+# Suppress SSL warnings for self-signed certificates
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
 # Import path setup (adds rdp-gen to sys.path)
 import app.utils.paths
 

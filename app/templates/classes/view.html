@@ -192,9 +192,19 @@
                     <option value="">Loading...</option>
                 </select>
             </div>
+            <div id="clone-progress" style="display: none; margin-top: 1rem;">
+                <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
+                    <span style="font-weight: 600;">Cloning VMs...</span>
+                    <span id="progress-text">0 / 0</span>
+                </div>
+                <div style="width: 100%; height: 24px; background: #f3f2f1; border-radius: 4px; overflow: hidden;">
+                    <div id="progress-bar" style="height: 100%; width: 0%; background: #0078d4; transition: width 0.3s ease;"></div>
+                </div>
+                <div id="current-vm" style="margin-top: 0.5rem; font-size: 0.85rem; color: #605e5c;"></div>
+            </div>
             <div class="form-actions">
                 <button class="btn-secondary" onclick="closeModal('add-vms-modal')">Cancel</button>
-                <button class="btn-primary" onclick="createVms()">
+                <button class="btn-primary" id="create-vms-btn" onclick="createVms()">
                     <i class="bi bi-plus-circle"></i> Create VMs
                 </button>
             </div>
@@ -556,21 +566,80 @@ async function createVms() {
         return;
     }
     
+    // Show progress UI
+    const progressDiv = document.getElementById('clone-progress');
+    const createBtn = document.getElementById('create-vms-btn');
+    const progressBar = document.getElementById('progress-bar');
+    const progressText = document.getElementById('progress-text');
+    const currentVmText = document.getElementById('current-vm');
+    
+    progressDiv.style.display = 'block';
+    createBtn.disabled = true;
+    createBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Creating...';
+    
     try {
+        // Start clone operation
         const resp = await fetch(`/api/classes/${classId}/vms`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ count, template_vmid: parseInt(templateVmid) })
         });
         const data = await resp.json();
-        if (data.ok) {
-            closeModal('add-vms-modal');
-            location.reload();
+        
+        if (data.ok && data.task_id) {
+            // Poll for progress
+            const taskId = data.task_id;
+            const pollInterval = setInterval(async () => {
+                try {
+                    const progressResp = await fetch(`/api/classes/clone/progress/${taskId}`);
+                    const progress = await progressResp.json();
+                    
+                    if (progress.status === 'not_found') {
+                        clearInterval(pollInterval);
+                        return;
+                    }
+                    
+                    // Update progress bar
+                    const completed = progress.completed || 0;
+                    const total = progress.total || count;
+                    const percentage = total > 0 ? (completed / total * 100) : 0;
+                    
+                    progressBar.style.width = percentage + '%';
+                    progressText.textContent = `${completed} / ${total}`;
+                    
+                    if (progress.current_vm) {
+                        currentVmText.textContent = `Current: ${progress.current_vm}`;
+                    }
+                    
+                    // Check if completed
+                    if (progress.status === 'completed' || completed >= total) {
+                        clearInterval(pollInterval);
+                        setTimeout(() => {
+                            closeModal('add-vms-modal');
+                            location.reload();
+                        }, 500);
+                    } else if (progress.status === 'failed') {
+                        clearInterval(pollInterval);
+                        alert('Clone operation failed: ' + (progress.errors ? progress.errors.join(', ') : 'Unknown error'));
+                        createBtn.disabled = false;
+                        createBtn.innerHTML = '<i class="bi bi-plus-circle"></i> Create VMs';
+                        progressDiv.style.display = 'none';
+                    }
+                } catch (e) {
+                    console.error('Progress check failed:', e);
+                }
+            }, 1000); // Poll every second
         } else {
             alert('Failed to create VMs: ' + data.error);
+            createBtn.disabled = false;
+            createBtn.innerHTML = '<i class="bi bi-plus-circle"></i> Create VMs';
+            progressDiv.style.display = 'none';
         }
     } catch (e) {
         alert('Error: ' + e.message);
+        createBtn.disabled = false;
+        createBtn.innerHTML = '<i class="bi bi-plus-circle"></i> Create VMs';
+        progressDiv.style.display = 'none';
     }
 }
 

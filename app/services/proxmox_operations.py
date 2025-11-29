@@ -156,7 +156,7 @@ def clone_vm_from_template(template_vmid: int, new_vmid: int, name: str, node: s
 
 
 def clone_vms_for_class(template_vmid: int, node: str, count: int, name_prefix: str,
-                        cluster_ip: str = None) -> List[Dict[str, Any]]:
+                        cluster_ip: str = None, task_id: str = None) -> List[Dict[str, Any]]:
     """Clone multiple VMs from a template for a class.
     
     Args:
@@ -165,10 +165,13 @@ def clone_vms_for_class(template_vmid: int, node: str, count: int, name_prefix: 
         count: Number of VMs to clone
         name_prefix: Prefix for VM names (will append number)
         cluster_ip: IP of the Proxmox cluster (restricted to 10.220.15.249)
+        task_id: Optional task ID for progress tracking
     
     Returns:
         List of dicts with keys: vmid, name, node
     """
+    from app.services.clone_progress import update_clone_progress
+    
     created_vms = []
     
     try:
@@ -221,6 +224,11 @@ def clone_vms_for_class(template_vmid: int, node: str, count: int, name_prefix: 
             
             vm_name = f"{name_prefix}-{i+1}"
             vm_name = sanitize_vm_name(vm_name, fallback="classvm")
+            
+            # Update progress
+            if task_id:
+                update_clone_progress(task_id, current_vm=vm_name)
+            
             success, msg = clone_vm_from_template(
                 template_vmid=template_vmid,
                 new_vmid=next_vmid,
@@ -237,13 +245,21 @@ def clone_vms_for_class(template_vmid: int, node: str, count: int, name_prefix: 
                 })
                 used_vmids.add(next_vmid)
                 next_vmid += 1
+                
+                # Update progress
+                if task_id:
+                    update_clone_progress(task_id, completed=len(created_vms))
             else:
                 logger.error(f"Failed to clone VM {vm_name}: {msg}")
+                if task_id:
+                    update_clone_progress(task_id, failed=i+1-len(created_vms), error=msg)
         
         return created_vms
         
     except Exception as e:
         logger.exception(f"Failed to clone VMs for class: {e}")
+        if task_id:
+            update_clone_progress(task_id, status="failed", error=str(e))
         return created_vms
 
 
