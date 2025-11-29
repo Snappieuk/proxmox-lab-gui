@@ -45,6 +45,30 @@
     </div>
 </div>
 
+<!-- Template VM Info -->
+{% if can_manage and class_.vm_assignments %}
+<div class="vm-section">
+    <h3 class="section-header">Template VM</h3>
+    {% set template_vm = (vm_assignments | selectattr('is_template_vm') | list)[0] if vm_assignments else None %}
+    {% if template_vm %}
+    <div class="template-card">
+        <div class="template-row">
+            <div><strong>VMID:</strong> {{ template_vm.proxmox_vmid }}</div>
+            <div><strong>Node:</strong> {{ template_vm.node or 'N/A' }}</div>
+            <div><strong>Status:</strong> <span class="badge badge-secondary" id="status-{{ template_vm.proxmox_vmid }}">Loading...</span></div>
+        </div>
+        <div class="template-row">
+            <div class="help-text">This is the reference VM cloned from the selected template. Student VMs are cloned after this template is ready.</div>
+        </div>
+    </div>
+    {% else %}
+    <div class="empty-state" style="padding: 1rem;">
+        <p>No template VM recorded yet.</p>
+    </div>
+    {% endif %}
+</div>
+{% endif %}
+
 <!-- VM Table -->
 <div class="vm-section">
     <h3 class="section-header">Virtual Machines</h3>
@@ -62,6 +86,7 @@
         </thead>
         <tbody id="vm-tbody">
             {% for vm in vm_assignments %}
+            {% if not vm.is_template_vm %}
             <tr data-vmid="{{ vm.proxmox_vmid }}" data-assignment-id="{{ vm.id }}">
                 <td><strong>{{ vm.proxmox_vmid }}</strong></td>
                 <td>{{ vm.node or 'N/A' }}</td>
@@ -109,6 +134,7 @@
                     </div>
                 </td>
             </tr>
+            {% endif %}
             {% endfor %}
         </tbody>
     </table>
@@ -251,6 +277,19 @@
 
 .vm-section {
     margin-top: 2rem;
+}
+
+.template-card {
+    border: 1px solid #e1dfdd;
+    background: #faf9f8;
+    border-radius: 6px;
+    padding: 0.75rem 1rem;
+}
+.template-row {
+    display: flex;
+    gap: 2rem;
+    align-items: center;
+    margin: 0.25rem 0;
 }
 
 .user-badge {

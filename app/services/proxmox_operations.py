@@ -109,7 +109,8 @@ def list_proxmox_templates(cluster_ip: str = None) -> List[Dict[str, Any]]:
 
 
 def clone_vm_from_template(template_vmid: int, new_vmid: int, name: str, node: str,
-                           cluster_ip: str = None, max_retries: int = 5, retry_delay: int = 4) -> Tuple[bool, str]:
+                           cluster_ip: str = None, max_retries: int = 5, retry_delay: int = 4,
+                           wait_until_complete: bool = True, wait_timeout_sec: int = 900) -> Tuple[bool, str]:
     """Clone a VM from a template.
     
     Args:
@@ -145,7 +146,7 @@ def clone_vm_from_template(template_vmid: int, new_vmid: int, name: str, node: s
         attempt = 0
         while True:
             try:
-                proxmox.nodes(node).qemu(template_vmid).clone.post(
+                clone_result = proxmox.nodes(node).qemu(template_vmid).clone.post(
                     newid=new_vmid,
                     name=safe_name,
                     full=1  # Full clone (not linked)
@@ -163,8 +164,58 @@ def clone_vm_from_template(template_vmid: int, new_vmid: int, name: str, node: s
                 logger.exception(f"Clone failed for template {template_vmid} after {attempt+1} attempts: {clone_err}")
                 return False, f"Clone failed: {clone_err}"
 
-        # Wait a short period for disk/image unlock (post clone task)
-        time.sleep(5)
+        # Optional: Poll task status until finished (stopped: OK) or timeout
+        if wait_until_complete:
+            try:
+                upid = None
+                if isinstance(clone_result, dict):
+                    upid = clone_result.get('upid')
+                # Some setups may return a string UPID directly
+                if isinstance(clone_result, str) and 'UPID' in clone_result:
+                    upid = clone_result
+
+                if upid:
+                    logger.info(f"Polling clone task {upid} until completion (timeout {wait_timeout_sec}s)")
+                    waited = 0
+                    poll_interval = 4
+                    while waited < wait_timeout_sec:
+                        try:
+                            status = proxmox.nodes(node).tasks(upid).status.get()
+                            # Status fields: status (e.g., 'stopped'), exitstatus (e.g., 'OK'), id
+                            st = status.get('status')
+                            exitst = status.get('exitstatus')
+                            if st == 'stopped' and (exitst is None or exitst == 'OK'):
+                                logger.info(f"Clone task {upid} completed: status={st}, exitstatus={exitst}")
+                                break
+                        except Exception as e:
+                            logger.debug(f"Task status poll error for {upid}: {e}")
+                            # Continue polling; transient errors can occur
+                        time.sleep(poll_interval)
+                        waited += poll_interval
+                    if waited >= wait_timeout_sec:
+                        logger.warning(f"Clone task {upid} did not complete within {wait_timeout_sec}s; continuing")
+                else:
+                    logger.warning("Clone result did not include UPID; skipping task polling")
+            except Exception as e:
+                logger.warning(f"Failed to poll clone task completion: {e}")
+
+            # Additionally, poll VM status until no 'lock' and status available
+            try:
+                waited = 0
+                poll_interval = 4
+                while waited < wait_timeout_sec:
+                    try:
+                        current = proxmox.nodes(node).qemu(new_vmid).status.current.get()
+                        lock = current.get('lock')
+                        # Accept when lock cleared; VM may be stopped after clone
+                        if not lock:
+                            break
+                    except Exception:
+                        pass
+                    time.sleep(poll_interval)
+                    waited += poll_interval
+            except Exception as e:
+                logger.debug(f"VM status poll error post-clone: {e}")
         
         # Create baseline snapshot for reimage functionality
         try:
@@ -341,6 +392,32 @@ def clone_vms_for_class(template_vmid: int, node: str, count: int, name_prefix: 
                 used_vmids.add(next_vmid)
                 next_vmid += 1
                 logger.info(f"Created template reference VM {template_vm_name} (VMID {next_vmid-1}) on {template_vm_node}")
+                # Wait for Proxmox clone lock to clear before proceeding with student clones
+                try:
+                    proxmox = get_proxmox_admin_for_cluster(cluster_id)
+                    check_node = template_vm_node
+                    check_vmid = template_vm_info["vmid"]
+                    # Poll status for a short period to detect lock clearing
+                    max_wait_seconds = 120
+                    interval = 4
+                    waited = 0
+                    while waited < max_wait_seconds:
+                        try:
+                            status = proxmox.nodes(check_node).qemu(check_vmid).status.current.get()
+                            # When cloning finishes, status returns with no 'lock' or lock != 'clone'
+                            lock = status.get('lock')
+                            if not lock or lock != 'clone':
+                                logger.info(f"Template VM {check_vmid} lock cleared after {waited}s")
+                                break
+                        except Exception as e:
+                            logger.debug(f"Polling template VM status error: {e}")
+                            break
+                        time.sleep(interval)
+                        waited += interval
+                    if waited >= max_wait_seconds:
+                        logger.warning(f"Template VM {check_vmid} still locked after {max_wait_seconds}s; proceeding with student clones")
+                except Exception as e:
+                    logger.warning(f"Failed to poll template VM lock state: {e}")
                 
                 if task_id:
                     update_clone_progress(task_id, completed=1)

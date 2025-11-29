@@ -27,20 +27,23 @@ def get_node_resources(proxmox, node_name: str) -> Optional[Dict]:
     """
     try:
         status = proxmox.nodes(node_name).status.get()
-        
-        mem_used = status.get('memory', {}).get('used', 0)
-        mem_total = status.get('memory', {}).get('total', 1)
-        mem_free = status.get('memory', {}).get('free', 0)
-        
-        cpu_usage = status.get('cpu', 0) * 100  # Convert to percentage
-        cpu_count = status.get('cpuinfo', {}).get('cpus', 1)
-        
-        # IO wait from wait stat (if available)
-        iowait = status.get('wait', 0) * 100  # Convert to percentage
-        
-        # Load average (1-minute)
-        load_avg = status.get('loadavg', [0])[0] if status.get('loadavg') else 0
-        
+        # Defensive defaults
+        mem = status.get('memory') or {}
+        mem_used = mem.get('used', 0)
+        mem_total = mem.get('total', 0) or 1  # avoid div by zero
+        mem_free = mem.get('free', max(0, mem_total - mem_used))
+
+        cpu_usage = (status.get('cpu') or 0) * 100  # percentage
+        cpuinfo = status.get('cpuinfo') or {}
+        cpu_count = cpuinfo.get('cpus', 1) or 1
+
+        iowait = (status.get('wait') or 0) * 100
+        loadavg = status.get('loadavg') or [0]
+        load_avg = loadavg[0] if isinstance(loadavg, (list, tuple)) and loadavg else (loadavg if isinstance(loadavg, (int, float)) else 0)
+
+        online_status = status.get('status')
+        online = True if online_status is None else (online_status == 'online')
+
         return {
             'node': node_name,
             'mem_used': mem_used,
@@ -51,7 +54,7 @@ def get_node_resources(proxmox, node_name: str) -> Optional[Dict]:
             'cpu_count': cpu_count,
             'iowait': iowait,
             'load_avg': load_avg,
-            'online': status.get('status') == 'online'
+            'online': online
         }
     except Exception as e:
         logger.error(f"Failed to get resources for node {node_name}: {e}")
@@ -133,7 +136,13 @@ def select_best_node(cluster_id: str, exclude_nodes: List[str] = None) -> Option
             stats = get_node_resources(proxmox, node_name)
             if not stats:
                 continue
-            
+            # Log basic stats regardless of online flag
+            logger.debug(
+                f"Node {node_name} raw stats: online={stats.get('online')}, "
+                f"mem%={stats['mem_percent']:.1f}, cpu%={stats['cpu_usage']:.1f}, "
+                f"iowait%={stats['iowait']:.1f}, load={stats['load_avg']:.2f}/{stats['cpu_count']}"
+            )
+
             score = calculate_node_score(stats)
             node_scores.append((node_name, score, stats))
             
@@ -184,13 +193,15 @@ def distribute_vms_across_nodes(cluster_id: str, vm_count: int, estimated_ram_mb
         if not nodes:
             return []
         
-        # Get initial resources for all nodes
+        # Get initial resources for all nodes (do not filter by 'online' to avoid empty sets)
         node_stats = {}
         for node_info in nodes:
             node_name = node_info.get('node')
             stats = get_node_resources(proxmox, node_name)
-            if stats and stats.get('online'):
+            if stats:
                 node_stats[node_name] = stats
+            else:
+                logger.warning(f"Skipping node {node_name}: unable to get stats")
         
         if not node_stats:
             return []
@@ -210,7 +221,8 @@ def distribute_vms_across_nodes(cluster_id: str, vm_count: int, estimated_ram_mb
             node_scores.sort(key=lambda x: x[1], reverse=True)
             
             # Select best node
-            best_node = node_scores[0][0]
+            # If all scores are zero (e.g., missing metrics), fall back to first available node
+            best_node = node_scores[0][0] if node_scores else next(iter(node_stats.keys()))
             node_assignments.append(best_node)
             
             logger.debug(
