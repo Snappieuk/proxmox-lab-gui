@@ -33,11 +33,14 @@ def login():
         username = request.form.get("username", "").strip()
         password = request.form.get("password", "")
 
-        # Try Proxmox authentication first
+        # Try Proxmox authentication first (returns full user@realm format)
         full_user = authenticate_proxmox_user(username, password)
         
-        # If Proxmox auth fails, try local account authentication
-        if not full_user:
+        if full_user:
+            # Proxmox user authenticated - full_user already has realm suffix
+            logger.info("Proxmox user logged in: %s", full_user)
+        else:
+            # If Proxmox auth fails, try local account authentication
             from app.services.class_service import authenticate_local_user
             local_user = authenticate_local_user(username, password)
             if local_user:

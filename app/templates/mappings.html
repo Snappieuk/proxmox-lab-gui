@@ -38,7 +38,13 @@
 
         <!-- User Selection -->
         <label for="user-select">Select User</label>
-        <select id="user-select" class="form-control">
+        
+        <!-- User Search -->
+        <input type="text" id="user-search" placeholder="Search users..." 
+               style="width: 100%; padding: 0.5rem; border: 1px solid #ddd; border-radius: 4px; margin-bottom: 0.5rem;">
+        
+        <select id="user-select" class="form-control" size="10" 
+                style="height: 250px; font-family: monospace;">
             <option value="">Select a user…</option>
         </select>
 
@@ -297,12 +303,18 @@ function showAlert(message, type = 'success') {
 // User selection handler
 document.addEventListener('DOMContentLoaded', () => {
     const userSelect = document.getElementById('user-select');
+    const userSearch = document.getElementById('user-search');
     const vmSelectionArea = document.getElementById('vm-selection-area');
     const selectedUserName = document.getElementById('selected-user-name');
     const vmCheckboxContainer = document.getElementById('vm-checkbox-container');
     const vmSearch = document.getElementById('vm-search');
     const confirmBtn = document.getElementById('confirm-btn');
     const selectedCount = document.getElementById('selected-count');
+    
+    // User search handler
+    userSearch.addEventListener('input', (e) => {
+        filterUsers(e.target.value.toLowerCase());
+    });
     
     userSelect.addEventListener('change', (e) => {
         selectedUser = e.target.value;
@@ -456,6 +468,39 @@ function updateSelectedCount() {
     const container = document.getElementById('vm-checkbox-container');
     const checked = container.querySelectorAll('input[type="checkbox"]:checked').length;
     document.getElementById('selected-count').textContent = `(${checked} selected)`;
+}
+
+function filterUsers(searchTerm) {
+    const userSelect = document.getElementById('user-select');
+    const currentValue = userSelect.value;
+    
+    // Clear and rebuild options
+    userSelect.innerHTML = '<option value="">Select a user…</option>';
+    
+    const filteredUsers = allUsers.filter(u => {
+        if (!searchTerm) return true;
+        return u.userid.toLowerCase().includes(searchTerm);
+    });
+    
+    filteredUsers.forEach(u => {
+        const option = document.createElement('option');
+        option.value = u.userid;
+        option.textContent = u.userid;
+        
+        // Maintain selection if current user still matches filter
+        if (u.userid === currentValue) {
+            option.selected = true;
+        }
+        
+        userSelect.appendChild(option);
+    });
+    
+    // Show count of filtered results
+    if (searchTerm && filteredUsers.length > 0) {
+        userSelect.options[0].textContent = `${filteredUsers.length} user(s) found`;
+    } else if (searchTerm && filteredUsers.length === 0) {
+        userSelect.options[0].textContent = 'No users found';
+    }
 }
 
 window.addEventListener('load', loadMappingsData);

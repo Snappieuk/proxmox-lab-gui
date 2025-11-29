@@ -311,6 +311,9 @@ class VMInventory(db.Model):
     - Reduces Proxmox API load
     """
     __tablename__ = 'vm_inventory'
+    __table_args__ = (
+        db.UniqueConstraint('cluster_id', 'vmid', name='uq_cluster_vmid'),
+    )
     
     # Primary key
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
