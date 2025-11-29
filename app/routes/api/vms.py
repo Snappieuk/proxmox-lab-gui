@@ -100,8 +100,15 @@ def api_vms():
                 return jsonify({"error": True, "message": f"Initial fetch failed: {e}"}), 500
 
         # Filter to user-owned VMIDs using local DB assignments + mappings.json without Proxmox calls
-        owned_vmids = _resolve_user_owned_vmids(username)
-        filtered = [r for r in inventory_rows if r.get('vmid') in owned_vmids]
+        # UNLESS user is admin, then show all VMs
+        from app.services.user_manager import is_admin_user
+        if is_admin_user(username):
+            filtered = inventory_rows  # Admins see everything
+            logger.debug(f"User {username} is admin, showing all {len(filtered)} inventory VMs")
+        else:
+            owned_vmids = _resolve_user_owned_vmids(username)
+            filtered = [r for r in inventory_rows if r.get('vmid') in owned_vmids]
+            logger.debug(f"User {username} filtered to {len(filtered)} VMs from owned set {owned_vmids}")
 
         # Determine staleness based on newest row age
         latest_dt = None
