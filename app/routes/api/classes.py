@@ -347,7 +347,6 @@ def delete_class_route(class_id: int):
     template_deleted = False
     template_delete_error = None
     if template_info and not force_delete:
-        from app.services.proxmox_operations import delete_vm
         from app.models import Template, db
         try:
             logger.info(f"Deleting class template VM {template_info['vmid']} (template_id={template_info['db_id']})")
@@ -617,8 +616,8 @@ def create_class_vms(class_id: int):
     # Generate task ID for progress tracking
     import uuid
     task_id = str(uuid.uuid4())
-    # Total includes template VM + student VMs
-    start_clone_progress(task_id, count + 1)
+    # Total includes teacher VM + base template VM + student VMs (2 initial full clones + students)
+    start_clone_progress(task_id, count + 2)
     
     # Clone VMs (includes 1 template VM + count student VMs)
     created_vms = clone_vms_for_class(

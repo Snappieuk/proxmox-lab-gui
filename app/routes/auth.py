@@ -35,10 +35,21 @@ def login():
         username = request.form.get("username", "").strip()
         password = request.form.get("password", "")
 
+        # Try Proxmox authentication first
         full_user = authenticate_proxmox_user(username, password)
+        
+        # If Proxmox auth fails, try local account authentication
         if not full_user:
-            error = "Invalid username or password."
-        else:
+            from app.services.class_service import authenticate_local_user
+            local_user = authenticate_local_user(username, password)
+            if local_user:
+                # Local user authenticated - use their username without realm suffix
+                full_user = username
+                logger.info("Local user logged in: %s", username)
+            else:
+                error = "Invalid username or password."
+        
+        if full_user:
             session["user"] = full_user
             # Initialize cluster selection (default to first cluster)
             if "cluster_id" not in session:

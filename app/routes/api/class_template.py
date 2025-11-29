@@ -171,12 +171,40 @@ def start_template(class_id: int):
     
     try:
         template = class_.template
-        success = start_class_vm(template.proxmox_vmid, template.cluster_ip)
+        # Get the node from VMAssignment if available, otherwise try to find it
+        node = template.node if hasattr(template, 'node') and template.node else None
+        
+        if not node:
+            # Try to find the VM's node via cluster resources
+            try:
+                from app.services.proxmox_service import get_proxmox_admin_for_cluster
+                from app.config import CLUSTERS
+                
+                cluster_id = None
+                for cluster in CLUSTERS:
+                    if cluster["host"] == template.cluster_ip:
+                        cluster_id = cluster["id"]
+                        break
+                
+                if cluster_id:
+                    proxmox = get_proxmox_admin_for_cluster(cluster_id)
+                    resources = proxmox.cluster.resources.get(type="vm")
+                    for r in resources:
+                        if r.get('vmid') == template.proxmox_vmid:
+                            node = r.get('node')
+                            break
+            except Exception as e:
+                logger.warning(f"Failed to auto-detect node for VM {template.proxmox_vmid}: {e}")
+        
+        if not node:
+            return jsonify({'ok': False, 'error': 'Could not determine VM node. Please check template configuration.'}), 400
+        
+        success, msg = start_class_vm(template.proxmox_vmid, node, template.cluster_ip)
         
         if success:
             return jsonify({'ok': True, 'message': 'Template VM started'})
         else:
-            return jsonify({'ok': False, 'error': 'Failed to start template VM'}), 500
+            return jsonify({'ok': False, 'error': msg or 'Failed to start template VM'}), 500
     except Exception as e:
         logger.exception(f"Failed to start template: {e}")
         return jsonify({'ok': False, 'error': str(e)}), 500
@@ -195,12 +223,38 @@ def stop_template(class_id: int):
     
     try:
         template = class_.template
-        success = stop_class_vm(template.proxmox_vmid, template.cluster_ip)
+        # Get the node from VMAssignment if available, otherwise try to find it
+        node = template.node if hasattr(template, 'node') and template.node else None
+        
+        if not node:
+            # Try to find the VM's node via cluster resources
+            try:
+                cluster_id = None
+                from app.config import CLUSTERS
+                for cluster in CLUSTERS:
+                    if cluster["host"] == template.cluster_ip:
+                        cluster_id = cluster["id"]
+                        break
+                
+                if cluster_id:
+                    proxmox = get_proxmox_admin_for_cluster(cluster_id)
+                    resources = proxmox.cluster.resources.get(type="vm")
+                    for r in resources:
+                        if r.get('vmid') == template.proxmox_vmid:
+                            node = r.get('node')
+                            break
+            except Exception as e:
+                logger.warning(f"Failed to auto-detect node for VM {template.proxmox_vmid}: {e}")
+        
+        if not node:
+            return jsonify({'ok': False, 'error': 'Could not determine VM node. Please check template configuration.'}), 400
+        
+        success, msg = stop_class_vm(template.proxmox_vmid, node, template.cluster_ip)
         
         if success:
             return jsonify({'ok': True, 'message': 'Template VM stopped'})
         else:
-            return jsonify({'ok': False, 'error': 'Failed to stop template VM'}), 500
+            return jsonify({'ok': False, 'error': msg or 'Failed to stop template VM'}), 500
     except Exception as e:
         logger.exception(f"Failed to stop template: {e}")
         return jsonify({'ok': False, 'error': str(e)}), 500

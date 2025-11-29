@@ -79,6 +79,8 @@
             <tr>
                 <th>VMID</th>
                 <th>Node</th>
+                <th>MAC Address</th>
+                <th>IP Address</th>
                 <th>Status</th>
                 <th>Assigned To</th>
                 <th>Actions</th>
@@ -90,6 +92,8 @@
             <tr data-vmid="{{ vm.proxmox_vmid }}" data-assignment-id="{{ vm.id }}">
                 <td><strong>{{ vm.proxmox_vmid }}</strong></td>
                 <td>{{ vm.node or 'N/A' }}</td>
+                <td><span id="mac-{{ vm.proxmox_vmid }}">Loading...</span></td>
+                <td><span id="ip-{{ vm.proxmox_vmid }}">Loading...</span></td>
                 <td>
                     <span class="badge badge-secondary" id="status-{{ vm.proxmox_vmid }}">Loading...</span>
                 </td>
@@ -419,8 +423,6 @@ async function updateStatuses() {
         const resp = await fetch(`/api/classes/${classId}/vms`);
         const data = await resp.json();
         
-        if (!data.ok) return;
-        
         data.vms.forEach(vm => {
             const statusEl = document.getElementById(`status-${vm.proxmox_vmid}`);
             if (statusEl) {
@@ -435,6 +437,20 @@ async function updateStatuses() {
                     statusEl.classList.add('badge-secondary');
                     statusEl.textContent = vm.status;
                 }
+            }
+            
+            // Update MAC address
+            const macEl = document.getElementById(`mac-${vm.proxmox_vmid}`);
+            if (macEl) {
+                macEl.textContent = vm.mac || 'N/A';
+            }
+            
+            // Update IP address
+            const ipEl = document.getElementById(`ip-${vm.proxmox_vmid}`);
+            if (ipEl) {
+                ipEl.textContent = vm.ip || 'N/A';
+            }
+        });     }
             }
         });
     } catch (e) {

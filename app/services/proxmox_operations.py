@@ -226,7 +226,8 @@ def clone_vm_from_template(template_vmid: int, new_vmid: int, name: str, node: s
                            cluster_ip: str = None, max_retries: int = 5, retry_delay: int = 4,
                            wait_until_complete: bool = True, wait_timeout_sec: int = 900,
                            full_clone: bool = True, create_baseline: bool = True,
-                           storage: str = None, disk_clone_method: bool = False) -> Tuple[bool, str]:
+                           storage: str = None, disk_clone_method: bool = False,
+                           task_id: str = None, progress_weight: float = 1.0) -> Tuple[bool, str]:
     """Clone a VM from a template.
     
     Args:
@@ -236,10 +237,14 @@ def clone_vm_from_template(template_vmid: int, new_vmid: int, name: str, node: s
         node: Node to create the VM on
         cluster_ip: IP of the Proxmox cluster (restricted to 10.220.15.249)
         disk_clone_method: If True, use direct disk cloning via storage API (bypasses VM locks)
+        task_id: Optional task ID for progress tracking
+        progress_weight: Weight of this clone in overall progress (0.0-1.0)
     
     Returns:
         Tuple of (success, message)
     """
+    from app.services.clone_progress import update_clone_progress
+    
     try:
         # Restrict to 10.220.15.249 cluster only
         target_ip = CLASS_CLUSTER_IP
@@ -309,14 +314,40 @@ def clone_vm_from_template(template_vmid: int, new_vmid: int, name: str, node: s
                     logger.info(f"Polling clone task {upid} until completion (timeout {wait_timeout_sec}s)")
                     waited = 0
                     poll_interval = 4
+                    last_progress_update = 0
+                    
                     while waited < wait_timeout_sec:
                         try:
                             status = proxmox.nodes(node).tasks(upid).status.get()
                             # Status fields: status (e.g., 'stopped'), exitstatus (e.g., 'OK'), id
                             st = status.get('status')
                             exitst = status.get('exitstatus')
+                            
+                            # Estimate progress based on time (since Proxmox doesn't give us real %)
+                            # Full clones: ~3-5min typical, Linked clones: ~10sec typical
+                            if task_id and waited - last_progress_update >= 10:  # Update every 10s
+                                if full_clone:
+                                    # Assume full clone takes 4 minutes on average
+                                    estimated_total = 240
+                                    progress_pct = min(95, int((waited / estimated_total) * 100))
+                                else:
+                                    # Linked clone takes ~10 seconds
+                                    estimated_total = 10
+                                    progress_pct = min(95, int((waited / estimated_total) * 100))
+                                
+                                update_clone_progress(task_id, 
+                                    message=f"Cloning {safe_name}... {progress_pct}% (estimated)",
+                                    progress_percent=progress_pct * progress_weight
+                                )
+                                last_progress_update = waited
+                            
                             if st == 'stopped' and (exitst is None or exitst == 'OK'):
                                 logger.info(f"Clone task {upid} completed: status={st}, exitstatus={exitst}")
+                                if task_id:
+                                    update_clone_progress(task_id, 
+                                        message=f"Clone {safe_name} completed",
+                                        progress_percent=100 * progress_weight
+                                    )
                                 break
                         except Exception as e:
                             logger.debug(f"Task status poll error for {upid}: {e}")
@@ -638,18 +669,18 @@ def clone_vms_for_class(template_vmid: int, node: str, count: int, name_prefix: 
                 # Don't proceed to base template if teacher VM failed
                 return created_vms
             
-            # Create VM 2: Clone that will be converted to template for student linked clones
+            # Create VM 2: Another full clone that will be converted to template for student linked clones
             while next_vmid in used_vmids:
                 next_vmid += 1
             
             class_template_name = f"{name_prefix}-BaseTemplate"
             class_template_name = sanitize_vm_name(class_template_name, fallback="classvm-base")
-            class_template_node = node_assignments[assignment_index] if assignment_index < len(node_assignments) else teacher_vm_node
-            assignment_index += 1
+            # Must use same node as teacher VM for consistency (linked clones need same node as template)
+            class_template_node = teacher_vm_node
             
-            logger.info(f"Creating base template for student linked clones: {class_template_name} (VMID {next_vmid}) on node {class_template_node}")
+            logger.info(f"Creating base template VM for student linked clones: {class_template_name} (VMID {next_vmid}) on node {class_template_node}")
             if task_id:
-                update_clone_progress(task_id, current_vm=class_template_name, message="Creating base template for students (2/2)")
+                update_clone_progress(task_id, current_vm=class_template_name, message="Creating base template VM (2/3)")
             
             # Full clone that will become the template
             success, msg = clone_vm_from_template(
@@ -724,9 +755,10 @@ def clone_vms_for_class(template_vmid: int, node: str, count: int, name_prefix: 
         
         # Step 2: Prepare student VM specifications
         # Student VMs will be linked clones from the class template (not the teacher's editable VM)
+        # IMPORTANT: Linked clones MUST be on the same node as the template
         logger.info(f"Student VMs will be linked clones from class template {class_template_vmid} on {class_template_node}")
         if task_id:
-            update_clone_progress(task_id, message=f"Preparing to deploy {count} student VMs as linked clones...")
+            update_clone_progress(task_id, message=f"Preparing to deploy {count} student VMs as linked clones on {class_template_node}...")
         
         vm_specs = []
         for i in range(count):
@@ -736,8 +768,8 @@ def clone_vms_for_class(template_vmid: int, node: str, count: int, name_prefix: 
             
             vm_name = f"{name_prefix}-{i+1}"
             vm_name = sanitize_vm_name(vm_name, fallback="classvm")
-            vm_node = node_assignments[assignment_index]
-            assignment_index += 1
+            # Linked clones must use same node as template - no smart placement for linked clones
+            vm_node = class_template_node
             
             vm_specs.append({
                 "index": i,
@@ -927,7 +959,7 @@ def stop_class_vm(vmid: int, node: str, cluster_ip: str = None) -> Tuple[bool, s
 
 
 def get_vm_status(vmid: int, node: str = None, cluster_ip: str = None) -> Dict[str, Any]:
-    """Get VM status.
+    """Get VM status with MAC address and IP address.
     
     Args:
         vmid: VM ID
@@ -935,7 +967,7 @@ def get_vm_status(vmid: int, node: str = None, cluster_ip: str = None) -> Dict[s
         cluster_ip: IP of the Proxmox cluster
     
     Returns:
-        Dict with VM status info (just the status string, not full object)
+        Dict with status, uptime, mac, ip, etc.
     """
     try:
         cluster_id = None
@@ -945,7 +977,7 @@ def get_vm_status(vmid: int, node: str = None, cluster_ip: str = None) -> Dict[s
                 break
         
         if not cluster_id:
-            return "unknown"
+            return {"status": "unknown", "mac": "N/A", "ip": "N/A"}
         
         proxmox = get_proxmox_admin_for_cluster(cluster_id)
         
@@ -958,16 +990,63 @@ def get_vm_status(vmid: int, node: str = None, cluster_ip: str = None) -> Dict[s
                     break
         
         if not node:
-            return "unknown"
+            return {"status": "unknown", "mac": "N/A", "ip": "N/A"}
         
-        status = proxmox.nodes(node).qemu(vmid).status.current.get()
+        status_data = proxmox.nodes(node).qemu(vmid).status.current.get()
         
-        # Return just the status string (running/stopped) not the full object
-        return status.get("status", "unknown")
+        # Get MAC address from VM config
+        mac_address = None
+        ip_address = None
+        try:
+            config = proxmox.nodes(node).qemu(vmid).config.get()
+            # Look for net0, net1, etc.
+            for key in config:
+                if key.startswith('net'):
+                    net_config = config[key]
+                    # Format: "virtio=XX:XX:XX:XX:XX:XX,bridge=vmbr0"
+                    if '=' in net_config:
+                        parts = net_config.split(',')
+                        if len(parts) > 0:
+                            mac_part = parts[0].split('=')[1] if '=' in parts[0] else None
+                            if mac_part:
+                                mac_address = mac_part.upper()
+                                break
+        except Exception as e:
+            logger.debug(f"Failed to get MAC address for VM {vmid}: {e}")
+        
+        # Try to get IP address from guest agent
+        try:
+            if status_data.get('status') == 'running':
+                agent_info = proxmox.nodes(node).qemu(vmid).agent.get('network-get-interfaces')
+                if agent_info and 'result' in agent_info:
+                    for iface in agent_info['result']:
+                        if iface.get('name') not in ['lo', 'loopback']:
+                            for addr in iface.get('ip-addresses', []):
+                                if addr.get('ip-address-type') == 'ipv4':
+                                    ip = addr.get('ip-address')
+                                    if ip and not ip.startswith('127.'):
+                                        ip_address = ip
+                                        break
+                            if ip_address:
+                                break
+        except Exception as e:
+            logger.debug(f"Failed to get IP address for VM {vmid}: {e}")
+        
+        return {
+            "status": status_data.get("status", "unknown"),
+            "uptime": status_data.get("uptime", 0),
+            "cpu": status_data.get("cpu", 0),
+            "mem": status_data.get("mem", 0),
+            "maxmem": status_data.get("maxmem", 0),
+            "disk": status_data.get("disk", 0),
+            "maxdisk": status_data.get("maxdisk", 0),
+            "mac": mac_address or "N/A",
+            "ip": ip_address or "N/A"
+        }
         
     except Exception as e:
         logger.exception(f"Failed to get VM status: {e}")
-        return "unknown"
+        return {"status": "unknown", "mac": "N/A", "ip": "N/A"}
 
 
 def create_vm_snapshot(vmid: int, node: str, snapname: str, description: str = "",
@@ -1310,7 +1389,8 @@ def push_template_to_students(base_template_vmid: int, base_template_node: str,
         time.sleep(3)
         
         # Step 2: Create new linked clones from the base template
-        logger.info(f"Creating {len(student_vm_list)} new linked clones from template {base_template_vmid}")
+        # IMPORTANT: Linked clones MUST be on same node as template
+        logger.info(f"Creating {len(student_vm_list)} new linked clones from template {base_template_vmid} on {base_template_node}")
         
         new_vms = []
         vm_specs = []
@@ -1320,7 +1400,7 @@ def push_template_to_students(base_template_vmid: int, base_template_node: str,
             vm_specs.append({
                 "vmid": old_vm['vmid'],  # Reuse old VMID
                 "name": vm_name,
-                "node": old_vm['node'],  # Keep on same node
+                "node": base_template_node,  # Must use template's node for linked clones
                 "index": i
             })
         

@@ -27,12 +27,15 @@ def start_clone_progress(task_id: str, total_count: int) -> None:
             "status": "in_progress",
             "started_at": datetime.utcnow(),
             "updated_at": datetime.utcnow(),
-            "errors": []
+            "errors": [],
+            "message": None,
+            "progress_percent": 0
         }
 
 
 def update_clone_progress(task_id: str, completed: int = None, failed: int = None, 
-                         current_vm: str = None, status: str = None, error: str = None) -> None:
+                         current_vm: str = None, status: str = None, error: str = None,
+                         message: str = None, progress_percent: float = None) -> None:
     """Update progress for a clone task."""
     with _progress_lock:
         if task_id not in _clone_progress:
@@ -50,6 +53,10 @@ def update_clone_progress(task_id: str, completed: int = None, failed: int = Non
             progress["status"] = status
         if error is not None:
             progress["errors"].append(error)
+        if message is not None:
+            progress["message"] = message
+        if progress_percent is not None:
+            progress["progress_percent"] = min(100, max(0, progress_percent))
         
         progress["updated_at"] = datetime.utcnow()
 
