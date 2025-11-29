@@ -15,6 +15,7 @@ from app.routes.api.rdp import api_rdp_bp
 from app.routes.api.ssh import api_ssh_bp
 from app.routes.api.classes import api_classes_bp
 from app.routes.api.class_template import api_class_template_bp
+from app.routes.api.debug import debug_bp
 
 
 def register_blueprints(app):
@@ -33,3 +34,4 @@ def register_blueprints(app):
     app.register_blueprint(api_ssh_bp)
     app.register_blueprint(api_classes_bp)
     app.register_blueprint(api_class_template_bp)
+    app.register_blueprint(debug_bp)
