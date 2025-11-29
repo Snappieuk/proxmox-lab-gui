@@ -136,13 +136,19 @@ variable "auto_select_node" {
 
 # Teacher VM Configuration
 variable "create_teacher_vm" {
-  description = "Create a separate teacher VM"
+  description = "Create a separate teacher VM (editable)"
+  type        = bool
+  default     = true
+}
+
+variable "create_teacher_template" {
+  description = "Create a teacher template VM (will be converted to template for students to clone from)"
   type        = bool
   default     = true
 }
 
 variable "teacher_node" {
-  description = "Specific node for teacher VM (empty = use first node in distribution)"
+  description = "Specific node for teacher VMs (empty = use first node in distribution)"
   type        = string
   default     = ""
 }

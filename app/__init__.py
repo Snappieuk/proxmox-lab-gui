@@ -98,42 +98,27 @@ def create_app(config=None):
             except Exception:
                 pass
         
+        # Get Depl0y URL if available
+        depl0y_url = app.config.get('DEPL0Y_URL')
+        
         return {
             "is_admin": is_admin,
             "clusters": clusters,
             "current_cluster": current_cluster,
             "local_user": local_user,
             "local_user_role": local_user_role,
+            "depl0y_url": depl0y_url,
         }
     
     # Start background IP scanner
     from app.services.proxmox_client import start_background_ip_scanner
     start_background_ip_scanner()
     
-    # Start background VM inventory sync service
+    # Start background VM inventory sync
     from app.services.background_sync import start_background_sync
     start_background_sync(app)
-    logger.info("Background VM inventory sync service initialized")
+    logger.info("Background VM inventory sync started")
     
-    # Populate database on startup (non-blocking)
-    def _populate_database():
-        """Background task to populate database on startup."""
-        import time
-        time.sleep(1)  # Brief delay to let app fully initialize
-        try:
-            with app.app_context():
-                from app.services.proxmox_client import get_all_vms
-                from app.services.inventory_service import persist_vm_inventory
-                logger.info("Starting initial database population...")
-                vms = get_all_vms(skip_ips=False, force_refresh=True)
-                persist_vm_inventory(vms)
-                logger.info(f"Initial database population complete: {len(vms)} VMs")
-        except Exception as e:
-            logger.warning(f"Initial database population failed: {e}")
-    
-    import threading
-    threading.Thread(target=_populate_database, daemon=True).start()
-
     # Ensure templates are replicated across all nodes at startup (background)
     def _replicate_templates_startup():
         import time
@@ -147,7 +132,30 @@ def create_app(config=None):
         except Exception as e:
             logger.warning(f"Template replication startup failed: {e}")
 
+    import threading
     threading.Thread(target=_replicate_templates_startup, daemon=True).start()
+    
+    # Initialize Depl0y companion service (background)
+    from app.config import ENABLE_DEPL0Y, DEPL0Y_URL as CUSTOM_DEPL0Y_URL
+    
+    if CUSTOM_DEPL0Y_URL:
+        # Use manually configured Depl0y URL
+        app.config['DEPL0Y_URL'] = CUSTOM_DEPL0Y_URL
+        logger.info(f"Depl0y configured at {CUSTOM_DEPL0Y_URL}")
+    elif ENABLE_DEPL0Y:
+        # Auto-install and start Depl0y
+        try:
+            from app.services.depl0y_manager import initialize_depl0y
+            depl0y_url = initialize_depl0y(background=True)
+            if depl0y_url:
+                app.config['DEPL0Y_URL'] = depl0y_url
+                logger.info(f"Depl0y service initializing at {depl0y_url}")
+        except Exception as e:
+            logger.warning(f"Depl0y initialization failed: {e}")
+            app.config['DEPL0Y_URL'] = None
+    else:
+        app.config['DEPL0Y_URL'] = None
+        logger.info("Depl0y integration disabled")
     
     logger.info("Flask app created successfully")
     return app

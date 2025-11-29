@@ -1,287 +1,233 @@
 #!/usr/bin/env python3
 """
-Background VM Inventory Synchronization Service
+Background VM Inventory Sync Service
 
-This service continuously polls Proxmox clusters and updates the VMInventory
-database table, ensuring the frontend always has up-to-date information without
-making direct Proxmox API calls.
+Continuously polls Proxmox clusters and updates the VMInventory database.
+This keeps the database (single source of truth) synchronized with actual Proxmox state.
 
-The service runs in a daemon thread and performs:
-1. Full VM inventory sync every FULL_SYNC_INTERVAL seconds
-2. Quick status updates for running VMs every QUICK_SYNC_INTERVAL seconds
-3. IP address discovery and RDP/SSH port checks
-4. Graceful handling of API errors with exponential backoff
+Architecture:
+- Full sync every 5 minutes: Complete inventory refresh
+- Quick sync every 30 seconds: Update status of running VMs only
+- Exponential backoff on errors
+
+All GUI queries read from VMInventory table, never directly from Proxmox API.
 """
 
 import logging
 import threading
 import time
 from datetime import datetime, timedelta
-from typing import Optional
-
-from app.config import CLUSTERS, VM_CACHE_TTL
+from typing import Dict, Any
 
 logger = logging.getLogger(__name__)
 
-# Sync intervals (seconds)
-FULL_SYNC_INTERVAL = 300  # 5 minutes - complete inventory refresh
-QUICK_SYNC_INTERVAL = 30  # 30 seconds - status-only updates for running VMs
-ERROR_BACKOFF_BASE = 10  # Base backoff time on errors
-ERROR_BACKOFF_MAX = 300  # Maximum backoff time
-
-# Global control
-_sync_thread: Optional[threading.Thread] = None
-_stop_event = threading.Event()
-_last_full_sync = 0
-_last_quick_sync = 0
-_consecutive_errors = 0
+# Global sync state
+_sync_thread = None
+_sync_running = False
+_sync_stats = {
+    'last_full_sync': None,
+    'last_quick_sync': None,
+    'full_sync_count': 0,
+    'quick_sync_count': 0,
+    'last_error': None,
+    'vms_synced': 0,
+    'sync_duration': 0,
+}
 
 
 def start_background_sync(app):
-    """Start the background synchronization service.
+    """Start the background sync daemon thread.
     
     Args:
-        app: Flask application instance (for app context)
+        app: Flask app instance (for context)
     """
-    global _sync_thread
+    global _sync_thread, _sync_running
     
-    if _sync_thread and _sync_thread.is_alive():
+    if _sync_running:
         logger.warning("Background sync already running")
         return
     
-    _stop_event.clear()
+    _sync_running = True
+    
+    def _sync_loop():
+        """Main sync loop with exponential backoff."""
+        error_count = 0
+        max_backoff = 300  # 5 minutes
+        
+        while _sync_running:
+            try:
+                with app.app_context():
+                    current_time = time.time()
+                    
+                    # Full sync every 5 minutes
+                    if (_sync_stats['last_full_sync'] is None or 
+                        (datetime.utcnow() - _sync_stats['last_full_sync']).seconds >= 300):
+                        logger.info("Starting full VM inventory sync...")
+                        _perform_full_sync()
+                        error_count = 0  # Reset on success
+                    
+                    # Quick sync every 30 seconds
+                    elif (_sync_stats['last_quick_sync'] is None or
+                          (datetime.utcnow() - _sync_stats['last_quick_sync']).seconds >= 30):
+                        _perform_quick_sync()
+                        error_count = 0  # Reset on success
+                
+                # Sleep between checks
+                time.sleep(10)
+                
+            except Exception as e:
+                error_count += 1
+                backoff = min(2 ** error_count, max_backoff)
+                logger.exception(f"Background sync error (attempt {error_count}): {e}")
+                _sync_stats['last_error'] = str(e)
+                time.sleep(backoff)
+    
     _sync_thread = threading.Thread(
-        target=_sync_worker,
-        args=(app,),
+        target=_sync_loop,
         daemon=True,
         name="VMInventorySync"
     )
     _sync_thread.start()
-    logger.info("Background VM inventory sync service started")
+    logger.info("Background VM inventory sync started")
 
 
 def stop_background_sync():
-    """Stop the background synchronization service."""
-    global _sync_thread
-    
-    if not _sync_thread or not _sync_thread.is_alive():
-        logger.warning("Background sync not running")
-        return
-    
-    logger.info("Stopping background sync service...")
-    _stop_event.set()
-    _sync_thread.join(timeout=10)
-    _sync_thread = None
-    logger.info("Background sync service stopped")
-
-
-def trigger_immediate_sync():
-    """Request an immediate full sync on next iteration."""
-    global _last_full_sync
-    _last_full_sync = 0
-    logger.info("Immediate sync triggered")
-
-
-def _sync_worker(app):
-    """Main worker loop for background synchronization."""
-    global _last_full_sync, _last_quick_sync, _consecutive_errors
-    
-    logger.info("VM inventory sync worker started")
-    
-    # Initial delay to let app fully initialize
-    time.sleep(5)
-    
-    while not _stop_event.is_set():
-        try:
-            now = time.time()
-            
-            # Determine what type of sync to perform
-            should_full_sync = (now - _last_full_sync) >= FULL_SYNC_INTERVAL
-            should_quick_sync = (now - _last_quick_sync) >= QUICK_SYNC_INTERVAL
-            
-            if should_full_sync:
-                with app.app_context():
-                    _perform_full_sync()
-                _last_full_sync = now
-                _last_quick_sync = now  # Quick sync is included in full sync
-                _consecutive_errors = 0  # Reset error counter on success
-                
-            elif should_quick_sync:
-                with app.app_context():
-                    _perform_quick_sync()
-                _last_quick_sync = now
-                _consecutive_errors = 0
-            
-            # Sleep interval (check stop event frequently)
-            for _ in range(10):  # Check every second for 10 seconds
-                if _stop_event.is_set():
-                    break
-                time.sleep(1)
-                
-        except Exception as e:
-            _consecutive_errors += 1
-            backoff = min(ERROR_BACKOFF_BASE * (2 ** _consecutive_errors), ERROR_BACKOFF_MAX)
-            logger.exception(f"Background sync error (attempt {_consecutive_errors}): {e}")
-            logger.info(f"Backing off for {backoff} seconds")
-            time.sleep(backoff)
-    
-    logger.info("VM inventory sync worker stopped")
+    """Stop the background sync service."""
+    global _sync_running
+    _sync_running = False
+    logger.info("Background sync stopped")
 
 
 def _perform_full_sync():
-    """Perform a complete inventory synchronization across all clusters."""
-    logger.info("Starting full inventory sync")
+    """Perform complete inventory sync from all Proxmox clusters."""
     start_time = time.time()
     
     try:
         from app.services.proxmox_client import get_all_vms
         from app.services.inventory_service import persist_vm_inventory
-        from app.services.arp_scanner import has_rdp_port_open, get_rdp_cache_time
-        from app.services.rdp_service import build_rdp
         
-        # Fetch all VMs from all clusters
-        all_vms = get_all_vms(skip_ips=False, force_refresh=True)
+        logger.debug("Fetching all VMs from Proxmox...")
+        vms = get_all_vms(skip_ips=False, force_refresh=True)
         
-        # Augment with RDP/SSH availability
-        rdp_cache_valid = get_rdp_cache_time() > 0
-        for vm in all_vms:
-            # Check RDP availability
-            rdp_can_build = False
-            rdp_port_available = False
-            try:
-                build_rdp(vm)
-                rdp_can_build = True
-            except Exception:
-                rdp_can_build = False
-            
-            if vm.get('category') == 'windows':
-                rdp_port_available = True
-            elif rdp_cache_valid and vm.get('ip') and vm['ip'] not in ('N/A', 'Fetching...', ''):
-                rdp_port_available = has_rdp_port_open(vm['ip'])
-            
-            vm['rdp_available'] = rdp_can_build and rdp_port_available
-            
-            # SSH is typically available on Linux VMs with IP
-            vm['ssh_available'] = (
-                vm.get('category') == 'linux' and
-                vm.get('ip') and
-                vm['ip'] not in ('N/A', 'Fetching...', '')
-            )
+        logger.debug(f"Persisting {len(vms)} VMs to database...")
+        count = persist_vm_inventory(vms)
         
-        # Persist to database
-        persist_vm_inventory(all_vms)
+        # Update stats
+        _sync_stats['last_full_sync'] = datetime.utcnow()
+        _sync_stats['full_sync_count'] += 1
+        _sync_stats['vms_synced'] = count
+        _sync_stats['sync_duration'] = time.time() - start_time
         
-        elapsed = time.time() - start_time
-        logger.info(f"Full sync complete: {len(all_vms)} VMs in {elapsed:.2f}s")
+        logger.info(f"Full sync completed: {count} VMs in {_sync_stats['sync_duration']:.1f}s")
         
     except Exception as e:
         logger.exception(f"Full sync failed: {e}")
+        _sync_stats['last_error'] = str(e)
         raise
 
 
 def _perform_quick_sync():
-    """Perform a quick status-only update for running VMs."""
-    logger.info("Starting quick status sync")
-    start_time = time.time()
+    """Quick sync: Update only running VMs' status.
     
+    This is faster than full sync and catches state changes quickly.
+    """
     try:
         from app.models import VMInventory, db
-        from app.services.proxmox_service import get_proxmox_admin_for_cluster
-        from datetime import datetime, timedelta
+        from app.services.proxmox_service import get_proxmox_admin
         
-        # Find VMs that are running or were recently active
-        cutoff = datetime.utcnow() - timedelta(minutes=10)
+        # Get recently active VMs (updated in last hour)
+        cutoff = datetime.utcnow() - timedelta(hours=1)
         active_vms = VMInventory.query.filter(
-            db.or_(
-                VMInventory.status == 'running',
-                VMInventory.last_status_check > cutoff
-            )
-        ).all()
+            (VMInventory.status == 'running') |
+            (VMInventory.status == 'running') |
+            (VMInventory.last_status_check > cutoff)
+        ).limit(50).all()  # Limit to prevent overload
         
         if not active_vms:
-            logger.debug("No active VMs to sync")
+            _sync_stats['last_quick_sync'] = datetime.utcnow()
             return
         
-        # Group by cluster for efficient API calls
-        by_cluster = {}
+        # Quick status check via Proxmox API
+        proxmox = get_proxmox_admin()
+        updated = 0
+        
         for vm in active_vms:
-            if vm.cluster_id not in by_cluster:
-                by_cluster[vm.cluster_id] = []
-            by_cluster[vm.cluster_id].append(vm)
-        
-        updated_count = 0
-        for cluster_id, vms in by_cluster.items():
             try:
-                proxmox = get_proxmox_admin_for_cluster(cluster_id)
+                # Get current status
+                if vm.type == 'qemu':
+                    status_obj = proxmox.nodes(vm.node).qemu(vm.vmid).status.current.get()
+                else:
+                    status_obj = proxmox.nodes(vm.node).lxc(vm.vmid).status.current.get()
                 
-                for vm in vms:
-                    try:
-                        # Get current status
-                        if vm.type == 'lxc':
-                            status_data = proxmox.nodes(vm.node).lxc(vm.vmid).status.current.get()
-                        else:
-                            status_data = proxmox.nodes(vm.node).qemu(vm.vmid).status.current.get()
-                        
-                        # Update status fields
-                        vm.status = status_data.get('status', 'unknown')
-                        vm.uptime = status_data.get('uptime')
-                        vm.cpu_usage = status_data.get('cpu', 0) * 100 if status_data.get('cpu') else None
-                        
-                        # Calculate memory usage percentage
-                        if status_data.get('mem') and status_data.get('maxmem'):
-                            vm.memory_usage = (status_data['mem'] / status_data['maxmem']) * 100
-                        
-                        vm.last_status_check = datetime.utcnow()
-                        vm.sync_error = None
-                        updated_count += 1
-                        
-                    except Exception as e:
-                        vm.sync_error = f"Status check failed: {str(e)[:200]}"
-                        logger.debug(f"Quick sync failed for VM {vm.vmid}: {e}")
+                new_status = status_obj.get('status', 'unknown')
                 
+                if vm.status != new_status:
+                    vm.status = new_status
+                    vm.last_status_check = datetime.utcnow()
+                    updated += 1
+                    
             except Exception as e:
-                logger.warning(f"Quick sync failed for cluster {cluster_id}: {e}")
+                logger.debug(f"Quick sync failed for VM {vm.vmid}: {e}")
+                continue
         
-        db.session.commit()
-        elapsed = time.time() - start_time
-        logger.info(f"Quick sync complete: {updated_count}/{len(active_vms)} VMs in {elapsed:.2f}s")
+        if updated > 0:
+            db.session.commit()
+            logger.debug(f"Quick sync updated {updated} VMs")
+        
+        _sync_stats['last_quick_sync'] = datetime.utcnow()
+        _sync_stats['quick_sync_count'] += 1
         
     except Exception as e:
         logger.exception(f"Quick sync failed: {e}")
         raise
 
 
-def get_sync_stats() -> dict:
-    """Get statistics about the background sync service."""
-    from app.models import VMInventory, db
-    from datetime import datetime, timedelta
+def trigger_immediate_sync() -> bool:
+    """Trigger an immediate full sync (for admin/debugging).
     
-    now = datetime.utcnow()
+    Returns:
+        True if sync started
+    """
+    try:
+        _perform_full_sync()
+        return True
+    except Exception as e:
+        logger.exception(f"Immediate sync failed: {e}")
+        return False
+
+
+def get_sync_stats() -> Dict[str, Any]:
+    """Get current sync statistics.
     
-    # Get sync statistics
+    Returns:
+        Dict with sync stats
+    """
+    from app.models import VMInventory
+    
+    # Get database stats
     total_vms = VMInventory.query.count()
     
-    # VMs updated in last 5 minutes (fresh)
-    fresh_cutoff = now - timedelta(minutes=5)
+    # Count fresh VMs (updated in last 10 minutes)
+    fresh_cutoff = datetime.utcnow() - timedelta(minutes=10)
     fresh_vms = VMInventory.query.filter(
         VMInventory.last_updated > fresh_cutoff
     ).count()
     
-    # VMs with errors
+    # Count VMs with sync errors
     error_vms = VMInventory.query.filter(
         VMInventory.sync_error.isnot(None)
     ).count()
     
-    # Running VMs
+    # Count running VMs
     running_vms = VMInventory.query.filter_by(status='running').count()
     
     return {
+        **_sync_stats,
+        'running': _sync_running,
         'total_vms': total_vms,
         'fresh_vms': fresh_vms,
         'error_vms': error_vms,
         'running_vms': running_vms,
-        'last_full_sync': _last_full_sync,
-        'last_quick_sync': _last_quick_sync,
-        'consecutive_errors': _consecutive_errors,
-        'is_running': _sync_thread and _sync_thread.is_alive(),
+        'last_full_sync_iso': _sync_stats['last_full_sync'].isoformat() if _sync_stats['last_full_sync'] else None,
+        'last_quick_sync_iso': _sync_stats['last_quick_sync'].isoformat() if _sync_stats['last_quick_sync'] else None,
     }

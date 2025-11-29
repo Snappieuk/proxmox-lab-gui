@@ -36,16 +36,20 @@ locals {
   }
 }
 
-# Generate student VMs from template
+# Generate student VMs from class template (teacher_template_vm after it's converted)
 resource "proxmox_vm_qemu" "student_vms" {
   for_each = var.students
 
   name        = "${var.class_prefix}-${each.key}"
   target_node = local.node_selection[each.key]
   
-  # Clone from template
-  clone      = var.template_name
+  # Clone from class template (created from teacher_template_vm)
+  # Note: This references the template by name after Python converts it
+  clone      = var.create_teacher_template ? "${var.class_prefix}-template" : var.template_name
   full_clone = var.use_full_clone
+  
+  # Depend on teacher template being created first
+  depends_on = [proxmox_vm_qemu.teacher_template_vm]
   
   # VM Configuration
   cores   = var.vm_cores
@@ -95,18 +99,18 @@ resource "proxmox_vm_qemu" "student_vms" {
   agent = 1
 }
 
-# Optional: Teacher VM (identical to student VMs)
+# Teacher VM 1: Editable VM for teacher use
 resource "proxmox_vm_qemu" "teacher_vm" {
   count = var.create_teacher_vm ? 1 : 0
   
   name        = "${var.class_prefix}-teacher"
   target_node = var.teacher_node != "" ? var.teacher_node : var.node_distribution[0]
   
-  # Clone from template (full clone so teacher can modify)
+  # Clone from original template (full clone so teacher can modify)
   clone      = var.template_name
   full_clone = true
   
-  # Same specs as student VMs (from template)
+  # Same specs as will be in student VMs (from template)
   cores   = var.vm_cores
   sockets = var.vm_sockets
   memory  = var.vm_memory
@@ -134,6 +138,48 @@ resource "proxmox_vm_qemu" "teacher_vm" {
   agent = 1
 }
 
+# Teacher VM 2: Clone from original template, convert to template for students to use
+resource "proxmox_vm_qemu" "teacher_template_vm" {
+  count = var.create_teacher_template ? 1 : 0
+  
+  name        = "${var.class_prefix}-template"
+  target_node = var.teacher_node != "" ? var.teacher_node : var.node_distribution[0]
+  
+  # Clone from original template (full clone)
+  clone      = var.template_name
+  full_clone = true
+  
+  # Same specs
+  cores   = var.vm_cores
+  sockets = var.vm_sockets
+  memory  = var.vm_memory
+  
+  disk {
+    size    = var.disk_size
+    type    = "scsi"
+    storage = var.storage_pool
+    iothread = 1
+  }
+  
+  network {
+    model  = "virtio"
+    bridge = var.network_bridge
+  }
+  
+  os_type = "cloud-init"
+  ipconfig0 = var.use_dhcp ? "ip=dhcp" : "ip=${cidrhost(var.subnet, 51)}/24,gw=${var.gateway}"
+  
+  ciuser  = var.default_user
+  sshkeys = var.ssh_public_keys
+  
+  tags = "${var.class_id},template,class-template"
+  
+  agent = 1
+  
+  # IMPORTANT: This VM will be converted to a template via Proxmox API after creation
+  # Terraform doesn't support template conversion, so we handle it in Python
+}
+
 # Output VM information
 output "student_vms" {
   description = "Student VM details"
@@ -149,13 +195,23 @@ output "student_vms" {
 }
 
 output "teacher_vm" {
-  description = "Teacher VM details"
+  description = "Teacher VM details (editable)"
   value = var.create_teacher_vm ? {
     id   = proxmox_vm_qemu.teacher_vm[0].vmid
     name = proxmox_vm_qemu.teacher_vm[0].name
     node = proxmox_vm_qemu.teacher_vm[0].target_node
     ip   = proxmox_vm_qemu.teacher_vm[0].default_ipv4_address
     ssh  = "ssh ${var.default_user}@${proxmox_vm_qemu.teacher_vm[0].default_ipv4_address}"
+  } : null
+}
+
+output "teacher_template_vm" {
+  description = "Teacher template VM details (will be converted to template for students)"
+  value = var.create_teacher_template ? {
+    id   = proxmox_vm_qemu.teacher_template_vm[0].vmid
+    name = proxmox_vm_qemu.teacher_template_vm[0].name
+    node = proxmox_vm_qemu.teacher_template_vm[0].target_node
+    ip   = proxmox_vm_qemu.teacher_template_vm[0].default_ipv4_address
   } : null
 }
 

@@ -16,7 +16,7 @@ from app.routes.api.ssh import api_ssh_bp
 from app.routes.api.classes import api_classes_bp
 from app.routes.api.class_template import api_class_template_bp
 from app.routes.api.templates import bp as api_templates_bp
-from app.routes.api.sync import bp as api_sync_bp
+from app.routes.api.sync import sync_bp as api_sync_bp
 
 
 def register_blueprints(app):

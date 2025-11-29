@@ -37,6 +37,7 @@ class TerraformService:
         template_name: str,
         use_full_clone: bool = False,
         create_teacher_vm: bool = True,
+        create_teacher_template: bool = True,
         node_distribution: Optional[List[str]] = None,
         target_node: Optional[str] = None,
         auto_select_best_node: bool = True,
@@ -49,7 +50,8 @@ class TerraformService:
             students: List of student usernames
             template_name: Proxmox template name to clone (uses template's CPU/RAM/disk)
             use_full_clone: Use full clone instead of linked
-            create_teacher_vm: Create separate teacher VM (same specs as students)
+            create_teacher_vm: Create separate teacher VM (editable)
+            create_teacher_template: Create teacher template VM (converted to template for students)
             node_distribution: List of nodes to distribute across
             target_node: Deploy all to this node (overrides distribution)
             auto_select_best_node: Query Proxmox for least loaded nodes
@@ -82,6 +84,7 @@ class TerraformService:
             template_name=template_name,
             use_full_clone=use_full_clone,
             create_teacher_vm=create_teacher_vm,
+            create_teacher_template=create_teacher_template,
             node_distribution=node_distribution,
             target_node=target_node,
         )
@@ -101,6 +104,16 @@ class TerraformService:
         
         # Get outputs
         outputs = self._terraform_output(class_dir)
+        
+        # Convert teacher template VM to Proxmox template
+        if create_teacher_template and outputs.get('teacher_template_vm'):
+            teacher_template = outputs['teacher_template_vm']
+            logger.info(f"Converting teacher template VM {teacher_template['id']} to Proxmox template")
+            self._convert_vm_to_template(
+                vmid=teacher_template['id'],
+                node=teacher_template['node']
+            )
+            logger.info(f"Teacher template VM {teacher_template['id']} converted to template")
         
         logger.info(f"Successfully deployed {len(students)} VMs for class {class_id}")
         return outputs
@@ -214,6 +227,7 @@ class TerraformService:
         template_name: str,
         use_full_clone: bool,
         create_teacher_vm: bool,
+        create_teacher_template: bool,
         node_distribution: Optional[List[str]],
         target_node: Optional[str],
     ) -> Dict:
@@ -245,8 +259,9 @@ class TerraformService:
             "template_name": template_name,
             "use_full_clone": use_full_clone,
             
-            # Teacher VM (same specs as students)
+            # Teacher VMs
             "create_teacher_vm": create_teacher_vm,
+            "create_teacher_template": create_teacher_template,
         }
         
         # Node distribution
@@ -327,6 +342,46 @@ class TerraformService:
         except json.JSONDecodeError:
             logger.warning(f"Failed to parse Terraform output: {result.stdout}")
             return {}
+    
+    def _convert_vm_to_template(self, vmid: int, node: str) -> None:
+        """Convert a VM to a Proxmox template.
+        
+        Args:
+            vmid: VM ID to convert
+            node: Node where VM is located
+        """
+        from app.services.proxmox_service import get_proxmox_admin
+        
+        try:
+            proxmox = get_proxmox_admin()
+            
+            # Stop VM if running
+            try:
+                status = proxmox.nodes(node).qemu(vmid).status.current.get()
+                if status.get('status') == 'running':
+                    logger.info(f"Stopping VM {vmid} before template conversion")
+                    proxmox.nodes(node).qemu(vmid).status.stop.post()
+                    import time
+                    time.sleep(5)  # Wait for VM to stop
+            except Exception as e:
+                logger.warning(f"Failed to check/stop VM {vmid}: {e}")
+            
+            # Convert to template
+            proxmox.nodes(node).qemu(vmid).template.post()
+            logger.info(f"VM {vmid} converted to template")
+            
+            # Verify conversion
+            import time
+            time.sleep(3)
+            config = proxmox.nodes(node).qemu(vmid).config.get()
+            if config.get('template') == 1:
+                logger.info(f"Verified VM {vmid} is now a template")
+            else:
+                logger.warning(f"VM {vmid} template flag not set after conversion")
+                
+        except Exception as e:
+            logger.error(f"Failed to convert VM {vmid} to template: {e}")
+            raise
 
 
 # Singleton instance

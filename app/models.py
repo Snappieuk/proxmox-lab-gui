@@ -296,63 +296,82 @@ class VMIPCache(db.Model):
 
 
 class VMInventory(db.Model):
-    """Persistent inventory of all discovered VMs across clusters.
-
-    Populated from Proxmox API fetches (get_all_vms) to allow UI filtering
-    without re-querying Proxmox and to persist IP/status across restarts.
-    All frontend data comes from this table - background workers keep it synchronized.
+    """
+    Complete VM inventory synchronized from Proxmox.
+    
+    This is the SINGLE SOURCE OF TRUTH for all VM data shown in the GUI.
+    Background sync service keeps this table current.
+    All frontend queries read from here - NEVER directly from Proxmox API.
+    
+    Benefits:
+    - Fast queries (<100ms vs 5-30s Proxmox API)
+    - Consistent data view
+    - Enables complex filtering/sorting
+    - Reduces Proxmox API load
     """
     __tablename__ = 'vm_inventory'
-
-    id = db.Column(db.Integer, primary_key=True)
-    cluster_id = db.Column(db.String(50), nullable=False, index=True)
-    cluster_name = db.Column(db.String(120), nullable=True)
-    vmid = db.Column(db.Integer, nullable=False, index=True)
-    name = db.Column(db.String(200), nullable=True, index=True)
-    node = db.Column(db.String(120), nullable=True, index=True)
-    status = db.Column(db.String(40), nullable=True, index=True)
-    ip = db.Column(db.String(45), nullable=True, index=True)
-    type = db.Column(db.String(20), nullable=True)  # qemu or lxc
-    category = db.Column(db.String(40), nullable=True)  # windows/linux/other
     
-    # Hardware specs
-    memory = db.Column(db.Integer, nullable=True)  # Memory in MB
+    # Primary key
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    
+    # Identity (unique per cluster)
+    cluster_id = db.Column(db.String(50), nullable=False, index=True)
+    vmid = db.Column(db.Integer, nullable=False, index=True)
+    name = db.Column(db.String(255), nullable=False, index=True)
+    node = db.Column(db.String(80), nullable=False, index=True)
+    
+    # Status & type
+    status = db.Column(db.String(20), nullable=False, default='unknown', index=True)  # running, stopped, unknown
+    type = db.Column(db.String(10), nullable=False, default='qemu')  # qemu or lxc
+    category = db.Column(db.String(50), nullable=True)  # lab, template, production, etc.
+    
+    # Network
+    ip = db.Column(db.String(45), nullable=True, index=True)  # IPv4 or IPv6
+    mac_address = db.Column(db.String(17), nullable=True)  # Used for ARP discovery
+    
+    # Resources
+    memory = db.Column(db.BigInteger, nullable=True)  # Memory in bytes
     cores = db.Column(db.Integer, nullable=True)  # CPU cores
     disk_size = db.Column(db.BigInteger, nullable=True)  # Disk size in bytes
     
-    # Runtime information
+    # Runtime metrics
     uptime = db.Column(db.Integer, nullable=True)  # Uptime in seconds
     cpu_usage = db.Column(db.Float, nullable=True)  # CPU usage percentage
     memory_usage = db.Column(db.Float, nullable=True)  # Memory usage percentage
     
-    # Configuration
+    # Metadata
     is_template = db.Column(db.Boolean, default=False, index=True)
-    tags = db.Column(db.String(500), nullable=True)  # Comma-separated tags
+    tags = db.Column(db.Text, nullable=True)  # Comma-separated tags
     
-    # Availability flags (computed)
-    rdp_available = db.Column(db.Boolean, default=False)
-    ssh_available = db.Column(db.Boolean, default=False)
+    # Remote access
+    rdp_available = db.Column(db.Boolean, default=False)  # RDP port 3389 open
+    ssh_available = db.Column(db.Boolean, default=False)  # SSH port 22 open
     
     # Sync tracking
-    last_updated = db.Column(db.DateTime, default=datetime.utcnow, index=True)
-    last_status_check = db.Column(db.DateTime, nullable=True)  # Last time status was verified
-    sync_error = db.Column(db.String(500), nullable=True)  # Last sync error if any
-
+    last_updated = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow, index=True)
+    last_status_check = db.Column(db.DateTime, nullable=True)  # Last quick status check
+    sync_error = db.Column(db.Text, nullable=True)  # Last error message if sync failed
+    
+    # Unique constraint: one record per (cluster, vmid)
     __table_args__ = (
         db.UniqueConstraint('cluster_id', 'vmid', name='uix_cluster_vmid'),
+        db.Index('idx_cluster_status', 'cluster_id', 'status'),
+        db.Index('idx_cluster_template', 'cluster_id', 'is_template'),
     )
-
+    
     def to_dict(self) -> dict:
+        """Convert to dict for API responses."""
         return {
+            'id': self.id,
             'cluster_id': self.cluster_id,
-            'cluster_name': self.cluster_name,
             'vmid': self.vmid,
             'name': self.name,
             'node': self.node,
             'status': self.status,
-            'ip': self.ip,
             'type': self.type,
             'category': self.category,
+            'ip': self.ip,
+            'mac_address': self.mac_address,
             'memory': self.memory,
             'cores': self.cores,
             'disk_size': self.disk_size,
@@ -360,16 +379,16 @@ class VMInventory(db.Model):
             'cpu_usage': self.cpu_usage,
             'memory_usage': self.memory_usage,
             'is_template': self.is_template,
-            'tags': self.tags,
+            'tags': self.tags.split(',') if self.tags else [],
             'rdp_available': self.rdp_available,
             'ssh_available': self.ssh_available,
             'last_updated': self.last_updated.isoformat() if self.last_updated else None,
             'last_status_check': self.last_status_check.isoformat() if self.last_status_check else None,
             'sync_error': self.sync_error,
         }
-
+    
     def __repr__(self):
-        return f"<VMInventory {self.cluster_id}:{self.vmid} {self.name} {self.status} {self.ip}>"
+        return f'<VMInventory {self.cluster_id}:{self.vmid} {self.name} [{self.status}]>'
 
 
 def init_db(app):

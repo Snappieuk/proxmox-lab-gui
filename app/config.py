@@ -103,3 +103,9 @@ else:
     # 10.220.8.0/21 network (broadcast: 10.220.15.255) - covers 10.220.8.0 to 10.220.15.255
     # This includes both 10.220.15.x (cluster1) and 10.220.12.x (cluster2)
     ARP_SUBNETS = ["10.220.15.255"]
+
+# Depl0y Integration
+# Set to False to disable automatic Depl0y installation and startup
+ENABLE_DEPL0Y = os.getenv("ENABLE_DEPL0Y", "true").lower() in ("true", "1", "yes")
+# Custom Depl0y URL if you've manually installed it elsewhere
+DEPL0Y_URL = os.getenv("DEPL0Y_URL", None)

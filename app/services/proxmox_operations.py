@@ -16,6 +16,115 @@ logger = logging.getLogger(__name__)
 
 # Default cluster IP for class operations (restricted to single cluster)
 CLASS_CLUSTER_IP = "10.220.15.249"
+
+
+def get_node_specific_template_vmid(node_id: int, template_base_id: int) -> int:
+    """Calculate node-specific template VMID to avoid cross-node conflicts.
+    
+    Uses scheme: 9000 + (node_id * 100) + template_base_id
+    Example: Node 1, Template 5 = 9000 + 100 + 5 = 9105
+    
+    Args:
+        node_id: Node ID (1-based)
+        template_base_id: Base template ID (typically 1-99)
+        
+    Returns:
+        Node-specific VMID
+    """
+    return 9000 + (node_id * 100) + template_base_id
+
+
+def wait_for_clone_completion(proxmox, node: str, vmid: int, timeout: int = 300) -> bool:
+    """Wait for VM clone to complete and verify disk exists.
+    
+    Monitors clone lock and ensures disk is present after cloning.
+    
+    Args:
+        proxmox: ProxmoxAPI instance
+        node: Node name
+        vmid: VM ID to monitor
+        timeout: Maximum wait time in seconds
+        
+    Returns:
+        True if clone completed successfully
+        
+    Raises:
+        TimeoutError: If clone doesn't complete within timeout
+        Exception: If clone fails or disk missing
+    """
+    import time
+    
+    start = time.time()
+    waited = 0
+    last_log = 0
+    
+    while waited < timeout:
+        try:
+            config = proxmox.nodes(node).qemu(vmid).config.get()
+            
+            # Check if still cloning
+            if config.get('lock') == 'clone':
+                if waited - last_log >= 30:  # Log every 30 seconds
+                    logger.info(f"VM {vmid} still cloning... ({waited}s / {timeout}s)")
+                    last_log = waited
+                time.sleep(3)
+                waited = int(time.time() - start)
+                continue
+            
+            # Clone lock released - verify disk exists
+            disk_keys = ['scsi0', 'virtio0', 'sata0', 'ide0']
+            has_disk = any(key in config for key in disk_keys)
+            
+            if has_disk:
+                logger.info(f"VM {vmid} clone completed successfully after {waited}s")
+                return True
+            else:
+                # No disk found - clone may have failed
+                logger.error(f"VM {vmid} clone lock released but no disk found after {waited}s")
+                logger.error(f"VM config: {config}")
+                raise Exception(f"Clone failed: VM {vmid} has no disk after cloning")
+                
+        except Exception as e:
+            error_str = str(e)
+            if 'does not exist' in error_str or '500' in error_str:
+                # VM doesn't exist yet - keep waiting
+                time.sleep(3)
+                waited = int(time.time() - start)
+                continue
+            else:
+                # Real error - re-raise
+                raise
+    
+    raise TimeoutError(f"Clone timeout: VM {vmid} did not complete within {timeout}s")
+
+
+def verify_template_has_disk(proxmox, node: str, template_vmid: int) -> Tuple[bool, str]:
+    """Verify template has a boot disk before attempting to clone.
+    
+    Args:
+        proxmox: ProxmoxAPI instance
+        node: Node name
+        template_vmid: Template VMID to verify
+        
+    Returns:
+        Tuple of (has_disk, disk_key) where disk_key is 'scsi0', 'virtio0', etc.
+    """
+    try:
+        config = proxmox.nodes(node).qemu(template_vmid).config.get()
+        
+        # Check for boot disk
+        disk_keys = ['scsi0', 'virtio0', 'sata0', 'ide0']
+        for key in disk_keys:
+            if key in config:
+                logger.debug(f"Template {template_vmid} has disk: {key}")
+                return True, key
+        
+        logger.error(f"Template {template_vmid} has no disk! Config: {config}")
+        return False, None
+        
+    except Exception as e:
+        logger.error(f"Failed to verify template {template_vmid}: {e}")
+        return False, None
 def replicate_templates_to_all_nodes(cluster_ip: str = None) -> None:
     """Ensure every QEMU template exists on every node. Missing replicas are cloned and converted.
 
@@ -418,6 +527,12 @@ def clone_vm_from_template(template_vmid: int, new_vmid: int, name: str, node: s
         
         proxmox = get_proxmox_admin_for_cluster(cluster_id)
 
+        # Verify template has disk before attempting clone
+        has_disk, disk_key = verify_template_has_disk(proxmox, node, template_vmid)
+        if not has_disk:
+            return False, f"Template {template_vmid} is missing boot disk - template may be corrupted"
+        logger.debug(f"Template {template_vmid} verified with disk: {disk_key}")
+
         safe_name = sanitize_vm_name(name)
 
         # If disk_clone_method is True, use direct storage API cloning (bypasses VM lock)
@@ -466,6 +581,38 @@ def clone_vm_from_template(template_vmid: int, new_vmid: int, name: str, node: s
                 
                 clone_result = proxmox.nodes(node).qemu(template_vmid).clone.post(**clone_params)
                 logger.info(f"Cloned template {template_vmid} to {new_vmid} ({safe_name}) on {node} (attempt {attempt+1})")
+                
+                # Wait for clone lock to release and verify disk exists
+                if wait_until_complete:
+                    try:
+                        logger.info(f"Waiting for clone {new_vmid} to complete...")
+                        wait_for_clone_completion(proxmox, node, new_vmid, timeout=wait_timeout_sec)
+                        logger.info(f"Clone {new_vmid} completed and verified")
+                        
+                        # Update progress if task tracking enabled
+                        if task_id:
+                            from app.services.clone_progress import update_clone_progress
+                            update_clone_progress(task_id, 
+                                message=f"Clone {safe_name} completed",
+                                progress_percent=100 * progress_weight
+                            )
+                    except TimeoutError as e:
+                        logger.error(f"Clone timeout for VM {new_vmid}: {e}")
+                        # Try to get final state for diagnostics
+                        try:
+                            final_config = proxmox.nodes(node).qemu(new_vmid).config.get()
+                            logger.error(f"Final VM config after timeout: {final_config}")
+                            # Check template for comparison
+                            template_config = proxmox.nodes(node).qemu(template_vmid).config.get()
+                            if 'scsi0' not in template_config and 'virtio0' not in template_config:
+                                logger.error(f"WARNING: Template {template_vmid} is missing disk! Template corrupted.")
+                        except Exception as diag_err:
+                            logger.error(f"Could not get diagnostic info: {diag_err}")
+                        return False, str(e)
+                    except Exception as e:
+                        logger.error(f"Clone verification failed for VM {new_vmid}: {e}")
+                        return False, str(e)
+                
                 break
             except Exception as clone_err:
                 msg = str(clone_err).lower()
@@ -481,85 +628,6 @@ def clone_vm_from_template(template_vmid: int, new_vmid: int, name: str, node: s
                 logger.exception(f"Clone failed for template {template_vmid} after {attempt+1} attempts: {clone_err}")
                 return False, f"Clone failed: {clone_err}"
 
-        # Optional: Poll task status until finished (stopped: OK) or timeout
-        if wait_until_complete:
-            try:
-                upid = None
-                if isinstance(clone_result, dict):
-                    upid = clone_result.get('upid')
-                # Some setups may return a string UPID directly
-                if isinstance(clone_result, str) and 'UPID' in clone_result:
-                    upid = clone_result
-
-                if upid:
-                    logger.info(f"Polling clone task {upid} until completion (timeout {wait_timeout_sec}s)")
-                    waited = 0
-                    poll_interval = 4
-                    last_progress_update = 0
-                    
-                    while waited < wait_timeout_sec:
-                        try:
-                            status = proxmox.nodes(node).tasks(upid).status.get()
-                            # Status fields: status (e.g., 'stopped'), exitstatus (e.g., 'OK'), id
-                            st = status.get('status')
-                            exitst = status.get('exitstatus')
-                            
-                            # Estimate progress based on time (since Proxmox doesn't give us real %)
-                            # Full clones: ~3-5min typical, Linked clones: ~10sec typical
-                            if task_id and waited - last_progress_update >= 10:  # Update every 10s
-                                if full_clone:
-                                    # Assume full clone takes 4 minutes on average
-                                    estimated_total = 240
-                                    progress_pct = min(95, int((waited / estimated_total) * 100))
-                                else:
-                                    # Linked clone takes ~10 seconds
-                                    estimated_total = 10
-                                    progress_pct = min(95, int((waited / estimated_total) * 100))
-                                
-                                update_clone_progress(task_id, 
-                                    message=f"Cloning {safe_name}... {progress_pct}% (estimated)",
-                                    progress_percent=progress_pct * progress_weight
-                                )
-                                last_progress_update = waited
-                            
-                            if st == 'stopped' and (exitst is None or exitst == 'OK'):
-                                logger.info(f"Clone task {upid} completed: status={st}, exitstatus={exitst}")
-                                if task_id:
-                                    update_clone_progress(task_id, 
-                                        message=f"Clone {safe_name} completed",
-                                        progress_percent=100 * progress_weight
-                                    )
-                                break
-                        except Exception as e:
-                            logger.debug(f"Task status poll error for {upid}: {e}")
-                            # Continue polling; transient errors can occur
-                        time.sleep(poll_interval)
-                        waited += poll_interval
-                    if waited >= wait_timeout_sec:
-                        logger.warning(f"Clone task {upid} did not complete within {wait_timeout_sec}s; continuing")
-                else:
-                    logger.warning("Clone result did not include UPID; skipping task polling")
-            except Exception as e:
-                logger.warning(f"Failed to poll clone task completion: {e}")
-
-            # Additionally, poll VM status until no 'lock' and status available
-            try:
-                waited = 0
-                poll_interval = 4
-                while waited < wait_timeout_sec:
-                    try:
-                        current = proxmox.nodes(node).qemu(new_vmid).status.current.get()
-                        lock = current.get('lock')
-                        # Accept when lock cleared; VM may be stopped after clone
-                        if not lock:
-                            break
-                    except Exception:
-                        pass
-                    time.sleep(poll_interval)
-                    waited += poll_interval
-            except Exception as e:
-                logger.debug(f"VM status poll error post-clone: {e}")
-        
         # Create baseline snapshot for reimage functionality (optional, skipped for mass deploy)
         if create_baseline:
             try:

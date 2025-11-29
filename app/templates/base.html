@@ -75,6 +75,11 @@
                    href="{{ url_for('admin_diagnostics.admin_probe') }}">
                     <i class="bi bi-activity"></i> Proxmox probe
                 </a>
+                {% if depl0y_url %}
+                <a class="sidebar-link" href="{{ depl0y_url }}" target="_blank" rel="noopener noreferrer" title="Depl0y VM Management">
+                    <i class="bi bi-layers"></i> Depl0y
+                </a>
+                {% endif %}
             {% endif %}
     {% endif %}
     
