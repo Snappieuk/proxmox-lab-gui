@@ -222,6 +222,11 @@ def create_class(name: str, teacher_id: int, description: str = None,
         return None, f"Failed to create class: {str(e)}"
 
 
+def get_class_by_id(class_id: int) -> Optional[Class]:
+    """Get class by ID."""
+    return Class.query.get(class_id)
+
+
 def get_class_by_token(token: str) -> Optional[Class]:
     """Get class by join token."""
     return Class.query.filter_by(join_token=token).first()
