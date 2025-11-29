@@ -43,8 +43,7 @@ def persist_vm_inventory(vms: List[Dict], cleanup_missing: bool = True) -> int:
             if not vmid:
                 continue
             
-            # Find or create inventory record with race condition protection
-            # Use savepoint to handle concurrent creates
+            # Find or create inventory record with proper error handling
             from sqlalchemy.exc import IntegrityError
             
             inventory = VMInventory.query.filter_by(
@@ -53,25 +52,40 @@ def persist_vm_inventory(vms: List[Dict], cleanup_missing: bool = True) -> int:
             ).first()
             
             if not inventory:
+                # Try to create new record
+                inventory = VMInventory(
+                    cluster_id=cluster_id,
+                    vmid=vmid,
+                    name=vm.get('name', 'Unknown'),
+                    node=vm.get('node', 'Unknown'),
+                    status=vm.get('status', 'unknown'),
+                    type=vm.get('type', 'qemu')
+                )
+                db.session.add(inventory)
+                
                 try:
-                    # Try to create with savepoint protection
-                    db.session.begin_nested()
-                    inventory = VMInventory(
-                        cluster_id=cluster_id,
-                        vmid=vmid
-                    )
-                    db.session.add(inventory)
-                    db.session.commit()  # Commit nested transaction
-                except IntegrityError:
-                    # Race condition: another thread created it
+                    # Flush to catch unique constraint violations immediately
+                    db.session.flush()
+                except IntegrityError as e:
+                    # Duplicate key - another process created it, rollback and refetch
                     db.session.rollback()
+                    
+                    # Re-query with a fresh session
                     inventory = VMInventory.query.filter_by(
                         cluster_id=cluster_id,
                         vmid=vmid
-                    ).first()
+                    ).with_for_update().first()
+                    
                     if not inventory:
-                        logger.error(f"Failed to create or find VMInventory for {cluster_id}/{vmid}")
+                        # Still not found - log details and skip
+                        logger.error(f"Failed to create or find VMInventory for {cluster_id}/{vmid} after IntegrityError: {e}")
+                        logger.error(f"  VM data: name={vm.get('name')}, node={vm.get('node')}")
                         continue
+                except Exception as e:
+                    # Unexpected error during flush
+                    logger.error(f"Unexpected error creating VMInventory for {cluster_id}/{vmid}: {e}")
+                    db.session.rollback()
+                    continue
             
             # Update all fields
             inventory.name = vm.get('name')
