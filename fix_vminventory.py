@@ -1,26 +1,37 @@
 #!/usr/bin/env python3
 """
-Migration script to add unique constraint to VMInventory table.
+Migration script to fix VMInventory table duplicates.
 
 This fixes the "Failed to create or find VMInventory" error by:
 1. Removing duplicate VMInventory records (keeping most recent)
-2. Adding unique constraint on (cluster_id, vmid)
+2. Creating unique index on (cluster_id, vmid) if not exists
 
 Run this on the remote server where the database exists:
     python3 fix_vminventory.py
 """
 
+import sys
 from app import create_app
 from app.models import db, VMInventory
-from sqlalchemy import text
+from sqlalchemy import text, inspect
 
 def main():
     app = create_app()
     
     with app.app_context():
-        print("Checking VMInventory table...")
+        print("=" * 60)
+        print("VMInventory Table Repair Tool")
+        print("=" * 60)
         
-        # Find and remove duplicates (keep most recent by id)
+        # Check if table exists
+        inspector = inspect(db.engine)
+        if 'vm_inventory' not in inspector.get_table_names():
+            print("✓ vm_inventory table does not exist yet - will be created correctly on first run")
+            return
+        
+        print("\n1. Checking for duplicate records...")
+        
+        # Find duplicates
         duplicates = db.session.execute(text("""
             SELECT cluster_id, vmid, COUNT(*) as count
             FROM vm_inventory
@@ -29,9 +40,10 @@ def main():
         """)).fetchall()
         
         if duplicates:
-            print(f"Found {len(duplicates)} duplicate cluster_id/vmid combinations")
+            print(f"   Found {len(duplicates)} duplicate cluster_id/vmid combinations:")
+            
             for cluster_id, vmid, count in duplicates:
-                print(f"  Removing duplicates for cluster={cluster_id}, vmid={vmid} ({count} records)")
+                print(f"   - cluster={cluster_id}, vmid={vmid} ({count} records)")
                 
                 # Keep the newest record (highest id), delete older ones
                 records = VMInventory.query.filter_by(
@@ -42,41 +54,48 @@ def main():
                 # Keep first (newest), delete rest
                 for record in records[1:]:
                     db.session.delete(record)
-                    print(f"    Deleted id={record.id}")
+                    print(f"     Deleted duplicate id={record.id}")
             
             db.session.commit()
-            print("Duplicates removed successfully")
+            print("   ✓ Duplicates removed")
         else:
-            print("No duplicates found")
+            print("   ✓ No duplicates found")
         
-        # Check if constraint already exists
-        inspector = db.inspect(db.engine)
-        constraints = inspector.get_unique_constraints('vm_inventory')
-        constraint_exists = any(c['name'] == 'uq_cluster_vmid' for c in constraints)
+        print("\n2. Checking unique constraint/index...")
         
-        if constraint_exists:
-            print("Unique constraint already exists - nothing to do")
+        # Check constraints and indexes
+        unique_constraints = inspector.get_unique_constraints('vm_inventory')
+        indexes = inspector.get_indexes('vm_inventory')
+        
+        has_constraint = any(
+            c.get('name') in ('uix_cluster_vmid', 'uq_cluster_vmid') 
+            for c in unique_constraints
+        )
+        
+        has_unique_index = any(
+            idx.get('unique') and 
+            set(idx.get('column_names', [])) == {'cluster_id', 'vmid'}
+            for idx in indexes
+        )
+        
+        if has_constraint or has_unique_index:
+            print("   ✓ Unique constraint already exists")
         else:
-            print("Adding unique constraint...")
+            print("   Creating unique index...")
             try:
-                # SQLite doesn't support ADD CONSTRAINT directly, need to recreate table
-                # But SQLAlchemy will handle this automatically on next table creation
-                # For now, just ensure no duplicates exist
                 db.session.execute(text("""
-                    CREATE UNIQUE INDEX IF NOT EXISTS idx_cluster_vmid 
+                    CREATE UNIQUE INDEX idx_cluster_vmid 
                     ON vm_inventory(cluster_id, vmid)
                 """))
                 db.session.commit()
-                print("Unique index created successfully")
+                print("   ✓ Unique index created")
             except Exception as e:
-                print(f"Note: Could not create unique index (may need table recreation): {e}")
-                print("The unique constraint in models.py will take effect on next db.create_all()")
+                print(f"   ⚠ Could not create unique index: {e}")
+                print("   Note: The table will be recreated with proper constraints on app restart")
         
-        # Show current state
-        total = VMInventory.query.count()
-        print(f"\nFinal state: {total} total VMInventory records")
+        print("\n3. Verifying final state...")
         
-        # Test query to ensure no duplicates remain
+        # Verify no duplicates remain
         remaining_dupes = db.session.execute(text("""
             SELECT cluster_id, vmid, COUNT(*) as count
             FROM vm_inventory
@@ -85,11 +104,20 @@ def main():
         """)).fetchall()
         
         if remaining_dupes:
-            print(f"WARNING: {len(remaining_dupes)} duplicates still exist!")
+            print(f"   ✗ ERROR: {len(remaining_dupes)} duplicates still exist!")
             for cluster_id, vmid, count in remaining_dupes:
-                print(f"  cluster={cluster_id}, vmid={vmid}, count={count}")
-        else:
-            print("✓ No duplicate records - database is clean")
+                print(f"     - cluster={cluster_id}, vmid={vmid}, count={count}")
+            sys.exit(1)
+        
+        total = VMInventory.query.count()
+        print(f"   ✓ Database clean: {total} unique VM records")
+        
+        print("\n" + "=" * 60)
+        print("✓ VMInventory repair completed successfully")
+        print("=" * 60)
+        print("\nNext steps:")
+        print("  1. Restart the application: sudo systemctl restart proxmox-gui")
+        print("  2. Check logs for any remaining errors")
 
 if __name__ == "__main__":
     main()
