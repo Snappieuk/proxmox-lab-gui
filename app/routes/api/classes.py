@@ -769,10 +769,11 @@ def revert_my_vm(class_id: int):
     if not assignment:
         return jsonify({"ok": False, "error": "You don't have a VM in this class"}), 404
     
+    # Revert to the baseline snapshot created when VM was cloned
     success, msg = revert_vm_to_snapshot(
         vmid=assignment.proxmox_vmid,
         node=assignment.node,
-        snapshot_name='class_baseline'
+        snapshot_name='baseline'  # Match the snapshot name from clone_vm_from_template
     )
     
     if not success:

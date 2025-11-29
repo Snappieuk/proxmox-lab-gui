@@ -148,6 +148,21 @@ def clone_vm_from_template(template_vmid: int, new_vmid: int, name: str, node: s
         )
 
         logger.info(f"Cloned template {template_vmid} to {new_vmid} ({safe_name}) on {node}")
+        
+        # Wait for clone to complete
+        import time
+        time.sleep(5)
+        
+        # Create baseline snapshot for reimage functionality
+        try:
+            proxmox.nodes(node).qemu(new_vmid).snapshot.post(
+                snapname='baseline',
+                description='Initial baseline snapshot for reimage'
+            )
+            logger.info(f"Created baseline snapshot for VM {new_vmid}")
+        except Exception as e:
+            logger.warning(f"Failed to create baseline snapshot for VM {new_vmid}: {e}")
+        
         return True, f"Successfully cloned VM {safe_name}"
         
     except Exception as e:

@@ -215,6 +215,36 @@ def create_class(name: str, teacher_id: int, description: str = None,
 
         db.session.commit()
         logger.info("Created class: %s by teacher %s (template_id=%s)", name, teacher.username, cloned_template_id)
+        
+        # Auto-create initial VM pool if pool_size specified and we have a template
+        if pool_size > 0 and cloned_template_id:
+            logger.info(f"Auto-creating {pool_size} VMs for class {name}")
+            try:
+                from app.services.proxmox_operations import clone_vms_for_class
+                cloned_template_obj = Template.query.get(cloned_template_id)
+                if cloned_template_obj:
+                    created_vms = clone_vms_for_class(
+                        template_vmid=cloned_template_obj.proxmox_vmid,
+                        node=cloned_template_obj.node,
+                        count=pool_size,
+                        name_prefix=sanitize_vm_name(name, fallback="classvm"),
+                        cluster_ip=cloned_template_obj.cluster_ip
+                    )
+                    # Create VM assignments for the cloned VMs
+                    for vm_info in created_vms:
+                        assignment = VMAssignment(
+                            class_id=class_.id,
+                            proxmox_vmid=vm_info['vmid'],
+                            node=vm_info['node'],
+                            status='available'
+                        )
+                        db.session.add(assignment)
+                    db.session.commit()
+                    logger.info(f"Created {len(created_vms)} VMs for class {name}")
+            except Exception as e:
+                logger.exception(f"Failed to auto-create VM pool for class {name}: {e}")
+                # Don't fail class creation if VM pool creation fails
+        
         return class_, "Class created successfully"
     except Exception as e:
         db.session.rollback()

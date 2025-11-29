@@ -292,10 +292,10 @@ def _load_vm_cache() -> None:
     #     cache_count = len(_vm_cache_data.get(cache_key) or [])
     #     logger.info("Loaded VM cache for all clusters with %d VMs from %s", 
     #                cache_count, VM_CACHE_FILE)
-    except Exception as e:
-        logger.warning("Failed to load VM cache: %s", e)
-        _vm_cache_data[cache_key] = None
-        _vm_cache_ts[cache_key] = 0.0
+    # except Exception as e:
+    #     logger.warning("Failed to load VM cache: %s", e)
+    #     _vm_cache_data[cache_key] = None
+    #     _vm_cache_ts[cache_key] = 0.0
     
     _vm_cache_loaded[cache_key] = True
 

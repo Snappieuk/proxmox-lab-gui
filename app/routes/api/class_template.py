@@ -276,7 +276,11 @@ def save_template(class_id: int):
 @api_class_template_bp.route("/<int:class_id>/template/push", methods=['POST'])
 @login_required
 def push_template(class_id: int):
-    """Push template to all VMs in class (delete and re-clone)."""
+    """Push template to all VMs in class (delete old VMs and re-clone from new template).
+    
+    This deletes all existing VMs and creates fresh ones from the current template.
+    Each new VM gets a baseline snapshot for the reimage functionality.
+    """
     class_, error_response, status_code = require_teacher_or_admin(class_id)
     if error_response:
         return error_response, status_code
@@ -285,67 +289,84 @@ def push_template(class_id: int):
         return jsonify({'ok': False, 'error': 'No template assigned'}), 404
     
     try:
+        from app.services.proxmox_operations import sanitize_vm_name
+        import time
+        
         template = class_.template
         assignments = class_.vm_assignments
         
         results = []
         errors = []
+        deleted_count = 0
+        created_count = 0
         
+        # Get cluster connection
+        cluster_id = None
+        from app.config import CLUSTERS
+        for cluster in CLUSTERS:
+            if cluster["host"] == template.cluster_ip:
+                cluster_id = cluster["id"]
+                break
+        
+        if not cluster_id:
+            return jsonify({'ok': False, 'error': 'Cluster not found'}), 500
+        
+        proxmox = get_proxmox_admin_for_cluster(cluster_id)
+        
+        # Step 1: Delete all existing VMs
+        logger.info(f"Deleting {len(assignments)} existing VMs for class {class_.name}")
         for assignment in assignments:
             try:
-                # Delete existing VM
                 delete_success = delete_vm(assignment.proxmox_vmid, template.cluster_ip)
-                if not delete_success:
-                    errors.append(f"Failed to delete VM {assignment.proxmox_vmid}")
-                    continue
-                
-                # Clone new VM from template
-                new_vmid = clone_vm_from_template(
-                    template.proxmox_vmid,
-                    template.cluster_ip,
-                    name=f"{class_.name}-{assignment.id}",
-                    target_node=template.node
-                )
-                
-                if new_vmid:
-                    # Update assignment with new VMID
-                    old_vmid = assignment.proxmox_vmid
-                    assignment.proxmox_vmid = new_vmid
-                    assignment.node = template.node
-                    
-                    # Get MAC address from new VM
-                    proxmox = get_proxmox_admin_for_cluster(template.cluster_ip)
-                    vm_config = proxmox.nodes(template.node).qemu(new_vmid).config.get()
-                    
-                    for key in vm_config.keys():
-                        if key.startswith('net'):
-                            net_value = vm_config[key]
-                            if '=' in net_value:
-                                parts = net_value.split(',')
-                                for part in parts:
-                                    if '=' in part:
-                                        k, v = part.split('=', 1)
-                                        if k.strip().lower() in ('macaddr', 'hwaddr'):
-                                            assignment.mac_address = v.strip()
-                                            break
-                            if assignment.mac_address:
-                                break
-                    
-                    results.append(f"Recreated VM {old_vmid} → {new_vmid}")
+                if delete_success:
+                    deleted_count += 1
+                    logger.info(f"Deleted VM {assignment.proxmox_vmid}")
                 else:
-                    errors.append(f"Failed to clone VM for assignment {assignment.id}")
+                    logger.warning(f"Failed to delete VM {assignment.proxmox_vmid}")
             except Exception as e:
-                logger.exception(f"Failed to push to VM {assignment.proxmox_vmid}: {e}")
-                errors.append(f"VM {assignment.proxmox_vmid}: {str(e)}")
+                logger.warning(f"Error deleting VM {assignment.proxmox_vmid}: {e}")
         
-        # Commit all changes
+        # Step 2: Delete all assignment records (will recreate them)
+        vm_count = len(assignments)
+        for assignment in assignments:
+            db.session.delete(assignment)
         db.session.commit()
         
-        logger.info(f"Pushed template to {len(results)} VMs for class {class_.name}")
+        logger.info(f"Deleted {deleted_count}/{vm_count} VMs and cleared all assignments")
+        
+        # Step 3: Clone new VMs from the updated template
+        logger.info(f"Creating {vm_count} new VMs from template {template.proxmox_vmid}")
+        
+        from app.services.proxmox_operations import clone_vms_for_class
+        created_vms = clone_vms_for_class(
+            template_vmid=template.proxmox_vmid,
+            node=template.node,
+            count=vm_count,
+            name_prefix=sanitize_vm_name(class_.name, fallback="classvm"),
+            cluster_ip=template.cluster_ip
+        )
+        
+        # Step 4: Create new assignments for the fresh VMs
+        for vm_info in created_vms:
+            assignment = VMAssignment(
+                class_id=class_.id,
+                proxmox_vmid=vm_info['vmid'],
+                node=vm_info['node'],
+                status='available'
+            )
+            db.session.add(assignment)
+            created_count += 1
+            results.append(f"Created new VM {vm_info['vmid']} on {vm_info['node']}")
+        
+        db.session.commit()
+        
+        logger.info(f"Successfully pushed template to class {class_.name}: deleted {deleted_count} VMs, created {created_count} new VMs")
         
         return jsonify({
             'ok': True,
-            'message': f'Template pushed to {len(results)} VMs',
+            'message': f'Template pushed: deleted {deleted_count} old VMs, created {created_count} new VMs',
+            'deleted': deleted_count,
+            'created': created_count,
             'results': results,
             'errors': errors
         })
