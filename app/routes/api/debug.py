@@ -16,8 +16,8 @@ def admin_status():
     """
     Returns detailed admin detection information for current user.
     """
-    from app.utils.decorators import require_user
-    from app.services.proxmox_client import is_admin_user, _user_in_group, _get_admin_group_members_cached
+    from app.services.user_manager import is_admin_user
+    from app.services.proxmox_client import _user_in_group, _get_admin_group_members_cached
     from app.config import ADMIN_USERS, ADMIN_GROUP
     
     user = session.get('user')
