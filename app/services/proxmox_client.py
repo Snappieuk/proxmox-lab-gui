@@ -2105,7 +2105,9 @@ def get_vms_for_user(user: str, search: Optional[str] = None, skip_ips: bool = F
     Returns VMs for a user. All VMs are fetched from all clusters at once.
     
     Admin: sees all VMs from all clusters (can filter by cluster in UI).
-    Non-admin: filtered to only VMs mapped to them.
+    Non-admin: filtered to VMs accessible via:
+      1. mappings.json (legacy manual mappings)
+      2. VMAssignment table (class-based assignments)
     
     Optional search parameter filters by VM name (case-insensitive).
     Set skip_ips=True to skip ARP scan for fast initial page load.
@@ -2114,14 +2116,50 @@ def get_vms_for_user(user: str, search: Optional[str] = None, skip_ips: bool = F
     # Get all VMs from all clusters
     vms = get_all_vms(skip_ips=skip_ips, force_refresh=force_refresh)
     admin = is_admin_user(user)
-    logger.debug("get_vms_for_user: user=%s is_admin=%s all_vms=%d", user, admin, len(vms))
+    logger.info("get_vms_for_user: user=%s is_admin=%s all_vms=%d ADMIN_USERS=%s ADMIN_GROUP=%s", 
+                user, admin, len(vms), ADMIN_USERS, ADMIN_GROUP)
     
     if not admin:
-        # Filter to only mapped VMs
-        vms = [vm for vm in vms if user in vm.get("user_mappings", [])]
-        logger.debug("get_vms_for_user: user=%s filtered to %d VMs using cached mappings", user, len(vms))
+        # Build set of accessible VMIDs from multiple sources
+        accessible_vmids = set()
+        
+        # Source 1: mappings.json (cached in vm.user_mappings)
+        mappings_vms = [vm for vm in vms if user in vm.get("user_mappings", [])]
+        accessible_vmids.update(vm["vmid"] for vm in mappings_vms)
+        logger.debug("get_vms_for_user: user=%s has %d VMs from mappings.json", user, len(mappings_vms))
+        
+        # Source 2: VMAssignment table (class-based VMs)
+        try:
+            from flask import has_app_context
+            if has_app_context():
+                from app.models import VMAssignment, User
+                # Normalize username variants (with/without realm)
+                user_variants = {user}
+                if '@' in user:
+                    base = user.split('@', 1)[0]
+                    user_variants.add(base)
+                    user_variants.add(f"{base}@pve")
+                    user_variants.add(f"{base}@pam")
+                else:
+                    user_variants.add(f"{user}@pve")
+                    user_variants.add(f"{user}@pam")
+                
+                # Find user record
+                local_user = User.query.filter(User.username.in_(user_variants)).first()
+                if local_user:
+                    assignments = VMAssignment.query.filter_by(assigned_user_id=local_user.id).all()
+                    class_vmids = {a.proxmox_vmid for a in assignments}
+                    accessible_vmids.update(class_vmids)
+                    logger.debug("get_vms_for_user: user=%s has %d VMs from class assignments", user, len(class_vmids))
+        except Exception as e:
+            logger.warning("get_vms_for_user: failed to check VMAssignment for user %s: %s", user, e)
+        
+        # Filter VMs to accessible set
+        vms = [vm for vm in vms if vm["vmid"] in accessible_vmids]
+        logger.info("get_vms_for_user: user=%s filtered to %d VMs (mappings.json + class assignments)", user, len(vms))
+        
         if not vms:
-            logger.info("User %s has no VM mappings", user)
+            logger.info("User %s has no VM access (not in mappings.json or class assignments)", user)
             return []
     
     # Apply search filter if provided
