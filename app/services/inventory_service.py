@@ -13,14 +13,15 @@ from typing import List, Dict, Optional, Any
 logger = logging.getLogger(__name__)
 
 
-def persist_vm_inventory(vms: List[Dict]) -> int:
+def persist_vm_inventory(vms: List[Dict], cleanup_missing: bool = True) -> int:
     """Persist VM list to database inventory.
     
-    Updates existing VMs and creates new ones. Does NOT delete missing VMs
-    (they might be on other clusters or temporarily unavailable).
+    Updates existing VMs and creates new ones. Optionally removes VMs that
+    no longer exist in Proxmox.
     
     Args:
         vms: List of VM dicts from get_all_vms()
+        cleanup_missing: If True, delete VMs from DB that aren't in the sync
         
     Returns:
         Number of VMs updated/created
@@ -83,6 +84,26 @@ def persist_vm_inventory(vms: List[Dict]) -> int:
             inventory.sync_error = None  # Clear any previous errors
             
             updated_count += 1
+        
+        # Remove VMs that no longer exist in Proxmox
+        if cleanup_missing and vms:
+            # Get all cluster IDs that were synced
+            synced_clusters = set(vm.get('cluster_id', 'default') for vm in vms)
+            
+            # For each synced cluster, get VMIDs that were seen
+            for cluster_id in synced_clusters:
+                cluster_vmids = set(vm.get('vmid') for vm in vms if vm.get('cluster_id', 'default') == cluster_id)
+                
+                # Find VMs in DB that weren't in the sync
+                missing = VMInventory.query.filter(
+                    VMInventory.cluster_id == cluster_id,
+                    VMInventory.vmid.notin_(cluster_vmids)
+                ).all()
+                
+                if missing:
+                    logger.info(f"Removing {len(missing)} deleted VMs from cluster {cluster_id}")
+                    for vm in missing:
+                        db.session.delete(vm)
         
         db.session.commit()
         logger.info(f"Persisted {updated_count} VMs to inventory")
