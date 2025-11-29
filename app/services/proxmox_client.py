@@ -1225,8 +1225,18 @@ def _enrich_vms_with_arp_ips(vms: List[Dict[str, Any]], force_sync: bool = False
             logger.debug("VM %d (%s) is LXC with IP=%s - SKIP SCAN", 
                         vm["vmid"], vm["name"], vm.get("ip"))
     
-    logger.info("ARP scan candidates: %d QEMU + %d LXC DHCP = %d total (stopped: %d, LXC with IP: %d)", 
-                qemu_count, lxc_dhcp_count, len(vm_mac_map), stopped_count, lxc_with_ip_count)
+    # Detect potential VMID collisions across clusters (same vmid present with different MACs)
+    vmid_collision_map = {}
+    for vm in vms:
+        if vm.get("status") == "running" and vm.get("vmid") in vm_mac_map:
+            vmid_collision_map.setdefault(vm["vmid"], set()).add(vm.get("cluster_id"))
+    collisions = {vmid: clusters for vmid, clusters in vmid_collision_map.items() if len(clusters) > 1}
+
+    if collisions:
+        logger.warning("Detected VMID collisions across clusters for ARP scan: %s. IP assignment may be ambiguous; consider unique VMID ranges per cluster.", collisions)
+
+    logger.info("ARP scan candidates: %d QEMU + %d LXC DHCP = %d total (stopped: %d, LXC with IP: %d, collisions: %d)", 
+                qemu_count, lxc_dhcp_count, len(vm_mac_map), stopped_count, lxc_with_ip_count, len(collisions))
     
     if not vm_mac_map:
         logger.info("=== ARP SCAN COMPLETE === No running VMs need ARP discovery")
@@ -1295,9 +1305,13 @@ def _save_ips_to_db(vms: List[Dict[str, Any]], vm_mac_map: Dict[int, str]) -> No
     legacy_updates = 0
     
     try:
-        # Get all class VMs in one query
+        # Get all class VMs in one query (use correct column proxmox_vmid)
         class_vmids = {vm["vmid"] for vm in vms if vm.get("ip") and vm["ip"] not in ("N/A", "Fetching...", "")}
-        assignments = {a.vmid: a for a in VMAssignment.query.filter(VMAssignment.vmid.in_(class_vmids)).all()}
+        if class_vmids:
+            assignments_query = VMAssignment.query.filter(VMAssignment.proxmox_vmid.in_(class_vmids)).all()
+            assignments = {a.proxmox_vmid: a for a in assignments_query}
+        else:
+            assignments = {}
         
         for vm in vms:
             vmid = vm["vmid"]
