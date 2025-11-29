@@ -186,16 +186,18 @@ def create_class(name: str, teacher_id: int, description: str = None,
             if not (clone_success and clone_vmid):
                 logger.warning(f"Failed to clone template for class {name}: {clone_msg}")
                 return None, f"Failed to clone template: {clone_msg}"
-            # Create cloned template record
-            cloned_template = Template(
+            # Create cloned template record using safe create_template
+            cloned_template, tpl_msg = create_template(
                 name=f"{name} Template",
                 proxmox_vmid=clone_vmid,
-                node=original_template.node,
                 cluster_ip=original_template.cluster_ip,
-                original_template_id=original_template.id
+                node=original_template.node,
+                original_template_id=original_template.id,
+                is_class_template=False
             )
-            db.session.add(cloned_template)
-            db.session.flush()
+            if not cloned_template:
+                logger.error(f"Failed to register cloned template: {tpl_msg}")
+                return None, f"Failed to register template: {tpl_msg}"
             cloned_template_id = cloned_template.id
             logger.info(f"Cloned template {original_template.proxmox_vmid} → {clone_vmid} for class {name}")
 
@@ -517,8 +519,9 @@ def create_template(name: str, proxmox_vmid: int, cluster_ip: str = '10.220.15.2
         except Exception as e:
             logger.warning(f"Failed to auto-detect node for template: {e}")
     
-    # Use "get or create" pattern with proper race condition handling
-    # Check must be inside transaction or after rollback to avoid race conditions
+    # Use "get or create" pattern with SAVEPOINT for proper nested transaction handling
+    # This prevents race conditions and handles constraint violations gracefully
+    
     if not node:
         # Cannot use unique constraint without node - fallback to old behavior
         logger.warning(f"Creating template without node (VMID {proxmox_vmid}) - cannot guarantee uniqueness")
@@ -542,9 +545,15 @@ def create_template(name: str, proxmox_vmid: int, cluster_ip: str = '10.220.15.2
             logger.exception("Failed to register template %s: %s", name, e)
             return None, f"Failed to register template: {str(e)}"
     
-    # WITH node: use proper get-or-create with constraint handling
+    # WITH node: use savepoint to handle constraint violations without poisoning outer transaction
+    # Use nested transaction (savepoint) to safely handle IntegrityError
+    from sqlalchemy.exc import IntegrityError
+    
+    # Try using a savepoint (nested transaction) for atomic get-or-create
     try:
-        # First attempt: try to create
+        # Create savepoint for nested transaction
+        db.session.begin_nested()
+        
         template = Template(
             name=name,
             proxmox_vmid=proxmox_vmid,
@@ -556,33 +565,33 @@ def create_template(name: str, proxmox_vmid: int, cluster_ip: str = '10.220.15.2
             original_template_id=original_template_id
         )
         db.session.add(template)
-        db.session.commit()
+        db.session.commit()  # Commit the nested transaction (savepoint)
+        
         logger.info(f"Registered template: {name} (VMID: {proxmox_vmid}) on node {node}")
         return template, "Template registered successfully"
         
-    except Exception as e:
+    except IntegrityError as e:
+        # Rollback only the nested transaction (savepoint), not the outer one
         db.session.rollback()
         
-        # Check if it's a uniqueness constraint violation
-        error_str = str(e)
-        if "UNIQUE constraint failed" in error_str or "IntegrityError" in error_str or "unique constraint" in error_str.lower():
-            # Race condition: another thread created it between our check and insert
-            # Query again to get the existing record
-            existing = Template.query.filter_by(
-                cluster_ip=cluster_ip,
-                node=node,
-                proxmox_vmid=proxmox_vmid
-            ).first()
-            
-            if existing:
-                logger.info(f"Template already exists (race condition handled): {existing.name} (VMID: {proxmox_vmid}) on {node}")
-                return existing, "Template already registered"
-            else:
-                # Shouldn't happen, but log it
-                logger.error(f"UNIQUE constraint failed but cannot find existing template: {error_str}")
-                return None, f"Database constraint error: {error_str}"
+        # Race condition: another thread created it between our check and insert
+        # Query to get the existing record (this query is safe after savepoint rollback)
+        existing = Template.query.filter_by(
+            cluster_ip=cluster_ip,
+            node=node,
+            proxmox_vmid=proxmox_vmid
+        ).first()
         
-        # Other database error
+        if existing:
+            logger.info(f"Template already exists (race condition handled): {existing.name} (VMID: {proxmox_vmid}) on {node}")
+            return existing, "Template already registered"
+        else:
+            # Shouldn't happen, but log it
+            logger.error(f"UNIQUE constraint failed but cannot find existing template: {str(e)}")
+            return None, f"Database constraint error: {str(e)}"
+            
+    except Exception as e:
+        db.session.rollback()
         logger.exception("Failed to register template %s: %s", name, e)
         return None, f"Failed to register template: {str(e)}"
 

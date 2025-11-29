@@ -43,18 +43,35 @@ def persist_vm_inventory(vms: List[Dict], cleanup_missing: bool = True) -> int:
             if not vmid:
                 continue
             
-            # Find or create inventory record
+            # Find or create inventory record with race condition protection
+            # Use savepoint to handle concurrent creates
+            from sqlalchemy.exc import IntegrityError
+            
             inventory = VMInventory.query.filter_by(
                 cluster_id=cluster_id,
                 vmid=vmid
             ).first()
             
             if not inventory:
-                inventory = VMInventory(
-                    cluster_id=cluster_id,
-                    vmid=vmid
-                )
-                db.session.add(inventory)
+                try:
+                    # Try to create with savepoint protection
+                    db.session.begin_nested()
+                    inventory = VMInventory(
+                        cluster_id=cluster_id,
+                        vmid=vmid
+                    )
+                    db.session.add(inventory)
+                    db.session.commit()  # Commit nested transaction
+                except IntegrityError:
+                    # Race condition: another thread created it
+                    db.session.rollback()
+                    inventory = VMInventory.query.filter_by(
+                        cluster_id=cluster_id,
+                        vmid=vmid
+                    ).first()
+                    if not inventory:
+                        logger.error(f"Failed to create or find VMInventory for {cluster_id}/{vmid}")
+                        continue
             
             # Update all fields
             inventory.name = vm.get('name')

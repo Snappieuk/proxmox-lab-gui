@@ -173,17 +173,20 @@ def replicate_templates_to_all_nodes(cluster_ip: str = None) -> None:
                             if existing:
                                 existing.name = name
                                 existing.last_verified_at = datetime.utcnow()
+                                db.session.commit()
                             else:
-                                new_tpl = Template(
+                                # Use safe create_template to avoid race conditions
+                                from app.services.class_service import create_template
+                                new_tpl, tpl_msg = create_template(
                                     name=name,
                                     proxmox_vmid=vmid,
                                     cluster_ip=target_ip,
                                     node=node,
-                                    is_replica=False,
-                                    last_verified_at=datetime.utcnow()
+                                    is_class_template=False
                                 )
-                                db.session.add(new_tpl)
-                            db.session.commit()
+                                if new_tpl:
+                                    new_tpl.last_verified_at = datetime.utcnow()
+                                    db.session.commit()
                         except Exception as db_err:
                             logger.warning(f"Failed to register template {vmid} in DB: {db_err}")
                             db.session.rollback()
@@ -252,23 +255,21 @@ def replicate_templates_to_all_nodes(cluster_ip: str = None) -> None:
                         try:
                             from app.models import Template, db
                             from datetime import datetime
-                            existing = Template.query.filter_by(
+                            # Use safe create_template to avoid race conditions
+                            from app.services.class_service import create_template
+                            replica_tpl, tpl_msg = create_template(
+                                name=replica_name,
+                                proxmox_vmid=replica_vmid,
                                 cluster_ip=target_ip,
                                 node=target,
-                                proxmox_vmid=replica_vmid
-                            ).first()
-                            if not existing:
-                                replica_tpl = Template(
-                                    name=replica_name,
-                                    proxmox_vmid=replica_vmid,
-                                    cluster_ip=target_ip,
-                                    node=target,
-                                    is_replica=True,
-                                    source_vmid=source['vmid'],
-                                    source_node=source['node'],
-                                    last_verified_at=datetime.utcnow()
-                                )
-                                db.session.add(replica_tpl)
+                                is_class_template=False
+                            )
+                            if replica_tpl:
+                                # Update replica-specific fields if needed
+                                replica_tpl.is_replica = True
+                                replica_tpl.source_vmid = source['vmid']
+                                replica_tpl.source_node = source['node']
+                                replica_tpl.last_verified_at = datetime.utcnow()
                                 db.session.commit()
                                 logger.info(f"Registered replica template {replica_vmid} in database")
                         except Exception as db_err:
@@ -1065,24 +1066,21 @@ def clone_vms_for_class(template_vmid: int, node: str, count: int, name_prefix: 
                             try:
                                 from app.models import Template, db
                                 from datetime import datetime
-                                existing = Template.query.filter_by(
+                                # Use safe create_template to avoid race conditions
+                                from app.services.class_service import create_template
+                                base_tpl, tpl_msg = create_template(
+                                    name=class_template_name,
+                                    proxmox_vmid=class_template_vmid,
                                     cluster_ip=cluster_ip,
                                     node=class_template_node,
-                                    proxmox_vmid=class_template_vmid
-                                ).first()
-                                if not existing:
-                                    base_tpl = Template(
-                                        name=class_template_name,
-                                        proxmox_vmid=class_template_vmid,
-                                        cluster_ip=cluster_ip,
-                                        node=class_template_node,
-                                        is_class_template=False,  # Not associated with specific class here
-                                        is_replica=True,
-                                        source_vmid=template_vmid,
-                                        source_node=node,
-                                        last_verified_at=datetime.utcnow()
-                                    )
-                                    db.session.add(base_tpl)
+                                    is_class_template=False
+                                )
+                                if base_tpl:
+                                    # Update replica-specific fields
+                                    base_tpl.is_replica = True
+                                    base_tpl.source_vmid = template_vmid
+                                    base_tpl.source_node = node
+                                    base_tpl.last_verified_at = datetime.utcnow()
                                     db.session.commit()
                                     logger.info(f"Registered base template {class_template_vmid} in database (intermediate template)")
                             except Exception as db_err:
