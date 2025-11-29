@@ -1069,7 +1069,12 @@ def _enrich_from_db_cache(vms: List[Dict[str, Any]]) -> None:
         vms: List of VM dictionaries to enrich with cached IPs
     """
     from datetime import datetime, timedelta
+    from flask import has_app_context
     from app.models import db, VMAssignment, VMIPCache
+    
+    if not has_app_context():
+        logger.debug("_enrich_from_db_cache: skipping (no app context)")
+        return
     
     logger = logging.getLogger(__name__)
     cache_ttl = timedelta(hours=1)
@@ -1191,39 +1196,31 @@ def _enrich_vms_with_arp_ips(vms: List[Dict[str, Any]], force_sync: bool = False
     lxc_with_ip_count = 0
     
     for vm in vms:
-        # Skip if VM is not running (offline VMs won't be in ARP table)
         if vm.get("status") != "running":
             stopped_count += 1
-            logger.debug("VM %d (%s) is %s - SKIPPED", 
-                        vm["vmid"], vm["name"], vm.get("status"))
+            logger.debug("VM %d (%s) is %s - SKIPPED", vm["vmid"], vm["name"], vm.get("status"))
             continue
 
         vmtype = vm.get("type")
         cluster_id = vm.get("cluster_id")
         mac = _get_vm_mac(vm["node"], vm["vmid"], vm["type"], cluster_id=cluster_id)
-        
         has_ip = vm.get("ip") and vm.get("ip") not in ("N/A", "Fetching...", "")
 
-        # Include QEMU VMs (always use ARP if no cached IP)
-        # Include LXC without IPs (DHCP case)
         if vmtype == "qemu" or (vmtype == "lxc" and not has_ip):
             if mac:
-                vm_mac_map[vm["vmid"]] = mac
+                composite_key = f"{cluster_id}:{vm['vmid']}"
+                vm_mac_map[composite_key] = mac
                 if vmtype == "qemu":
                     qemu_count += 1
-                    logger.debug("VM %d (%s) QEMU: MAC=%s, current_ip=%s - WILL SCAN", 
-                                vm["vmid"], vm["name"], mac, vm.get("ip", "N/A"))
+                    logger.debug("VM %d (%s) QEMU: MAC=%s, current_ip=%s - WILL SCAN", vm["vmid"], vm["name"], mac, vm.get("ip", "N/A"))
                 else:
                     lxc_dhcp_count += 1
-                    logger.debug("VM %d (%s) LXC DHCP: MAC=%s - WILL SCAN", 
-                                vm["vmid"], vm["name"], mac)
+                    logger.debug("VM %d (%s) LXC DHCP: MAC=%s - WILL SCAN", vm["vmid"], vm["name"], mac)
             else:
-                logger.warning("VM %d (%s, %s) is running but has NO MAC found in config", 
-                              vm["vmid"], vm["name"], vmtype)
+                logger.warning("VM %d (%s, %s) is running but has NO MAC found in config", vm["vmid"], vm["name"], vmtype)
         else:
             lxc_with_ip_count += 1
-            logger.debug("VM %d (%s) is LXC with IP=%s - SKIP SCAN", 
-                        vm["vmid"], vm["name"], vm.get("ip"))
+            logger.debug("VM %d (%s) is LXC with IP=%s - SKIP SCAN", vm["vmid"], vm["name"], vm.get("ip"))
     
     # Detect potential VMID collisions across clusters (same vmid present with different MACs)
     vmid_collision_map = {}
@@ -1253,25 +1250,20 @@ def _enrich_vms_with_arp_ips(vms: List[Dict[str, Any]], force_sync: bool = False
     updated_count = 0
     
     for vm in vms:
-        if vm["vmid"] in discovered_ips:
-            cached_ip = discovered_ips[vm["vmid"]]
-            
-            # Only update if we got a valid IP from ARP cache
+        composite_key = f"{vm.get('cluster_id')}:{vm['vmid']}"
+        if composite_key in discovered_ips:
+            cached_ip = discovered_ips[composite_key]
             if cached_ip and cached_ip not in ("N/A", "Fetching...", ""):
                 vm["ip"] = cached_ip
                 updated_count += 1
-                
-                # Check RDP availability: Windows always true, others check port scan cache
                 if vm.get("category") == "windows":
-                    vm["rdp_available"] = True  # Windows assumed to have RDP
+                    vm["rdp_available"] = True
                 else:
-                    vm["rdp_available"] = has_rdp_port_open(cached_ip)  # Check scan cache
-                logger.debug("VM %d (%s): Updated with ARP cached IP=%s, RDP=%s", 
-                            vm["vmid"], vm["name"], cached_ip, vm["rdp_available"])
+                    vm["rdp_available"] = has_rdp_port_open(cached_ip)
+                logger.debug("VM %d (%s): Updated with ARP cached IP=%s, RDP=%s", vm["vmid"], vm["name"], cached_ip, vm["rdp_available"])
             else:
-                logger.debug("VM %d (%s): ARP cache returned invalid IP: %s", 
-                            vm["vmid"], vm["name"], cached_ip)
-        # If VM not in discovered_ips, keep whatever IP it already has (from database cache)
+                logger.debug("VM %d (%s): ARP cache returned invalid IP: %s", vm["vmid"], vm["name"], cached_ip)
+        # else leave existing IP
     
     if updated_count == len(vm_mac_map):
         logger.info("=== ARP CACHE HIT === All %d VMs had cached IPs", updated_count)
@@ -1297,7 +1289,12 @@ def _save_ips_to_db(vms: List[Dict[str, Any]], vm_mac_map: Dict[int, str]) -> No
         vm_mac_map: Map of vmid -> MAC address for IP validation
     """
     from datetime import datetime
+    from flask import has_app_context
     from app.models import db, VMAssignment, VMIPCache
+    
+    if not has_app_context():
+        logger.warning("_save_ips_to_db: skipping (no app context)")
+        return
     
     logger = logging.getLogger(__name__)
     now = datetime.utcnow()
@@ -1608,8 +1605,12 @@ def get_all_vms(skip_ips: bool = False, force_refresh: bool = False) -> List[Dic
 
     # Persist to database inventory (best-effort; avoid hard failure)
     try:
-        from app.services.inventory_service import persist_vm_inventory
-        persist_vm_inventory(out)
+        from flask import has_app_context
+        if has_app_context():
+            from app.services.inventory_service import persist_vm_inventory
+            persist_vm_inventory(out)
+        else:
+            logger.debug("get_all_vms: skipping inventory persistence (no app context)")
     except Exception as inv_err:
         logger.warning(f"get_all_vms: failed to persist VM inventory: {inv_err}")
     

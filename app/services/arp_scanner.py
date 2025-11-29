@@ -37,7 +37,7 @@ import os
 import threading
 import time
 import ipaddress
-from typing import Dict, Optional, List
+from typing import Dict, Optional, List, Union
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -53,7 +53,7 @@ NMAP_SCAN_TIMEOUT_BUFFER: int = 30  # Extra seconds to wait for nmap scan comple
 
 # Background scan state
 _scan_thread: Optional[threading.Thread] = None
-_scan_status: Dict[int, str] = {}  # vmid -> status message
+_scan_status: Dict[str, str] = {}  # key (vmid or composite) -> status message
 _scan_in_progress: bool = False
 _scan_lock = threading.Lock()
 
@@ -541,7 +541,7 @@ def get_scan_status(vmid: int) -> Optional[str]:
     return _scan_status.get(vmid)
 
 
-def _background_scan_worker(vm_mac_map: Dict[int, str], subnets: Optional[List[str]] = None):
+def _background_scan_worker(vm_mac_map: Dict[str, str], subnets: Optional[List[str]] = None):
     """
     Background worker that performs network scan and updates IP cache.
     
@@ -556,8 +556,8 @@ def _background_scan_worker(vm_mac_map: Dict[int, str], subnets: Optional[List[s
         
         # Update status for all VMs
         with _scan_lock:
-            for vmid in vm_mac_map.keys():
-                _scan_status[vmid] = "Scanning network..."
+            for key in vm_mac_map.keys():
+                _scan_status[key] = "Scanning network..."
         
         # Try parallel ping sweep first (most reliable for ARP population)
         logger.info("Background: Scanning network range 10.220.8.0/21 with parallel ping sweep")
@@ -582,26 +582,26 @@ def _background_scan_worker(vm_mac_map: Dict[int, str], subnets: Optional[List[s
         # Match VMs to IPs and update cache + status
         found_count = 0
         with _scan_lock:
-            for vmid, mac in vm_mac_map.items():
-                if mac in arp_table:
-                    ip = arp_table[mac]
-                    _arp_cache[mac] = ip
-                    _scan_status[vmid] = ip
+            for key, mac in vm_mac_map.items():
+                    if mac in arp_table:
+                        ip = arp_table[mac]
+                        _arp_cache[mac] = ip
+                        _scan_status[key] = ip
                     found_count += 1
-                    logger.info("VM %d (MAC %s) -> IP %s", vmid, mac, ip)
+                        logger.info("SCAN key %s (MAC %s) -> IP %s", key, mac, ip)
                 else:
-                    _scan_status[vmid] = "Not found in ARP"
-                    logger.warning("VM %d (MAC %s) not found in ARP table", vmid, mac)
+                        _scan_status[key] = "Not found in ARP"
+                        logger.warning("SCAN key %s (MAC %s) not found in ARP table", key, mac)
             
             _arp_cache_time = time.time()
         
-        logger.info("Background scan complete: discovered IPs for %d/%d VMs", found_count, len(vm_mac_map))
+        logger.info("Background scan complete: discovered IPs for %d/%d keys", found_count, len(vm_mac_map))
         
     except Exception as e:
         logger.error("Background scan failed: %s", e)
         with _scan_lock:
-            for vmid in vm_mac_map.keys():
-                _scan_status[vmid] = f"Scan error: {e}"
+            for key in vm_mac_map.keys():
+                _scan_status[key] = f"Scan error: {e}"
     
     finally:
         with _scan_lock:
@@ -609,7 +609,7 @@ def _background_scan_worker(vm_mac_map: Dict[int, str], subnets: Optional[List[s
             _scan_in_progress = False
 
 
-def discover_ips_via_arp(vm_mac_map: Dict[int, str], subnets: Optional[List[str]] = None, background: bool = True, force_refresh: bool = False) -> Dict[int, str]:
+def discover_ips_via_arp(vm_mac_map: Dict[str, str], subnets: Optional[List[str]] = None, background: bool = True, force_refresh: bool = False) -> Dict[str, str]:
     """
     Discover VM IPs using network scan + ARP lookup.
     
@@ -643,12 +643,12 @@ def discover_ips_via_arp(vm_mac_map: Dict[int, str], subnets: Optional[List[str]
             logger.info("ARP cache expired (age: %.1f seconds, TTL: %d seconds)", cache_age, _arp_cache_ttl)
     
     # Check if we already have matches in cache
-    vm_ips = {}
+    vm_ips: Dict[str, str] = {}
     if cache_valid:
-        for vmid, mac in vm_mac_map.items():
+        for key, mac in vm_mac_map.items():
             if mac in _arp_cache:
-                vm_ips[vmid] = _arp_cache[mac]
-                logger.debug("VM %d (MAC %s) -> IP %s (cached)", vmid, mac, _arp_cache[mac])
+                vm_ips[key] = _arp_cache[mac]
+                logger.debug("SCAN key %s (MAC %s) -> IP %s (cached)", key, mac, _arp_cache[mac])
     
     # If we found all IPs and cache is valid, no need to scan at all
     if len(vm_ips) == len(vm_mac_map) and cache_valid:
@@ -670,9 +670,9 @@ def discover_ips_via_arp(vm_mac_map: Dict[int, str], subnets: Optional[List[str]
                 logger.info("Started background network scan")
                 
                 # Set initial status for VMs without IPs
-                for vmid in vm_mac_map.keys():
-                    if vmid not in vm_ips:
-                        _scan_status[vmid] = "Scan starting..."
+                for key in vm_mac_map.keys():
+                    if key not in vm_ips:
+                        _scan_status[key] = "Scan starting..."
             else:
                 logger.info("Background scan already in progress")
         
@@ -700,14 +700,14 @@ def discover_ips_via_arp(vm_mac_map: Dict[int, str], subnets: Optional[List[str]
     logger.info("Sample ARP table MACs (first 10): %s", list(arp_table.keys())[:10])
     
     # Map remaining VM MACs to IPs
-    for vmid, mac in vm_mac_map.items():
-        if vmid in vm_ips:
+    for key, mac in vm_mac_map.items():
+        if key in vm_ips:
             continue  # Already found
         if mac in arp_table:
-            vm_ips[vmid] = arp_table[mac]
-            logger.info("VM %d (MAC %s) -> IP %s", vmid, mac, arp_table[mac])
+            vm_ips[key] = arp_table[mac]
+            logger.info("SCAN key %s (MAC %s) -> IP %s", key, mac, arp_table[mac])
         else:
-            logger.warning("VM %d (MAC %s) NOT in ARP table (len=%d)", vmid, mac, len(arp_table))
+            logger.warning("SCAN key %s (MAC %s) NOT in ARP table (len=%d)", key, mac, len(arp_table))
             # Show actual ARP table entries for comparison
             if len(arp_table) > 0:
                 sample_entries = list(arp_table.items())[:5]
@@ -717,7 +717,7 @@ def discover_ips_via_arp(vm_mac_map: Dict[int, str], subnets: Optional[List[str]
                 if partial_matches:
                     logger.warning("Partial MAC matches found: %s", partial_matches)
     
-    logger.info("Discovered IPs for %d/%d VMs via ARP", len(vm_ips), len(vm_mac_map))
+    logger.info("Discovered IPs for %d/%d keys via ARP", len(vm_ips), len(vm_mac_map))
     return vm_ips
 
 

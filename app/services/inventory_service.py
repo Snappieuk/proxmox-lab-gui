@@ -20,6 +20,14 @@ def persist_vm_inventory(vms: List[Dict[str, object]]) -> None:
     """
     if not vms:
         return
+    
+    from flask import has_app_context
+    import logging
+    
+    if not has_app_context():
+        logger = logging.getLogger(__name__)
+        logger.warning("persist_vm_inventory: skipping (no app context)")
+        return
 
     # Build map of existing rows for faster upsert (fetch only vmids in batch)
     cluster_vm_pairs = [(vm.get("cluster_id"), int(vm.get("vmid"))) for vm in vms if vm.get("vmid") is not None]
