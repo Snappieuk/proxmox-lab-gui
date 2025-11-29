@@ -200,7 +200,8 @@ def create_new_class():
             # Ensure Flask application context in background thread
             from flask import current_app
             app = current_app._get_current_object()
-            with app.app_context():
+            app_ctx = app.app_context()
+            app_ctx.push()
             from datetime import datetime
             from app.services.proxmox_service import get_proxmox_admin
             from app.models import db, Class
@@ -419,6 +420,11 @@ def create_new_class():
         except Exception as e:
                 logger.exception(f"Template cloning and deployment failed for class {class_id_val}: {e}")
                 update_clone_progress(task_id, status="failed", error=str(e))
+            finally:
+                try:
+                    app_ctx.pop()
+                except Exception:
+                    pass
     
     threading.Thread(target=_background_clone_and_deploy, daemon=True).start()
     
