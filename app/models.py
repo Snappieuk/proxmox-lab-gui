@@ -155,6 +155,7 @@ class Class(db.Model):
             'teacher_name': self.teacher.username if self.teacher else None,
             'template_id': self.template_id,
             'template_name': self.template.name if self.template else None,
+            'template_original_name': self.template.original_template.name if (self.template and getattr(self.template, 'original_template', None)) else None,
             'join_token': self.join_token,
             'token_valid': self.is_token_valid(),
             'token_never_expires': self.token_never_expires,
@@ -190,6 +191,7 @@ class Template(db.Model):
     created_by = db.relationship('User', back_populates='created_templates')
     # Relationship to the class that owns this template (for class-specific templates)
     owning_class = db.relationship('Class', foreign_keys=[class_id], backref='owned_templates')
+    original_template = db.relationship('Template', remote_side=[id], uselist=False)
     
     def to_dict(self) -> dict:
         return {
@@ -202,6 +204,8 @@ class Template(db.Model):
             'created_by_name': self.created_by.username if self.created_by else None,
             'is_class_template': self.is_class_template,
             'class_id': self.class_id,
+            'original_template_id': self.original_template_id,
+            'original_template_name': self.original_template.name if getattr(self, 'original_template', None) else None,
             'created_at': self.created_at.isoformat() if self.created_at else None,
         }
     

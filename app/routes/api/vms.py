@@ -24,7 +24,9 @@ from app.services.proxmox_client import (
     invalidate_cluster_cache,
     verify_vm_ip,
 )
-from app.services.inventory_service import fetch_vm_inventory
+from app.services.inventory_service import fetch_vm_inventory, persist_vm_inventory
+from app.models import User, VMAssignment
+from app.config import MAPPINGS_FILE
 from app.config import VM_CACHE_TTL
 import threading, time
 from app.services.arp_scanner import get_scan_status, has_rdp_port_open, get_rdp_cache_time
@@ -41,92 +43,79 @@ api_vms_bp = Blueprint('api_vms', __name__, url_prefix='/api')
 @api_vms_bp.route("/vms")
 @login_required
 def api_vms():
-    """
-    Get VMs for current user.
-    
+    """DB-first VM listing endpoint.
+
+    Always returns persisted inventory immediately (fast path) filtered by user ownership, then
+    optionally triggers a background live refresh to update the DB for subsequent requests.
+
     Query parameters:
-    - skip_ips: Skip ARP scan for fast initial load (IPs will be 'N/A')
-    - force_refresh: Bypass cache and fetch fresh data from Proxmox
-    - search: Filter VMs by name/VMID/IP
+    - search: Name/IP/VMID substring filter applied to inventory rows.
+    - cluster: Limit to a specific cluster_id.
+    - force_refresh=true: Spawn background refresh thread regardless of staleness.
+    - live=true: (Optional) Return live Proxmox data directly (bypasses DB-first logic).
     """
     from app.services.user_manager import require_user
-    
-    user = require_user()
-    # skip_ips now ignored (always false for consistent IP visibility)
-    skip_ips = False
+    from datetime import datetime
+
+    username = require_user()  # Session username (may include realm suffix)
     force_refresh = request.args.get('force_refresh', 'false').lower() == 'true'
-    search = request.args.get('search', '')
-    
-    # Optional DB-backed inventory path (?db=true). Allows cluster filtering without live Proxmox queries.
-    use_db = request.args.get('db', 'false').lower() == 'true'
-    cluster_filter = request.args.get('cluster')  # cluster_id string
+    live_direct = request.args.get('live', 'false').lower() == 'true'
+    search = request.args.get('search', '') or None
+    cluster_filter = request.args.get('cluster') or None
+
+    # Direct live mode OR force refresh returns raw list (legacy frontend expectation)
+    if live_direct or force_refresh:
+        try:
+            vms_live = get_vms_for_user(username, search=search, skip_ips=False, force_refresh=True)
+            _augment_rdp_availability(vms_live)
+            # Persist latest snapshot (best-effort)
+            try:
+                persist_vm_inventory(vms_live)
+            except Exception:
+                logger.exception("Failed to persist inventory after live/force fetch")
+            return jsonify(vms_live)
+        except Exception as e:
+            logger.exception("live/force fetch failed for user %s", username)
+            return jsonify({"error": True, "message": f"Live/force fetch failed: {e}"}), 500
 
     try:
-        if use_db:
-            # Fetch persisted inventory then filter to user's accessible VMs (if mapping applies)
-            inventory = fetch_vm_inventory(cluster_id=cluster_filter, search=search or None)
-            user_accessible = get_vms_for_user(user, skip_ips=True, force_refresh=False)
-            accessible_vmids = {vm['vmid'] for vm in user_accessible}
-            vms = [inv for inv in inventory if inv['vmid'] in accessible_vmids]
+        # Fetch persisted rows (fast path)
+        inventory_rows = fetch_vm_inventory(cluster_id=cluster_filter, search=search)
 
-            # Determine staleness (max last_updated age for rows considered)
-            now_ts = time.time()
-            latest_dt = None
-            for row in inventory:
-                lu = row.get('last_updated')
-                if lu:
-                    try:
-                        # Parse ISO timestamp
-                        from datetime import datetime
-                        dt = datetime.fromisoformat(lu.replace('Z',''))
-                        if latest_dt is None or dt > latest_dt:
-                            latest_dt = dt
-                    except Exception:
-                        continue
-            stale = True
-            if latest_dt is not None:
-                age = (datetime.utcnow() - latest_dt).total_seconds()
-                stale = age > VM_CACHE_TTL
+        # Filter to user-owned VMIDs using local DB assignments + mappings.json without Proxmox calls
+        owned_vmids = _resolve_user_owned_vmids(username)
+        filtered = [r for r in inventory_rows if r.get('vmid') in owned_vmids]
 
-            # Background refresh disabled - causes context issues
-            # Users can manually refresh by reloading the page or using force_refresh=true
-            # TODO: Re-enable once proper app context management is implemented
-
-            return jsonify({"vms": vms, "stale": stale})
-        else:
-            vms = get_vms_for_user(user, search=search or None, skip_ips=False, force_refresh=force_refresh)
-        
-        # Check which VMs can actually generate RDP files
-        rdp_cache_valid = get_rdp_cache_time() > 0  # Has the port scan completed?
-        
-        for vm in vms:
-            rdp_can_build = False
-            rdp_port_available = False
-            
-            # Check if build_rdp would succeed (has valid IP)
+        # Determine staleness based on newest row age
+        latest_dt = None
+        for r in inventory_rows:
+            lu = r.get('last_updated')
+            if not lu:
+                continue
             try:
-                build_rdp(vm)
-                rdp_can_build = True
+                dt = datetime.fromisoformat(lu.replace('Z', ''))
+                if latest_dt is None or dt > latest_dt:
+                    latest_dt = dt
             except Exception:
-                rdp_can_build = False
-            
-            # Check if this is Windows OR has port 3389 open
-            if vm.get('category') == 'windows':
-                rdp_port_available = True  # Windows always assumed to have RDP
-            elif rdp_cache_valid and vm.get('ip') and vm['ip'] not in ('N/A', 'Fetching...', ''):
-                rdp_port_available = has_rdp_port_open(vm['ip'])
-            
-            # Only show button if BOTH conditions met
-            vm['rdp_available'] = rdp_can_build and rdp_port_available
-        
-        return jsonify(vms)
+                continue
+        if latest_dt is None:
+            stale = True  # Empty inventory or unparsable timestamps -> treat as stale
+        else:
+            age = (datetime.utcnow() - latest_dt).total_seconds()
+            stale = age > VM_CACHE_TTL
+
+        # Trigger background refresh if stale or forced
+        # Background refresh only if stale (force_refresh handled in live path above)
+        if stale:
+            _trigger_background_refresh(username, reason="stale")
+
+        # Augment with RDP availability (uses cached port scan data)
+        _augment_rdp_availability(filtered)
+
+        return jsonify({"vms": filtered, "stale": stale, "mode": "inventory"})
     except Exception as e:
-        logger.exception("Failed to get VMs for user %s", user)
-        return jsonify({
-            "error": True,
-            "message": f"Failed to load VMs: {str(e)}",
-            "details": "Check if Proxmox server is reachable and credentials are correct"
-        }), 500
+        logger.exception("inventory fast path failed for user %s", username)
+        return jsonify({"error": True, "message": f"Inventory path failed: {e}"}), 500
 
 
 @api_vms_bp.route("/vm/<int:vmid>/ip")
@@ -173,6 +162,95 @@ def api_vm_ip(vmid: int):
     except Exception as e:
         logger.exception("Failed to get IP for VM %d", vmid)
         return jsonify({"error": str(e), "status": "error"}), 500
+
+
+def _resolve_user_owned_vmids(username: str) -> set:
+    """Resolve VMIDs the user should see without performing a live Proxmox fetch.
+
+    Combines class-based assignments (VMAssignment) and legacy mappings.json.
+    Accepts realm-suffixed usernames (e.g., student1@pve) and normalizes variants.
+    """
+    variants = {username}
+    if '@' in username:
+        base = username.split('@', 1)[0]
+        variants.add(base)
+    # Proxmox common realms
+    variants.update({v + '@pve' for v in list(variants)})
+    variants.update({v + '@pam' for v in list(variants)})
+
+    owned = set()
+    try:
+        # Class-based assignments
+        user_row = User.query.filter(User.username.in_(variants)).first()
+        if user_row:
+            for assign in user_row.vm_assignments:
+                if assign.proxmox_vmid:
+                    owned.add(assign.proxmox_vmid)
+    except Exception:
+        logger.exception("Failed to gather class assignments for %s", username)
+
+    # Legacy mappings.json
+    try:
+        import os, json
+        if os.path.exists(MAPPINGS_FILE):
+            with open(MAPPINGS_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            # Data may be {"user@pve": [100,101]} or similar
+            for name_variant in variants:
+                vm_list = data.get(name_variant)
+                if isinstance(vm_list, list):
+                    for vmid in vm_list:
+                        try:
+                            owned.add(int(vmid))
+                        except Exception:
+                            continue
+    except Exception:
+        logger.exception("Failed to parse mappings.json for %s", username)
+
+    return owned
+
+
+def _trigger_background_refresh(username: str, reason: str):
+    """Spawn a background thread to perform a live Proxmox fetch and persist inventory.
+
+    Applies cooldown to avoid repeated expensive refreshes. Uses app context safely.
+    """
+    global _last_bg_refresh
+    now = time.time()
+    if now - _last_bg_refresh < _bg_refresh_cooldown and reason != 'force':
+        return  # Respect cooldown unless forced
+    _last_bg_refresh = now
+
+    app = current_app._get_current_object()
+
+    def _worker():
+        with app.app_context():
+            try:
+                live_vms = get_vms_for_user(username, skip_ips=False, force_refresh=True)
+                persist_vm_inventory(live_vms)
+                logger.info("Background refresh complete (%s) for %s: %d VMs", reason, username, len(live_vms))
+            except Exception as e:
+                logger.exception("Background refresh failed (%s) for %s: %s", reason, username, e)
+
+    threading.Thread(target=_worker, daemon=True).start()
+
+
+def _augment_rdp_availability(vms: list):
+    """Add rdp_available field to each VM dict in-place based on IP and port scan cache."""
+    rdp_cache_valid = get_rdp_cache_time() > 0
+    for vm in vms:
+        rdp_can_build = False
+        rdp_port_available = False
+        try:
+            build_rdp(vm)
+            rdp_can_build = True
+        except Exception:
+            rdp_can_build = False
+        if vm.get('category') == 'windows':
+            rdp_port_available = True
+        elif rdp_cache_valid and vm.get('ip') and vm['ip'] not in ('N/A', 'Fetching...', ''):
+            rdp_port_available = has_rdp_port_open(vm['ip'])
+        vm['rdp_available'] = rdp_can_build and rdp_port_available
 
 
 @api_vms_bp.route("/vm/<int:vmid>/status")

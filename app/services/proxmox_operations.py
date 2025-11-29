@@ -108,8 +108,8 @@ def list_proxmox_templates(cluster_ip: str = None) -> List[Dict[str, Any]]:
         return []
 
 
-def clone_vm_from_template(template_vmid: int, new_vmid: int, name: str, node: str, 
-                           cluster_ip: str = None) -> Tuple[bool, str]:
+def clone_vm_from_template(template_vmid: int, new_vmid: int, name: str, node: str,
+                           cluster_ip: str = None, max_retries: int = 5, retry_delay: int = 4) -> Tuple[bool, str]:
     """Clone a VM from a template.
     
     Args:
@@ -138,19 +138,32 @@ def clone_vm_from_template(template_vmid: int, new_vmid: int, name: str, node: s
             return False, f"Cluster not found for IP: {target_ip}"
         
         proxmox = get_proxmox_admin_for_cluster(cluster_id)
-        
-        safe_name = sanitize_vm_name(name)
-        # Clone the template
-        proxmox.nodes(node).qemu(template_vmid).clone.post(
-            newid=new_vmid,
-            name=safe_name,
-            full=1  # Full clone (not linked)
-        )
 
-        logger.info(f"Cloned template {template_vmid} to {new_vmid} ({safe_name}) on {node}")
-        
-        # Wait for clone to complete
+        safe_name = sanitize_vm_name(name)
+
         import time
+        attempt = 0
+        while True:
+            try:
+                proxmox.nodes(node).qemu(template_vmid).clone.post(
+                    newid=new_vmid,
+                    name=safe_name,
+                    full=1  # Full clone (not linked)
+                )
+                logger.info(f"Cloned template {template_vmid} to {new_vmid} ({safe_name}) on {node} (attempt {attempt+1})")
+                break
+            except Exception as clone_err:
+                msg = str(clone_err).lower()
+                # Typical locked error: 'VM is locked (clone)' – wait and retry
+                if ('locked' in msg or 'busy' in msg) and attempt < max_retries - 1:
+                    attempt += 1
+                    logger.warning(f"Template VMID {template_vmid} locked/busy, retrying in {retry_delay}s (attempt {attempt}/{max_retries})")
+                    time.sleep(retry_delay)
+                    continue
+                logger.exception(f"Clone failed for template {template_vmid} after {attempt+1} attempts: {clone_err}")
+                return False, f"Clone failed: {clone_err}"
+
+        # Wait a short period for disk/image unlock (post clone task)
         time.sleep(5)
         
         # Create baseline snapshot for reimage functionality
@@ -171,7 +184,7 @@ def clone_vm_from_template(template_vmid: int, new_vmid: int, name: str, node: s
 
 
 def clone_vms_for_class(template_vmid: int, node: str, count: int, name_prefix: str,
-                        cluster_ip: str = None, task_id: str = None) -> List[Dict[str, Any]]:
+                        cluster_ip: str = None, task_id: str = None, per_vm_retry: int = 5) -> List[Dict[str, Any]]:
     """Clone multiple VMs from a template for a class.
     
     Args:
@@ -249,7 +262,8 @@ def clone_vms_for_class(template_vmid: int, node: str, count: int, name_prefix: 
                 new_vmid=next_vmid,
                 name=vm_name,
                 node=node,
-                cluster_ip=cluster_ip
+                cluster_ip=cluster_ip,
+                max_retries=per_vm_retry
             )
             
             if success:

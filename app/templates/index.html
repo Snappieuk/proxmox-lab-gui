@@ -606,7 +606,7 @@ function createVMRow(vm, category) {
         <td>
             <span class="badge ${statusClass}">${statusText}</span>
         </td>
-        <td class="vm-ip">${vm.ip || 'N/A'}</td>
+        <td class="vm-ip"${vm.ip === 'Fetching...' ? ' style="font-style: italic; color: #858585;"' : ''}>${vm.ip || 'N/A'}</td>
         <td>
             <div class="action-buttons">
                 <button class="btn-icon btn-icon-success btn-power" 
