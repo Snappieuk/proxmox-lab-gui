@@ -31,6 +31,10 @@ from app.services.arp_scanner import get_scan_status, has_rdp_port_open, get_rdp
 
 logger = logging.getLogger(__name__)
 
+# Track last background refresh to prevent spam
+_last_bg_refresh = 0
+_bg_refresh_cooldown = 60  # seconds
+
 api_vms_bp = Blueprint('api_vms', __name__, url_prefix='/api')
 
 
@@ -83,20 +87,29 @@ def api_vms():
                 age = (datetime.utcnow() - latest_dt).total_seconds()
                 stale = age > VM_CACHE_TTL
 
-            # If stale trigger background refresh (non-blocking)
+            # If stale trigger background refresh (non-blocking) - with cooldown to prevent spam
             if stale:
-                def _bg_refresh():
-                    import logging
-                    logger = logging.getLogger(__name__)
-                    try:
-                        # Need app context for database operations
-                        with current_app.app_context():
-                            # Force refresh to update inventory persistence
-                            from app.services.proxmox_client import get_all_vms
-                            get_all_vms(skip_ips=False, force_refresh=True)
-                    except Exception as e:
-                        logger.warning(f"Background inventory refresh failed: {e}")
-                threading.Thread(target=_bg_refresh, daemon=True).start()
+                global _last_bg_refresh
+                now = time.time()
+                if now - _last_bg_refresh > _bg_refresh_cooldown:
+                    _last_bg_refresh = now
+                    # Capture app reference before thread starts
+                    app = current_app._get_current_object()
+                    def _bg_refresh():
+                        import logging
+                        logger = logging.getLogger(__name__)
+                        try:
+                            # Use captured app reference for context
+                            with app.app_context():
+                                # Force refresh to update inventory persistence
+                                from app.services.proxmox_client import get_all_vms
+                                get_all_vms(skip_ips=False, force_refresh=True)
+                        except Exception as e:
+                            logger.warning(f"Background inventory refresh failed: {e}")
+                    threading.Thread(target=_bg_refresh, daemon=True).start()
+                    logger.debug("Background inventory refresh triggered (cooldown active for 60s)")
+                else:
+                    logger.debug(f"Background refresh skipped (cooldown: {int(_bg_refresh_cooldown - (now - _last_bg_refresh))}s remaining)")
 
             return jsonify({"vms": vms, "stale": stale})
         else:
