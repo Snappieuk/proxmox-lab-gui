@@ -257,9 +257,43 @@ def clone_vms_for_class(template_vmid: int, node: str, count: int, name_prefix: 
         # Smart node selection: distribute VMs across nodes based on resources
         node_assignments = []
         if smart_placement:
-            logger.info(f"Using smart placement to distribute {count + (1 if include_template_vm else 0)} VMs across cluster")
+            logger.info(f"Using smart placement with dynamic re-scoring to distribute {count + (1 if include_template_vm else 0)} VMs across cluster")
             total_vms = (1 if include_template_vm else 0) + count
-            node_assignments = distribute_vms_across_nodes(cluster_id, total_vms)
+            
+            # Get template info to estimate resource requirements
+            estimated_ram_mb = 2048  # Default
+            estimated_cores = 1.0     # Default
+            
+            try:
+                # Query template configuration to get accurate resource estimates
+                template_config = None
+                nodes_list = proxmox.nodes.get()
+                
+                for node_info in nodes_list:
+                    try:
+                        node_name = node_info.get('node')
+                        template_config = proxmox.nodes(node_name).qemu(template_vmid).config.get()
+                        break  # Found the template
+                    except:
+                        continue  # Template not on this node
+                
+                if template_config:
+                    # Extract resource configuration
+                    estimated_ram_mb = template_config.get('memory', 2048)
+                    estimated_cores = float(template_config.get('cores', 1))
+                    logger.info(f"Template resource estimates from config: {estimated_ram_mb}MB RAM, {estimated_cores} cores")
+                else:
+                    logger.warning(f"Could not fetch template config, using defaults: {estimated_ram_mb}MB RAM, {estimated_cores} cores")
+            except Exception as e:
+                logger.warning(f"Failed to get template resource estimates: {e}, using defaults")
+            
+            # Get node assignments with dynamic re-scoring based on estimated resources
+            node_assignments = distribute_vms_across_nodes(
+                cluster_id, 
+                total_vms,
+                estimated_ram_mb=estimated_ram_mb,
+                estimated_cpu_cores=estimated_cores
+            )
             
             if not node_assignments:
                 logger.warning("Smart placement failed, falling back to single node")
