@@ -87,29 +87,9 @@ def api_vms():
                 age = (datetime.utcnow() - latest_dt).total_seconds()
                 stale = age > VM_CACHE_TTL
 
-            # If stale trigger background refresh (non-blocking) - with cooldown to prevent spam
-            if stale:
-                global _last_bg_refresh
-                now = time.time()
-                if now - _last_bg_refresh > _bg_refresh_cooldown:
-                    _last_bg_refresh = now
-                    # Capture app reference before thread starts
-                    app = current_app._get_current_object()
-                    def _bg_refresh():
-                        import logging
-                        logger = logging.getLogger(__name__)
-                        try:
-                            # Use captured app reference for context
-                            with app.app_context():
-                                # Force refresh to update inventory persistence
-                                from app.services.proxmox_client import get_all_vms
-                                get_all_vms(skip_ips=False, force_refresh=True)
-                        except Exception as e:
-                            logger.warning(f"Background inventory refresh failed: {e}")
-                    threading.Thread(target=_bg_refresh, daemon=True).start()
-                    logger.debug("Background inventory refresh triggered (cooldown active for 60s)")
-                else:
-                    logger.debug(f"Background refresh skipped (cooldown: {int(_bg_refresh_cooldown - (now - _last_bg_refresh))}s remaining)")
+            # Background refresh disabled - causes context issues
+            # Users can manually refresh by reloading the page or using force_refresh=true
+            # TODO: Re-enable once proper app context management is implemented
 
             return jsonify({"vms": vms, "stale": stale})
         else:
