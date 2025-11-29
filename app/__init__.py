@@ -155,7 +155,7 @@ def create_app(config=None):
             # Poll for a short time to get actual URL
             import time
             depl_url = None
-            for _ in range(8):
+            for _ in range(12):
                 url = get_depl0y_url()
                 if url:
                     depl_url = url
@@ -165,7 +165,10 @@ def create_app(config=None):
             # If still not available, use the expected URL (service may still be starting)
             if not depl_url:
                 host_ip = _detect_host_ip()
-                depl_url = f"http://{host_ip}:{DEPL0Y_PORT}"
+                if DEPL0Y_PORT == 80:
+                    depl_url = f"http://{host_ip}"
+                else:
+                    depl_url = f"http://{host_ip}:{DEPL0Y_PORT}"
                 logger.info(f"Depl0y starting in background, using expected URL: {depl_url}")
             
             app.config['DEPL0Y_URL'] = depl_url

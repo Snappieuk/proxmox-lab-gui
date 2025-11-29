@@ -17,8 +17,9 @@ logger = logging.getLogger(__name__)
 # Configuration
 DEPL0Y_DIR = Path(__file__).parent.parent.parent / "depl0y"
 DEPL0Y_REPO = "https://github.com/agit8or1/Depl0y.git"
-DEPL0Y_PORT = 3000
-DEPL0Y_BACKEND_PORT = 8000
+# Frontend defaults to 80 for Depl0y; allow override via env
+DEPL0Y_PORT = int(os.getenv("DEPL0Y_FRONTEND_PORT", "80"))
+DEPL0Y_BACKEND_PORT = int(os.getenv("DEPL0Y_BACKEND_PORT", "8000"))
 
 
 def find_available_port(start_port: int, max_attempts: int = 10) -> int:
@@ -73,8 +74,12 @@ def get_depl0y_url() -> str:
     host_ip = _detect_host_ip()
     # Check on detected host IP first, then localhost
     if is_depl0y_running(host_ip):
+        if DEPL0Y_PORT == 80:
+            return f"http://{host_ip}"
         return f"http://{host_ip}:{DEPL0Y_PORT}"
     if is_depl0y_running('127.0.0.1'):
+        if DEPL0Y_PORT == 80:
+            return f"http://{host_ip}"
         return f"http://{host_ip}:{DEPL0Y_PORT}"
     return None
 
@@ -94,34 +99,55 @@ def install_depl0y() -> bool:
             timeout=300
         )
         logger.info("Depl0y cloned successfully")
-        
-        # Install backend dependencies
+
+        # Preferred: use Depl0y's own installer if available
+        install_sh = DEPL0Y_DIR / "install.sh"
+        if install_sh.exists():
+            try:
+                logger.info("Running Depl0y's install.sh script...")
+                # Provide ports and host via env; script should be idempotent
+                env = os.environ.copy()
+                env.update({
+                    "HOST": "0.0.0.0",
+                    "DEPL0Y_FRONTEND_PORT": str(DEPL0Y_PORT),
+                    "DEPL0Y_BACKEND_PORT": str(DEPL0Y_BACKEND_PORT),
+                })
+                subprocess.run(
+                    ['bash', str(install_sh)],
+                    cwd=DEPL0Y_DIR,
+                    env=env,
+                    check=True,
+                    timeout=1800
+                )
+                logger.info("Depl0y install.sh finished successfully")
+                return True
+            except subprocess.CalledProcessError as e:
+                logger.warning(f"install.sh failed, falling back to manual install: {e}")
+
+        # Fallback: manual install (backend + frontend deps)
         backend_dir = DEPL0Y_DIR / "backend"
         if backend_dir.exists():
-            logger.info("Installing Depl0y backend dependencies...")
+            logger.info("Installing Depl0y backend dependencies (fallback)...")
             subprocess.run(
                 ['pip', 'install', '-r', 'requirements.txt'],
                 cwd=backend_dir,
                 check=True,
-                capture_output=True,
-                timeout=600
+                timeout=900
             )
-        
-        # Install frontend dependencies (if Node.js available)
+
         frontend_dir = DEPL0Y_DIR / "frontend"
         if frontend_dir.exists():
             try:
-                logger.info("Installing Depl0y frontend dependencies...")
+                logger.info("Installing Depl0y frontend dependencies (fallback)...")
                 subprocess.run(
                     ['npm', 'install'],
                     cwd=frontend_dir,
                     check=True,
-                    capture_output=True,
-                    timeout=600
+                    timeout=900
                 )
             except (subprocess.CalledProcessError, FileNotFoundError):
                 logger.warning("npm not available, skipping frontend build")
-        
+
         return True
         
     except subprocess.TimeoutExpired:
@@ -141,7 +167,30 @@ def start_depl0y_backend() -> bool:
         if is_depl0y_running():
             logger.info("Depl0y is already running")
             return True
-        
+
+        # If install.sh created a start script or process manager, prefer that
+        start_sh = DEPL0Y_DIR / "start.sh"
+        if start_sh.exists():
+            try:
+                logger.info("Starting Depl0y via start.sh...")
+                env = os.environ.copy()
+                env.update({
+                    "HOST": "0.0.0.0",
+                    "DEPL0Y_FRONTEND_PORT": str(DEPL0Y_PORT),
+                    "DEPL0Y_BACKEND_PORT": str(DEPL0Y_BACKEND_PORT),
+                })
+                subprocess.Popen(
+                    ['bash', str(start_sh)],
+                    cwd=DEPL0Y_DIR,
+                    env=env,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True
+                )
+                time.sleep(4)
+            except Exception as e:
+                logger.warning(f"start.sh failed, falling back to manual start: {e}")
+
         backend_dir = DEPL0Y_DIR / "backend"
         if not backend_dir.exists():
             logger.error(f"Depl0y backend directory not found: {backend_dir}")
@@ -149,14 +198,24 @@ def start_depl0y_backend() -> bool:
         
         logger.info("Starting Depl0y backend...")
         
-        # Start backend (uvicorn main:app)
-        subprocess.Popen(
-            ['uvicorn', 'main:app', '--host', '0.0.0.0', '--port', str(DEPL0Y_BACKEND_PORT)],
-            cwd=backend_dir,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True
-        )
+        # Start backend (uvicorn main:app) with robust fallback
+        try:
+            subprocess.Popen(
+                ['uvicorn', 'main:app', '--host', '0.0.0.0', '--port', str(DEPL0Y_BACKEND_PORT)],
+                cwd=backend_dir,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True
+            )
+        except FileNotFoundError:
+            import sys
+            subprocess.Popen(
+                [sys.executable, '-m', 'uvicorn', 'main:app', '--host', '0.0.0.0', '--port', str(DEPL0Y_BACKEND_PORT)],
+                cwd=backend_dir,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True
+            )
         
         # Give it a moment to start
         time.sleep(2)
@@ -165,8 +224,13 @@ def start_depl0y_backend() -> bool:
         frontend_dir = DEPL0Y_DIR / "frontend"
         if frontend_dir.exists() and (frontend_dir / "node_modules").exists():
             logger.info("Starting Depl0y frontend...")
+            # If port is 80, use preview/build if available; otherwise dev server
+            cmd = ['npm', 'run', 'dev', '--', '--port', str(DEPL0Y_PORT), '--host']
+            if DEPL0Y_PORT == 80:
+                # Prefer preview on 80 to serve built assets
+                cmd = ['npm', 'run', 'preview', '--', '--port', str(DEPL0Y_PORT), '--host']
             subprocess.Popen(
-                ['npm', 'run', 'dev', '--', '--port', str(DEPL0Y_PORT), '--host'],
+                cmd,
                 cwd=frontend_dir,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,

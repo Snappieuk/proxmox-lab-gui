@@ -31,8 +31,13 @@ def persist_vm_inventory(vms: List[Dict], cleanup_missing: bool = True) -> int:
     updated_count = 0
     
     try:
+        # Use a single timestamp for this sync
+        from datetime import datetime
+        sync_ts = datetime.utcnow()
+        seen_clusters = set()
         for vm in vms:
             cluster_id = vm.get('cluster_id', 'default')
+            seen_clusters.add(cluster_id)
             vmid = vm.get('vmid')
             
             if not vmid:
@@ -79,31 +84,24 @@ def persist_vm_inventory(vms: List[Dict], cleanup_missing: bool = True) -> int:
             inventory.ssh_available = vm.get('ssh_available', False)
             
             # Update timestamp
-            inventory.last_updated = datetime.utcnow()
-            inventory.last_status_check = datetime.utcnow()
+            inventory.last_updated = sync_ts
+            inventory.last_status_check = sync_ts
             inventory.sync_error = None  # Clear any previous errors
             
             updated_count += 1
         
-        # Remove VMs that no longer exist in Proxmox
+        # Remove VMs not touched in this sync for seen clusters
         if cleanup_missing and vms:
-            # Get all cluster IDs that were synced
-            synced_clusters = set(vm.get('cluster_id', 'default') for vm in vms)
-            
-            # For each synced cluster, get VMIDs that were seen
-            for cluster_id in synced_clusters:
-                cluster_vmids = set(vm.get('vmid') for vm in vms if vm.get('cluster_id', 'default') == cluster_id)
-                
-                # Find VMs in DB that weren't in the sync
+            from app.models import VMInventory
+            for cluster_id in seen_clusters:
                 missing = VMInventory.query.filter(
                     VMInventory.cluster_id == cluster_id,
-                    VMInventory.vmid.notin_(cluster_vmids)
+                    VMInventory.last_updated < sync_ts
                 ).all()
-                
                 if missing:
                     logger.info(f"Removing {len(missing)} deleted VMs from cluster {cluster_id}")
-                    for vm in missing:
-                        db.session.delete(vm)
+                    for rec in missing:
+                        db.session.delete(rec)
         
         db.session.commit()
         logger.info(f"Persisted {updated_count} VMs to inventory")
