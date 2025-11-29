@@ -1299,10 +1299,10 @@ def _enrich_vms_with_arp_ips(vms: List[Dict[str, Any]], force_sync: bool = False
         logger.info("=== ARP SCAN COMPLETE === No running VMs need ARP discovery")
         return
     
-    # Run ARP scan in background mode (non-blocking)
-    # Returns cached IPs immediately, scan happens in background thread
-    # VMs without cached IPs will show "Fetching..." until background scan completes
-    discovered_ips = discover_ips_via_arp(vm_mac_map, subnets=ARP_SUBNETS, background=True)
+    # Run ARP scan (sync or async based on force_sync parameter)
+    # force_sync=True blocks until scan completes (used by background sync for database persistence)
+    # force_sync=False runs in background thread (used by web requests for fast response)
+    discovered_ips = discover_ips_via_arp(vm_mac_map, subnets=ARP_SUBNETS, background=not force_sync)
     
     # Update VMs with discovered IPs (from cache only, background scan will update later)
     # IMPORTANT: Only update VMs that have IPs in discovered_ips
@@ -1654,12 +1654,18 @@ def get_all_vms(skip_ips: bool = False, force_refresh: bool = False) -> List[Dic
 
     # Run ARP-based IP discovery unless skipping IPs
     if not skip_ips and ARP_SCANNER_AVAILABLE:
-        logger.info("get_all_vms: calling ARP scan enrichment")
-        # Accelerated IP enrichment: run synchronous ARP scan if small VM set
-        if len(out) <= 25:
+        logger.info("get_all_vms: calling ARP scan enrichment (force_refresh=%s)", force_refresh)
+        # Background sync should always wait for IPs (synchronous scan)
+        # Web requests use async scan for fast response (unless small VM set)
+        if force_refresh:
+            # Background sync - always synchronous to ensure IPs are persisted
+            _enrich_vms_with_arp_ips(out, force_sync=True)
+        elif len(out) <= 25:
+            # Small VM set - run synchronous scan
             _enrich_vms_with_arp_ips(out, force_sync=True)
         else:
-            _enrich_vms_with_arp_ips(out)
+            # Large VM set from web request - async scan
+            _enrich_vms_with_arp_ips(out, force_sync=False)
     elif skip_ips:
         logger.info("get_all_vms: SKIPPING ARP scan (skip_ips=True)")
     else:
