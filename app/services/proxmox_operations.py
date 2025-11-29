@@ -361,7 +361,7 @@ def clone_vms_for_class(template_vmid: int, node: str, count: int, name_prefix: 
                             if maxmem_bytes:
                                 try:
                                     estimated_ram_mb = int(maxmem_bytes) // (1024*1024)
-                                } except Exception:
+                                except Exception:
                                     pass
                             if cpus:
                                 try:
