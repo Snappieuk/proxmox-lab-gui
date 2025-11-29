@@ -56,7 +56,7 @@ def get_template_info(class_id: int):
     
     # Check if class creation is still in progress
     if hasattr(class_, 'clone_task_id') and class_.clone_task_id:
-        from app.services.class_service import get_clone_progress
+        from app.services.clone_progress import get_clone_progress
         progress = get_clone_progress(class_.clone_task_id)
         if progress.get('status') == 'running':
             return jsonify({

@@ -68,6 +68,29 @@ def create_app(config=None):
     from app.routes import register_blueprints
     register_blueprints(app)
     
+    # Global error handler for API routes to return JSON instead of HTML
+    @app.errorhandler(Exception)
+    def handle_api_error(error):
+        """Return JSON for API errors instead of HTML."""
+        from flask import request, jsonify
+        import traceback
+        
+        # Only apply to /api/ routes
+        if request.path.startswith('/api/'):
+            logger.error(f"API error on {request.path}: {error}", exc_info=True)
+            
+            # Get HTTP status code if available
+            status_code = getattr(error, 'code', 500)
+            
+            return jsonify({
+                'ok': False,
+                'error': str(error),
+                'type': type(error).__name__
+            }), status_code
+        
+        # For non-API routes, use default Flask error handling
+        raise error
+    
     # Register context processor
     @app.context_processor
     def inject_admin_flag():
