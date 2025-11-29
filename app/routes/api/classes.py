@@ -197,15 +197,19 @@ def create_new_class():
     import threading
     def _background_clone_and_deploy():
         try:
+            # Ensure Flask application context in background thread
+            from flask import current_app
+            app = current_app._get_current_object()
+            with app.app_context():
             from datetime import datetime
             from app.services.proxmox_service import get_proxmox_admin
             from app.models import db, Class
             
             # Re-fetch class in thread context
-            class_obj = Class.query.get(class_id_val)
-            if not class_obj:
-                update_clone_progress(task_id, status="failed", errors=["Class not found"])
-                return
+                class_obj = Class.query.get(class_id_val)
+                if not class_obj:
+                    update_clone_progress(task_id, status="failed", error="Class not found")
+                    return
             
             # Step 1: Clone the source template exclusively for this class
             update_clone_progress(task_id, completed=0, message=f"Cloning template '{source_name}' (VMID {source_vmid}) for exclusive class use...")
@@ -236,7 +240,7 @@ def create_new_class():
             )
             
             if not clone_success:
-                update_clone_progress(task_id, status="failed", errors=[f"Failed to clone template: {clone_msg}"])
+                update_clone_progress(task_id, status="failed", error=f"Failed to clone template: {clone_msg}")
                 return
             
             update_clone_progress(task_id, completed=1, message=f"Class base template created: VMID {class_template_vmid}")
@@ -249,7 +253,7 @@ def create_new_class():
             )
             
             if not convert_success:
-                update_clone_progress(task_id, status="failed", errors=[f"Failed to convert to template: {convert_msg}"])
+                update_clone_progress(task_id, status="failed", error=f"Failed to convert to template: {convert_msg}")
                 delete_vm(class_template_vmid, source_node, CLASS_CLUSTER_IP)
                 return
             
@@ -318,7 +322,7 @@ def create_new_class():
                 update_clone_progress(task_id, completed=2, message=f"Teacher editable VM created: {teacher_vm_name}")
             else:
                 logger.error(f"Failed to create teacher VM: {clone_msg}")
-                update_clone_progress(task_id, status="failed", errors=[f"Failed to create teacher VM: {clone_msg}"])
+                update_clone_progress(task_id, status="failed", error=f"Failed to create teacher VM: {clone_msg}")
                 return
             
             # Step 3: Create teacher template VM (for students to clone from after teacher customization)
@@ -358,11 +362,11 @@ def create_new_class():
                     update_clone_progress(task_id, completed=3, message=f"Teacher template VM created: {teacher_template_name}")
                 else:
                     logger.error(f"Failed to convert teacher template: {convert_msg}")
-                    update_clone_progress(task_id, status="failed", errors=[f"Failed to convert teacher template: {convert_msg}"])
+                    update_clone_progress(task_id, status="failed", error=f"Failed to convert teacher template: {convert_msg}")
                     return
             else:
                 logger.error(f"Failed to create teacher template VM: {clone_msg}")
-                update_clone_progress(task_id, status="failed", errors=[f"Failed to create teacher template VM: {clone_msg}"])
+                update_clone_progress(task_id, status="failed", error=f"Failed to create teacher template VM: {clone_msg}")
                 return
             
             # Step 4: Create student VMs from teacher template
@@ -413,8 +417,8 @@ def create_new_class():
             )
             
         except Exception as e:
-            logger.exception(f"Template cloning and deployment failed for class {class_id_val}: {e}")
-            update_clone_progress(task_id, status="failed", errors=[str(e)])
+                logger.exception(f"Template cloning and deployment failed for class {class_id_val}: {e}")
+                update_clone_progress(task_id, status="failed", error=str(e))
     
     threading.Thread(target=_background_clone_and_deploy, daemon=True).start()
     
