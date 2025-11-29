@@ -318,21 +318,47 @@ def clone_vms_for_class(template_vmid: int, node: str, count: int, name_prefix: 
             try:
                 # Query template configuration to get accurate resource estimates
                 template_config = None
+                template_node = None
+                # First, reliably find the node hosting the template VMID via cluster resources
+                try:
+                    resources = proxmox.cluster.resources.get(type="vm")
+                    for r in resources:
+                        if int(r.get("vmid", -1)) == int(template_vmid):
+                            template_node = r.get("node")
+                            break
+                except Exception:
+                    template_node = None
+
+                # Fallback: probe nodes if cluster resources didn't reveal location
                 nodes_list = proxmox.nodes.get()
-                
-                for node_info in nodes_list:
+                if template_node:
                     try:
-                        node_name = node_info.get('node')
-                        template_config = proxmox.nodes(node_name).qemu(template_vmid).config.get()
-                        break  # Found the template
-                    except:
-                        continue  # Template not on this node
-                
+                        template_config = proxmox.nodes(template_node).qemu(template_vmid).config.get()
+                    except Exception:
+                        template_config = None
+                if not template_config:
+                    for node_info in nodes_list:
+                        try:
+                            node_name = node_info.get('node')
+                            template_config = proxmox.nodes(node_name).qemu(template_vmid).config.get()
+                            template_node = node_name
+                            break
+                        except Exception:
+                            continue
+
                 if template_config:
-                    # Extract resource configuration
-                    estimated_ram_mb = template_config.get('memory', 2048)
-                    estimated_cores = float(template_config.get('cores', 1))
-                    logger.info(f"Template resource estimates from config: {estimated_ram_mb}MB RAM, {estimated_cores} cores")
+                    # Extract resource configuration with defensive typing
+                    memory_mb = template_config.get('memory')
+                    cores_val = template_config.get('cores')
+                    try:
+                        estimated_ram_mb = int(memory_mb) if memory_mb is not None else 2048
+                    except Exception:
+                        estimated_ram_mb = 2048
+                    try:
+                        estimated_cores = float(cores_val) if cores_val is not None else 1.0
+                    except Exception:
+                        estimated_cores = 1.0
+                    logger.info(f"Template resource estimates from config: {estimated_ram_mb}MB RAM, {estimated_cores} cores (node {template_node})")
                 else:
                     logger.warning(f"Could not fetch template config, using defaults: {estimated_ram_mb}MB RAM, {estimated_cores} cores")
             except Exception as e:

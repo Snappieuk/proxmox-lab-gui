@@ -75,21 +75,43 @@ def calculate_node_score(node_stats: Dict) -> float:
     if not node_stats or not node_stats.get('online'):
         return 0.0
     
+    # Coerce numeric fields defensively
+    try:
+        mem_percent = float(node_stats.get('mem_percent', 100))
+    except Exception:
+        mem_percent = 100.0
+    try:
+        cpu_usage = float(node_stats.get('cpu_usage', 100))
+    except Exception:
+        cpu_usage = 100.0
+    try:
+        iowait = float(node_stats.get('iowait', 100))
+    except Exception:
+        iowait = 100.0
+    try:
+        load_avg = float(node_stats.get('load_avg', 0))
+    except Exception:
+        load_avg = 0.0
+    try:
+        cpu_count = int(node_stats.get('cpu_count', 1)) or 1
+    except Exception:
+        cpu_count = 1
+
     # Memory score: More free memory = better (0-100)
-    mem_free_percent = 100 - node_stats['mem_percent']
+    mem_free_percent = 100 - mem_percent
     mem_score = mem_free_percent * 0.4
     
     # CPU score: Less usage = better (0-100)
-    cpu_free_percent = 100 - min(node_stats['cpu_usage'], 100)
+    cpu_free_percent = 100 - min(cpu_usage, 100)
     cpu_score = cpu_free_percent * 0.3
     
     # IO wait score: Less wait = better (0-100)
-    io_free_percent = 100 - min(node_stats['iowait'], 100)
+    io_free_percent = 100 - min(iowait, 100)
     io_score = io_free_percent * 0.2
     
     # Load average score: Lower load per core = better (0-100)
     # Normalize load avg: 0.0 = 100, 1.0 per core = 50, 2.0+ per core = 0
-    load_per_core = node_stats['load_avg'] / node_stats['cpu_count']
+    load_per_core = load_avg / cpu_count
     load_score = max(0, min(100, 100 - (load_per_core * 50))) * 0.1
     
     total_score = mem_score + cpu_score + io_score + load_score
