@@ -29,19 +29,15 @@ def sanitize_vm_name(name: str, fallback: str = "vm") -> str:
     - Ensure starts/ends with alphanumeric (prepend/append fallback tokens if needed)
     - Limit length to 63 chars
     - If result empty, use fallback
-    This keeps behavior predictable and prevents 400 clone errors for invalid names.
     """
     if not isinstance(name, str):
         name = str(name) if name is not None else ""
     original = name
     name = name.lower().strip()
-    # Replace invalid chars with '-'
     name = re.sub(r"[^a-z0-9-]", "-", name)
-    # Collapse multiple hyphens
     name = re.sub(r"-+", "-", name)
-    # Strip leading/trailing hyphens
     name = name.strip('-')
-        import time
+    if not name:
         name = fallback
     # Ensure starts with alphanumeric
     if not name[0].isalnum():
@@ -49,20 +45,12 @@ def sanitize_vm_name(name: str, fallback: str = "vm") -> str:
     # Ensure ends with alphanumeric
     if not name[-1].isalnum():
         name = f"{name}0"
-    # Truncate to 63 characters (typical hostname limit)
+    # Truncate to 63 characters
     if len(name) > 63:
-        name = name[:63].rstrip('-')
-        if not name:
-            name = fallback
+        name = name[:63].rstrip('-') or fallback
     if name != original:
         logger.info(f"sanitize_vm_name: '{original}' -> '{name}'")
     return name
-                    # Exponential backoff
-                    delay = retry_delay * (2 ** (attempt - 1))
-                    # Cap maximum delay to avoid excessive wait
-                    delay = min(delay, 60)
-                    logger.warning(f"Template VMID {template_vmid} locked/busy, retrying in {delay}s (attempt {attempt}/{max_retries})")
-                    time.sleep(delay)
 def list_proxmox_templates(cluster_ip: str = None) -> List[Dict[str, Any]]:
     """List all VM templates on a Proxmox cluster.
     
