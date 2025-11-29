@@ -86,6 +86,8 @@ def api_vms():
             # If stale trigger background refresh (non-blocking)
             if stale:
                 def _bg_refresh():
+                    import logging
+                    logger = logging.getLogger(__name__)
                     try:
                         # Force refresh to update inventory persistence
                         from app.services.proxmox_client import get_all_vms

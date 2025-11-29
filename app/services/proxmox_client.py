@@ -461,7 +461,12 @@ def invalidate_cluster_cache() -> None:
 def _get_cached_ip_from_db(cluster_id: str, vmid: int) -> Optional[str]:
     """Get IP from database cache if not expired (1 hour TTL)."""
     from datetime import datetime, timedelta
+    from flask import has_app_context
     from app.models import VMAssignment, VMIPCache
+    
+    if not has_app_context():
+        logger.debug("_get_cached_ip_from_db: skipping (no app context)")
+        return None
     
     try:
         # Check VMAssignment first (class VMs)
@@ -490,7 +495,12 @@ def _get_cached_ips_batch(cluster_id: str, vmids: List[int]) -> Dict[int, str]:
         Dict mapping vmid to cached IP (only includes VMs with valid cached IPs)
     """
     from datetime import datetime, timedelta
+    from flask import has_app_context
     from app.models import VMAssignment, VMIPCache
+    
+    if not has_app_context():
+        logger.debug("_get_cached_ips_batch: skipping (no app context)")
+        return {}
     
     results: Dict[int, str] = {}
     cutoff = datetime.utcnow() - timedelta(hours=1)
@@ -528,7 +538,12 @@ def _get_cached_ips_batch(cluster_id: str, vmids: List[int]) -> Dict[int, str]:
 def _cache_ip_to_db(cluster_id: str, vmid: int, ip: Optional[str], mac: Optional[str] = None) -> None:
     """Store IP in database cache."""
     from datetime import datetime
+    from flask import has_app_context
     from app.models import db, VMAssignment, VMIPCache
+    
+    if not has_app_context():
+        logger.debug("_cache_ip_to_db: skipping (no app context)")
+        return
     
     if not ip:
         return
@@ -571,7 +586,12 @@ def _cache_ip_to_db(cluster_id: str, vmid: int, ip: Optional[str], mac: Optional
 
 def _clear_vm_ip_cache(cluster_id: str, vmid: int) -> None:
     """Clear IP cache for specific VM in database."""
+    from flask import has_app_context
     from app.models import db, VMAssignment, VMIPCache
+    
+    if not has_app_context():
+        logger.debug("_clear_vm_ip_cache: skipping (no app context)")
+        return
     
     try:
         # Clear VMAssignment cache
