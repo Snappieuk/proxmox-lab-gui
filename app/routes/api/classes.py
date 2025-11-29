@@ -193,13 +193,15 @@ def create_new_class():
     task_id = str(uuid.uuid4())
     start_clone_progress(task_id, pool_size + 3)
     
+    # Capture Flask app context BEFORE starting thread
+    from flask import current_app
+    app = current_app._get_current_object()
+    
     # Clone template and deploy VMs in background thread
     import threading
     def _background_clone_and_deploy():
         try:
-            # Ensure Flask application context in background thread
-            from flask import current_app
-            app = current_app._get_current_object()
+            # Push application context in background thread
             app_ctx = app.app_context()
             app_ctx.push()
             from datetime import datetime
@@ -879,12 +881,15 @@ def create_class_vms(class_id: int):
     task_id = str(uuid.uuid4())
     start_clone_progress(task_id, count + 1)  # Students + teacher
     
+    # Capture Flask app context BEFORE starting thread
+    from flask import current_app
+    app = current_app._get_current_object()
+    
     # Deploy VMs using Terraform in background thread
     import threading
     def _background_terraform_deploy():
         try:
-            from flask import current_app
-            app = current_app._get_current_object()
+            # Push application context in background thread
             app_ctx = app.app_context()
             app_ctx.push()
             from app.services.proxmox_service import get_proxmox_admin
@@ -1117,11 +1122,14 @@ def promote_editable_to_base_template(class_id: int):
     task_id = str(uuid.uuid4())
     start_clone_progress(task_id, 2)  # promote -> optional cleanup
 
+    # Capture Flask app context BEFORE starting thread
+    from flask import current_app
+    app = current_app._get_current_object()
+
     import threading
     def _background_promote():
         try:
-            from flask import current_app
-            app = current_app._get_current_object()
+            # Push application context in background thread
             app_ctx = app.app_context()
             app_ctx.push()
             from app.services.proxmox_service import get_proxmox_admin
