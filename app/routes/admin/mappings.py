@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 admin_mappings_bp = Blueprint('admin_mappings', __name__, url_prefix='/admin')
 
 
-@admin_mappings_bp.route("/mappings")
+@admin_mappings_bp.route("/mappings", endpoint="admin_mappings")
 @admin_required
 def mappings():
     """
