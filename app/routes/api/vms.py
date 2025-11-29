@@ -89,9 +89,11 @@ def api_vms():
                     import logging
                     logger = logging.getLogger(__name__)
                     try:
-                        # Force refresh to update inventory persistence
-                        from app.services.proxmox_client import get_all_vms
-                        get_all_vms(skip_ips=False, force_refresh=True)
+                        # Need app context for database operations
+                        with current_app.app_context():
+                            # Force refresh to update inventory persistence
+                            from app.services.proxmox_client import get_all_vms
+                            get_all_vms(skip_ips=False, force_refresh=True)
                     except Exception as e:
                         logger.warning(f"Background inventory refresh failed: {e}")
                 threading.Thread(target=_bg_refresh, daemon=True).start()
