@@ -683,8 +683,15 @@ def delete_vm_route(class_id: int, assignment_id: int):
     if not assignment:
         return jsonify({"ok": False, "error": "VM assignment not found"}), 404
     
+    # SAFETY CHECK: Verify this assignment belongs to the specified class
+    if assignment.class_id != class_id:
+        logger.error(f"SAFETY VIOLATION: Attempted to delete assignment {assignment_id} (VMID {assignment.proxmox_vmid}) with class_id={assignment.class_id} from class {class_id}")
+        return jsonify({"ok": False, "error": "VM does not belong to this class"}), 403
+    
     vmid = assignment.proxmox_vmid
     node = assignment.node
+    
+    logger.info(f"Deleting VM {vmid} (assignment {assignment_id}) from class {class_id}")
     
     # Delete from database first
     success, msg, _ = delete_vm_assignment(assignment_id)

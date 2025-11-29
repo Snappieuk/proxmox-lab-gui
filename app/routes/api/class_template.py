@@ -203,8 +203,13 @@ def reimage_template(class_id: int):
         if not original_template:
             return jsonify({'ok': False, 'error': 'Original template not found'}), 404
         
+        # SAFETY CHECK: Verify this is actually the class's template
+        if template.id != class_.template_id:
+            logger.error(f"SAFETY VIOLATION: Template {template.id} (VMID {template.proxmox_vmid}) is not the template for class {class_id}")
+            return jsonify({'ok': False, 'error': 'Template does not belong to this class'}), 403
+        
         # Delete current template VM
-        logger.info(f"Deleting current template VM {old_vmid} for reimage")
+        logger.info(f"Deleting current template VM {old_vmid} for class {class_id} reimage (will recreate from original template {original_template.proxmox_vmid})")
         delete_success, delete_msg = delete_vm(old_vmid, template.cluster_ip)
         
         if not delete_success:
