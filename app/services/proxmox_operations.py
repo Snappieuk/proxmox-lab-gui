@@ -572,23 +572,52 @@ def clone_vms_for_class(template_vmid: int, node: str, count: int, name_prefix: 
             # Use cluster resources API to get ALL VMs and containers across all nodes
             resources = proxmox.cluster.resources.get(type="vm")
             for r in resources:
-                used_vmids.add(r["vmid"])
+                try:
+                    vmid = r.get("vmid")
+                    if vmid is not None:
+                        used_vmids.add(int(vmid))
+                except (ValueError, TypeError) as ve:
+                    logger.debug(f"Skipping invalid vmid in resources: {r.get('vmid')}")
             logger.info(f"Found {len(used_vmids)} existing VMIDs via cluster resources API")
         except Exception as e:
             logger.warning(f"Cluster resources API failed, falling back to per-node query: {e}")
-            # Fallback: query each node individually
+        
+        # Always do per-node fallback if cluster resources returned nothing or failed
+        if len(used_vmids) == 0:
+            logger.info("Cluster resources returned no VMIDs, querying nodes directly")
             for node_info in proxmox.nodes.get():
-                node_name = node_info["node"]
+                node_name = node_info.get("node")
+                if not node_name:
+                    continue
                 try:
                     # Get both QEMU VMs and LXC containers
                     for vm in proxmox.nodes(node_name).qemu.get():
-                        used_vmids.add(vm["vmid"])
+                        try:
+                            vmid = vm.get("vmid")
+                            if vmid is not None:
+                                used_vmids.add(int(vmid))
+                        except (ValueError, TypeError):
+                            pass
                     for ct in proxmox.nodes(node_name).lxc.get():
-                        used_vmids.add(ct["vmid"])
+                        try:
+                            vmid = ct.get("vmid")
+                            if vmid is not None:
+                                used_vmids.add(int(vmid))
+                        except (ValueError, TypeError):
+                            pass
                 except Exception as node_error:
                     logger.warning(f"Failed to query node {node_name}: {node_error}")
+            logger.info(f"Per-node query found {len(used_vmids)} VMIDs")
         
-        next_vmid = 200  # Start from 200 for class VMs
+        # Determine next VMID (start from 200 if nothing found)
+        if used_vmids:
+            next_vmid = max(used_vmids) + 1
+            # Ensure we're at least at 200 for class VMs
+            if next_vmid < 200:
+                next_vmid = 200
+        else:
+            logger.warning("No existing VMIDs found, starting from 200")
+            next_vmid = 200
         
         # Smart node selection: distribute VMs across nodes based on resources
         node_assignments = []
@@ -833,8 +862,9 @@ def clone_vms_for_class(template_vmid: int, node: str, count: int, name_prefix: 
             class_template_node = teacher_vm_node
             
             logger.info(f"Creating base template VM for student linked clones: {class_template_name} (VMID {next_vmid}) on node {class_template_node}")
+            logger.info(f"Will clone from ORIGINAL template VMID {template_vmid} (NOT from teacher VM {teacher_vm_vmid})")
             if task_id:
-                update_clone_progress(task_id, current_vm=class_template_name, message="Creating base template VM (2/3)")
+                update_clone_progress(task_id, current_vm=class_template_name, message=f"Creating base template VM from template {template_vmid} (2/3)")
 
             # Buffer to avoid concurrent lock: wait ~60s after first clone
             try:
