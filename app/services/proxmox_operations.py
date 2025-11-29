@@ -1061,7 +1061,7 @@ def clone_vms_for_class(template_vmid: int, node: str, count: int, name_prefix: 
                             if task_id:
                                 update_clone_progress(task_id, message="Base template converted successfully")
                             
-                            # Register base template in database
+                            # Register base template in database (optional, for tracking)
                             try:
                                 from app.models import Template, db
                                 from datetime import datetime
@@ -1076,8 +1076,7 @@ def clone_vms_for_class(template_vmid: int, node: str, count: int, name_prefix: 
                                         proxmox_vmid=class_template_vmid,
                                         cluster_ip=cluster_ip,
                                         node=class_template_node,
-                                        is_class_template=True,
-                                        class_id=class_id,
+                                        is_class_template=False,  # Not associated with specific class here
                                         is_replica=True,
                                         source_vmid=template_vmid,
                                         source_node=node,
@@ -1085,7 +1084,7 @@ def clone_vms_for_class(template_vmid: int, node: str, count: int, name_prefix: 
                                     )
                                     db.session.add(base_tpl)
                                     db.session.commit()
-                                    logger.info(f"Registered base template {class_template_vmid} in database for class {class_id}")
+                                    logger.info(f"Registered base template {class_template_vmid} in database (intermediate template)")
                             except Exception as db_err:
                                 logger.warning(f"Failed to register base template in DB: {db_err}")
                                 db.session.rollback()
@@ -1370,6 +1369,12 @@ def start_class_vm(vmid: int, node: str, cluster_ip: str = None) -> Tuple[bool, 
             return False, f"Cluster not found"
         
         proxmox = get_proxmox_admin_for_cluster(cluster_id)
+        
+        # Check if this is a template before trying to start
+        vm_config = proxmox.nodes(node).qemu(vmid).config.get()
+        if vm_config.get('template') == 1:
+            return False, "Cannot start a template VM. This VM is configured as a template and must be cloned to a regular VM before it can be started."
+        
         proxmox.nodes(node).qemu(vmid).status.start.post()
         
         logger.info(f"Started VM {vmid} on {node}")

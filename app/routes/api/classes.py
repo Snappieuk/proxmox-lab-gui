@@ -178,91 +178,241 @@ def create_new_class():
     if not source_template:
         return jsonify({"ok": False, "error": "Template not found in database"}), 400
     
-    # Generate task ID for progress tracking (1 template clone + student VMs + teacher VM)
+    # Capture template info for thread
+    source_vmid = source_template.proxmox_vmid
+    source_node = source_template.node
+    source_name = source_template.name
+    source_template_id = source_template.id
+    teacher_id = user.id
+    class_id_val = class_.id
+    class_name = class_.name
+    
+    # Generate task ID for progress tracking
+    # 1 class template + 1 teacher editable + 1 teacher template + pool_size students
     import uuid
     task_id = str(uuid.uuid4())
-    start_clone_progress(task_id, pool_size + 3)  # Template clone + students + teacher editable + teacher template
+    start_clone_progress(task_id, pool_size + 3)
     
     # Clone template and deploy VMs in background thread
     import threading
     def _background_clone_and_deploy():
         try:
+            from datetime import datetime
             from app.services.proxmox_service import get_proxmox_admin
-            from app.models import db
+            from app.models import db, Class
             
-            from app.services.terraform_service import deploy_class_with_terraform
+            # Re-fetch class in thread context
+            class_obj = Class.query.get(class_id_val)
+            if not class_obj:
+                update_clone_progress(task_id, status="failed", errors=["Class not found"])
+                return
             
-            result = deploy_class_with_terraform(
-                class_id=str(class_.id),
-                class_prefix=class_prefix,
-                students=students,
-                template_name=class_template_name,  # Use the class-specific template
-                use_full_clone=False,  # Linked clones from class template (faster)
-                create_teacher_vm=True,  # Teacher VM (editable)
-                create_teacher_template=True,  # Teacher template (for teacher to customize)
-                target_node=None,  # Auto-distribute
-                auto_select_best_node=True,  # Query Proxmox for best nodes
+            # Step 1: Clone the source template exclusively for this class
+            update_clone_progress(task_id, completed=0, message=f"Cloning template '{source_name}' (VMID {source_vmid}) for exclusive class use...")
+            
+            # Find next available VMID
+            proxmox = get_proxmox_admin()
+            used_vmids = set(r.get('vmid') for r in proxmox.cluster.resources.get(type="vm"))
+            class_template_vmid = max(used_vmids) + 1 if used_vmids else 200
+            
+            # Sanitize class name for Proxmox
+            import re
+            class_prefix = re.sub(r'[^a-z0-9-]', '', class_name.lower().replace(' ', '-').replace('_', '-'))
+            if not class_prefix:
+                class_prefix = f"class-{class_id_val}"
+            
+            class_template_name = f"{class_prefix}-base-template"
+            
+            # Clone the source template to create class-specific base template
+            clone_success, clone_msg = clone_vm_from_template(
+                template_vmid=source_vmid,
+                new_vmid=class_template_vmid,
+                name=class_template_name,
+                node=source_node,
+                cluster_ip=CLASS_CLUSTER_IP,
+                full_clone=True,
+                create_baseline=False,
+                wait_until_complete=True
             )
             
-            # Register VMs in database
-            student_vms = result.get('student_vms', {})
-            teacher_vm = result.get('teacher_vm')
-            teacher_template_vm = result.get('teacher_template_vm')
+            if not clone_success:
+                update_clone_progress(task_id, status="failed", errors=[f"Failed to clone template: {clone_msg}"])
+                return
             
-            # Register teacher VM (editable)
-            if teacher_vm:
-                assignment, _ = create_vm_assignment(
-                    class_id=class_.id,
-                    proxmox_vmid=teacher_vm['id'],
-                    node=teacher_vm['node'],
-                    is_template_vm=False  # This is the editable teacher VM
-                )
-                update_clone_progress(task_id, completed=2, message=f"Teacher VM (editable) created: {teacher_vm['name']}")
+            update_clone_progress(task_id, completed=1, message=f"Class base template created: VMID {class_template_vmid}")
             
-            # Register teacher template VM (converted to template for teacher use)
-            if teacher_template_vm:
-                assignment, _ = create_vm_assignment(
-                    class_id=class_.id,
-                    proxmox_vmid=teacher_template_vm['id'],
-                    node=teacher_template_vm['node'],
-                    is_template_vm=True  # This is the class-specific template
-                )
-                update_clone_progress(task_id, completed=3, message=f"Class template VM created: {teacher_template_vm['name']} (converted to template)")
+            # Convert to template
+            convert_success, convert_msg = convert_vm_to_template(
+                vmid=class_template_vmid,
+                node=source_node,
+                cluster_ip=CLASS_CLUSTER_IP
+            )
             
-            # Register student VMs (cloned from class template, unassigned)
-            registered_count = 0
-            for student_name, vm_info in student_vms.items():
+            if not convert_success:
+                update_clone_progress(task_id, status="failed", errors=[f"Failed to convert to template: {convert_msg}"])
+                delete_vm(class_template_vmid, source_node, CLASS_CLUSTER_IP)
+                return
+            
+            # Register class template in database
+            class_specific_template, tpl_msg = create_template(
+                name=class_template_name,
+                proxmox_vmid=class_template_vmid,
+                cluster_ip=CLASS_CLUSTER_IP,
+                node=source_node,
+                created_by_id=teacher_id,
+                is_class_template=True,
+                class_id=class_id_val,
+                original_template_id=source_template_id
+            )
+            
+            # Update class to use new template
+            if class_specific_template:
+                class_obj.template_id = class_specific_template.id
+                db.session.commit()
+            
+            logger.info(f"Class {class_id_val} base template created: VMID {class_template_vmid}")
+            
+            # Step 2: Create teacher editable VM from class template
+            update_clone_progress(task_id, completed=1, message="Creating teacher editable VM...")
+            
+            used_vmids = set(r.get('vmid') for r in proxmox.cluster.resources.get(type="vm"))
+            teacher_vm_vmid = max(used_vmids) + 1 if used_vmids else 300
+            teacher_vm_name = f"{class_prefix}-teacher-editable"
+            
+            clone_success, clone_msg = clone_vm_from_template(
+                template_vmid=class_template_vmid,
+                new_vmid=teacher_vm_vmid,
+                name=teacher_vm_name,
+                node=source_node,
+                cluster_ip=CLASS_CLUSTER_IP,
+                full_clone=False,  # Linked clone
+                create_baseline=True,
+                wait_until_complete=True
+            )
+            
+            if clone_success:
                 assignment, _ = create_vm_assignment(
-                    class_id=class_.id,
-                    proxmox_vmid=vm_info['id'],
-                    node=vm_info['node'],
+                    class_id=class_id_val,
+                    proxmox_vmid=teacher_vm_vmid,
+                    node=source_node,
                     is_template_vm=False
                 )
-                registered_count += 1
-                update_clone_progress(
-                    task_id,
-                    completed=registered_count + 3,
-                    message=f"Registered {registered_count}/{len(student_vms)} student VMs"
+                # Assign the teacher editable VM to the teacher
+                if assignment:
+                    assignment.assigned_user_id = teacher_id
+                    assignment.assigned_at = datetime.utcnow()
+                    assignment.status = 'assigned'
+                    db.session.commit()
+                    logger.info(f"Teacher editable VM created and assigned to teacher: {teacher_vm_name} (VMID {teacher_vm_vmid})")
+                update_clone_progress(task_id, completed=2, message=f"Teacher editable VM created: {teacher_vm_name}")
+            else:
+                logger.error(f"Failed to create teacher VM: {clone_msg}")
+                update_clone_progress(task_id, status="failed", errors=[f"Failed to create teacher VM: {clone_msg}"])
+                return
+            
+            # Step 3: Create teacher template VM (for students to clone from after teacher customization)
+            update_clone_progress(task_id, completed=2, message="Creating teacher template VM...")
+            
+            used_vmids = set(r.get('vmid') for r in proxmox.cluster.resources.get(type="vm"))
+            teacher_template_vmid = max(used_vmids) + 1 if used_vmids else 400
+            teacher_template_name = f"{class_prefix}-teacher-template"
+            
+            clone_success, clone_msg = clone_vm_from_template(
+                template_vmid=class_template_vmid,
+                new_vmid=teacher_template_vmid,
+                name=teacher_template_name,
+                node=source_node,
+                cluster_ip=CLASS_CLUSTER_IP,
+                full_clone=False,  # Linked clone
+                create_baseline=False,
+                wait_until_complete=True
+            )
+            
+            if clone_success:
+                # Convert to template
+                convert_success, convert_msg = convert_vm_to_template(
+                    vmid=teacher_template_vmid,
+                    node=source_node,
+                    cluster_ip=CLASS_CLUSTER_IP
                 )
+                
+                if convert_success:
+                    assignment, _ = create_vm_assignment(
+                        class_id=class_id_val,
+                        proxmox_vmid=teacher_template_vmid,
+                        node=source_node,
+                        is_template_vm=True
+                    )
+                    logger.info(f"Teacher template VM created: {teacher_template_name} (VMID {teacher_template_vmid})")
+                    update_clone_progress(task_id, completed=3, message=f"Teacher template VM created: {teacher_template_name}")
+                else:
+                    logger.error(f"Failed to convert teacher template: {convert_msg}")
+                    update_clone_progress(task_id, status="failed", errors=[f"Failed to convert teacher template: {convert_msg}"])
+                    return
+            else:
+                logger.error(f"Failed to create teacher template VM: {clone_msg}")
+                update_clone_progress(task_id, status="failed", errors=[f"Failed to create teacher template VM: {clone_msg}"])
+                return
+            
+            # Step 4: Create student VMs from teacher template
+            update_clone_progress(task_id, completed=3, message=f"Creating {pool_size} student VMs...")
+            
+            for i in range(1, pool_size + 1):
+                used_vmids = set(r.get('vmid') for r in proxmox.cluster.resources.get(type="vm"))
+                student_vmid = max(used_vmids) + 1 if used_vmids else (500 + i)
+                student_name = f"{class_prefix}-student{i}"
+                
+                clone_success, clone_msg = clone_vm_from_template(
+                    template_vmid=teacher_template_vmid,  # Clone from teacher template
+                    new_vmid=student_vmid,
+                    name=student_name,
+                    node=source_node,
+                    cluster_ip=CLASS_CLUSTER_IP,
+                    full_clone=False,
+                    create_baseline=True,
+                    wait_until_complete=True
+                )
+                
+                if clone_success:
+                    assignment, _ = create_vm_assignment(
+                        class_id=class_id_val,
+                        proxmox_vmid=student_vmid,
+                        node=source_node,
+                        is_template_vm=False
+                    )
+                    logger.info(f"Student VM {i} created: {student_name} (VMID {student_vmid})")
+                    update_clone_progress(
+                        task_id,
+                        completed=3 + i,
+                        message=f"Created student VM {i}/{pool_size}: {student_name}"
+                    )
+                else:
+                    logger.warning(f"Failed to create student VM {i}: {clone_msg}")
+                    update_clone_progress(
+                        task_id,
+                        completed=3 + i,
+                        message=f"Failed to create student VM {i}/{pool_size}: {clone_msg}"
+                    )
+                    # Continue with remaining VMs even if one fails
             
             update_clone_progress(
                 task_id,
                 status="completed",
-                message=f"Successfully created class with dedicated template (VMID {class_template_vmid}), {len(student_vms)} student VMs, 1 editable teacher VM, and 1 teacher template VM. All isolated from the source template."
+                message=f"Class setup complete! Created base template (VMID {class_template_vmid}), teacher editable VM (VMID {teacher_vm_vmid}), teacher template (VMID {teacher_template_vmid}), and {pool_size} student VMs."
             )
             
         except Exception as e:
-            logger.exception(f"Template cloning and deployment failed for class {class_.id}: {e}")
+            logger.exception(f"Template cloning and deployment failed for class {class_id_val}: {e}")
             update_clone_progress(task_id, status="failed", errors=[str(e)])
     
     threading.Thread(target=_background_clone_and_deploy, daemon=True).start()
     
     return jsonify({
         "ok": True,
-        "message": f"Class '{class_.name}' created! First cloning template exclusively for this class, then deploying {pool_size} student VMs + 2 teacher VMs.",
+        "message": f"Class '{class_.name}' created! Cloning template and creating VMs in background.",
         "class": class_.to_dict(),
         "task_id": task_id,
-        "info": "Creating dedicated class template (isolated from source) then deploying VMs. This ensures changes to this class's template don't affect other classes."
+        "info": "Creating: 1) Base template (from source), 2) Teacher editable VM, 3) Teacher template VM, 4) Student VMs. Students will clone from the teacher template after teacher customization."
     })
 
 
@@ -706,6 +856,13 @@ def create_class_vms(class_id: int):
     # Generate student usernames
     students = [f"student{i}" for i in range(1, count + 1)]
     
+    # Capture variables for thread context
+    class_id_val = class_.id
+    class_name = class_.name
+    teacher_id = user.id
+    pool_size_val = count
+    template_name_captured = template_name
+    
     # Generate task ID for progress tracking
     import uuid
     task_id = str(uuid.uuid4())
@@ -716,10 +873,23 @@ def create_class_vms(class_id: int):
     def _background_terraform_deploy():
         try:
             from app.services.proxmox_service import get_proxmox_admin
-            from app.models import db
+            from app.models import db, Class
+            
+            # Re-fetch class in thread context
+            class_obj = Class.query.get(class_id_val)
+            if not class_obj:
+                update_clone_progress(task_id, status="failed", errors=["Class not found"])
+                return
+            
+            # Get template info
+            if not class_obj.template:
+                update_clone_progress(task_id, status="failed", errors=["No template assigned to class"])
+                return
+            
+            template_obj = class_obj.template
             
             # Step 1: Clone the source template exclusively for this class
-            update_clone_progress(task_id, completed=0, message=f"Cloning template '{source_template.name}' (VMID {source_template.proxmox_vmid}) for exclusive class use...")
+            update_clone_progress(task_id, completed=0, message=f"Cloning template '{template_obj.name}' (VMID {template_obj.proxmox_vmid}) for exclusive class use...")
             
             # Find next available VMID
             proxmox = get_proxmox_admin()
@@ -728,18 +898,18 @@ def create_class_vms(class_id: int):
             
             # Sanitize class name for Proxmox (alphanumeric and hyphens only)
             import re
-            class_prefix = re.sub(r'[^a-z0-9-]', '', class_.name.lower().replace(' ', '-').replace('_', '-'))
+            class_prefix = re.sub(r'[^a-z0-9-]', '', class_name.lower().replace(' ', '-').replace('_', '-'))
             if not class_prefix:
-                class_prefix = f"class-{class_.id}"
+                class_prefix = f"class-{class_id_val}"
             
             class_template_name = f"{class_prefix}-template"
             
             # Clone the source template to create class-specific template
             clone_success, clone_msg = clone_vm_from_template(
-                template_vmid=source_template.proxmox_vmid,
+                template_vmid=template_obj.proxmox_vmid,
                 new_vmid=class_template_vmid,
                 name=class_template_name,
-                node=source_template.node,
+                node=template_obj.node,
                 cluster_ip=CLASS_CLUSTER_IP,
                 full_clone=True,  # Full clone to isolate from source
                 create_baseline=False,  # No baseline snapshot needed for template
@@ -755,14 +925,14 @@ def create_class_vms(class_id: int):
             # Convert the cloned VM to a template
             convert_success, convert_msg = convert_vm_to_template(
                 vmid=class_template_vmid,
-                node=source_template.node,
+                node=template_obj.node,
                 cluster_ip=CLASS_CLUSTER_IP
             )
             
             if not convert_success:
                 update_clone_progress(task_id, status="failed", errors=[f"Failed to convert to template: {convert_msg}"])
                 # Clean up the clone
-                delete_vm(class_template_vmid, source_template.node, CLASS_CLUSTER_IP)
+                delete_vm(class_template_vmid, template_obj.node, CLASS_CLUSTER_IP)
                 return
             
             # Register the new class-specific template in database
@@ -770,11 +940,11 @@ def create_class_vms(class_id: int):
                 name=class_template_name,
                 proxmox_vmid=class_template_vmid,
                 cluster_ip=CLASS_CLUSTER_IP,
-                node=source_template.node,
-                created_by_id=user.id,
+                node=template_obj.node,
+                created_by_id=teacher_id,
                 is_class_template=True,
-                class_id=class_.id,
-                original_template_id=source_template.id
+                class_id=class_id_val,
+                original_template_id=template_obj.id
             )
             
             if not class_specific_template:
@@ -782,26 +952,26 @@ def create_class_vms(class_id: int):
                 # Continue anyway - template is created in Proxmox
             
             # Update class to use the new class-specific template
-            class_.template_id = class_specific_template.id if class_specific_template else None
+            class_obj.template_id = class_specific_template.id if class_specific_template else None
             db.session.commit()
             
-            logger.info(f"Class {class_.id} now has dedicated template VMID {class_template_vmid}")
+            logger.info(f"Class {class_id_val} now has dedicated template VMID {class_template_vmid}")
             
             # Step 2: Deploy student and teacher VMs from the class-specific template
-            update_clone_progress(task_id, completed=1, message=f"Deploying {pool_size} student VMs + 2 teacher VMs from class template...")
+            update_clone_progress(task_id, completed=1, message=f"Deploying {pool_size_val} student VMs + 2 teacher VMs from class template...")
             
             # Generate student usernames
-            students = [f"student{i}" for i in range(1, pool_size + 1)]
+            students = [f"student{i}" for i in range(1, pool_size_val + 1)]
             
             from app.services.terraform_service import deploy_class_with_terraform
             
             update_clone_progress(task_id, message="Deploying VMs with Terraform...")
             
             result = deploy_class_with_terraform(
-                class_id=str(class_id),
-                class_prefix=class_.name.lower().replace(' ', '-'),
+                class_id=str(class_id_val),
+                class_prefix=class_name.lower().replace(' ', '-'),
                 students=students,
-                template_name=template_name,
+                template_name=template_name_captured,
                 use_full_clone=False,  # Linked clones for speed
                 create_teacher_vm=True,
                 target_node=target_node,  # None = auto-distribute
@@ -815,7 +985,7 @@ def create_class_vms(class_id: int):
             # Register teacher VM
             if teacher_vm:
                 assignment, _ = create_vm_assignment(
-                    class_id=class_id,
+                    class_id=class_id_val,
                     proxmox_vmid=teacher_vm['id'],
                     node=teacher_vm['node'],
                     is_template_vm=True
@@ -826,7 +996,7 @@ def create_class_vms(class_id: int):
             registered_count = 0
             for student_name, vm_info in student_vms.items():
                 assignment, _ = create_vm_assignment(
-                    class_id=class_id,
+                    class_id=class_id_val,
                     proxmox_vmid=vm_info['id'],
                     node=vm_info['node'],
                     is_template_vm=False
@@ -864,6 +1034,164 @@ def clone_progress_route(task_id: str):
     """Check progress of a VM cloning task."""
     progress = get_clone_progress(task_id)
     return jsonify(progress)
+
+@api_classes_bp.route("/<int:class_id>/promote-editable", methods=["POST"])
+@login_required
+def promote_editable_to_base_template(class_id: int):
+    """Promote the Teacher Editable VM to become the new Class Base Template.
+
+    Steps:
+    1) Clone Teacher Editable VM -> convert to template (new base template)
+    2) Update class.template_id to new template
+    3) Recreate Teacher Template VM from new base template (linked clone -> convert to template)
+    4) Update assignments: remove old teacher template assignment, add new one
+    """
+    from datetime import datetime
+    
+    user, error = require_teacher_or_adminer()
+    if error:
+        return jsonify(error[0]), error[1]
+
+    class_ = get_class_by_id(class_id)
+    if not class_:
+        return jsonify({"ok": False, "error": "Class not found"}), 404
+
+    # Ownership check
+    if not user.is_adminer and class_.teacher_id != user.id:
+        return jsonify({"ok": False, "error": "Access denied"}), 403
+
+    # Find Teacher Editable VM (is_template_vm=False, preferably assigned to teacher)
+    teacher_vm = None
+    # First try: find VM assigned to teacher
+    for assignment in class_.vm_assignments:
+        if not assignment.is_template_vm and assignment.assigned_user_id == class_.teacher_id and assignment.proxmox_vmid:
+            teacher_vm = assignment
+            break
+    
+    # Fallback: find any unassigned non-template VM (earliest created)
+    if not teacher_vm:
+        unassigned = [a for a in class_.vm_assignments if not a.is_template_vm and a.assigned_user_id is None and a.proxmox_vmid]
+        if unassigned:
+            teacher_vm = sorted(unassigned, key=lambda a: a.created_at or datetime.min)[0]
+            logger.info(f"Using unassigned VM {teacher_vm.proxmox_vmid} as teacher editable (not assigned to teacher)")
+    
+    if not teacher_vm:
+        return jsonify({"ok": False, "error": "Teacher Editable VM not found"}), 404
+
+    # Get current class base template (from class_.template)
+    current_base_template = class_.template
+    if not current_base_template:
+        return jsonify({"ok": False, "error": "Class base template not registered"}), 400
+
+    # Capture variables for thread context
+    teacher_vm_vmid = teacher_vm.proxmox_vmid
+    teacher_vm_node = teacher_vm.node
+    user_id = user.id
+    current_base_id = current_base_template.id if current_base_template else None
+    current_base_vmid = current_base_template.proxmox_vmid if current_base_template else None
+    current_base_node = current_base_template.node if current_base_template else None
+
+    # Prepare progress tracking
+    import uuid
+    task_id = str(uuid.uuid4())
+    start_clone_progress(task_id, 2)  # promote -> optional cleanup
+
+    import threading
+    def _background_promote():
+        try:
+            from app.services.proxmox_service import get_proxmox_admin
+            from app.models import db, Class, Template, VMAssignment
+
+            class_obj = Class.query.get(class_id)
+            if not class_obj:
+                update_clone_progress(task_id, status="failed", errors=["Class not found in DB"])
+                return
+
+            # Step 1: Clone teacher editable VM to new base template
+            update_clone_progress(task_id, completed=0, message="Cloning Teacher Editable VM to new base template...")
+            proxmox = get_proxmox_admin()
+            used_vmids = set(r.get('vmid') for r in proxmox.cluster.resources.get(type="vm"))
+            new_base_vmid = max(used_vmids) + 1 if used_vmids else 600
+
+            # Name conventions
+            import re
+            class_prefix = re.sub(r'[^a-z0-9-]', '', class_obj.name.lower().replace(' ', '-').replace('_', '-')) or f"class-{class_obj.id}"
+            new_base_name = f"{class_prefix}-base-template-v2"
+
+            from app.services.proxmox_operations import clone_vm_from_template, convert_vm_to_template, delete_vm
+            from app.services.proxmox_operations import CLASS_CLUSTER_IP
+
+            clone_success, clone_msg = clone_vm_from_template(
+                template_vmid=teacher_vm_vmid,
+                new_vmid=new_base_vmid,
+                name=new_base_name,
+                node=teacher_vm_node,
+                cluster_ip=CLASS_CLUSTER_IP,
+                full_clone=True,
+                create_baseline=False,
+                wait_until_complete=True
+            )
+
+            if not clone_success:
+                update_clone_progress(task_id, status="failed", errors=[f"Clone failed: {clone_msg}"])
+                return
+
+            convert_success, convert_msg = convert_vm_to_template(
+                vmid=new_base_vmid,
+                node=teacher_vm_node,
+                cluster_ip=CLASS_CLUSTER_IP
+            )
+
+            if not convert_success:
+                update_clone_progress(task_id, status="failed", errors=[f"Convert to template failed: {convert_msg}"])
+                # cleanup clone
+                delete_vm(new_base_vmid, teacher_vm_node, CLASS_CLUSTER_IP)
+                return
+
+            # Register new base template in DB and update class
+            new_tpl, _msg = create_template(
+                name=new_base_name,
+                proxmox_vmid=new_base_vmid,
+                cluster_ip=CLASS_CLUSTER_IP,
+                node=teacher_vm_node,
+                created_by_id=user_id,
+                is_class_template=True,
+                class_id=class_id,
+                original_template_id=current_base_id
+            )
+
+            if new_tpl:
+                class_obj.template_id = new_tpl.id
+                db.session.commit()
+                update_clone_progress(task_id, completed=1, message=f"Promoted editable VM to new base template (VMID {new_base_vmid})")
+            else:
+                update_clone_progress(task_id, status="failed", errors=["Failed to register new base template in DB"])
+                return
+
+            # Step 2: (Simplified) No teacher template recreation – students will clone from the new base
+            update_clone_progress(task_id, completed=1, message="New Class Base Template is active. Students should clone from this base.")
+
+            # Step 3: Optional cleanup of old base template VM in Proxmox
+            # Best-effort: delete old base template VM to avoid confusion
+            try:
+                if current_base_vmid and current_base_node:
+                    delete_vm(current_base_vmid, current_base_node, CLASS_CLUSTER_IP)
+            except Exception:
+                pass
+
+            update_clone_progress(task_id, status="completed", message="Promotion complete: new Class Base Template is active.")
+
+        except Exception as e:
+            logger.exception(f"Promote editable failed for class {class_id}: {e}")
+            update_clone_progress(task_id, status="failed", errors=[str(e)])
+
+    threading.Thread(target=_background_promote, daemon=True).start()
+
+    return jsonify({
+        "ok": True,
+        "message": "Promotion started in background. Track progress via task_id.",
+        "task_id": task_id
+    })
 
 
 @api_classes_bp.route("/<int:class_id>/vms/<int:assignment_id>/assign", methods=["POST"])
@@ -999,6 +1327,10 @@ def start_my_vm(class_id: int):
     assignment = get_user_vm_in_class(user.id, class_id)
     if not assignment:
         return jsonify({"ok": False, "error": "You don't have a VM in this class"}), 404
+    
+    # Prevent starting template VMs
+    if assignment.is_template_vm:
+        return jsonify({"ok": False, "error": "Cannot start a template VM. Templates must be cloned to regular VMs before they can be started."}), 400
     
     success, msg = start_class_vm(assignment.proxmox_vmid, assignment.node)
     

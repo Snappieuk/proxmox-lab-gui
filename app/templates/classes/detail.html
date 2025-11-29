@@ -1096,19 +1096,40 @@ async function reimageTemplate() {
 }
 
 async function saveTemplate() {
-    if (!confirm('Save current template state as new baseline? This will replace the existing baseline snapshot.')) return;
+    if (!confirm('Save current Editable VM as the new Class Base Template? This will replace the existing base template.')) return;
     
     try {
-        const resp = await fetch(`/api/class/${classId}/template/save`, { method: 'POST' });
+        const resp = await fetch(`/api/classes/${classId}/promote-editable`, { method: 'POST' });
         const data = await resp.json();
         
         if (data.ok) {
-            showAlert(data.message, 'success');
+            showAlert('Promotion started. Tracking progress...', 'info');
+            // Optionally poll progress
+            if (data.task_id) {
+                const taskId = data.task_id;
+                const interval = setInterval(async () => {
+                    try {
+                        const p = await fetch(`/api/classes/clone/progress/${taskId}`);
+                        const pj = await p.json();
+                        if (pj.status === 'completed') {
+                            clearInterval(interval);
+                            showAlert('Class Base Template updated successfully.', 'success');
+                            // Reload to reflect new template state
+                            setTimeout(() => location.reload(), 1500);
+                        } else if (pj.status === 'failed') {
+                            clearInterval(interval);
+                            showAlert('Promotion failed: ' + (pj.errors && pj.errors[0] || 'Unknown error'), 'error');
+                        }
+                    } catch (e) {
+                        clearInterval(interval);
+                    }
+                }, 1500);
+            }
         } else {
-            showAlert(data.error || 'Failed to save template', 'error');
+            showAlert(data.error || 'Failed to promote editable VM', 'error');
         }
     } catch (e) {
-        showAlert('Failed to save template', 'error');
+        showAlert('Failed to promote editable VM', 'error');
     }
 }
 

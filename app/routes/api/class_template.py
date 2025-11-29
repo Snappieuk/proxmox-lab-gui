@@ -365,10 +365,9 @@ def save_template(class_id: int):
 @api_class_template_bp.route("/<int:class_id>/template/push", methods=['POST'])
 @login_required
 def push_template(class_id: int):
-    """Push template to all VMs in class (delete old VMs and re-clone from new template).
+    """Push template to student VMs only (preserve teacher/editable and template VMs).
     
-    This deletes all existing VMs and creates fresh ones from the current template.
-    Each new VM gets a baseline snapshot for the reimage functionality.
+    Deletes only student VMs and recreates them from the current class base template.
     """
     class_, error_response, status_code = require_teacher_or_admin(class_id)
     if error_response:
@@ -379,82 +378,100 @@ def push_template(class_id: int):
     
     try:
         from app.services.proxmox_operations import sanitize_vm_name
-        import time
+        from app.config import CLUSTERS
         
         template = class_.template
-        assignments = class_.vm_assignments
+        assignments = list(class_.vm_assignments)  # materialize
         
         results = []
         errors = []
         deleted_count = 0
         created_count = 0
         
-        # Get cluster connection
+        # Resolve cluster id
         cluster_id = None
-        from app.config import CLUSTERS
         for cluster in CLUSTERS:
             if cluster["host"] == template.cluster_ip:
                 cluster_id = cluster["id"]
                 break
-        
         if not cluster_id:
             return jsonify({'ok': False, 'error': 'Cluster not found'}), 500
         
-        proxmox = get_proxmox_admin_for_cluster(cluster_id)
-        
-        # SAFETY CHECK: Verify all assignments belong to this class
+        # Log current assignments
         assignment_vmids = {a.proxmox_vmid for a in assignments}
-        logger.info(f"Class {class_id} has {len(assignment_vmids)} VMs in database: {sorted(assignment_vmids)}")
+        logger.info(f"Class {class_id} has {len(assignment_vmids)} VMs in DB: {sorted(assignment_vmids)}")
         
-        # Step 1: Delete ONLY VMs that belong to this class (via VMAssignment records)
-        logger.info(f"Deleting {len(assignments)} existing VMs for class {class_.name} (class_id={class_id})")
-        for assignment in assignments:
-            # Double-check this assignment belongs to this class
-            if assignment.class_id != class_id:
-                logger.error(f"SAFETY VIOLATION: Assignment {assignment.id} (VMID {assignment.proxmox_vmid}) does not belong to class {class_id}!")
-                errors.append(f"VM {assignment.proxmox_vmid} does not belong to this class (skipped)")
-                continue
-            
+        # Determine protected assignments
+        protected = []
+        # Always protect template reference VMs (if any are tracked as assignments)
+        protected.extend([a for a in assignments if a.is_template_vm])
+        
+        # Protect teacher's editable VM if assigned to the teacher
+        teacher_owned = [a for a in assignments if (not a.is_template_vm and a.assigned_user_id == class_.teacher_id)]
+        if teacher_owned:
+            protected.extend(teacher_owned)
+        else:
+            # Fallback: protect earliest created unassigned non-template VM as teacher editable
+            unassigned_non_template = [a for a in assignments if (not a.is_template_vm and a.assigned_user_id is None)]
+            if unassigned_non_template:
+                keep = sorted(unassigned_non_template, key=lambda a: a.created_at or 0)[0]
+                protected.append(keep)
+                logger.info(f"Protecting presumed teacher editable VMID {keep.proxmox_vmid}")
+        
+        protected_ids = {a.id for a in protected}
+        deletable = [a for a in assignments if a.id not in protected_ids]
+        
+        logger.info(f"Will preserve {len(protected)} VM(s): {[a.proxmox_vmid for a in protected]}")
+        logger.info(f"Will recreate {len(deletable)} student VM(s): {[a.proxmox_vmid for a in deletable]}")
+        
+        if not deletable:
+            return jsonify({
+                'ok': True,
+                'message': 'No student VMs to recreate; nothing changed.',
+                'deleted': 0,
+                'created': 0,
+                'results': [],
+                'errors': []
+            })
+        
+        # Delete only deletable VMs and their assignment records
+        for assignment in deletable:
             try:
-                logger.info(f"Deleting VM {assignment.proxmox_vmid} (assignment_id={assignment.id}, class_id={assignment.class_id})")
-                delete_success = delete_vm(assignment.proxmox_vmid, template.cluster_ip)
+                logger.info(f"Deleting student VM {assignment.proxmox_vmid} on node {assignment.node} (assignment_id={assignment.id})")
+                delete_success, delete_msg = delete_vm(assignment.proxmox_vmid, assignment.node, template.cluster_ip)
                 if delete_success:
                     deleted_count += 1
-                    logger.info(f"Successfully deleted VM {assignment.proxmox_vmid} from class {class_id}")
+                    db.session.delete(assignment)
+                    results.append(f"Deleted VM {assignment.proxmox_vmid}")
                 else:
-                    logger.warning(f"Failed to delete VM {assignment.proxmox_vmid} from class {class_id}")
-                    errors.append(f"Failed to delete VM {assignment.proxmox_vmid}")
+                    logger.warning(f"Failed to delete VM {assignment.proxmox_vmid}: {delete_msg}")
+                    errors.append(f"Failed to delete VM {assignment.proxmox_vmid}: {delete_msg}")
             except Exception as e:
-                logger.warning(f"Error deleting VM {assignment.proxmox_vmid} from class {class_id}: {e}")
+                logger.warning(f"Error deleting VM {assignment.proxmox_vmid}: {e}")
                 errors.append(f"Error deleting VM {assignment.proxmox_vmid}: {str(e)}")
         
-        # Step 2: Delete all assignment records (will recreate them)
-        vm_count = len(assignments)
-        for assignment in assignments:
-            db.session.delete(assignment)
         db.session.commit()
         
-        logger.info(f"Deleted {deleted_count}/{vm_count} VMs and cleared all assignments")
-        
-        # Step 3: Clone new VMs from the updated template
-        logger.info(f"Creating {vm_count} new VMs from template {template.proxmox_vmid}")
-        
+        # Clone replacements from the updated base template
         from app.services.proxmox_operations import clone_vms_for_class
+        clone_count = len(deletable)
+        logger.info(f"Creating {clone_count} new student VM(s) from template {template.proxmox_vmid}")
         created_vms = clone_vms_for_class(
             template_vmid=template.proxmox_vmid,
             node=template.node,
-            count=vm_count,
+            count=clone_count,
             name_prefix=sanitize_vm_name(class_.name, fallback="classvm"),
             cluster_ip=template.cluster_ip
         )
         
-        # Step 4: Create new assignments for the fresh VMs
+        # Register new assignments
         for vm_info in created_vms:
             assignment = VMAssignment(
                 class_id=class_.id,
                 proxmox_vmid=vm_info['vmid'],
                 node=vm_info['node'],
-                status='available'
+                status='available',
+                is_template_vm=False
             )
             db.session.add(assignment)
             created_count += 1
@@ -462,11 +479,10 @@ def push_template(class_id: int):
         
         db.session.commit()
         
-        logger.info(f"Successfully pushed template to class {class_.name}: deleted {deleted_count} VMs, created {created_count} new VMs")
-        
+        logger.info(f"Template push complete for class {class_.name}: deleted {deleted_count}, created {created_count}")
         return jsonify({
             'ok': True,
-            'message': f'Template pushed: deleted {deleted_count} old VMs, created {created_count} new VMs',
+            'message': f'Template pushed: deleted {deleted_count} student VM(s), created {created_count} new VM(s)',
             'deleted': deleted_count,
             'created': created_count,
             'results': results,
