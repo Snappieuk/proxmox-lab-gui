@@ -66,20 +66,20 @@ def persist_vm_inventory(vms: List[Dict], cleanup_missing: bool = True) -> int:
                 try:
                     # Flush to catch unique constraint violations immediately
                     db.session.flush()
-                except IntegrityError as e:
-                    # Duplicate key - another process created it, rollback and refetch
+                except IntegrityError:
+                    # Duplicate key - another process created it simultaneously
+                    # Rollback this transaction and try to fetch again
                     db.session.rollback()
                     
-                    # Re-query with a fresh session
+                    # Re-query without locking (SQLite doesn't handle locks well)
                     inventory = VMInventory.query.filter_by(
                         cluster_id=cluster_id,
                         vmid=vmid
-                    ).with_for_update().first()
+                    ).first()
                     
                     if not inventory:
-                        # Still not found - log details and skip
-                        logger.error(f"Failed to create or find VMInventory for {cluster_id}/{vmid} after IntegrityError: {e}")
-                        logger.error(f"  VM data: name={vm.get('name')}, node={vm.get('node')}")
+                        # Race condition or constraint issue - skip this VM
+                        logger.warning(f"IntegrityError for {cluster_id}/{vmid} but record not found after rollback - skipping")
                         continue
                 except Exception as e:
                     # Unexpected error during flush
