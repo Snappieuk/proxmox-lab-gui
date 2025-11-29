@@ -412,8 +412,9 @@ async function loadVMs() {
         // Check if we need to force refresh (cluster switch)
         const urlParams = new URLSearchParams(window.location.search);
         const forceRefresh = urlParams.get('force_refresh') === 'true';
-        // First attempt: DB-backed inventory for immediate display
-        let resp = await fetch('/api/vms?db=true');
+        // DB-first fetch (default behavior) - returns cached data immediately
+        const fetchUrl = forceRefresh ? '/api/vms?force_refresh=true' : '/api/vms';
+        let resp = await fetch(fetchUrl);
         let useLiveFallback = false;
         if (!resp.ok) {
             useLiveFallback = true;
@@ -421,9 +422,9 @@ async function loadVMs() {
         let payload = useLiveFallback ? [] : await resp.json();
         let data = Array.isArray(payload) ? payload : (payload.vms || []);
         const stale = !useLiveFallback && !!payload.stale;
-        if (useLiveFallback || (stale && forceRefresh)) {
-            // Fallback to live Proxmox fetch if inventory missing or forced
-            const liveUrl = forceRefresh ? '/api/vms?force_refresh=true' : '/api/vms';
+        if (useLiveFallback) {
+            // Fallback to live Proxmox fetch if DB query failed
+            const liveUrl = '/api/vms?live=true';
             resp = await fetch(liveUrl);
             if (resp.ok) {
                 data = await resp.json();
@@ -663,7 +664,7 @@ async function refreshVmStatus() {
     }
     
     try {
-        const resp = await fetch("/api/vms?db=true");
+        const resp = await fetch("/api/vms");
         if (!resp.ok) return;
         const payload = await resp.json();
         const list = Array.isArray(payload) ? payload : (payload.vms || []);

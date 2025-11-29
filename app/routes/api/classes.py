@@ -348,7 +348,7 @@ def delete_class_route(class_id: int):
     template_delete_error = None
     if template_info and not force_delete:
         from app.services.proxmox_operations import delete_vm
-        from app.models import Template
+        from app.models import Template, db
         try:
             logger.info(f"Deleting class template VM {template_info['vmid']} (template_id={template_info['db_id']})")
             t_success, t_msg = delete_vm(template_info['vmid'], template_info['node'], template_info['cluster_ip'])
