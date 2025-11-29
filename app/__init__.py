@@ -98,16 +98,12 @@ def create_app(config=None):
             except Exception:
                 pass
         
-        # Get Depl0y URL if available
-        depl0y_url = app.config.get('DEPL0Y_URL')
-        
         return {
             "is_admin": is_admin,
             "clusters": clusters,
             "current_cluster": current_cluster,
             "local_user": local_user,
             "local_user_role": local_user_role,
-            "depl0y_url": depl0y_url,
         }
     
     # Start background IP scanner
@@ -139,47 +135,7 @@ def create_app(config=None):
     else:
         logger.info("Template replication at startup disabled")
     
-    # Initialize Depl0y companion service (background)
-    from app.config import ENABLE_DEPL0Y, DEPL0Y_URL as CUSTOM_DEPL0Y_URL
-    
-    if CUSTOM_DEPL0Y_URL:
-        # Use manually configured Depl0y URL
-        app.config['DEPL0Y_URL'] = CUSTOM_DEPL0Y_URL
-        logger.info(f"Depl0y configured at {CUSTOM_DEPL0Y_URL}")
-    elif ENABLE_DEPL0Y:
-        # Auto-install and start Depl0y
-        try:
-            from app.services.depl0y_manager import initialize_depl0y, get_depl0y_url, _detect_host_ip, DEPL0Y_PORT
-            # Start in background; don't set placeholder URL
-            initialize_depl0y(background=True)
-            # Poll for a short time to get actual URL
-            import time
-            depl_url = None
-            for _ in range(12):
-                url = get_depl0y_url()
-                if url:
-                    depl_url = url
-                    break
-                time.sleep(1)
-            
-            # If still not available, use the expected URL (service may still be starting)
-            if not depl_url:
-                host_ip = _detect_host_ip()
-                if DEPL0Y_PORT == 80:
-                    depl_url = f"http://{host_ip}"
-                else:
-                    depl_url = f"http://{host_ip}:{DEPL0Y_PORT}"
-                logger.info(f"Depl0y starting in background, using expected URL: {depl_url}")
-            
-            app.config['DEPL0Y_URL'] = depl_url
-            if depl_url:
-                logger.info(f"Depl0y service at {depl_url}")
-        except Exception as e:
-            logger.warning(f"Depl0y initialization failed: {e}")
-            app.config['DEPL0Y_URL'] = None
-    else:
-        app.config['DEPL0Y_URL'] = None
-        logger.info("Depl0y integration disabled")
+    # Depl0y integration removed
     
     logger.info("Flask app created successfully")
     return app
