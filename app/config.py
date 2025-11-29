@@ -109,3 +109,6 @@ else:
 ENABLE_DEPL0Y = os.getenv("ENABLE_DEPL0Y", "true").lower() in ("true", "1", "yes")
 # Custom Depl0y URL if you've manually installed it elsewhere
 DEPL0Y_URL = os.getenv("DEPL0Y_URL", None)
+
+# Template replication at startup (disabled by default)
+ENABLE_TEMPLATE_REPLICATION = os.getenv("ENABLE_TEMPLATE_REPLICATION", "false").lower() in ("true", "1", "yes")

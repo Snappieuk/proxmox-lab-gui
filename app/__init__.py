@@ -119,21 +119,25 @@ def create_app(config=None):
     start_background_sync(app)
     logger.info("Background VM inventory sync started")
     
-    # Ensure templates are replicated across all nodes at startup (background)
-    def _replicate_templates_startup():
-        import time
-        time.sleep(2)
-        try:
-            with app.app_context():
-                from app.services.proxmox_operations import replicate_templates_to_all_nodes
-                logger.info("Starting template replication check across nodes...")
-                replicate_templates_to_all_nodes()
-                logger.info("Template replication check completed")
-        except Exception as e:
-            logger.warning(f"Template replication startup failed: {e}")
+    # Ensure templates are replicated across all nodes at startup (disabled by default)
+    from app.config import ENABLE_TEMPLATE_REPLICATION
+    if ENABLE_TEMPLATE_REPLICATION:
+        def _replicate_templates_startup():
+            import time
+            time.sleep(2)
+            try:
+                with app.app_context():
+                    from app.services.proxmox_operations import replicate_templates_to_all_nodes
+                    logger.info("Starting template replication check across nodes...")
+                    replicate_templates_to_all_nodes()
+                    logger.info("Template replication check completed")
+            except Exception as e:
+                logger.warning(f"Template replication startup failed: {e}")
 
-    import threading
-    threading.Thread(target=_replicate_templates_startup, daemon=True).start()
+        import threading
+        threading.Thread(target=_replicate_templates_startup, daemon=True).start()
+    else:
+        logger.info("Template replication at startup disabled")
     
     # Initialize Depl0y companion service (background)
     from app.config import ENABLE_DEPL0Y, DEPL0Y_URL as CUSTOM_DEPL0Y_URL
