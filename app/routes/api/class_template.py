@@ -49,55 +49,74 @@ def require_teacher_or_admin(class_id: int):
 @api_class_template_bp.route("/<int:class_id>/template/info")
 @login_required
 def get_template_info(class_id: int):
-    """Get template VM status and info."""
+    """Get template VM status and info (returns TEACHER USABLE VM, not the Proxmox template)."""
     class_, error_response, status_code = require_teacher_or_admin(class_id)
     if error_response:
         return error_response, status_code
     
-    if not class_.template:
-        return jsonify({'ok': False, 'error': 'No template assigned to class'}), 404
+    # Find the teacher usable VM (is_template_vm=False, assigned to teacher)
+    teacher_vm = None
+    for assignment in class_.vm_assignments:
+        if not assignment.is_template_vm and assignment.assigned_user_id == class_.teacher_id:
+            teacher_vm = assignment
+            break
     
-    template = class_.template
+    if not teacher_vm:
+        # Try to find any unassigned non-template VM
+        for assignment in class_.vm_assignments:
+            if not assignment.is_template_vm and assignment.assigned_user_id is None:
+                teacher_vm = assignment
+                break
+    
+    if not teacher_vm or not teacher_vm.proxmox_vmid:
+        return jsonify({'ok': False, 'error': 'Teacher usable VM not yet created. Class creation may still be in progress.'}), 404
+    
+    # Use the VMAssignment data instead of Template data
+    vmid = teacher_vm.proxmox_vmid
+    node = teacher_vm.node
     
     try:
-        # Get node from Proxmox if not set in template
-        node = template.node
-        logger.info(f"Fetching VM config for template_id={template.id}, vmid={template.proxmox_vmid}, node={node}")
+        logger.info(f"Fetching VM config for teacher usable VM: class_id={class_id}, vmid={vmid}, node={node}")
         
-        proxmox = get_proxmox_admin_for_cluster(template.cluster_ip)
+        # Get cluster_ip from the class's template (or assignment if stored there)
+        cluster_ip = class_.template.cluster_ip if class_.template else None
+        if not cluster_ip:
+            return jsonify({'ok': False, 'error': 'Cannot determine cluster for class'}), 500
+        
+        proxmox = get_proxmox_admin_for_cluster(cluster_ip)
         
         # If node is missing or invalid, fetch it from Proxmox
         if not node or node == "qemu" or node == "None":
-            logger.warning(f"Template {template.id} has invalid/missing node: '{node}'. Fetching from Proxmox...")
+            logger.warning(f"VMAssignment {teacher_vm.id} has invalid/missing node: '{node}'. Fetching from Proxmox...")
             try:
                 # Get all VMs from cluster to find the node
                 resources = proxmox.cluster.resources.get(type="vm")
                 for r in resources:
-                    if r.get('vmid') == template.proxmox_vmid:
+                    if r.get('vmid') == vmid:
                         node = r.get('node')
-                        logger.info(f"Found node '{node}' for VMID {template.proxmox_vmid}")
-                        # Update template with correct node
-                        template.node = node
+                        logger.info(f"Found node '{node}' for VMID {vmid}")
+                        # Update assignment with correct node
+                        teacher_vm.node = node
                         db.session.commit()
                         break
                 
                 if not node or node == "qemu" or node == "None":
-                    logger.error(f"Could not find valid node for VMID {template.proxmox_vmid}")
+                    logger.error(f"Could not find valid node for VMID {vmid}")
                     return jsonify({
                         "ok": False, 
-                        "error": f"Template VM {template.proxmox_vmid} not found in Proxmox. It may have been deleted."
+                        "error": f"Teacher VM {vmid} not found in Proxmox. It may have been deleted."
                     }), 404
             except Exception as e:
                 logger.error(f"Failed to fetch node from Proxmox: {e}")
                 return jsonify({
                     "ok": False, 
-                    "error": f"Cannot access template VM. It may have been deleted or the cluster is unreachable."
+                    "error": f"Cannot access teacher VM. It may have been deleted or the cluster is unreachable."
                 }), 500
         
-        vm_config = proxmox.nodes(node).qemu(template.proxmox_vmid).config.get()
+        vm_config = proxmox.nodes(node).qemu(vmid).config.get()
 
         # Get VM status from Proxmox (after node is validated)
-        vm_status = get_vm_status(template.proxmox_vmid, node, template.cluster_ip)
+        vm_status = get_vm_status(vmid, node, cluster_ip)
 
         # Extract MAC address from network config
         mac_address = None
@@ -115,25 +134,25 @@ def get_template_info(class_id: int):
                 if mac_address:
                     break
 
-        # Attempt fast IP discovery for template VM
+        # Attempt fast IP discovery for teacher usable VM
         ip_address = None
         rdp_available = False
         try:
             from app.services import proxmox_client as pc
             # Use existing internal lookup (guest agent if running)
             if vm_status == 'running':
-                ip_address = pc._lookup_vm_ip(node, template.proxmox_vmid, 'qemu')  # private helper
+                ip_address = pc._lookup_vm_ip(node, vmid, 'qemu')  # private helper
                 if not ip_address and mac_address:
                     # Fallback: synchronous ARP scan for this single MAC
                     from app.services.arp_scanner import discover_ips_via_arp
                     from app.config import ARP_SUBNETS, CLUSTERS
                     cluster_id = None
                     for c in CLUSTERS:
-                        if c['host'] == template.cluster_ip:
+                        if c['host'] == cluster_ip:
                             cluster_id = c['id']
                             break
                     if cluster_id:
-                        composite_key = f"{cluster_id}:{template.proxmox_vmid}"
+                        composite_key = f"{cluster_id}:{vmid}"
                         discovered = discover_ips_via_arp({composite_key: mac_address}, subnets=ARP_SUBNETS, background=False)
                         ip_address = discovered.get(composite_key)
                 if ip_address:
@@ -141,12 +160,16 @@ def get_template_info(class_id: int):
                     # We don't have ostype here; attempt port check
                     rdp_available = pc.has_rdp_port_open(ip_address)
         except Exception as ip_err:
-            logger.debug(f"Template IP discovery failed: {ip_err}")
+            logger.debug(f"Teacher VM IP discovery failed: {ip_err}")
 
         return jsonify({
             'ok': True,
             'template': {
-                **template.to_dict(),
+                'id': teacher_vm.id,
+                'proxmox_vmid': vmid,
+                'node': node,
+                'cluster_ip': cluster_ip,
+                'name': vm_config.get('name', f'VM-{vmid}'),
                 'status': vm_status,
                 'mac_address': mac_address,
                 'ip': ip_address,
@@ -161,102 +184,122 @@ def get_template_info(class_id: int):
 @api_class_template_bp.route("/<int:class_id>/template/start", methods=['POST'])
 @login_required
 def start_template(class_id: int):
-    """Start the template VM."""
+    """Start the teacher usable VM (not the Proxmox template)."""
     class_, error_response, status_code = require_teacher_or_admin(class_id)
     if error_response:
         return error_response, status_code
     
-    if not class_.template:
-        return jsonify({'ok': False, 'error': 'No template assigned'}), 404
+    # Find the teacher usable VM (is_template_vm=False, assigned to teacher)
+    teacher_vm = None
+    for assignment in class_.vm_assignments:
+        if not assignment.is_template_vm and assignment.assigned_user_id == class_.teacher_id:
+            teacher_vm = assignment
+            break
+    
+    if not teacher_vm:
+        # Try to find any unassigned non-template VM
+        for assignment in class_.vm_assignments:
+            if not assignment.is_template_vm and assignment.assigned_user_id is None:
+                teacher_vm = assignment
+                break
+    
+    if not teacher_vm or not teacher_vm.proxmox_vmid:
+        return jsonify({'ok': False, 'error': 'Teacher usable VM not found'}), 404
     
     try:
-        template = class_.template
-        # Get the node from VMAssignment if available, otherwise try to find it
-        node = template.node if hasattr(template, 'node') and template.node else None
+        vmid = teacher_vm.proxmox_vmid
+        node = teacher_vm.node
+        cluster_ip = class_.template.cluster_ip if class_.template else None
+        
+        if not cluster_ip:
+            return jsonify({'ok': False, 'error': 'Cannot determine cluster for class'}), 500
         
         if not node:
             # Try to find the VM's node via cluster resources
             try:
                 from app.services.proxmox_service import get_proxmox_admin_for_cluster
-                from app.config import CLUSTERS
                 
-                cluster_id = None
-                for cluster in CLUSTERS:
-                    if cluster["host"] == template.cluster_ip:
-                        cluster_id = cluster["id"]
+                proxmox = get_proxmox_admin_for_cluster(cluster_ip)
+                resources = proxmox.cluster.resources.get(type="vm")
+                for r in resources:
+                    if r.get('vmid') == vmid:
+                        node = r.get('node')
                         break
-                
-                if cluster_id:
-                    proxmox = get_proxmox_admin_for_cluster(cluster_id)
-                    resources = proxmox.cluster.resources.get(type="vm")
-                    for r in resources:
-                        if r.get('vmid') == template.proxmox_vmid:
-                            node = r.get('node')
-                            break
             except Exception as e:
-                logger.warning(f"Failed to auto-detect node for VM {template.proxmox_vmid}: {e}")
+                logger.warning(f"Failed to auto-detect node for VM {vmid}: {e}")
         
         if not node:
-            return jsonify({'ok': False, 'error': 'Could not determine VM node. Please check template configuration.'}), 400
+            return jsonify({'ok': False, 'error': 'Could not determine VM node. Please check VM configuration.'}), 400
         
-        success, msg = start_class_vm(template.proxmox_vmid, node, template.cluster_ip)
+        success, msg = start_class_vm(vmid, node, cluster_ip)
         
         if success:
-            return jsonify({'ok': True, 'message': 'Template VM started'})
+            return jsonify({'ok': True, 'message': 'Teacher VM started'})
         else:
-            return jsonify({'ok': False, 'error': msg or 'Failed to start template VM'}), 500
+            return jsonify({'ok': False, 'error': msg or 'Failed to start teacher VM'}), 500
     except Exception as e:
-        logger.exception(f"Failed to start template: {e}")
+        logger.exception(f"Failed to start teacher VM: {e}")
         return jsonify({'ok': False, 'error': str(e)}), 500
 
 
 @api_class_template_bp.route("/<int:class_id>/template/stop", methods=['POST'])
 @login_required
 def stop_template(class_id: int):
-    """Stop the template VM."""
+    """Stop the teacher usable VM (not the Proxmox template)."""
     class_, error_response, status_code = require_teacher_or_admin(class_id)
     if error_response:
         return error_response, status_code
     
-    if not class_.template:
-        return jsonify({'ok': False, 'error': 'No template assigned'}), 404
+    # Find the teacher usable VM (is_template_vm=False, assigned to teacher)
+    teacher_vm = None
+    for assignment in class_.vm_assignments:
+        if not assignment.is_template_vm and assignment.assigned_user_id == class_.teacher_id:
+            teacher_vm = assignment
+            break
+    
+    if not teacher_vm:
+        # Try to find any unassigned non-template VM
+        for assignment in class_.vm_assignments:
+            if not assignment.is_template_vm and assignment.assigned_user_id is None:
+                teacher_vm = assignment
+                break
+    
+    if not teacher_vm or not teacher_vm.proxmox_vmid:
+        return jsonify({'ok': False, 'error': 'Teacher usable VM not found'}), 404
     
     try:
-        template = class_.template
-        # Get the node from VMAssignment if available, otherwise try to find it
-        node = template.node if hasattr(template, 'node') and template.node else None
+        vmid = teacher_vm.proxmox_vmid
+        node = teacher_vm.node
+        cluster_ip = class_.template.cluster_ip if class_.template else None
+        
+        if not cluster_ip:
+            return jsonify({'ok': False, 'error': 'Cannot determine cluster for class'}), 500
         
         if not node:
             # Try to find the VM's node via cluster resources
             try:
-                cluster_id = None
-                from app.config import CLUSTERS
-                for cluster in CLUSTERS:
-                    if cluster["host"] == template.cluster_ip:
-                        cluster_id = cluster["id"]
-                        break
+                from app.services.proxmox_service import get_proxmox_admin_for_cluster
                 
-                if cluster_id:
-                    proxmox = get_proxmox_admin_for_cluster(cluster_id)
-                    resources = proxmox.cluster.resources.get(type="vm")
-                    for r in resources:
-                        if r.get('vmid') == template.proxmox_vmid:
-                            node = r.get('node')
-                            break
+                proxmox = get_proxmox_admin_for_cluster(cluster_ip)
+                resources = proxmox.cluster.resources.get(type="vm")
+                for r in resources:
+                    if r.get('vmid') == vmid:
+                        node = r.get('node')
+                        break
             except Exception as e:
-                logger.warning(f"Failed to auto-detect node for VM {template.proxmox_vmid}: {e}")
+                logger.warning(f"Failed to auto-detect node for VM {vmid}: {e}")
         
         if not node:
-            return jsonify({'ok': False, 'error': 'Could not determine VM node. Please check template configuration.'}), 400
+            return jsonify({'ok': False, 'error': 'Could not determine VM node. Please check VM configuration.'}), 400
         
-        success, msg = stop_class_vm(template.proxmox_vmid, node, template.cluster_ip)
+        success, msg = stop_class_vm(vmid, node, cluster_ip)
         
         if success:
-            return jsonify({'ok': True, 'message': 'Template VM stopped'})
+            return jsonify({'ok': True, 'message': 'Teacher VM stopped'})
         else:
-            return jsonify({'ok': False, 'error': msg or 'Failed to stop template VM'}), 500
+            return jsonify({'ok': False, 'error': msg or 'Failed to stop teacher VM'}), 500
     except Exception as e:
-        logger.exception(f"Failed to stop template: {e}")
+        logger.exception(f"Failed to stop teacher VM: {e}")
         return jsonify({'ok': False, 'error': str(e)}), 500
 
 
