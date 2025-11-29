@@ -473,10 +473,12 @@ def join_class_via_token(token: str, user_id: int) -> Tuple[bool, str, Optional[
 
 def create_template(name: str, proxmox_vmid: int, cluster_ip: str = '10.220.15.249',
                    node: str = None, created_by_id: int = None, 
-                   is_class_template: bool = False, class_id: int = None) -> Tuple[Optional[Template], str]:
+                   is_class_template: bool = False, class_id: int = None,
+                   original_template_id: int = None) -> Tuple[Optional[Template], str]:
     """Register a Proxmox template in the database.
     
     If node is not provided, will attempt to fetch it from Proxmox.
+    If a template with the same cluster_ip/node/vmid already exists, returns the existing one.
     
     Returns: (template, message/error)
     """
@@ -515,6 +517,18 @@ def create_template(name: str, proxmox_vmid: int, cluster_ip: str = '10.220.15.2
         except Exception as e:
             logger.warning(f"Failed to auto-detect node for template: {e}")
     
+    # Check if template already exists (handle unique constraint gracefully)
+    if node:
+        existing = Template.query.filter_by(
+            cluster_ip=cluster_ip,
+            node=node,
+            proxmox_vmid=proxmox_vmid
+        ).first()
+        
+        if existing:
+            logger.info(f"Template already exists: {existing.name} (VMID: {proxmox_vmid}) on {node}")
+            return existing, "Template already registered"
+    
     template = Template(
         name=name,
         proxmox_vmid=proxmox_vmid,
@@ -522,7 +536,8 @@ def create_template(name: str, proxmox_vmid: int, cluster_ip: str = '10.220.15.2
         node=node,
         created_by_id=created_by_id,
         is_class_template=is_class_template,
-        class_id=class_id
+        class_id=class_id,
+        original_template_id=original_template_id
     )
     
     try:
@@ -534,6 +549,16 @@ def create_template(name: str, proxmox_vmid: int, cluster_ip: str = '10.220.15.2
     except Exception as e:
         db.session.rollback()
         logger.exception("Failed to register template %s: %s", name, e)
+        # Try to return existing template if constraint error
+        if "UNIQUE constraint failed" in str(e) or "IntegrityError" in str(e):
+            if node:
+                existing = Template.query.filter_by(
+                    cluster_ip=cluster_ip,
+                    node=node,
+                    proxmox_vmid=proxmox_vmid
+                ).first()
+                if existing:
+                    return existing, "Template already registered"
         return None, f"Failed to register template: {str(e)}"
 
 
