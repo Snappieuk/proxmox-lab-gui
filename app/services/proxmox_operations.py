@@ -401,7 +401,9 @@ def clone_vms_for_class(template_vmid: int, node: str, count: int, name_prefix: 
                         cluster_ip: str = None, task_id: str = None, per_vm_retry: int = 10, 
                         concurrent: bool = True, max_workers: int = 10,
                         include_template_vm: bool = True, smart_placement: bool = True,
-                        fast_clone: bool = True, storage: str = None) -> List[Dict[str, Any]]:
+                        fast_clone: bool = True, storage: str = None,
+                        precreated_teacher_vmid: int = None,
+                        precreated_teacher_node: str = None) -> List[Dict[str, Any]]:
     """Clone multiple VMs from a template for a class.
     
     Args:
@@ -475,8 +477,15 @@ def clone_vms_for_class(template_vmid: int, node: str, count: int, name_prefix: 
         # Smart node selection: distribute VMs across nodes based on resources
         node_assignments = []
         if smart_placement:
-            logger.info(f"Using smart placement with dynamic re-scoring to distribute {count + (1 if include_template_vm else 0)} VMs across cluster")
-            total_vms = (1 if include_template_vm else 0) + count
+            # Determine how many placement slots we need
+            # - If include_template_vm and no precreated teacher: need 2 initial full clones (teacher + base template)
+            # - If include_template_vm and precreated_teacher_vmid provided: need 1 (base template) only
+            # - Plus student VMs count
+            initial_templates = 0
+            if include_template_vm:
+                initial_templates = 2 if not precreated_teacher_vmid else 1
+            total_vms = initial_templates + count
+            logger.info(f"Using smart placement with dynamic re-scoring to distribute {total_vms} VMs across cluster")
             
             # Get template info to estimate resource requirements
             estimated_ram_mb = 2048  # Default
@@ -572,7 +581,10 @@ def clone_vms_for_class(template_vmid: int, node: str, count: int, name_prefix: 
                 node_assignments = [node] * total_vms
         else:
             logger.info(f"Smart placement disabled, using node: {node}")
-            total_vms = (1 if include_template_vm else 0) + count
+            initial_templates = 0
+            if include_template_vm:
+                initial_templates = 2 if not precreated_teacher_vmid else 1
+            total_vms = initial_templates + count
             node_assignments = [node] * total_vms
         
         assignment_index = 0  # Track which node to use next
@@ -584,7 +596,7 @@ def clone_vms_for_class(template_vmid: int, node: str, count: int, name_prefix: 
         class_template_vmid = template_vmid
         class_template_node = node
         
-        if include_template_vm:
+        if include_template_vm and not precreated_teacher_vmid:
             # Create VM 1: Teacher's editable template VM
             while next_vmid in used_vmids:
                 next_vmid += 1
@@ -668,6 +680,18 @@ def clone_vms_for_class(template_vmid: int, node: str, count: int, name_prefix: 
                     update_clone_progress(task_id, failed=1, error=msg, message="Failed to create teacher VM")
                 # Don't proceed to base template if teacher VM failed
                 return created_vms
+
+        # If teacher VM was precreated, record it and reuse its node
+        if precreated_teacher_vmid:
+            teacher_vm_vmid = precreated_teacher_vmid
+            teacher_vm_node = precreated_teacher_node or node
+            created_vms.append({
+                "vmid": teacher_vm_vmid,
+                "name": f"{name_prefix}-Teacher",
+                "node": teacher_vm_node,
+                "is_template_vm": True
+            })
+            used_vmids.add(teacher_vm_vmid)
             
             # Create VM 2: Another full clone that will be converted to template for student linked clones
             while next_vmid in used_vmids:
@@ -1014,23 +1038,25 @@ def get_vm_status(vmid: int, node: str = None, cluster_ip: str = None) -> Dict[s
         except Exception as e:
             logger.debug(f"Failed to get MAC address for VM {vmid}: {e}")
         
-        # Try to get IP address from guest agent
+        # Primary: resolve IP via ARP scanner (guest agent/LXC may not be available)
         try:
-            if status_data.get('status') == 'running':
-                agent_info = proxmox.nodes(node).qemu(vmid).agent.get('network-get-interfaces')
-                if agent_info and 'result' in agent_info:
-                    for iface in agent_info['result']:
-                        if iface.get('name') not in ['lo', 'loopback']:
-                            for addr in iface.get('ip-addresses', []):
-                                if addr.get('ip-address-type') == 'ipv4':
-                                    ip = addr.get('ip-address')
-                                    if ip and not ip.startswith('127.'):
-                                        ip_address = ip
-                                        break
-                            if ip_address:
-                                break
+            if mac_address:
+                from app.services.arp_scanner import get_arp_table, discover_ips_via_arp
+                # Try current ARP table first
+                arp = get_arp_table()
+                mac_norm = mac_address.lower()
+                if mac_norm in arp:
+                    ip_address = arp.get(mac_norm)
+                # If not found, trigger background ARP discovery for configured subnets
+                if not ip_address:
+                    try:
+                        from app.config import ARP_SUBNETS
+                        # Trigger background scan; returns cached results if available
+                        discover_ips_via_arp({}, ARP_SUBNETS, background=True)
+                    except Exception as se:
+                        logger.debug(f"ARP discovery trigger failed: {se}")
         except Exception as e:
-            logger.debug(f"Failed to get IP address for VM {vmid}: {e}")
+            logger.debug(f"ARP-based IP resolution failed for VM {vmid}: {e}")
         
         return {
             "status": status_data.get("status", "unknown"),

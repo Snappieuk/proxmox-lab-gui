@@ -303,25 +303,33 @@
                     <thead>
                         <tr>
                             <th>VMID</th>
-                            <th>MAC Address</th>
-                            <th>Assigned Student</th>
+                            <th>Node</th>
+                            <th>MAC</th>
+                            <th>IP</th>
                             <th>Status</th>
+                            <th>Assigned Student</th>
                             <th>Actions</th>
                         </tr>
                     </thead>
                     <tbody id="vms-tbody">
                         {% for vm in vm_assignments %}
-                        <tr>
+                        {% if not vm.is_template_vm %}
+                        <tr data-vmid="{{ vm.proxmox_vmid }}" data-node="{{ vm.node }}">
                             <td><strong>{{ vm.proxmox_vmid }}</strong></td>
-                            <td><code style="font-size: 0.85rem;">{{ vm.mac_address or 'N/A' }}</code></td>
+                            <td>{{ vm.node or 'N/A' }}</td>
+                            <td><span id="mac-{{ vm.proxmox_vmid }}">{{ vm.mac or 'N/A' }}</span></td>
+                            <td><span id="ip-{{ vm.proxmox_vmid }}">{{ vm.ip or 'N/A' }}</span></td>
+                            <td><span class="status-badge" id="status-{{ vm.proxmox_vmid }}">{{ vm.status or 'unknown' }}</span></td>
                             <td>{{ vm.assigned_user_name or '<span style="color: #999;">Unassigned</span>' | safe }}</td>
-                            <td><span class="status-badge status-{{ vm.status }}">{{ vm.status }}</span></td>
-                            <td>
-                                <button class="action-btn" onclick="viewVM({{ vm.proxmox_vmid }})">
-                                    <i class="bi bi-eye"></i> View
-                                </button>
+                            <td style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+                                <button class="btn-minimal" title="Start" onclick="startVm({{ vm.proxmox_vmid }}, '{{ vm.node }}')"><i class="bi bi-play-fill"></i></button>
+                                <button class="btn-minimal" title="Stop" onclick="stopVm({{ vm.proxmox_vmid }}, '{{ vm.node }}')"><i class="bi bi-stop-fill"></i></button>
+                                <button class="btn-minimal" title="Revert baseline" onclick="revertVm({{ vm.proxmox_vmid }}, '{{ vm.node }}')"><i class="bi bi-arrow-counterclockwise"></i></button>
+                                <button class="btn-minimal" title="SSH" onclick="sshVm({{ vm.proxmox_vmid }})"><i class="bi bi-terminal-fill"></i></button>
+                                <button class="btn-minimal" title="Download RDP" onclick="rdpVm({{ vm.proxmox_vmid }})"><i class="bi bi-file-earmark-arrow-down"></i></button>
                             </td>
                         </tr>
+                        {% endif %}
                         {% endfor %}
                     </tbody>
                 </table>
@@ -1134,6 +1142,77 @@ function refreshVMs() {
 function viewVM(vmid) {
     // Navigate to portal with VM highlighted
     window.location.href = `/portal#vm-${vmid}`;
+}
+
+// VM actions for student VMs
+async function startVm(vmid, node) {
+    try {
+        const resp = await fetch(`/api/vm/${vmid}/start`, { method: 'POST' });
+        const data = await resp.json();
+        if (!data.ok) {
+            showAlert('Failed to start VM: ' + (data.error || 'Unknown error'), 'error');
+        } else {
+            showAlert('VM starting...', 'info');
+        }
+        setTimeout(() => updateVmRow(vmid), 2000);
+    } catch (e) {
+        showAlert('Error starting VM', 'error');
+    }
+}
+
+async function stopVm(vmid, node) {
+    try {
+        const resp = await fetch(`/api/vm/${vmid}/stop`, { method: 'POST' });
+        const data = await resp.json();
+        if (!data.ok) {
+            showAlert('Failed to stop VM: ' + (data.error || 'Unknown error'), 'error');
+        } else {
+            showAlert('VM stopping...', 'info');
+        }
+        setTimeout(() => updateVmRow(vmid), 2000);
+    } catch (e) {
+        showAlert('Error stopping VM', 'error');
+    }
+}
+
+async function revertVm(vmid, node) {
+    if (!confirm('Revert this VM to the class baseline? All changes will be lost!')) return;
+    try {
+        const resp = await fetch(`/api/vm/${vmid}/revert`, { method: 'POST' });
+        const data = await resp.json();
+        if (!data.ok) {
+            showAlert('Failed to revert VM: ' + (data.error || 'Unknown error'), 'error');
+        } else {
+            showAlert('VM reverted to baseline', 'success');
+        }
+        setTimeout(() => updateVmRow(vmid), 2000);
+    } catch (e) {
+        showAlert('Error reverting VM', 'error');
+    }
+}
+
+function sshVm(vmid) {
+    window.open(`/ssh/${vmid}`, '_blank');
+}
+
+function rdpVm(vmid) {
+    window.location.href = `/rdp/${vmid}.rdp`;
+}
+
+async function updateVmRow(vmid) {
+    try {
+        const resp = await fetch(`/api/classes/${classId}/vms`);
+        const data = await resp.json();
+        if (!data.ok) return;
+        const vm = (data.vms || []).find(v => v.proxmox_vmid === vmid);
+        if (!vm) return;
+        const statusEl = document.getElementById(`status-${vmid}`);
+        const macEl = document.getElementById(`mac-${vmid}`);
+        const ipEl = document.getElementById(`ip-${vmid}`);
+        if (statusEl) statusEl.textContent = vm.status || 'unknown';
+        if (macEl) macEl.textContent = vm.mac || 'N/A';
+        if (ipEl) ipEl.textContent = vm.ip || 'N/A';
+    } catch {}
 }
 
 function showAlert(message, type = 'info') {

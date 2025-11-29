@@ -64,6 +64,7 @@ from app.services.proxmox_operations import (
     clone_vms_for_class,
     CLASS_CLUSTER_IP
 )
+from app.config import CLUSTERS
 
 from app.services.clone_progress import start_clone_progress, get_clone_progress, update_clone_progress
 
@@ -257,21 +258,18 @@ def delete_class_route(class_id: int):
         logger.error(f"User {user.username} not authorized to delete class {class_id}")
         return jsonify({"ok": False, "error": "Access denied"}), 403
     
-    # Capture template info BEFORE deletion so we can optionally delete the class-scoped template VM
+    # Capture template info BEFORE deletion so we can delete the class's base template VM
     template_info = None
     if class_.template:
         tpl = class_.template
-        # Consider a template deletable if it is explicitly marked class-scoped or has original_template_id
-        if getattr(tpl, 'is_class_template', False) or tpl.original_template_id or tpl.class_id == class_.id:
-            template_info = {
-                'vmid': tpl.proxmox_vmid,
-                'node': tpl.node,
-                'cluster_ip': tpl.cluster_ip,
-                'db_id': tpl.id,
-            }
-            logger.info(f"Class {class_id}: will delete cloned template VM {tpl.proxmox_vmid} (template_id={tpl.id})")
-        else:
-            logger.info(f"Class {class_id}: template {tpl.proxmox_vmid} not marked class-specific; leaving intact")
+        # Always attempt to delete the class's base template VM to avoid orphaned resources
+        template_info = {
+            'vmid': tpl.proxmox_vmid,
+            'node': tpl.node,
+            'cluster_ip': tpl.cluster_ip,
+            'db_id': tpl.id,
+        }
+        logger.info(f"Class {class_id}: will delete base template VM {tpl.proxmox_vmid} (template_id={tpl.id})")
 
     # Check if force delete (skip VM deletion from Proxmox including template)
     force_delete = request.args.get('force', 'false').lower() == 'true'
@@ -618,41 +616,64 @@ def create_class_vms(class_id: int):
     task_id = str(uuid.uuid4())
     # Total includes teacher VM + base template VM + student VMs (2 initial full clones + students)
     start_clone_progress(task_id, count + 2)
-    
-    # Clone VMs (includes 1 template VM + count student VMs)
-    created_vms = clone_vms_for_class(
+
+    # STEP 1: Clone teacher VM synchronously so the page can proceed
+    from app.services.proxmox_operations import clone_vm_from_template
+    teacher_name = f"{class_.name}-Teacher"
+    # Find next available VMID by asking Proxmox resources
+    from app.services.proxmox_service import get_proxmox_admin_for_cluster
+    proxmox = get_proxmox_admin_for_cluster(next(c["id"] for c in CLUSTERS if c["host"] == CLASS_CLUSTER_IP))
+    used_vmids = set(r.get('vmid') for r in proxmox.cluster.resources.get(type="vm"))
+    next_vmid = 200
+    while next_vmid in used_vmids:
+        next_vmid += 1
+
+    update_clone_progress(task_id, current_vm=teacher_name, status="running", message="Creating teacher VM (1/3)")
+    success, msg = clone_vm_from_template(
         template_vmid=template_vmid,
+        new_vmid=next_vmid,
+        name=teacher_name,
         node=target_node,
-        count=count,
-        name_prefix=class_.name,
         cluster_ip=CLASS_CLUSTER_IP,
-        task_id=task_id,
-        include_template_vm=True  # Always create template reference VM
+        max_retries=10,
+        full_clone=True,
+        create_baseline=False
     )
-    
-    # Register created VMs in database
-    # Separate template VM from student VMs
-    registered = []
-    template_vm = None
-    
-    for vm_info in created_vms:
-        is_template = vm_info.get("is_template_vm", False)
-        assignment, msg = create_vm_assignment(
-            class_id, 
-            vm_info["vmid"], 
-            vm_info["node"],
-            is_template_vm=is_template
-        )
-        if assignment:
-            registered.append(assignment.to_dict())
-            if is_template:
-                template_vm = assignment.to_dict()
-    
-    update_clone_progress(task_id, status="completed")
-    
+    if not success:
+        update_clone_progress(task_id, failed=1, error=msg)
+        return jsonify({"ok": False, "error": msg}), 500
+
+    # Register teacher VM immediately
+    assignment, _ = create_vm_assignment(class_id, next_vmid, target_node, is_template_vm=True)
+    registered = [assignment.to_dict()] if assignment else []
+    template_vm = assignment.to_dict() if assignment else None
+    update_clone_progress(task_id, completed=1, message="Teacher VM created. Continuing in background...")
+
+    # STEP 2: Background thread for base template + student VMs
+    import threading
+    def _background_clone():
+        try:
+            clone_vms_for_class(
+                template_vmid=template_vmid,
+                node=target_node,
+                count=count,
+                name_prefix=class_.name,
+                cluster_ip=CLASS_CLUSTER_IP,
+                task_id=task_id,
+                include_template_vm=True,
+                precreated_teacher_vmid=next_vmid,
+                precreated_teacher_node=target_node
+            )
+            update_clone_progress(task_id, status="completed")
+        except Exception as e:
+            update_clone_progress(task_id, status="failed", errors=[str(e)])
+
+    threading.Thread(target=_background_clone, daemon=True).start()
+
+    # Return immediately with teacher VM info and task id
     return jsonify({
         "ok": True,
-        "message": f"Created {len(created_vms)} VMs (1 template + {count} student VMs)",
+        "message": f"Teacher VM created; base template and {count} student VMs will be prepared in the background.",
         "vms": registered,
         "template_vm": template_vm,
         "task_id": task_id
