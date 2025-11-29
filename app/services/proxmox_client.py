@@ -1641,7 +1641,9 @@ def get_all_vms(skip_ips: bool = False, force_refresh: bool = False) -> List[Dic
         else:
             logger.debug("get_all_vms: skipping inventory persistence (no app context)")
     except Exception as inv_err:
-        logger.warning(f"get_all_vms: failed to persist VM inventory: {inv_err}")
+        # Gracefully handle database schema issues (e.g., missing cluster_id column)
+        # Run migrate_add_cluster_id.py to fix the schema
+        logger.warning(f"get_all_vms: failed to persist VM inventory (run migrate_add_cluster_id.py if you see IntegrityError): {inv_err}")
     
     return out
 
