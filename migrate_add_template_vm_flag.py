@@ -25,9 +25,10 @@ def migrate():
             
             # Add the column
             print("Adding 'is_template_vm' column to vm_assignments table...")
-            db.engine.execute(
-                'ALTER TABLE vm_assignments ADD COLUMN is_template_vm BOOLEAN DEFAULT 0'
-            )
+            from sqlalchemy import text
+            with db.engine.connect() as conn:
+                conn.execute(text('ALTER TABLE vm_assignments ADD COLUMN is_template_vm BOOLEAN DEFAULT 0'))
+                conn.commit()
             
             print("✓ Successfully added is_template_vm column")
             print("\nMigration complete!")
