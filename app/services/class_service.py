@@ -168,57 +168,58 @@ def create_class(name: str, teacher_id: int, description: str = None,
         if not original_template:
             return None, "Template not found"
     
-    class_ = Class(
-        name=name,
-        description=description,
-        try:
-            # Delay class creation until after successful template clone (if template provided)
-            cloned_template_id = None
-            if original_template:
-                if not original_template.node:
-                    logger.error(f"Template {original_template.id} ({original_template.name}) has no node specified")
-                    return None, "Template configuration error: node not set. Please ensure the template has a valid Proxmox node."
-                from app.services.proxmox_operations import clone_template_for_class, sanitize_vm_name
-                sanitized_prefix = sanitize_vm_name(name, fallback="classtemplate")
-                clone_success, clone_vmid, clone_msg = clone_template_for_class(
-                    original_template.proxmox_vmid,
-                    original_template.node,
-                    f"{sanitized_prefix}-template",
-                    original_template.cluster_ip
-                )
-                if not (clone_success and clone_vmid):
-                    logger.warning(f"Failed to clone template for class {name}: {clone_msg}")
-                    return None, f"Failed to clone template: {clone_msg}"
-                # Create cloned template record
-                cloned_template = Template(
-                    name=f"{name} Template",
-                    proxmox_vmid=clone_vmid,
-                    node=original_template.node,
-                    cluster_ip=original_template.cluster_ip,
-                    original_template_id=original_template.id
-                )
-                db.session.add(cloned_template)
-                db.session.flush()
-                cloned_template_id = cloned_template.id
-                logger.info(f"Cloned template {original_template.proxmox_vmid} → {clone_vmid} for class {name}")
-
-            # Now create the class record
-            class_ = Class(
-                name=name,
-                description=description,
-                teacher_id=teacher_id,
-                template_id=cloned_template_id,
-                pool_size=pool_size
+    try:
+        # Delay class creation until after successful template clone (if template provided)
+        cloned_template_id = None
+        if original_template:
+            if not original_template.node:
+                logger.error(f"Template {original_template.id} ({original_template.name}) has no node specified")
+                return None, "Template configuration error: node not set. Please ensure the template has a valid Proxmox node."
+            from app.services.proxmox_operations import clone_template_for_class, sanitize_vm_name
+            sanitized_prefix = sanitize_vm_name(name, fallback="classtemplate")
+            clone_success, clone_vmid, clone_msg = clone_template_for_class(
+                original_template.proxmox_vmid,
+                original_template.node,
+                f"{sanitized_prefix}-template",
+                original_template.cluster_ip
             )
-            db.session.add(class_)
+            if not (clone_success and clone_vmid):
+                logger.warning(f"Failed to clone template for class {name}: {clone_msg}")
+                return None, f"Failed to clone template: {clone_msg}"
+            # Create cloned template record
+            cloned_template = Template(
+                name=f"{name} Template",
+                proxmox_vmid=clone_vmid,
+                node=original_template.node,
+                cluster_ip=original_template.cluster_ip,
+                original_template_id=original_template.id
+            )
+            db.session.add(cloned_template)
             db.session.flush()
+            cloned_template_id = cloned_template.id
+            logger.info(f"Cloned template {original_template.proxmox_vmid} → {clone_vmid} for class {name}")
 
-            # Auto-generate join token (7-day default) if none
-            class_.generate_join_token(expires_in_days=7)
+        # Now create the class record
+        class_ = Class(
+            name=name,
+            description=description,
+            teacher_id=teacher_id,
+            template_id=cloned_template_id,
+            pool_size=pool_size
+        )
+        db.session.add(class_)
+        db.session.flush()
 
-            db.session.commit()
-            logger.info("Created class: %s by teacher %s (template_id=%s)", name, teacher.username, cloned_template_id)
-            return class_, "Class created successfully"
+        # Auto-generate join token (7-day default) if none
+        class_.generate_join_token(expires_in_days=7)
+
+        db.session.commit()
+        logger.info("Created class: %s by teacher %s (template_id=%s)", name, teacher.username, cloned_template_id)
+        return class_, "Class created successfully"
+    except Exception as e:
+        db.session.rollback()
+        logger.exception("Failed to create class %s: %s", name, e)
+        return None, f"Failed to create class: {str(e)}"
 
 
 def get_class_by_token(token: str) -> Optional[Class]:
