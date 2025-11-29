@@ -171,41 +171,33 @@ def create_new_class():
     if not class_:
         return jsonify({"ok": False, "error": msg}), 400
     
-    logger.info(f"Class {class_.id} created, now deploying {pool_size} student VMs + 2 teacher VMs")
+    logger.info(f"Class {class_.id} created, now cloning template exclusively for this class")
     
-    # Get template name for Terraform
-    template_name = class_.template.name if class_.template else None
-    if not template_name:
+    # Get source template info
+    source_template = class_.template
+    if not source_template:
         return jsonify({"ok": False, "error": "Template not found in database"}), 400
     
-    # Generate student usernames (pool_size determines count)
-    students = [f"student{i}" for i in range(1, pool_size + 1)]
-    
-    # Generate task ID for progress tracking
+    # Generate task ID for progress tracking (1 template clone + student VMs + teacher VM)
     import uuid
     task_id = str(uuid.uuid4())
-    start_clone_progress(task_id, pool_size + 2)  # Students + 2 teacher VMs
+    start_clone_progress(task_id, pool_size + 3)  # Template clone + students + teacher editable + teacher template
     
-    # Deploy VMs using Terraform in background thread
+    # Clone template and deploy VMs in background thread
     import threading
-    def _background_terraform_deploy():
+    def _background_clone_and_deploy():
         try:
+            from app.services.proxmox_service import get_proxmox_admin
+            from app.models import db
+            
             from app.services.terraform_service import deploy_class_with_terraform
-            
-            update_clone_progress(task_id, message=f"Deploying {pool_size} student VMs + 2 teacher VMs from template '{template_name}'...")
-            
-            # Sanitize class name for Proxmox (alphanumeric and hyphens only)
-            import re
-            class_prefix = re.sub(r'[^a-z0-9-]', '', class_.name.lower().replace(' ', '-').replace('_', '-'))
-            if not class_prefix:
-                class_prefix = f"class-{class_.id}"
             
             result = deploy_class_with_terraform(
                 class_id=str(class_.id),
                 class_prefix=class_prefix,
                 students=students,
-                template_name=template_name,
-                use_full_clone=False,  # Linked clones for speed
+                template_name=class_template_name,  # Use the class-specific template
+                use_full_clone=False,  # Linked clones from class template (faster)
                 create_teacher_vm=True,  # Teacher VM (editable)
                 create_teacher_template=True,  # Teacher template (for teacher to customize)
                 target_node=None,  # Auto-distribute
@@ -225,7 +217,7 @@ def create_new_class():
                     node=teacher_vm['node'],
                     is_template_vm=False  # This is the editable teacher VM
                 )
-                update_clone_progress(task_id, completed=1, message=f"Teacher VM (editable) created: {teacher_vm['name']}")
+                update_clone_progress(task_id, completed=2, message=f"Teacher VM (editable) created: {teacher_vm['name']}")
             
             # Register teacher template VM (converted to template for teacher use)
             if teacher_template_vm:
@@ -235,9 +227,9 @@ def create_new_class():
                     node=teacher_template_vm['node'],
                     is_template_vm=True  # This is the class-specific template
                 )
-                update_clone_progress(task_id, completed=2, message=f"Class template VM created: {teacher_template_vm['name']} (converted to template)")
+                update_clone_progress(task_id, completed=3, message=f"Class template VM created: {teacher_template_vm['name']} (converted to template)")
             
-            # Register student VMs (cloned from original template, unassigned)
+            # Register student VMs (cloned from class template, unassigned)
             registered_count = 0
             for student_name, vm_info in student_vms.items():
                 assignment, _ = create_vm_assignment(
@@ -249,28 +241,28 @@ def create_new_class():
                 registered_count += 1
                 update_clone_progress(
                     task_id,
-                    completed=registered_count + 2,
+                    completed=registered_count + 3,
                     message=f"Registered {registered_count}/{len(student_vms)} student VMs"
                 )
             
             update_clone_progress(
                 task_id,
                 status="completed",
-                message=f"Successfully deployed {len(student_vms)} student VMs + 1 editable teacher VM + 1 class template VM (all from original template)"
+                message=f"Successfully created class with dedicated template (VMID {class_template_vmid}), {len(student_vms)} student VMs, 1 editable teacher VM, and 1 teacher template VM. All isolated from the source template."
             )
             
         except Exception as e:
-            logger.exception(f"Terraform deployment failed for class {class_.id}: {e}")
+            logger.exception(f"Template cloning and deployment failed for class {class_.id}: {e}")
             update_clone_progress(task_id, status="failed", errors=[str(e)])
     
-    threading.Thread(target=_background_terraform_deploy, daemon=True).start()
+    threading.Thread(target=_background_clone_and_deploy, daemon=True).start()
     
     return jsonify({
         "ok": True,
-        "message": f"Class '{class_.name}' created! Deploying {pool_size} student VMs + 2 teacher VMs in background (check progress with task_id).",
+        "message": f"Class '{class_.name}' created! First cloning template exclusively for this class, then deploying {pool_size} student VMs + 2 teacher VMs.",
         "class": class_.to_dict(),
         "task_id": task_id,
-        "info": "VMs are being deployed with Terraform in parallel. This may take 30-60 seconds."
+        "info": "Creating dedicated class template (isolated from source) then deploying VMs. This ensures changes to this class's template don't affect other classes."
     })
 
 
@@ -723,6 +715,84 @@ def create_class_vms(class_id: int):
     import threading
     def _background_terraform_deploy():
         try:
+            from app.services.proxmox_service import get_proxmox_admin
+            from app.models import db
+            
+            # Step 1: Clone the source template exclusively for this class
+            update_clone_progress(task_id, completed=0, message=f"Cloning template '{source_template.name}' (VMID {source_template.proxmox_vmid}) for exclusive class use...")
+            
+            # Find next available VMID
+            proxmox = get_proxmox_admin()
+            used_vmids = set(r.get('vmid') for r in proxmox.cluster.resources.get(type="vm"))
+            class_template_vmid = max(used_vmids) + 1 if used_vmids else 200
+            
+            # Sanitize class name for Proxmox (alphanumeric and hyphens only)
+            import re
+            class_prefix = re.sub(r'[^a-z0-9-]', '', class_.name.lower().replace(' ', '-').replace('_', '-'))
+            if not class_prefix:
+                class_prefix = f"class-{class_.id}"
+            
+            class_template_name = f"{class_prefix}-template"
+            
+            # Clone the source template to create class-specific template
+            clone_success, clone_msg = clone_vm_from_template(
+                template_vmid=source_template.proxmox_vmid,
+                new_vmid=class_template_vmid,
+                name=class_template_name,
+                node=source_template.node,
+                cluster_ip=CLASS_CLUSTER_IP,
+                full_clone=True,  # Full clone to isolate from source
+                create_baseline=False,  # No baseline snapshot needed for template
+                wait_until_complete=True
+            )
+            
+            if not clone_success:
+                update_clone_progress(task_id, status="failed", errors=[f"Failed to clone template: {clone_msg}"])
+                return
+            
+            update_clone_progress(task_id, completed=1, message=f"Class template created: VMID {class_template_vmid}")
+            
+            # Convert the cloned VM to a template
+            convert_success, convert_msg = convert_vm_to_template(
+                vmid=class_template_vmid,
+                node=source_template.node,
+                cluster_ip=CLASS_CLUSTER_IP
+            )
+            
+            if not convert_success:
+                update_clone_progress(task_id, status="failed", errors=[f"Failed to convert to template: {convert_msg}"])
+                # Clean up the clone
+                delete_vm(class_template_vmid, source_template.node, CLASS_CLUSTER_IP)
+                return
+            
+            # Register the new class-specific template in database
+            class_specific_template, tpl_msg = create_template(
+                name=class_template_name,
+                proxmox_vmid=class_template_vmid,
+                cluster_ip=CLASS_CLUSTER_IP,
+                node=source_template.node,
+                created_by_id=user.id,
+                is_class_template=True,
+                class_id=class_.id,
+                original_template_id=source_template.id
+            )
+            
+            if not class_specific_template:
+                logger.error(f"Failed to register class template in DB: {tpl_msg}")
+                # Continue anyway - template is created in Proxmox
+            
+            # Update class to use the new class-specific template
+            class_.template_id = class_specific_template.id if class_specific_template else None
+            db.session.commit()
+            
+            logger.info(f"Class {class_.id} now has dedicated template VMID {class_template_vmid}")
+            
+            # Step 2: Deploy student and teacher VMs from the class-specific template
+            update_clone_progress(task_id, completed=1, message=f"Deploying {pool_size} student VMs + 2 teacher VMs from class template...")
+            
+            # Generate student usernames
+            students = [f"student{i}" for i in range(1, pool_size + 1)]
+            
             from app.services.terraform_service import deploy_class_with_terraform
             
             update_clone_progress(task_id, message="Deploying VMs with Terraform...")

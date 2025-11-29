@@ -151,15 +151,29 @@ document.addEventListener('DOMContentLoaded', async function() {
             return;
         }
         
-        const templates = data.proxmox_templates || [];
+        const proxmoxTemplates = data.proxmox_templates || [];
+        const registeredTemplates = data.registered_templates || [];
         
-        if (templates.length === 0) {
+        // Create map of registered templates by VMID for quick lookup
+        const registeredMap = {};
+        registeredTemplates.forEach(t => {
+            registeredMap[t.proxmox_vmid] = t.id;
+        });
+        
+        // Store template data for later use
+        window.templateData = {
+            proxmox: proxmoxTemplates,
+            registered: registeredMap
+        };
+        
+        if (proxmoxTemplates.length === 0) {
             selectElement.innerHTML = '<option value="">No templates available</option>';
         } else {
             selectElement.innerHTML = '<option value="">Select a template...</option>' +
-                templates.map(t => 
-                    `<option value="${t.vmid}">${t.name} (VMID: ${t.vmid})</option>`
-                ).join('');
+                proxmoxTemplates.map(t => {
+                    const registered = registeredMap[t.vmid] ? ' ✓' : '';
+                    return `<option value="${t.vmid}" data-name="${t.name}" data-node="${t.node}">${t.name} (VMID: ${t.vmid})${registered}</option>`;
+                }).join('');
         }
         
     } catch (e) {
@@ -175,7 +189,7 @@ document.getElementById('create-class-form').addEventListener('submit', async fu
     const name = document.getElementById('class-name').value.trim();
     const description = document.getElementById('class-description').value.trim();
     const poolSize = parseInt(document.getElementById('pool-size').value) || 0;
-    const templateVmid = document.getElementById('template-select').value;
+    const templateVmid = parseInt(document.getElementById('template-select').value);
     
     if (!name) {
         alert('Please enter a class name.');
@@ -192,27 +206,37 @@ document.getElementById('create-class-form').addEventListener('submit', async fu
     submitBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Creating...';
     
     try {
-        // First register template if selected
-        let templateId = null;
-        if (templateVmid) {
-            const selectedCard = document.querySelector(`.template-card[data-vmid="${templateVmid}"]`);
-            const templateName = selectedCard ? selectedCard.querySelector('.template-card-name').textContent : `Template ${templateVmid}`;
+        // Check if template is already registered, if not register it
+        let templateId = window.templateData.registered[templateVmid];
+        
+        if (!templateId) {
+            // Template not registered yet - register it
+            const selectedOption = document.querySelector(`#template-select option[value="${templateVmid}"]`);
+            const templateName = selectedOption.dataset.name || `Template ${templateVmid}`;
+            const templateNode = selectedOption.dataset.node;
             
             const templateResp = await fetch('/api/classes/templates', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     name: templateName,
-                    proxmox_vmid: parseInt(templateVmid)
+                    proxmox_vmid: templateVmid,
+                    node: templateNode
                 })
             });
             const templateData = await templateResp.json();
             if (templateData.ok && templateData.template) {
                 templateId = templateData.template.id;
+            } else {
+                throw new Error(templateData.error || 'Failed to register template');
             }
         }
         
-        // Create the class
+        if (!templateId) {
+            throw new Error('No template ID available');
+        }
+        
+        // Create the class with the template ID
         const resp = await fetch('/api/classes', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
