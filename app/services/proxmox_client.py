@@ -26,6 +26,7 @@ from app.config import (
     PROXMOX_CACHE_TTL,
     ENABLE_IP_LOOKUP,
     ENABLE_IP_PERSISTENCE,
+    DB_IP_CACHE_TTL,
     ARP_SUBNETS,
     CLUSTERS,
 )
@@ -482,18 +483,25 @@ def _get_cached_ip_from_db(cluster_id: str, vmid: int) -> Optional[str]:
         assignment = VMAssignment.query.filter_by(vmid=vmid).first()
         if assignment and assignment.cached_ip and assignment.ip_updated_at:
             age = datetime.utcnow() - assignment.ip_updated_at
-            if age < timedelta(hours=1):
+            if age.total_seconds() < DB_IP_CACHE_TTL:
                 return assignment.cached_ip
         
         # Check VMIPCache (legacy VMs)
         cache_entry = VMIPCache.query.filter_by(vmid=vmid, cluster_id=cluster_id).first()
         if cache_entry and cache_entry.cached_ip and cache_entry.ip_updated_at:
             age = datetime.utcnow() - cache_entry.ip_updated_at
-            if age < timedelta(hours=1):
+            if age.total_seconds() < DB_IP_CACHE_TTL:
                 return cache_entry.cached_ip
     except Exception as e:
         logger.debug(f"Failed to get cached IP from DB for VM {vmid}: {e}")
     
+    # Fallback to persistent JSON cache
+    try:
+        ip = _get_persistent_ip(cluster_id, vmid)
+        if ip:
+            return ip
+    except Exception:
+        pass
     return None
 
 
@@ -512,7 +520,8 @@ def _get_cached_ips_batch(cluster_id: str, vmids: List[int]) -> Dict[int, str]:
         return {}
     
     results: Dict[int, str] = {}
-    cutoff = datetime.utcnow() - timedelta(hours=1)
+    cutoff_seconds = DB_IP_CACHE_TTL
+    cutoff = datetime.utcnow() - timedelta(seconds=cutoff_seconds)
     
     try:
         # Get all VMAssignments for these VMs
@@ -541,6 +550,15 @@ def _get_cached_ips_batch(cluster_id: str, vmids: List[int]) -> Dict[int, str]:
     except Exception as e:
         logger.debug(f"Failed to batch fetch cached IPs from DB: {e}")
     
+    # Merge persistent JSON cache
+    try:
+        for vmid in vmids:
+            if vmid not in results:
+                ip = _get_persistent_ip(cluster_id, vmid)
+                if ip:
+                    results[vmid] = ip
+    except Exception:
+        pass
     return results
 
 

@@ -91,6 +91,10 @@ ENABLE_IP_LOOKUP = True
 # Disabled by default for better performance - IPs cached in memory instead
 ENABLE_IP_PERSISTENCE = os.getenv("ENABLE_IP_PERSISTENCE", "false").lower() in ("true", "1", "yes")
 
+# Database IP cache TTL (seconds). Used for `VMAssignment.cached_ip` and `VMIPCache`.
+# Set large value to persist across restarts. Default: 30 days.
+DB_IP_CACHE_TTL = int(os.getenv("DB_IP_CACHE_TTL", "2592000"))
+
 # ARP scanner: broadcast addresses to ping for IP discovery
 # Scans 10.220.8.0/21 network (10.220.8.0 - 10.220.15.255)
 # Set to subnet broadcast addresses on your network

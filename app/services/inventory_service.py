@@ -57,11 +57,13 @@ def persist_vm_inventory(vms: List[Dict], cleanup_missing: bool = True) -> int:
                 db.session.add(inventory)
             
             # Update all fields
-            inventory.cluster_name = vm.get('cluster_name')
             inventory.name = vm.get('name')
             inventory.node = vm.get('node')
             inventory.status = vm.get('status')
-            inventory.ip = vm.get('ip')
+            # Preserve existing IP if new value is missing or a placeholder
+            new_ip = vm.get('ip')
+            if new_ip and new_ip not in ('N/A', 'Fetching...', ''):
+                inventory.ip = new_ip
             inventory.type = vm.get('type')
             inventory.category = vm.get('category')
             
@@ -90,7 +92,7 @@ def persist_vm_inventory(vms: List[Dict], cleanup_missing: bool = True) -> int:
             
             updated_count += 1
         
-        # Remove VMs not touched in this sync for seen clusters
+        # Remove VMs not touched in this sync for seen clusters (only after a successful pass)
         if cleanup_missing and vms:
             from app.models import VMInventory
             for cluster_id in seen_clusters:
