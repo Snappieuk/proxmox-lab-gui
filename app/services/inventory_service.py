@@ -16,7 +16,8 @@ def persist_vm_inventory(vms: List[Dict[str, object]]) -> None:
     """Upsert a batch of VM dicts into `vm_inventory` table.
 
     Expected keys per vm dict: cluster_id, cluster_name, vmid, name, node,
-    status, ip, type, category.
+    status, ip, type, category, memory, cores, disk_size, uptime, cpu_usage,
+    memory_usage, is_template, tags, rdp_available, ssh_available.
     """
     if not vms:
         return
@@ -90,6 +91,7 @@ def persist_vm_inventory(vms: List[Dict[str, object]]) -> None:
         else:
             ip_effective = ip_new
 
+        # Update basic fields
         row.cluster_name = vm.get("cluster_name") or row.cluster_name
         row.name = vm.get("name") or row.name
         row.node = vm.get("node") or row.node
@@ -97,7 +99,44 @@ def persist_vm_inventory(vms: List[Dict[str, object]]) -> None:
         row.ip = ip_effective
         row.type = vm.get("type") or row.type
         row.category = vm.get("category") or row.category
+        
+        # Update hardware specs
+        if vm.get("memory") is not None:
+            row.memory = vm.get("memory")
+        if vm.get("cores") is not None:
+            row.cores = vm.get("cores")
+        if vm.get("disk_size") is not None:
+            row.disk_size = vm.get("disk_size")
+        
+        # Update runtime info
+        if vm.get("uptime") is not None:
+            row.uptime = vm.get("uptime")
+        if vm.get("cpu_usage") is not None:
+            row.cpu_usage = vm.get("cpu_usage")
+        if vm.get("memory_usage") is not None:
+            row.memory_usage = vm.get("memory_usage")
+        
+        # Update configuration
+        if vm.get("is_template") is not None:
+            row.is_template = vm.get("is_template")
+        if vm.get("tags") is not None:
+            row.tags = vm.get("tags")
+        
+        # Update availability flags
+        if vm.get("rdp_available") is not None:
+            row.rdp_available = vm.get("rdp_available")
+        if vm.get("ssh_available") is not None:
+            row.ssh_available = vm.get("ssh_available")
+        
+        # Update sync tracking
         row.last_updated = now
+        row.last_status_check = now
+        
+        # Clear sync error on successful update
+        if vm.get("sync_error"):
+            row.sync_error = vm.get("sync_error")
+        else:
+            row.sync_error = None
 
     try:
         before = datetime.utcnow()

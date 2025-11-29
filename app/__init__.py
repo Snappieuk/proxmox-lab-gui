@@ -110,6 +110,11 @@ def create_app(config=None):
     from app.services.proxmox_client import start_background_ip_scanner
     start_background_ip_scanner()
     
+    # Start background VM inventory sync service
+    from app.services.background_sync import start_background_sync
+    start_background_sync(app)
+    logger.info("Background VM inventory sync service initialized")
+    
     # Populate database on startup (non-blocking)
     def _populate_database():
         """Background task to populate database on startup."""

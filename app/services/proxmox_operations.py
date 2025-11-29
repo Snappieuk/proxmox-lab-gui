@@ -20,8 +20,12 @@ def replicate_templates_to_all_nodes(cluster_ip: str = None) -> None:
     """Ensure every QEMU template exists on every node. Missing replicas are cloned and converted.
 
     Runs best as a background task. Adds a 60s delay per replica to avoid locks.
+    Stores all template information in the database.
     """
     try:
+        from app.models import Template, db
+        from datetime import datetime
+        
         target_ip = cluster_ip or CLASS_CLUSTER_IP
         cluster_id = None
         for cluster in CLUSTERS:
@@ -43,11 +47,37 @@ def replicate_templates_to_all_nodes(cluster_ip: str = None) -> None:
                 vms = proxmox.nodes(node).qemu.get()
                 for vm in vms:
                     if vm.get('template') == 1:
+                        vmid = vm.get('vmid')
+                        name = vm.get('name') or f"tpl-{vmid}"
                         templates.append({
-                            'vmid': vm.get('vmid'),
-                            'name': vm.get('name') or f"tpl-{vm.get('vmid')}",
+                            'vmid': vmid,
+                            'name': name,
                             'node': node
                         })
+                        # Register/update in database
+                        try:
+                            existing = Template.query.filter_by(
+                                cluster_ip=target_ip,
+                                node=node,
+                                proxmox_vmid=vmid
+                            ).first()
+                            if existing:
+                                existing.name = name
+                                existing.last_verified_at = datetime.utcnow()
+                            else:
+                                new_tpl = Template(
+                                    name=name,
+                                    proxmox_vmid=vmid,
+                                    cluster_ip=target_ip,
+                                    node=node,
+                                    is_replica=False,
+                                    last_verified_at=datetime.utcnow()
+                                )
+                                db.session.add(new_tpl)
+                            db.session.commit()
+                        except Exception as db_err:
+                            logger.warning(f"Failed to register template {vmid} in DB: {db_err}")
+                            db.session.rollback()
             except Exception as e:
                 logger.warning(f"Failed to query templates on {node}: {e}")
 
@@ -97,9 +127,44 @@ def replicate_templates_to_all_nodes(cluster_ip: str = None) -> None:
                     )
                     logger.info(f"Clone started for '{tpl_name}' -> {target} as {replica_name} ({replica_vmid})")
                     time.sleep(60)
+                    # Ensure VM is stopped before conversion
+                    try:
+                        vm_status = proxmox.nodes(target).qemu(replica_vmid).status.current.get()
+                        if vm_status.get('status') == 'running':
+                            logger.info(f"Stopping replica {replica_vmid} on {target} before conversion")
+                            proxmox.nodes(target).qemu(replica_vmid).status.shutdown.post()
+                            time.sleep(10)
+                    except Exception:
+                        pass
                     ok, msg = convert_vm_to_template(replica_vmid, target, target_ip)
                     if ok:
                         logger.info(f"Replica template ready on {target}: {replica_vmid}")
+                        # Register replica in database
+                        try:
+                            from app.models import Template, db
+                            from datetime import datetime
+                            existing = Template.query.filter_by(
+                                cluster_ip=target_ip,
+                                node=target,
+                                proxmox_vmid=replica_vmid
+                            ).first()
+                            if not existing:
+                                replica_tpl = Template(
+                                    name=replica_name,
+                                    proxmox_vmid=replica_vmid,
+                                    cluster_ip=target_ip,
+                                    node=target,
+                                    is_replica=True,
+                                    source_vmid=source['vmid'],
+                                    source_node=source['node'],
+                                    last_verified_at=datetime.utcnow()
+                                )
+                                db.session.add(replica_tpl)
+                                db.session.commit()
+                                logger.info(f"Registered replica template {replica_vmid} in database")
+                        except Exception as db_err:
+                            logger.warning(f"Failed to register replica in DB: {db_err}")
+                            db.session.rollback()
                     else:
                         logger.warning(f"Replica conversion failed on {target}: {msg}")
                 except Exception as e:
@@ -924,6 +989,35 @@ def clone_vms_for_class(template_vmid: int, node: str, count: int, name_prefix: 
                             logger.info(f"Confirmed VM {class_template_vmid} is now a template")
                             if task_id:
                                 update_clone_progress(task_id, message="Base template converted successfully")
+                            
+                            # Register base template in database
+                            try:
+                                from app.models import Template, db
+                                from datetime import datetime
+                                existing = Template.query.filter_by(
+                                    cluster_ip=cluster_ip,
+                                    node=class_template_node,
+                                    proxmox_vmid=class_template_vmid
+                                ).first()
+                                if not existing:
+                                    base_tpl = Template(
+                                        name=class_template_name,
+                                        proxmox_vmid=class_template_vmid,
+                                        cluster_ip=cluster_ip,
+                                        node=class_template_node,
+                                        is_class_template=True,
+                                        class_id=class_id,
+                                        is_replica=True,
+                                        source_vmid=template_vmid,
+                                        source_node=node,
+                                        last_verified_at=datetime.utcnow()
+                                    )
+                                    db.session.add(base_tpl)
+                                    db.session.commit()
+                                    logger.info(f"Registered base template {class_template_vmid} in database for class {class_id}")
+                            except Exception as db_err:
+                                logger.warning(f"Failed to register base template in DB: {db_err}")
+                                db.session.rollback()
                         else:
                             logger.error(f"VM {class_template_vmid} config shows template={cfg.get('template')}, conversion may have failed")
                     except Exception as verify_err:
@@ -1466,10 +1560,35 @@ def convert_vm_to_template(vmid: int, node: str, cluster_ip: str = None) -> Tupl
             return False, "Cluster not found"
         
         proxmox = get_proxmox_admin_for_cluster(cluster_id)
-        proxmox.nodes(node).qemu(vmid).template.post()
         
-        logger.info(f"Converted VM {vmid} to template on {node}")
-        return True, "VM converted to template"
+        # Ensure VM is stopped before conversion (required for some storages)
+        try:
+            vm_status = proxmox.nodes(node).qemu(vmid).status.current.get()
+            if vm_status.get('status') == 'running':
+                logger.info(f"Stopping VM {vmid} on {node} before template conversion")
+                proxmox.nodes(node).qemu(vmid).status.shutdown.post()
+                import time
+                time.sleep(5)
+        except Exception as stop_err:
+            logger.debug(f"VM stop check/action: {stop_err}")
+        
+        proxmox.nodes(node).qemu(vmid).template.post()
+        logger.info(f"Called template.post() for VM {vmid} on {node}")
+        
+        # Verify conversion
+        import time
+        time.sleep(3)
+        try:
+            cfg = proxmox.nodes(node).qemu(vmid).config.get()
+            if cfg.get('template') == 1:
+                logger.info(f"Confirmed VM {vmid} is now a template on {node}")
+                return True, "VM converted to template"
+            else:
+                logger.error(f"VM {vmid} config shows template={cfg.get('template')}, conversion may have failed")
+                return False, f"Template flag not set (template={cfg.get('template')})"
+        except Exception as verify_err:
+            logger.warning(f"Could not verify template conversion: {verify_err}")
+            return True, "VM conversion called but not verified"
         
     except Exception as e:
         logger.exception(f"Failed to convert VM to template: {e}")

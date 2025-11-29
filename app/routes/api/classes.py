@@ -604,6 +604,9 @@ def create_class_vms(class_id: int):
         if not class_.template:
             return jsonify({"ok": False, "error": "No template specified and class has no default template"}), 400
         template_vmid = class_.template.proxmox_vmid
+        logger.info(f"Using class template VMID {template_vmid} (from class {class_.name}, template ID {class_.template.id})")
+    else:
+        logger.info(f"Using override template VMID {template_vmid} (from API request)")
     
     # Get node from template or use target_node
     if not target_node and class_.template:

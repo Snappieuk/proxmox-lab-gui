@@ -327,7 +327,7 @@ def api_vm_status(vmid: int):
 @api_vms_bp.route("/vm/<int:vmid>/start", methods=["POST"])
 @login_required
 def api_vm_start(vmid: int):
-    """Start a VM."""
+    """Start a VM and immediately update database."""
     from app.services.user_manager import require_user
     
     user = require_user()
@@ -338,6 +338,10 @@ def api_vm_start(vmid: int):
     try:
         start_vm(vm)
         invalidate_cluster_cache()
+        
+        # Immediately update database with new status
+        _update_vm_status_in_db(vmid, vm.get("cluster_id"), "running")
+        
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
@@ -347,7 +351,7 @@ def api_vm_start(vmid: int):
 @api_vms_bp.route("/vm/<int:vmid>/stop", methods=["POST"])
 @login_required
 def api_vm_stop(vmid: int):
-    """Stop a VM."""
+    """Stop a VM and immediately update database."""
     from app.services.user_manager import require_user
     
     user = require_user()
@@ -358,7 +362,39 @@ def api_vm_stop(vmid: int):
     try:
         shutdown_vm(vm)
         invalidate_cluster_cache()
+        
+        # Immediately update database with new status
+        _update_vm_status_in_db(vmid, vm.get("cluster_id"), "stopped")
+        
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
     return jsonify({"ok": True})
+
+
+def _update_vm_status_in_db(vmid: int, cluster_id: str, new_status: str):
+    """Immediately update VM status in database after state change."""
+    try:
+        from app.models import VMInventory, db
+        from datetime import datetime
+        
+        vm = VMInventory.query.filter_by(
+            cluster_id=cluster_id,
+            vmid=vmid
+        ).first()
+        
+        if vm:
+            vm.status = new_status
+            vm.last_status_check = datetime.utcnow()
+            vm.last_updated = datetime.utcnow()
+            
+            # Clear uptime when stopped
+            if new_status == 'stopped':
+                vm.uptime = None
+                vm.cpu_usage = None
+                vm.memory_usage = None
+            
+            db.session.commit()
+            logger.debug(f"Updated VM {vmid} status to {new_status} in database")
+    except Exception as e:
+        logger.warning(f"Failed to update VM {vmid} status in database: {e}")
