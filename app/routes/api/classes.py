@@ -207,10 +207,10 @@ def create_new_class():
             from app.models import db, Class
             
             # Re-fetch class in thread context
-                class_obj = Class.query.get(class_id_val)
-                if not class_obj:
-                    update_clone_progress(task_id, status="failed", error="Class not found")
-                    return
+            class_obj = Class.query.get(class_id_val)
+            if not class_obj:
+                update_clone_progress(task_id, status="failed", error="Class not found")
+                return
             
             # Step 1: Clone the source template exclusively for this class
             update_clone_progress(task_id, completed=0, message=f"Cloning template '{source_name}' (VMID {source_vmid}) for exclusive class use...")
@@ -418,13 +418,13 @@ def create_new_class():
             )
             
         except Exception as e:
-                logger.exception(f"Template cloning and deployment failed for class {class_id_val}: {e}")
-                update_clone_progress(task_id, status="failed", error=str(e))
-            finally:
-                try:
-                    app_ctx.pop()
-                except Exception:
-                    pass
+            logger.exception(f"Template cloning and deployment failed for class {class_id_val}: {e}")
+            update_clone_progress(task_id, status="failed", error=str(e))
+        finally:
+            try:
+                app_ctx.pop()
+            except Exception:
+                pass
     
     threading.Thread(target=_background_clone_and_deploy, daemon=True).start()
     
@@ -893,6 +893,10 @@ def create_class_vms(class_id: int):
     import threading
     def _background_terraform_deploy():
         try:
+            from flask import current_app
+            app = current_app._get_current_object()
+            app_ctx = app.app_context()
+            app_ctx.push()
             from app.services.proxmox_service import get_proxmox_admin
             from app.models import db, Class
             
@@ -1048,6 +1052,11 @@ def create_class_vms(class_id: int):
         except Exception as e:
             logger.exception(f"Terraform deployment failed for class {class_id}: {e}")
             update_clone_progress(task_id, status="failed", error=str(e))
+        finally:
+            try:
+                app_ctx.pop()
+            except Exception:
+                pass
     
     threading.Thread(target=_background_terraform_deploy, daemon=True).start()
     
@@ -1130,6 +1139,10 @@ def promote_editable_to_base_template(class_id: int):
     import threading
     def _background_promote():
         try:
+            from flask import current_app
+            app = current_app._get_current_object()
+            app_ctx = app.app_context()
+            app_ctx.push()
             from app.services.proxmox_service import get_proxmox_admin
             from app.models import db, Class, Template, VMAssignment
 
@@ -1215,6 +1228,11 @@ def promote_editable_to_base_template(class_id: int):
         except Exception as e:
             logger.exception(f"Promote editable failed for class {class_id}: {e}")
             update_clone_progress(task_id, status="failed", error=str(e))
+        finally:
+            try:
+                app_ctx.pop()
+            except Exception:
+                pass
 
     threading.Thread(target=_background_promote, daemon=True).start()
 
