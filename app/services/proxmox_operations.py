@@ -41,7 +41,7 @@ def sanitize_vm_name(name: str, fallback: str = "vm") -> str:
     name = re.sub(r"-+", "-", name)
     # Strip leading/trailing hyphens
     name = name.strip('-')
-    if not name:
+        import time
         name = fallback
     # Ensure starts with alphanumeric
     if not name[0].isalnum():
@@ -57,8 +57,12 @@ def sanitize_vm_name(name: str, fallback: str = "vm") -> str:
     if name != original:
         logger.info(f"sanitize_vm_name: '{original}' -> '{name}'")
     return name
-
-
+                    # Exponential backoff
+                    delay = retry_delay * (2 ** (attempt - 1))
+                    # Cap maximum delay to avoid excessive wait
+                    delay = min(delay, 60)
+                    logger.warning(f"Template VMID {template_vmid} locked/busy, retrying in {delay}s (attempt {attempt}/{max_retries})")
+                    time.sleep(delay)
 def list_proxmox_templates(cluster_ip: str = None) -> List[Dict[str, Any]]:
     """List all VM templates on a Proxmox cluster.
     
@@ -350,15 +354,43 @@ def clone_vms_for_class(template_vmid: int, node: str, count: int, name_prefix: 
                     # Extract resource configuration with defensive typing
                     memory_mb = template_config.get('memory')
                     cores_val = template_config.get('cores')
+                    cfg_log = {k: template_config.get(k) for k in ['memory','cores','sockets','cpu','name']}
                     try:
-                        estimated_ram_mb = int(memory_mb) if memory_mb is not None else 2048
+                        estimated_ram_mb = int(memory_mb) if memory_mb is not None else None
                     except Exception:
+                        estimated_ram_mb = None
+                    try:
+                        estimated_cores = float(cores_val) if cores_val is not None else None
+                    except Exception:
+                        estimated_cores = None
+
+                    # Fallback to status.current for maxmem/cpus if config incomplete
+                    if estimated_ram_mb is None or estimated_cores is None:
+                        try:
+                            cur = proxmox.nodes(template_node).qemu(template_vmid).status.current.get()
+                            maxmem_bytes = cur.get('maxmem')
+                            cpus = cur.get('cpus')
+                            if maxmem_bytes:
+                                try:
+                                    estimated_ram_mb = int(maxmem_bytes) // (1024*1024)
+                                } except Exception:
+                                    pass
+                            if cpus:
+                                try:
+                                    estimated_cores = float(cpus)
+                                except Exception:
+                                    pass
+                            logger.info(f"Template status fallback: maxmem={maxmem_bytes}, cpus={cpus}")
+                        except Exception as e:
+                            logger.debug(f"Status fallback failed: {e}")
+
+                    # Final defaults if still missing
+                    if estimated_ram_mb is None:
                         estimated_ram_mb = 2048
-                    try:
-                        estimated_cores = float(cores_val) if cores_val is not None else 1.0
-                    except Exception:
+                    if estimated_cores is None:
                         estimated_cores = 1.0
-                    logger.info(f"Template resource estimates from config: {estimated_ram_mb}MB RAM, {estimated_cores} cores (node {template_node})")
+
+                    logger.info(f"Template resource estimates: {estimated_ram_mb}MB RAM, {estimated_cores} cores (node {template_node}, cfg={cfg_log})")
                 else:
                     logger.warning(f"Could not fetch template config, using defaults: {estimated_ram_mb}MB RAM, {estimated_cores} cores")
             except Exception as e:

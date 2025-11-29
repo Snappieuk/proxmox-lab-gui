@@ -268,7 +268,10 @@ def distribute_vms_across_nodes(cluster_id: str, vm_count: int, estimated_ram_mb
             current_stats['cpu_usage'] = min(100, current_stats['cpu_usage'] + cpu_increase)
             
             # Adjust load average (rough estimate: +1 per VM)
-            current_stats['load_avg'] += 1.0
+            try:
+                current_stats['load_avg'] = float(current_stats.get('load_avg', 0)) + 1.0
+            except Exception:
+                current_stats['load_avg'] = 1.0
             
             # Update the stats in the dictionary
             node_stats[best_node] = current_stats
