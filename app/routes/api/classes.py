@@ -254,16 +254,27 @@ def create_new_class():
                 return
             
             # Register class template in database
-            class_specific_template, tpl_msg = create_template(
-                name=class_template_name,
-                proxmox_vmid=class_template_vmid,
+            # Idempotent registration: reuse if a template with same (cluster_ip, node, vmid) already exists
+            from app.models import Template
+            existing_tpl = Template.query.filter_by(
                 cluster_ip=CLASS_CLUSTER_IP,
                 node=source_node,
-                created_by_id=teacher_id,
-                is_class_template=True,
-                class_id=class_id_val,
-                original_template_id=source_template_id
-            )
+                proxmox_vmid=class_template_vmid
+            ).first()
+            if existing_tpl:
+                class_specific_template = existing_tpl
+                tpl_msg = "reused existing template"
+            else:
+                class_specific_template, tpl_msg = create_template(
+                    name=class_template_name,
+                    proxmox_vmid=class_template_vmid,
+                    cluster_ip=CLASS_CLUSTER_IP,
+                    node=source_node,
+                    created_by_id=teacher_id,
+                    is_class_template=True,
+                    class_id=class_id_val,
+                    original_template_id=source_template_id
+                )
             
             # Update class to use new template
             if class_specific_template:
@@ -935,17 +946,27 @@ def create_class_vms(class_id: int):
                 delete_vm(class_template_vmid, template_obj.node, CLASS_CLUSTER_IP)
                 return
             
-            # Register the new class-specific template in database
-            class_specific_template, tpl_msg = create_template(
-                name=class_template_name,
-                proxmox_vmid=class_template_vmid,
+            # Register the new class-specific template in database (idempotent)
+            from app.models import Template
+            existing_tpl = Template.query.filter_by(
                 cluster_ip=CLASS_CLUSTER_IP,
                 node=template_obj.node,
-                created_by_id=teacher_id,
-                is_class_template=True,
-                class_id=class_id_val,
-                original_template_id=template_obj.id
-            )
+                proxmox_vmid=class_template_vmid
+            ).first()
+            if existing_tpl:
+                class_specific_template = existing_tpl
+                tpl_msg = "reused existing template"
+            else:
+                class_specific_template, tpl_msg = create_template(
+                    name=class_template_name,
+                    proxmox_vmid=class_template_vmid,
+                    cluster_ip=CLASS_CLUSTER_IP,
+                    node=template_obj.node,
+                    created_by_id=teacher_id,
+                    is_class_template=True,
+                    class_id=class_id_val,
+                    original_template_id=template_obj.id
+                )
             
             if not class_specific_template:
                 logger.error(f"Failed to register class template in DB: {tpl_msg}")
