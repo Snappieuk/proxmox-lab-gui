@@ -82,6 +82,23 @@ def api_vms():
         # Fetch persisted rows (fast path)
         inventory_rows = fetch_vm_inventory(cluster_id=cluster_filter, search=search)
 
+        # If inventory is completely empty, do initial live fetch to populate it
+        if len(inventory_rows) == 0:
+            logger.info(f"Inventory empty for user {username}, performing initial live fetch")
+            try:
+                vms_live = get_vms_for_user(username, search=search, skip_ips=False, force_refresh=True)
+                _augment_rdp_availability(vms_live)
+                # Persist for future requests
+                try:
+                    persist_vm_inventory(vms_live)
+                    logger.info(f"Populated inventory with {len(vms_live)} VMs")
+                except Exception:
+                    logger.exception("Failed to persist inventory during initial fetch")
+                return jsonify({"vms": vms_live, "stale": False, "mode": "initial"})
+            except Exception as e:
+                logger.exception(f"Initial live fetch failed for user {username}")
+                return jsonify({"error": True, "message": f"Initial fetch failed: {e}"}), 500
+
         # Filter to user-owned VMIDs using local DB assignments + mappings.json without Proxmox calls
         owned_vmids = _resolve_user_owned_vmids(username)
         filtered = [r for r in inventory_rows if r.get('vmid') in owned_vmids]
