@@ -6,10 +6,14 @@ Handles class CRUD, template listing, VM pool management, and invite links.
 """
 
 import logging
+import re
+import threading
+import uuid
 
 from flask import Blueprint, jsonify, request, session
 
 from app.utils.decorators import login_required
+from app.models import User, VMAssignment, Class, db
 
 # Import path setup is no longer needed
 import app.utils.paths
@@ -67,8 +71,6 @@ from app.services.proxmox_operations import (
 from app.config import CLUSTERS
 
 from app.services.clone_progress import start_clone_progress, get_clone_progress, update_clone_progress
-
-from app.models import User, VMAssignment
 
 logger = logging.getLogger(__name__)
 
@@ -210,7 +212,6 @@ def create_new_class():
             app_ctx.push()
             from datetime import datetime
             from app.services.proxmox_service import get_proxmox_admin
-            from app.models import db, Class
             
             # Re-fetch class in thread context
             class_obj = Class.query.get(class_id_val)
