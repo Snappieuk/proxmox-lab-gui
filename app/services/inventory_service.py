@@ -30,7 +30,25 @@ def persist_vm_inventory(vms: List[Dict[str, object]]) -> None:
         return
 
     # Build map of existing rows for faster upsert (fetch only vmids in batch)
-    cluster_vm_pairs = [(vm.get("cluster_id"), int(vm.get("vmid"))) for vm in vms if vm.get("vmid") is not None]
+    # Filter out VMs without cluster_id (should not happen; defensive)
+    cluster_vm_pairs = []
+    skipped_missing_cluster = 0
+    for vm in vms:
+        if vm.get("vmid") is None:
+            continue
+        cid = vm.get("cluster_id")
+        if not cid:
+            skipped_missing_cluster += 1
+            continue
+        try:
+            cluster_vm_pairs.append((cid, int(vm.get("vmid"))))
+        except Exception:
+            continue
+    if skipped_missing_cluster:
+        logging.getLogger(__name__).warning(
+            "persist_vm_inventory: skipped %d VMs without cluster_id (ensure _build_vm_dict adds it)",
+            skipped_missing_cluster
+        )
     if not cluster_vm_pairs:
         return
 

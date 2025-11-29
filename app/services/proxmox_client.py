@@ -991,6 +991,9 @@ def _build_vm_dict(raw: Dict[str, Any], skip_ips: bool = False) -> Dict[str, Any
     name = raw.get("name", f"vm-{vmid}")
     status = raw.get("status", "unknown")
     vmtype = raw.get("type", "qemu")
+    # Preserve cluster identity if provided (added earlier in get_all_vms)
+    cluster_id = raw.get("cluster_id") or "unknown_cluster"
+    cluster_name = raw.get("cluster_name") or "Unknown Cluster"
     
     # Fetch ostype from VM config if not already in raw data
     if "ostype" not in raw and vmtype == "qemu":
@@ -1061,6 +1064,8 @@ def _build_vm_dict(raw: Dict[str, Any], skip_ips: bool = False) -> Dict[str, Any
         "ip": ip,
         "rdp_available": rdp_available,
         "user_mappings": [],  # Will be populated by _enrich_with_user_mappings()
+        "cluster_id": cluster_id,
+        "cluster_name": cluster_name,
     }
 
 
