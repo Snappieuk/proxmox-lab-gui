@@ -67,3 +67,39 @@ def admin_status():
             "user_variants_checked": list(variants),
         }
     })
+
+
+@debug_bp.route('/vm-counts', methods=['GET'])
+def vm_counts():
+    """
+    Shows VM counts to debug why admin sees no VMs.
+    """
+    from app.services.proxmox_client import get_all_vms, get_vms_for_user, is_admin_user
+    
+    user = session.get('user')
+    if not user:
+        return jsonify({"error": "Not logged in"}), 401
+    
+    try:
+        # Get counts
+        all_vms = get_all_vms(skip_ips=True, force_refresh=False)
+        user_vms = get_vms_for_user(user, skip_ips=True, force_refresh=False)
+        is_admin = is_admin_user(user)
+        
+        return jsonify({
+            "user": user,
+            "is_admin": is_admin,
+            "all_vms_count": len(all_vms),
+            "user_vms_count": len(user_vms),
+            "all_vms_sample": [
+                {"vmid": vm["vmid"], "name": vm.get("name"), "type": vm.get("type")}
+                for vm in all_vms[:5]
+            ] if all_vms else [],
+            "user_vms_sample": [
+                {"vmid": vm["vmid"], "name": vm.get("name"), "type": vm.get("type")}
+                for vm in user_vms[:5]
+            ] if user_vms else [],
+        })
+    except Exception as e:
+        logger.error(f"Error in vm_counts: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
