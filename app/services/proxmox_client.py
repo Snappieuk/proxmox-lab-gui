@@ -1922,18 +1922,22 @@ def _user_in_group(user: str, groupid: str) -> bool:
     Uses cached admin group members if groupid is the admin group.
     """
     if not groupid:
+        logger.debug("_user_in_group: groupid is None/empty")
         return False
 
     # Use cached admin group members for the admin group
     if groupid == ADMIN_GROUP:
         members = _get_admin_group_members_cached()
+        logger.info("_user_in_group: checking user=%s against admin group '%s', members=%s", user, groupid, members)
     else:
         # For other groups, fetch directly (no caching)
         try:
             data = get_proxmox_admin().access.groups(groupid).get()
             if not data:
+                logger.warning("_user_in_group: group '%s' returned no data", groupid)
                 return False
-        except Exception:
+        except Exception as e:
+            logger.warning("_user_in_group: failed to fetch group '%s': %s", groupid, e)
             return False
 
         raw_members = data.get("members", []) or []
@@ -1943,6 +1947,7 @@ def _user_in_group(user: str, groupid: str) -> bool:
                 members.append(m)
             elif isinstance(m, dict) and "userid" in m:
                 members.append(m["userid"])
+        logger.debug("_user_in_group: group '%s' has members: %s", groupid, members)
 
     # Accept both realm variants for matching: user (full), or username@pam, username@pve
     variants = {user}
@@ -1950,7 +1955,15 @@ def _user_in_group(user: str, groupid: str) -> bool:
         name, realm = user.split("@", 1)
         for r in ("pam", "pve"):
             variants.add(f"{name}@{r}")
-    return any(u in members for u in variants)
+    else:
+        # User without realm - add both common realms
+        variants.add(f"{user}@pve")
+        variants.add(f"{user}@pam")
+    
+    logger.debug("_user_in_group: checking variants %s against members %s", variants, members)
+    result = any(u in members for u in variants)
+    logger.info("_user_in_group: user=%s group=%s result=%s", user, groupid, result)
+    return result
 
 
 def _debug_is_admin_user(user: str) -> bool:

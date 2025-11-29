@@ -110,5 +110,24 @@ def create_app(config=None):
     from app.services.proxmox_client import start_background_ip_scanner
     start_background_ip_scanner()
     
+    # Populate database on startup (non-blocking)
+    def _populate_database():
+        """Background task to populate database on startup."""
+        import time
+        time.sleep(1)  # Brief delay to let app fully initialize
+        try:
+            with app.app_context():
+                from app.services.proxmox_client import get_all_vms
+                from app.services.inventory_service import persist_vm_inventory
+                logger.info("Starting initial database population...")
+                vms = get_all_vms(skip_ips=False, force_refresh=True)
+                persist_vm_inventory(vms)
+                logger.info(f"Initial database population complete: {len(vms)} VMs")
+        except Exception as e:
+            logger.warning(f"Initial database population failed: {e}")
+    
+    import threading
+    threading.Thread(target=_populate_database, daemon=True).start()
+    
     logger.info("Flask app created successfully")
     return app
