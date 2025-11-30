@@ -402,39 +402,38 @@ def create_new_class():
                     cluster_ip=CLASS_CLUSTER_IP,
                     full_clone=True,  # Full clone for cluster distribution
                     storage='local-lvm',  # Clone to local first
-                    create_baseline=False,  # Will add baseline after move to NFS
+                    create_baseline=False,
                     wait_until_complete=True
                 )
                 
                 if clone_success:
                     logger.info(f"Student VM {i}/{pool_size} cloned to local: {student_name} (VMID {student_vmid})")
                     
-                    # Move to NFS so it can be migrated to any node
-                    logger.info(f"Moving student VM {student_vmid} to NFS...")
-                    try:
-                        from app.services.proxmox_operations import move_vm_disk_to_local_storage
-                        move_success, move_msg = move_vm_disk_to_local_storage(
-                            proxmox=proxmox,
-                            node=source_node,
-                            vmid=student_vmid,
-                            target_storage='TRUENAS-NFS'
-                        )
-                        if move_success:
-                            logger.info(f"Student VM {student_vmid} moved to NFS")
-                            
-                            # Now create baseline snapshot on NFS
-                            try:
-                                proxmox.nodes(source_node).qemu(student_vmid).snapshot.post(
-                                    snapname='baseline',
-                                    description='Initial baseline snapshot for reimage'
-                                )
-                                logger.info(f"Created baseline snapshot for VM {student_vmid}")
-                            except Exception as snap_err:
-                                logger.warning(f"Failed to create baseline snapshot for VM {student_vmid}: {snap_err}")
-                        else:
-                            logger.warning(f"Failed to move VM {student_vmid} to NFS: {move_msg}. VM will only run on {source_node}.")
-                    except Exception as move_err:
-                        logger.warning(f"Failed to move VM {student_vmid} to NFS: {move_err}. VM will only run on {source_node}.")
+                    # TODO: Re-enable disk move to NFS once testing complete
+                    # Start disk move to NFS (fire-and-forget, don't wait)
+                    # logger.info(f"Initiating disk move for VM {student_vmid} to NFS...")
+                    # try:
+                    #     # Find the disk to move
+                    #     config = proxmox.nodes(source_node).qemu(student_vmid).config.get()
+                    #     disk_keys = ['virtio0', 'scsi0', 'sata0', 'ide0']
+                    #     disk_key = None
+                    #     for key in disk_keys:
+                    #         if key in config:
+                    #             disk_key = key
+                    #             break
+                    #     
+                    #     if disk_key:
+                    #         # Fire-and-forget: start move but don't wait
+                    #         move_task = proxmox.nodes(source_node).qemu(student_vmid).move_disk.post(
+                    #             disk=disk_key,
+                    #             storage='TRUENAS-NFS',
+                    #             delete=1  # Delete source after successful move
+                    #         )
+                    #         logger.info(f"Disk move initiated for VM {student_vmid}, task: {move_task} (not waiting)")
+                    #     else:
+                    #         logger.warning(f"No disk found to move for VM {student_vmid}")
+                    # except Exception as move_err:
+                    #     logger.warning(f"Failed to initiate disk move for VM {student_vmid}: {move_err}")
                     
                     assignment, _ = create_vm_assignment(
                         class_id=class_id_val,
@@ -442,7 +441,7 @@ def create_new_class():
                         node=source_node,
                         is_template_vm=False
                     )
-                    logger.info(f"Student VM {i}/{pool_size} ready: {student_name} (VMID {student_vmid})")
+                    logger.info(f"Student VM {i}/{pool_size} created: {student_name} (VMID {student_vmid})")
                     update_clone_progress(
                         task_id,
                         completed=3 + (i * 1.0 / pool_size),
