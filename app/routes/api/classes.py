@@ -237,7 +237,33 @@ def create_new_class():
                     logger.error(error_msg)
                     update_clone_progress(task_id, status="failed", error=error_msg)
                     return
-                logger.info(f"Confirmed: VMID {source_vmid} is a valid Proxmox template")
+                
+                # Check if template is locked (stuck from previous operation)
+                template_lock = source_config.get('lock')
+                if template_lock:
+                    logger.warning(f"Source template {source_vmid} has lock '{template_lock}' - waiting for it to clear...")
+                    waited = 0
+                    max_wait = 300  # Wait up to 5 minutes for stuck locks
+                    while waited < max_wait:
+                        try:
+                            config = proxmox.nodes(source_node).qemu(source_vmid).config.get()
+                            if not config.get('lock'):
+                                logger.info(f"Template lock cleared after {waited}s")
+                                break
+                            logger.info(f"Template still locked, waiting... ({waited}s)")
+                            time.sleep(10)
+                            waited += 10
+                        except Exception as e:
+                            logger.warning(f"Error checking template lock: {e}")
+                            break
+                    
+                    if waited >= max_wait:
+                        error_msg = f"Source template {source_vmid} has stuck lock '{template_lock}' - please manually unlock it in Proxmox"
+                        logger.error(error_msg)
+                        update_clone_progress(task_id, status="failed", error=error_msg)
+                        return
+                
+                logger.info(f"Confirmed: VMID {source_vmid} is a valid Proxmox template and unlocked")
             except Exception as e:
                 error_msg = f"Cannot access source template {source_vmid} on node {source_node}: {e}. The template may have been deleted from Proxmox."
                 logger.error(error_msg)
@@ -268,7 +294,9 @@ def create_new_class():
                 full_clone=True,  # Full clone so teacher can customize freely
                 storage='local-lvm',  # Clone to local first (same node as source)
                 create_baseline=False,  # No baseline needed
-                wait_until_complete=True
+                wait_until_complete=True,
+                max_retries=15,  # Increase retries for template that may be locked
+                retry_delay=8    # Longer delays between retries
             )
             
             if not clone_success:
@@ -343,249 +371,6 @@ def create_new_class():
             
             logger.info(f"Step 1 complete: Teacher VM created and assigned (VMID {teacher_vm_vmid})")
             
-            # ========================================
-            # STEP 2: Clone source template → Class Base VM
-            # ========================================
-            update_clone_progress(task_id, completed=1, message=f"Step 2/4: Creating class base VM from '{source_name}'...")
-            
-            # Wait for SOURCE TEMPLATE to be unlocked before cloning again
-            logger.info(f"Waiting for source template {source_vmid} to be unlocked...")
-            waited = 0
-            
-            while True:
-                try:
-                    config = proxmox.nodes(source_node).qemu(source_vmid).config.get()
-                    has_lock = config.get('lock')
-                    
-                    if not has_lock:
-                        logger.info(f"Source template {source_vmid} is ready (no lock) after {waited}s")
-                        source_ready = True
-                        break
-                    else:
-                        logger.info(f"Source template {source_vmid} still has lock '{has_lock}', waiting... ({waited}s)")
-                except Exception as e:
-                    logger.warning(f"Error checking source template {source_vmid}: {e}")
-                
-                time.sleep(5)
-                waited += 5
-            
-            # Allocate class base VM ID from maintained set (don't re-query, queries are stale)
-            class_base_vmid = max(used_vmids) + 1
-            used_vmids.add(class_base_vmid)  # Mark as used immediately
-            logger.info(f"Allocated class base VMID: {class_base_vmid}")
-            class_base_name = f"{class_prefix}-base"
-            
-            # CRITICAL DEBUG: Log exactly what we're cloning from
-            logger.info(f"=== STEP 2 CLONE DEBUG ===")
-            logger.info(f"  source_vmid (ORIGINAL TEMPLATE): {source_vmid}")
-            logger.info(f"  teacher_vm_vmid (STEP 1 RESULT): {teacher_vm_vmid}")
-            logger.info(f"  class_base_vmid (NEW VM TARGET): {class_base_vmid}")
-            logger.info(f"  CLONING FROM {source_vmid} -> {class_base_vmid}")
-            logger.info(f"=== END DEBUG ===")
-            
-            clone_success, clone_msg = clone_vm_from_template(
-                template_vmid=source_vmid,
-                new_vmid=class_base_vmid,
-                name=class_base_name,
-                node=source_node,
-                cluster_ip=CLASS_CLUSTER_IP,
-                full_clone=True,  # Full clone for clean template
-                storage='local-lvm',  # Clone to local-lvm for fast template cloning
-                create_baseline=False,
-                wait_until_complete=True
-            )
-            
-            if not clone_success:
-                update_clone_progress(task_id, status="failed", error=f"Step 2 failed - Could not create class base VM: {clone_msg}")
-                return
-            
-            # Poll until class base VM exists and is ready
-            logger.info(f"Waiting for class base VM {class_base_vmid} to be fully ready...")
-            waited = 0
-            vm_ready = False
-            
-            while True:
-                try:
-                    config = proxmox.nodes(source_node).qemu(class_base_vmid).config.get()
-                    
-                    # Check for disk
-                    has_disk = any(key in config for key in ['scsi0', 'virtio0', 'sata0', 'ide0'])
-                    
-                    # Check for lock (still cloning)
-                    has_lock = config.get('lock')
-                    
-                    if has_disk and not has_lock:
-                        logger.info(f"Class base VM {class_base_vmid} is ready after {waited}s")
-                        vm_ready = True
-                        break
-                    elif has_lock:
-                        logger.info(f"Class base VM {class_base_vmid} still has lock '{has_lock}', waiting... ({waited}s)")
-                    elif not has_disk:
-                        logger.warning(f"Class base VM {class_base_vmid} exists but has no disk yet, waiting... ({waited}s)")
-                    
-                except Exception as e:
-                    if 'does not exist' in str(e).lower():
-                        logger.info(f"Class base VM {class_base_vmid} not visible yet, waiting... ({waited}s)")
-                    else:
-                        logger.warning(f"Error checking class base VM {class_base_vmid}: {e}")
-                
-                time.sleep(5)
-                waited += 5
-            
-            logger.info(f"Waiting 8 seconds for class base VM to stabilize...")
-            time.sleep(8)
-            
-            logger.info(f"Step 2 complete: Class base VM created (VMID {class_base_vmid})")
-            
-            # ========================================
-            # STEP 3: Convert Class Base VM → Template
-            # ========================================
-            update_clone_progress(task_id, completed=2, message=f"Step 3/4: Converting class base to template...")
-            
-            logger.info(f"Waiting 5 seconds before template conversion...")
-            time.sleep(5)
-            
-            convert_success, convert_msg = convert_vm_to_template(
-                vmid=class_base_vmid,
-                node=source_node,
-                cluster_ip=CLASS_CLUSTER_IP
-            )
-            
-            if not convert_success:
-                update_clone_progress(task_id, status="failed", error=f"Step 3 failed - Could not convert to template: {convert_msg}")
-                return
-            
-            # Poll until template is unlocked and ready for cloning
-            logger.info(f"Waiting for template {class_base_vmid} to be unlocked and ready...")
-            waited = 0
-            
-            while True:
-                try:
-                    config = proxmox.nodes(source_node).qemu(class_base_vmid).config.get()
-                    has_lock = config.get('lock')
-                    
-                    if not has_lock:
-                        logger.info(f"Template {class_base_vmid} is ready (no lock) after {waited}s")
-                        template_ready = True
-                        break
-                    else:
-                        logger.info(f"Template {class_base_vmid} still has lock '{has_lock}', waiting... ({waited}s)")
-                except Exception as e:
-                    logger.warning(f"Error checking template {class_base_vmid}: {e}")
-                
-                time.sleep(5)
-                waited += 5
-            
-            logger.info(f"Template {class_base_vmid} is on local-lvm (builder node) for fast cloning")
-            
-            # Register class template in database
-            class_specific_template, tpl_msg = create_template(
-                name=class_base_name,
-                proxmox_vmid=class_base_vmid,
-                cluster_ip=CLASS_CLUSTER_IP,
-                node=source_node,
-                created_by_id=teacher_id,
-                is_class_template=True,
-                class_id=class_id_val,
-                original_template_id=source_template_id
-            )
-            
-            # Update class to use new template
-            if class_specific_template:
-                class_obj.template_id = class_specific_template.id
-                db.session.commit()
-            
-            # Register as template VM assignment
-            assignment, _ = create_vm_assignment(
-                class_id=class_id_val,
-                proxmox_vmid=class_base_vmid,
-                node=source_node,
-                is_template_vm=True
-            )
-            
-            logger.info(f"Step 3 complete: Class base converted to template (VMID {class_base_vmid})")
-            
-            # ========================================
-            # STEP 4: Create All Student VMs from Class Base Template
-            # ========================================
-            update_clone_progress(task_id, completed=3, message=f"Step 4/4: Creating {pool_size} student VMs...")
-            
-            for i in range(1, pool_size + 1):
-                # Allocate student VM ID from maintained set (don't re-query)
-                student_vmid = max(used_vmids) + 1
-                used_vmids.add(student_vmid)  # Mark as used immediately
-                student_name = f"{class_prefix}-student{i}"
-                
-                # Clone to local-lvm first (fast, same node as template)
-                clone_success, clone_msg = clone_vm_from_template(
-                    template_vmid=class_base_vmid,  # Clone from class base template
-                    new_vmid=student_vmid,
-                    name=student_name,
-                    node=source_node,
-                    cluster_ip=CLASS_CLUSTER_IP,
-                    full_clone=True,  # Full clone for cluster distribution
-                    storage='local-lvm',  # Clone to local first
-                    create_baseline=False,
-                    wait_until_complete=True
-                )
-                
-                if clone_success:
-                    logger.info(f"Student VM {i}/{pool_size} cloned to local: {student_name} (VMID {student_vmid})")
-                    
-                    # TODO: Re-enable disk move to NFS once testing complete
-                    # Start disk move to NFS (fire-and-forget, don't wait)
-                    # logger.info(f"Initiating disk move for VM {student_vmid} to NFS...")
-                    # try:
-                    #     # Find the disk to move
-                    #     config = proxmox.nodes(source_node).qemu(student_vmid).config.get()
-                    #     disk_keys = ['virtio0', 'scsi0', 'sata0', 'ide0']
-                    #     disk_key = None
-                    #     for key in disk_keys:
-                    #         if key in config:
-                    #             disk_key = key
-                    #             break
-                    #     
-                    #     if disk_key:
-                    #         # Fire-and-forget: start move but don't wait
-                    #         move_task = proxmox.nodes(source_node).qemu(student_vmid).move_disk.post(
-                    #             disk=disk_key,
-                    #             storage='TRUENAS-NFS',
-                    #             delete=1  # Delete source after successful move
-                    #         )
-                    #         logger.info(f"Disk move initiated for VM {student_vmid}, task: {move_task} (not waiting)")
-                    #     else:
-                    #         logger.warning(f"No disk found to move for VM {student_vmid}")
-                    # except Exception as move_err:
-                    #     logger.warning(f"Failed to initiate disk move for VM {student_vmid}: {move_err}")
-                    
-                    assignment, _ = create_vm_assignment(
-                        class_id=class_id_val,
-                        proxmox_vmid=student_vmid,
-                        node=source_node,
-                        is_template_vm=False
-                    )
-                    logger.info(f"Student VM {i}/{pool_size} created: {student_name} (VMID {student_vmid})")
-                    update_clone_progress(
-                        task_id,
-                        completed=3 + (i * 1.0 / pool_size),
-                        message=f"Created student VM {i}/{pool_size}: {student_name}"
-                    )
-                else:
-                    logger.warning(f"Failed to create student VM {i}: {clone_msg}")
-                    update_clone_progress(
-                        task_id,
-                        completed=3 + (i * 1.0 / pool_size),
-                        message=f"Failed student VM {i}/{pool_size}: {clone_msg}"
-                    )
-                    # Continue with remaining VMs even if one fails
-            
-            logger.info(f"Step 4 complete: Created {pool_size} student VMs")
-            
-            # Auto-assign VMs to any students who joined while waiting
-            assigned_count = auto_assign_vms_to_waiting_students(class_id_val)
-            if assigned_count > 0:
-                logger.info(f"Auto-assigned {assigned_count} VMs to waiting students")
-            
             # Clear task_id from class - creation complete
             class_obj.clone_task_id = None
             db.session.commit()
@@ -593,11 +378,11 @@ def create_new_class():
             update_clone_progress(
                 task_id,
                 status="completed",
-                message=f"Class setup complete! Created: Teacher VM (VMID {teacher_vm_vmid}), Class base template (VMID {class_base_vmid}), and {pool_size} student VMs."
+                message=f"Teacher VM created successfully (VMID {teacher_vm_vmid})"
             )
             
         except Exception as e:
-            logger.exception(f"Template cloning and deployment failed for class {class_id_val}: {e}")
+            logger.exception(f"Teacher VM creation failed for class {class_id_val}: {e}")
             update_clone_progress(task_id, status="failed", error=str(e))
             # Clear task_id on failure too
             try:
@@ -617,10 +402,10 @@ def create_new_class():
     
     return jsonify({
         "ok": True,
-        "message": f"Class '{class_.name}' created! Cloning VMs in background.",
+        "message": f"Class '{class_.name}' created! Creating teacher VM in background.",
         "class": class_.to_dict(),
         "task_id": task_id,
-        "info": "Creating: 1) Teacher's editable VM, 2) Class base VM, 3) Class base → template, 4) Student VMs from class base."
+        "info": "Creating teacher VM only. Additional VMs will be added in future updates."
     })
 
 
