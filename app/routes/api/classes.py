@@ -226,12 +226,37 @@ def create_new_class():
             proxmox = get_proxmox_admin()
             
             # ========================================
+            # VALIDATE: Source VMID must be a Proxmox template
+            # ========================================
+            logger.info(f"Validating source template: VMID {source_vmid} on node {source_node}")
+            try:
+                source_config = proxmox.nodes(source_node).qemu(source_vmid).config.get()
+                is_template = source_config.get('template', 0) == 1
+                if not is_template:
+                    error_msg = f"VMID {source_vmid} is NOT a Proxmox template! It's a regular VM. Please register the correct template."
+                    logger.error(error_msg)
+                    update_clone_progress(task_id, status="failed", error=error_msg)
+                    return
+                logger.info(f"Confirmed: VMID {source_vmid} is a valid Proxmox template")
+            except Exception as e:
+                error_msg = f"Cannot access source template {source_vmid} on node {source_node}: {e}. The template may have been deleted from Proxmox."
+                logger.error(error_msg)
+                update_clone_progress(task_id, status="failed", error=error_msg)
+                return
+            
+            # ========================================
             # STEP 1: Clone source template → Teacher's Editable VM
             # ========================================
             update_clone_progress(task_id, completed=0, message=f"Step 1/4: Creating teacher's editable VM from '{source_name}'...")
             
+            # Build used VMIDs set ONCE at start - don't re-query every step (queries can be stale)
             used_vmids = set(r.get('vmid') for r in proxmox.cluster.resources.get(type="vm"))
+            logger.info(f"Initial VMID scan found {len(used_vmids)} VMs")
+            
+            # Allocate teacher VM ID
             teacher_vm_vmid = max(used_vmids) + 1 if used_vmids else 200
+            used_vmids.add(teacher_vm_vmid)  # Mark as used immediately
+            logger.info(f"Allocated teacher VM VMID: {teacher_vm_vmid}")
             teacher_vm_name = f"{class_prefix}-teacher"
             
             clone_success, clone_msg = clone_vm_from_template(
@@ -344,9 +369,19 @@ def create_new_class():
                 time.sleep(5)
                 waited += 5
             
-            used_vmids = set(r.get('vmid') for r in proxmox.cluster.resources.get(type="vm"))
-            class_base_vmid = max(used_vmids) + 1 if used_vmids else 300
+            # Allocate class base VM ID from maintained set (don't re-query, queries are stale)
+            class_base_vmid = max(used_vmids) + 1
+            used_vmids.add(class_base_vmid)  # Mark as used immediately
+            logger.info(f"Allocated class base VMID: {class_base_vmid}")
             class_base_name = f"{class_prefix}-base"
+            
+            # CRITICAL DEBUG: Log exactly what we're cloning from
+            logger.info(f"=== STEP 2 CLONE DEBUG ===")
+            logger.info(f"  source_vmid (ORIGINAL TEMPLATE): {source_vmid}")
+            logger.info(f"  teacher_vm_vmid (STEP 1 RESULT): {teacher_vm_vmid}")
+            logger.info(f"  class_base_vmid (NEW VM TARGET): {class_base_vmid}")
+            logger.info(f"  CLONING FROM {source_vmid} -> {class_base_vmid}")
+            logger.info(f"=== END DEBUG ===")
             
             clone_success, clone_msg = clone_vm_from_template(
                 template_vmid=source_vmid,
@@ -476,8 +511,9 @@ def create_new_class():
             update_clone_progress(task_id, completed=3, message=f"Step 4/4: Creating {pool_size} student VMs...")
             
             for i in range(1, pool_size + 1):
-                used_vmids = set(r.get('vmid') for r in proxmox.cluster.resources.get(type="vm"))
-                student_vmid = max(used_vmids) + 1 if used_vmids else (400 + i)
+                # Allocate student VM ID from maintained set (don't re-query)
+                student_vmid = max(used_vmids) + 1
+                used_vmids.add(student_vmid)  # Mark as used immediately
                 student_name = f"{class_prefix}-student{i}"
                 
                 # Clone to local-lvm first (fast, same node as template)
