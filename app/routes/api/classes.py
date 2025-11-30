@@ -242,7 +242,7 @@ def create_new_class():
                 cluster_ip=CLASS_CLUSTER_IP,
                 full_clone=True,  # Full clone so teacher can customize freely
                 storage='local-lvm',  # Clone to local first (same node as source)
-                create_baseline=True,  # Create baseline snapshot for reset
+                create_baseline=False,  # No baseline needed
                 wait_until_complete=True
             )
             
@@ -295,8 +295,8 @@ def create_new_class():
                 update_clone_progress(task_id, status="failed", error=f"Teacher VM {teacher_vm_vmid} did not become ready after {max_wait}s")
                 return
             
-            logger.info(f"Waiting 5 seconds for teacher VM to stabilize...")
-            time.sleep(5)
+            logger.info(f"Waiting 10 seconds for teacher VM to fully stabilize...")
+            time.sleep(10)
             
             # Move teacher VM to NFS so it can run on any node
             logger.info(f"Moving teacher VM {teacher_vm_vmid} to NFS for cluster access...")
@@ -1369,6 +1369,146 @@ def promote_editable_to_base_template(class_id: int):
     return jsonify({
         "ok": True,
         "message": "Promotion started in background. Track progress via task_id.",
+        "task_id": task_id
+    })
+
+
+@api_classes_bp.route("/<int:class_id>/redeploy-student-vms", methods=["POST"])
+@login_required
+def redeploy_student_vms(class_id: int):
+    """Redeploy all student VMs from the current class base template.
+    
+    Deletes all existing student VMs and recreates them from the class base template.
+    """
+    user, error = require_teacher_or_adminer()
+    if error:
+        return jsonify(error[0]), error[1]
+
+    class_ = get_class_by_id(class_id)
+    if not class_:
+        return jsonify({"ok": False, "error": "Class not found"}), 404
+
+    # Ownership check
+    if not user.is_adminer and class_.teacher_id != user.id:
+        return jsonify({"ok": False, "error": "Access denied"}), 403
+    
+    # Get class base template
+    if not class_.template:
+        return jsonify({"ok": False, "error": "Class has no base template"}), 400
+    
+    class_base_vmid = class_.template.proxmox_vmid
+    class_base_node = class_.template.node
+    pool_size = request.get_json().get('pool_size', class_.vm_pool_size or 20)
+    
+    # Prepare progress tracking
+    task_id = str(uuid.uuid4())
+    start_clone_progress(task_id, pool_size + 1)  # delete + create
+    
+    # Capture Flask app context
+    from flask import current_app
+    app = current_app._get_current_object()
+    
+    def _background_redeploy():
+        try:
+            app_ctx = app.app_context()
+            app_ctx.push()
+            from app.services.proxmox_service import get_proxmox_admin
+            import time
+            
+            class_obj = Class.query.get(class_id)
+            if not class_obj:
+                update_clone_progress(task_id, status="failed", error="Class not found")
+                return
+            
+            proxmox = get_proxmox_admin()
+            
+            # Step 1: Delete all existing student VMs (non-template VMs not assigned to teacher)
+            update_clone_progress(task_id, completed=0, message="Deleting existing student VMs...")
+            student_assignments = [a for a in class_obj.vm_assignments 
+                                 if not a.is_template_vm 
+                                 and a.assigned_user_id != class_obj.teacher_id
+                                 and a.proxmox_vmid]
+            
+            for assignment in student_assignments:
+                try:
+                    delete_vm(assignment.proxmox_vmid, assignment.node, CLASS_CLUSTER_IP)
+                    logger.info(f"Deleted student VM {assignment.proxmox_vmid}")
+                except Exception as e:
+                    logger.warning(f"Failed to delete VM {assignment.proxmox_vmid}: {e}")
+                
+                # Remove assignment from database
+                db.session.delete(assignment)
+            
+            db.session.commit()
+            
+            # Step 2: Create new student VMs from class base template
+            update_clone_progress(task_id, completed=1, message=f"Creating {pool_size} new student VMs...")
+            
+            import re
+            class_prefix = re.sub(r'[^a-z0-9-]', '', class_obj.name.lower().replace(' ', '-').replace('_', '-')) or f"class-{class_obj.id}"
+            
+            for i in range(1, pool_size + 1):
+                used_vmids = set(r.get('vmid') for r in proxmox.cluster.resources.get(type="vm"))
+                student_vmid = max(used_vmids) + 1 if used_vmids else (400 + i)
+                student_name = f"{class_prefix}-student{i}"
+                
+                clone_success, clone_msg = clone_vm_from_template(
+                    template_vmid=class_base_vmid,
+                    new_vmid=student_vmid,
+                    name=student_name,
+                    node=class_base_node,
+                    cluster_ip=CLASS_CLUSTER_IP,
+                    full_clone=True,
+                    storage='local-lvm',
+                    create_baseline=False,
+                    wait_until_complete=True
+                )
+                
+                if clone_success:
+                    logger.info(f"Student VM {i}/{pool_size} created: {student_name} (VMID {student_vmid})")
+                    
+                    # Create VM assignment
+                    assignment, _ = create_vm_assignment(
+                        class_id=class_id,
+                        proxmox_vmid=student_vmid,
+                        node=class_base_node,
+                        is_template_vm=False
+                    )
+                    
+                    update_clone_progress(
+                        task_id,
+                        completed=1 + i,
+                        message=f"Created student VM {i}/{pool_size}: {student_name}"
+                    )
+                else:
+                    logger.warning(f"Failed to create student VM {i}: {clone_msg}")
+                    update_clone_progress(
+                        task_id,
+                        completed=1 + i,
+                        message=f"Failed student VM {i}/{pool_size}: {clone_msg}"
+                    )
+            
+            # Auto-assign VMs to waiting students
+            assigned_count = auto_assign_vms_to_waiting_students(class_id)
+            if assigned_count > 0:
+                logger.info(f"Auto-assigned {assigned_count} VMs to waiting students")
+            
+            update_clone_progress(task_id, status="completed", message=f"Redeployed {pool_size} student VMs successfully")
+            
+        except Exception as e:
+            logger.exception(f"Redeploy student VMs failed for class {class_id}: {e}")
+            update_clone_progress(task_id, status="failed", error=str(e))
+        finally:
+            try:
+                app_ctx.pop()
+            except Exception:
+                pass
+    
+    threading.Thread(target=_background_redeploy, daemon=True).start()
+    
+    return jsonify({
+        "ok": True,
+        "message": "Student VM redeployment started in background",
         "task_id": task_id
     })
 
