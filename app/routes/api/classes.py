@@ -241,6 +241,7 @@ def create_new_class():
                 node=source_node,
                 cluster_ip=CLASS_CLUSTER_IP,
                 full_clone=True,  # Full clone so teacher can customize freely
+                storage='local-lvm',  # Clone to local first (same node as source)
                 create_baseline=True,  # Create baseline snapshot for reset
                 wait_until_complete=True
             )
@@ -249,8 +250,25 @@ def create_new_class():
                 update_clone_progress(task_id, status="failed", error=f"Step 1 failed - Could not create teacher VM: {clone_msg}")
                 return
             
-            logger.info(f"Waiting 8 seconds for teacher VM to stabilize...")
-            time.sleep(8)
+            logger.info(f"Waiting 5 seconds for teacher VM to stabilize...")
+            time.sleep(5)
+            
+            # Move teacher VM to NFS so it can run on any node
+            logger.info(f"Moving teacher VM {teacher_vm_vmid} to NFS for cluster access...")
+            try:
+                from app.services.proxmox_operations import move_vm_disk_to_local_storage
+                move_success, move_msg = move_vm_disk_to_local_storage(
+                    proxmox=proxmox,
+                    node=source_node,
+                    vmid=teacher_vm_vmid,
+                    target_storage='TRUENAS-NFS'
+                )
+                if move_success:
+                    logger.info(f"Teacher VM {teacher_vm_vmid} moved to NFS successfully")
+                else:
+                    logger.warning(f"Failed to move teacher VM to NFS: {move_msg}. VM will only run on {source_node}.")
+            except Exception as e:
+                logger.warning(f"Failed to move teacher VM to NFS: {e}. VM will only run on {source_node}.")
             
             # Assign teacher VM to the teacher
             assignment, _ = create_vm_assignment(
@@ -283,6 +301,7 @@ def create_new_class():
                 node=source_node,
                 cluster_ip=CLASS_CLUSTER_IP,
                 full_clone=True,  # Full clone for clean template
+                storage='local-lvm',  # Clone to local-lvm for fast template cloning
                 create_baseline=False,
                 wait_until_complete=True
             )
@@ -335,6 +354,8 @@ def create_new_class():
                 update_clone_progress(task_id, status="failed", error=f"Step 3 failed - Template {class_base_vmid} did not become ready after conversion")
                 return
             
+            logger.info(f"Template {class_base_vmid} is on local-lvm (builder node) for fast cloning")
+            
             # Register class template in database
             class_specific_template, tpl_msg = create_template(
                 name=class_base_name,
@@ -372,25 +393,56 @@ def create_new_class():
                 student_vmid = max(used_vmids) + 1 if used_vmids else (400 + i)
                 student_name = f"{class_prefix}-student{i}"
                 
+                # Clone to local-lvm first (fast, same node as template)
                 clone_success, clone_msg = clone_vm_from_template(
                     template_vmid=class_base_vmid,  # Clone from class base template
                     new_vmid=student_vmid,
                     name=student_name,
                     node=source_node,
                     cluster_ip=CLASS_CLUSTER_IP,
-                    full_clone=False,  # Linked clone for efficiency
-                    create_baseline=True,  # Students can reset to baseline
+                    full_clone=True,  # Full clone for cluster distribution
+                    storage='local-lvm',  # Clone to local first
+                    create_baseline=False,  # Will add baseline after move to NFS
                     wait_until_complete=True
                 )
                 
                 if clone_success:
+                    logger.info(f"Student VM {i}/{pool_size} cloned to local: {student_name} (VMID {student_vmid})")
+                    
+                    # Move to NFS so it can be migrated to any node
+                    logger.info(f"Moving student VM {student_vmid} to NFS...")
+                    try:
+                        from app.services.proxmox_operations import move_vm_disk_to_local_storage
+                        move_success, move_msg = move_vm_disk_to_local_storage(
+                            proxmox=proxmox,
+                            node=source_node,
+                            vmid=student_vmid,
+                            target_storage='TRUENAS-NFS'
+                        )
+                        if move_success:
+                            logger.info(f"Student VM {student_vmid} moved to NFS")
+                            
+                            # Now create baseline snapshot on NFS
+                            try:
+                                proxmox.nodes(source_node).qemu(student_vmid).snapshot.post(
+                                    snapname='baseline',
+                                    description='Initial baseline snapshot for reimage'
+                                )
+                                logger.info(f"Created baseline snapshot for VM {student_vmid}")
+                            except Exception as snap_err:
+                                logger.warning(f"Failed to create baseline snapshot for VM {student_vmid}: {snap_err}")
+                        else:
+                            logger.warning(f"Failed to move VM {student_vmid} to NFS: {move_msg}. VM will only run on {source_node}.")
+                    except Exception as move_err:
+                        logger.warning(f"Failed to move VM {student_vmid} to NFS: {move_err}. VM will only run on {source_node}.")
+                    
                     assignment, _ = create_vm_assignment(
                         class_id=class_id_val,
                         proxmox_vmid=student_vmid,
                         node=source_node,
                         is_template_vm=False
                     )
-                    logger.info(f"Student VM {i}/{pool_size} created: {student_name} (VMID {student_vmid})")
+                    logger.info(f"Student VM {i}/{pool_size} ready: {student_name} (VMID {student_vmid})")
                     update_clone_progress(
                         task_id,
                         completed=3 + (i * 1.0 / pool_size),

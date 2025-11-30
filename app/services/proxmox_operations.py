@@ -153,6 +153,103 @@ def verify_template_has_disk(proxmox, node: str, template_vmid: int, retries: in
                 return False, None
     
     return False, None
+
+
+def move_vm_disk_to_local_storage(proxmox, node: str, vmid: int, target_storage: str = 'local-lvm') -> Tuple[bool, str]:
+    """Move a VM's disk between storage backends.
+    
+    This supports the optimized cloning workflow:
+    - local-lvm → TRUENAS-NFS: Move VMs to NFS for cluster distribution
+    - TRUENAS-NFS → local-lvm: Move templates to local for fast cloning
+    
+    Args:
+        proxmox: ProxmoxAPI instance
+        node: Node where the VM/template resides
+        vmid: VM ID to move
+        target_storage: Target storage (e.g., 'local-lvm', 'TRUENAS-NFS')
+        
+    Returns:
+        Tuple of (success, message)
+    """
+    try:
+        # Get current VM config
+        config = proxmox.nodes(node).qemu(vmid).config.get()
+        
+        # Find the disk to move
+        disk_keys = ['scsi0', 'virtio0', 'sata0', 'ide0']
+        source_disk = None
+        disk_key = None
+        
+        for key in disk_keys:
+            if key in config:
+                disk_key = key
+                source_disk = config[key]
+                break
+        
+        if not source_disk:
+            return False, f"No disk found on VM {vmid}"
+        
+        # Parse disk string (e.g., "TRUENAS-NFS:112/vm-112-disk-0.qcow2,size=32G")
+        disk_parts = source_disk.split(',')[0]  # Get just the storage:volume part
+        if ':' not in disk_parts:
+            return False, f"Could not parse disk format: {source_disk}"
+        
+        current_storage, volume = disk_parts.split(':', 1)
+        
+        # Check if already on target storage
+        if current_storage == target_storage:
+            logger.info(f"VM {vmid} disk already on {target_storage}, skipping move")
+            return True, f"Disk already on {target_storage}"
+        
+        logger.info(f"Moving VM {vmid} disk from {current_storage} to {target_storage}...")
+        
+        # Use Proxmox move_disk API
+        move_task = proxmox.nodes(node).qemu(vmid).move_disk.post(
+            disk=disk_key,
+            storage=target_storage,
+            delete=1  # Delete source disk after successful move
+        )
+        
+        logger.info(f"Move disk initiated for VM {vmid}, task: {move_task}")
+        
+        # Wait for move to complete (can take several minutes)
+        import time
+        waited = 0
+        max_wait = 600  # 10 minutes timeout
+        
+        while waited < max_wait:
+            try:
+                config = proxmox.nodes(node).qemu(vmid).config.get()
+                current_disk = config.get(disk_key, '')
+                
+                # Check if disk is now on target storage
+                if current_disk.startswith(f"{target_storage}:"):
+                    logger.info(f"VM {vmid} disk successfully moved to {target_storage} after {waited}s")
+                    return True, f"Disk moved to {target_storage}"
+                
+                # Check for lock (indicates move in progress)
+                if config.get('lock'):
+                    if waited % 30 == 0:  # Log every 30 seconds
+                        logger.info(f"VM {vmid} disk move in progress... ({waited}s / {max_wait}s)")
+                    time.sleep(5)
+                    waited += 5
+                else:
+                    # No lock and not on target storage - may have failed
+                    logger.warning(f"VM {vmid} disk move completed but disk not on target storage")
+                    return False, "Move completed but disk not on target storage"
+                    
+            except Exception as e:
+                logger.error(f"Error checking move status for VM {vmid}: {e}")
+                time.sleep(5)
+                waited += 5
+        
+        return False, f"Timeout waiting for disk move after {max_wait}s"
+        
+    except Exception as e:
+        logger.exception(f"Failed to move VM {vmid} disk to {target_storage}: {e}")
+        return False, f"Move failed: {str(e)}"
+
+
 def replicate_templates_to_all_nodes(cluster_ip: str = None) -> None:
     """Ensure every QEMU template exists on every node. Missing replicas are cloned and converted.
 
