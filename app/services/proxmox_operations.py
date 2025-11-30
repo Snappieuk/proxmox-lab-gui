@@ -98,33 +98,48 @@ def wait_for_clone_completion(proxmox, node: str, vmid: int, timeout: int = 300)
     raise TimeoutError(f"Clone timeout: VM {vmid} did not complete within {timeout}s")
 
 
-def verify_template_has_disk(proxmox, node: str, template_vmid: int) -> Tuple[bool, str]:
+def verify_template_has_disk(proxmox, node: str, template_vmid: int, retries: int = 3, retry_delay: float = 2.0) -> Tuple[bool, str]:
     """Verify template has a boot disk before attempting to clone.
     
     Args:
         proxmox: ProxmoxAPI instance
         node: Node name
         template_vmid: Template VMID to verify
+        retries: Number of retry attempts (default 3)
+        retry_delay: Seconds to wait between retries (default 2.0)
         
     Returns:
         Tuple of (has_disk, disk_key) where disk_key is 'scsi0', 'virtio0', etc.
     """
-    try:
-        config = proxmox.nodes(node).qemu(template_vmid).config.get()
-        
-        # Check for boot disk
-        disk_keys = ['scsi0', 'virtio0', 'sata0', 'ide0']
-        for key in disk_keys:
-            if key in config:
-                logger.debug(f"Template {template_vmid} has disk: {key}")
-                return True, key
-        
-        logger.error(f"Template {template_vmid} has no disk! Config: {config}")
-        return False, None
-        
-    except Exception as e:
-        logger.error(f"Failed to verify template {template_vmid}: {e}")
-        return False, None
+    import time
+    
+    for attempt in range(retries):
+        try:
+            config = proxmox.nodes(node).qemu(template_vmid).config.get()
+            
+            # Check for boot disk
+            disk_keys = ['scsi0', 'virtio0', 'sata0', 'ide0']
+            for key in disk_keys:
+                if key in config:
+                    logger.debug(f"Template {template_vmid} has disk: {key} (attempt {attempt + 1}/{retries})")
+                    return True, key
+            
+            if attempt < retries - 1:
+                logger.warning(f"Template {template_vmid} has no disk on attempt {attempt + 1}/{retries}, retrying in {retry_delay}s...")
+                time.sleep(retry_delay)
+            else:
+                logger.error(f"Template {template_vmid} has no disk after {retries} attempts! Config: {config}")
+                return False, None
+            
+        except Exception as e:
+            if attempt < retries - 1:
+                logger.warning(f"Failed to verify template {template_vmid} (attempt {attempt + 1}/{retries}): {e}, retrying...")
+                time.sleep(retry_delay)
+            else:
+                logger.error(f"Failed to verify template {template_vmid} after {retries} attempts: {e}")
+                return False, None
+    
+    return False, None
 def replicate_templates_to_all_nodes(cluster_ip: str = None) -> None:
     """Ensure every QEMU template exists on every node. Missing replicas are cloned and converted.
 

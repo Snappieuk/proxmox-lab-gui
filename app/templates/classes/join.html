@@ -24,20 +24,20 @@
             </div>
         </div>
         
-        {% if class_.unassigned_count > 0 %}
         <form action="{{ url_for('classes.confirm_join_class', token=token) }}" method="POST">
             <button type="submit" class="btn-join">
                 <i class="bi bi-box-arrow-in-right"></i> Join Class
             </button>
         </form>
+        
+        {% if class_.unassigned_count > 0 %}
         <p class="join-note">
             Joining will automatically assign you a virtual machine.
         </p>
         {% else %}
-        <div class="join-full">
-            <i class="bi bi-exclamation-triangle"></i>
-            <p>This class has no available VMs. Please contact your teacher.</p>
-        </div>
+        <p class="join-note join-note-warning">
+            <i class="bi bi-info-circle"></i> No VMs are currently available. You'll be added to the class and assigned a VM when one becomes available.
+        </p>
         {% endif %}
         
         <a href="{{ url_for('classes.classes_list') }}" class="back-link">
@@ -127,6 +127,17 @@
     margin-top: 1rem;
     font-size: 0.9rem;
     color: #8a8886;
+}
+
+.join-note-warning {
+    background: #fff4ce;
+    padding: 1rem;
+    border-radius: 6px;
+    color: #8a6d3b;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
 }
 
 .join-full {
