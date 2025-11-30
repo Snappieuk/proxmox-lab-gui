@@ -57,6 +57,9 @@ def wait_for_clone_completion(proxmox, node: str, vmid: int, timeout: int = 300)
     start = time.time()
     waited = 0
     last_log = 0
+    first_check = True
+    
+    logger.info(f"Starting wait for VM {vmid} clone completion (timeout: {timeout}s)")
     
     while waited < timeout:
         try:
@@ -64,7 +67,10 @@ def wait_for_clone_completion(proxmox, node: str, vmid: int, timeout: int = 300)
             
             # Check if still cloning
             if config.get('lock') == 'clone':
-                if waited - last_log >= 30:  # Log every 30 seconds
+                if first_check:
+                    logger.info(f"VM {vmid} has clone lock, waiting for completion...")
+                    first_check = False
+                elif waited - last_log >= 30:  # Log every 30 seconds
                     logger.info(f"VM {vmid} still cloning... ({waited}s / {timeout}s)")
                     last_log = waited
                 time.sleep(3)
@@ -73,28 +79,35 @@ def wait_for_clone_completion(proxmox, node: str, vmid: int, timeout: int = 300)
             
             # Clone lock released - verify disk exists
             disk_keys = ['scsi0', 'virtio0', 'sata0', 'ide0']
-            has_disk = any(key in config for key in disk_keys)
+            found_disks = [key for key in disk_keys if key in config]
             
-            if has_disk:
-                logger.info(f"VM {vmid} clone completed successfully after {waited}s")
+            if found_disks:
+                logger.info(f"VM {vmid} clone completed successfully after {waited}s, disk(s): {', '.join(found_disks)}")
                 return True
             else:
                 # No disk found - clone may have failed
                 logger.error(f"VM {vmid} clone lock released but no disk found after {waited}s")
-                logger.error(f"VM config: {config}")
+                logger.error(f"VM config keys: {list(config.keys())}")
                 raise Exception(f"Clone failed: VM {vmid} has no disk after cloning")
                 
         except Exception as e:
             error_str = str(e)
             if 'does not exist' in error_str or '500' in error_str:
                 # VM doesn't exist yet - keep waiting
+                if first_check:
+                    logger.info(f"VM {vmid} not yet visible, waiting for creation...")
+                    first_check = False
                 time.sleep(3)
                 waited = int(time.time() - start)
                 continue
             else:
                 # Real error - re-raise
+                logger.error(f"Error while waiting for VM {vmid}: {e}")
                 raise
     
+    # Timeout reached
+    logger.error(f"Timeout waiting for VM {vmid} clone after {timeout}s")
+    raise TimeoutError(f"Clone of VM {vmid} did not complete within {timeout} seconds")
     raise TimeoutError(f"Clone timeout: VM {vmid} did not complete within {timeout}s")
 
 
@@ -596,14 +609,15 @@ def clone_vm_from_template(template_vmid: int, new_vmid: int, name: str, node: s
                     clone_params['storage'] = storage
                 
                 clone_result = proxmox.nodes(node).qemu(template_vmid).clone.post(**clone_params)
-                logger.info(f"Cloned template {template_vmid} to {new_vmid} ({safe_name}) on {node} (attempt {attempt+1})")
+                upid = clone_result  # Proxmox returns UPID task identifier
+                logger.info(f"Clone initiated: template {template_vmid} → {new_vmid} ({safe_name}) on {node}, UPID: {upid}")
                 
                 # Wait for clone lock to release and verify disk exists
                 if wait_until_complete:
                     try:
-                        logger.info(f"Waiting for clone {new_vmid} to complete...")
+                        logger.info(f"Waiting for clone {new_vmid} to complete (timeout: {wait_timeout_sec}s)...")
                         wait_for_clone_completion(proxmox, node, new_vmid, timeout=wait_timeout_sec)
-                        logger.info(f"Clone {new_vmid} completed and verified")
+                        logger.info(f"Clone {new_vmid} completed and verified successfully")
                         
                         # Update progress if task tracking enabled
                         if task_id:
@@ -613,7 +627,7 @@ def clone_vm_from_template(template_vmid: int, new_vmid: int, name: str, node: s
                                 progress_percent=100 * progress_weight
                             )
                     except TimeoutError as e:
-                        logger.error(f"Clone timeout for VM {new_vmid}: {e}")
+                        logger.error(f"Clone timeout for VM {new_vmid} after {wait_timeout_sec}s: {e}")
                         # Try to get final state for diagnostics
                         try:
                             final_config = proxmox.nodes(node).qemu(new_vmid).config.get()

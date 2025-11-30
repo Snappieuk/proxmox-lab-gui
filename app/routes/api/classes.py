@@ -317,6 +317,24 @@ def create_new_class():
             logger.info(f"Waiting 10 seconds for template conversion to complete...")
             time.sleep(10)
             
+            # Verify template is ready before proceeding
+            logger.info(f"Verifying template {class_base_vmid} is ready for cloning...")
+            from app.services.proxmox_operations import verify_template_has_disk
+            template_ready = False
+            for attempt in range(5):  # Try up to 5 times (25 seconds total)
+                has_disk, disk_key = verify_template_has_disk(proxmox, source_node, class_base_vmid, retries=1, retry_delay=0)
+                if has_disk:
+                    logger.info(f"Template {class_base_vmid} verified ready with disk: {disk_key}")
+                    template_ready = True
+                    break
+                else:
+                    logger.warning(f"Template {class_base_vmid} not ready yet (attempt {attempt + 1}/5), waiting 5s...")
+                    time.sleep(5)
+            
+            if not template_ready:
+                update_clone_progress(task_id, status="failed", error=f"Step 3 failed - Template {class_base_vmid} did not become ready after conversion")
+                return
+            
             # Register class template in database
             class_specific_template, tpl_msg = create_template(
                 name=class_base_name,

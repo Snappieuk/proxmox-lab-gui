@@ -148,6 +148,22 @@ class Class(db.Model):
         return self.students.count()
     
     def to_dict(self) -> dict:
+        # Get enrolled students with their VM assignments
+        students_list = []
+        for student in self.students:
+            # Find VM assigned to this student in this class
+            vm_assignment = VMAssignment.query.filter_by(
+                class_id=self.id,
+                assigned_user_id=student.id
+            ).first()
+            
+            students_list.append({
+                'id': student.id,
+                'username': student.username,
+                'vmid': vm_assignment.proxmox_vmid if vm_assignment else None,
+                'vm_status': vm_assignment.status if vm_assignment else None
+            })
+        
         return {
             'id': self.id,
             'name': self.name,
@@ -165,6 +181,7 @@ class Class(db.Model):
             'assigned_count': self.assigned_count,
             'unassigned_count': self.unassigned_count,
             'enrolled_count': self.enrolled_count,
+            'students': students_list,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
         }
