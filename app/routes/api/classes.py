@@ -250,6 +250,51 @@ def create_new_class():
                 update_clone_progress(task_id, status="failed", error=f"Step 1 failed - Could not create teacher VM: {clone_msg}")
                 return
             
+            # Poll until teacher VM exists and is ready
+            logger.info(f"Waiting for teacher VM {teacher_vm_vmid} to be fully ready...")
+            max_wait = 300  # 5 minutes
+            waited = 0
+            vm_ready = False
+            
+            while waited < max_wait:
+                try:
+                    config = proxmox.nodes(source_node).qemu(teacher_vm_vmid).config.get()
+                    
+                    # Check for disk
+                    has_disk = any(key in config for key in ['scsi0', 'virtio0', 'sata0', 'ide0'])
+                    
+                    # Check for lock (still cloning)
+                    has_lock = config.get('lock')
+                    
+                    if has_disk and not has_lock:
+                        logger.info(f"Teacher VM {teacher_vm_vmid} is ready after {waited}s")
+                        vm_ready = True
+                        break
+                    elif has_lock:
+                        logger.info(f"Teacher VM {teacher_vm_vmid} still has lock '{has_lock}', waiting... ({waited}s)")
+                    elif not has_disk:
+                        logger.warning(f"Teacher VM {teacher_vm_vmid} exists but has no disk yet, waiting... ({waited}s)")
+                    
+                except Exception as e:
+                    if 'does not exist' in str(e).lower():
+                        logger.info(f"Teacher VM {teacher_vm_vmid} not visible yet, waiting... ({waited}s)")
+                    else:
+                        logger.warning(f"Error checking teacher VM {teacher_vm_vmid}: {e}")
+                
+                time.sleep(5)
+                waited += 5
+            
+            if not vm_ready:
+                # Try to diagnose the problem
+                try:
+                    config = proxmox.nodes(source_node).qemu(teacher_vm_vmid).config.get()
+                    logger.error(f"Teacher VM {teacher_vm_vmid} timeout. Final config: {config}")
+                except Exception as e:
+                    logger.error(f"Teacher VM {teacher_vm_vmid} timeout and cannot read config: {e}")
+                
+                update_clone_progress(task_id, status="failed", error=f"Teacher VM {teacher_vm_vmid} did not become ready after {max_wait}s")
+                return
+            
             logger.info(f"Waiting 5 seconds for teacher VM to stabilize...")
             time.sleep(5)
             
@@ -310,6 +355,51 @@ def create_new_class():
                 update_clone_progress(task_id, status="failed", error=f"Step 2 failed - Could not create class base VM: {clone_msg}")
                 return
             
+            # Poll until class base VM exists and is ready
+            logger.info(f"Waiting for class base VM {class_base_vmid} to be fully ready...")
+            max_wait = 300  # 5 minutes
+            waited = 0
+            vm_ready = False
+            
+            while waited < max_wait:
+                try:
+                    config = proxmox.nodes(source_node).qemu(class_base_vmid).config.get()
+                    
+                    # Check for disk
+                    has_disk = any(key in config for key in ['scsi0', 'virtio0', 'sata0', 'ide0'])
+                    
+                    # Check for lock (still cloning)
+                    has_lock = config.get('lock')
+                    
+                    if has_disk and not has_lock:
+                        logger.info(f"Class base VM {class_base_vmid} is ready after {waited}s")
+                        vm_ready = True
+                        break
+                    elif has_lock:
+                        logger.info(f"Class base VM {class_base_vmid} still has lock '{has_lock}', waiting... ({waited}s)")
+                    elif not has_disk:
+                        logger.warning(f"Class base VM {class_base_vmid} exists but has no disk yet, waiting... ({waited}s)")
+                    
+                except Exception as e:
+                    if 'does not exist' in str(e).lower():
+                        logger.info(f"Class base VM {class_base_vmid} not visible yet, waiting... ({waited}s)")
+                    else:
+                        logger.warning(f"Error checking class base VM {class_base_vmid}: {e}")
+                
+                time.sleep(5)
+                waited += 5
+            
+            if not vm_ready:
+                # Try to diagnose the problem
+                try:
+                    config = proxmox.nodes(source_node).qemu(class_base_vmid).config.get()
+                    logger.error(f"Class base VM {class_base_vmid} timeout. Final config: {config}")
+                except Exception as e:
+                    logger.error(f"Class base VM {class_base_vmid} timeout and cannot read config: {e}")
+                
+                update_clone_progress(task_id, status="failed", error=f"Class base VM {class_base_vmid} did not become ready after {max_wait}s")
+                return
+            
             logger.info(f"Waiting 8 seconds for class base VM to stabilize...")
             time.sleep(8)
             
@@ -331,27 +421,6 @@ def create_new_class():
             
             if not convert_success:
                 update_clone_progress(task_id, status="failed", error=f"Step 3 failed - Could not convert to template: {convert_msg}")
-                return
-            
-            logger.info(f"Waiting 10 seconds for template conversion to complete...")
-            time.sleep(10)
-            
-            # Verify template is ready before proceeding
-            logger.info(f"Verifying template {class_base_vmid} is ready for cloning...")
-            from app.services.proxmox_operations import verify_template_has_disk
-            template_ready = False
-            for attempt in range(5):  # Try up to 5 times (25 seconds total)
-                has_disk, disk_key = verify_template_has_disk(proxmox, source_node, class_base_vmid, retries=1, retry_delay=0)
-                if has_disk:
-                    logger.info(f"Template {class_base_vmid} verified ready with disk: {disk_key}")
-                    template_ready = True
-                    break
-                else:
-                    logger.warning(f"Template {class_base_vmid} not ready yet (attempt {attempt + 1}/5), waiting 5s...")
-                    time.sleep(5)
-            
-            if not template_ready:
-                update_clone_progress(task_id, status="failed", error=f"Step 3 failed - Template {class_base_vmid} did not become ready after conversion")
                 return
             
             logger.info(f"Template {class_base_vmid} is on local-lvm (builder node) for fast cloning")

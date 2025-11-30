@@ -45,13 +45,32 @@ def _serialize_vm_list(raw_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 def list_mappings():
     """Return current mappings, users, and lightweight VM catalog."""
     try:
+        from app.models import User, db
+        
         mapping = get_user_vm_map()
-        users = get_pve_users()
+        
+        # Get Proxmox users
+        pve_users = get_pve_users()
+        for u in pve_users:
+            u['type'] = 'proxmox'
+        
+        # Get local database users
+        local_users = User.query.all()
+        local_user_list = [{
+            'userid': user.username,
+            'type': 'local',
+            'role': user.role
+        } for user in local_users]
+        
+        # Combine both lists
+        all_users = pve_users + local_user_list
+        all_users.sort(key=lambda x: x['userid'])
+        
         vm_catalog = _serialize_vm_list(get_all_vm_ids_and_names())
         return jsonify({
             "ok": True,
             "mapping": mapping,
-            "users": users,
+            "users": all_users,
             "vms": vm_catalog,
         })
     except Exception as e:

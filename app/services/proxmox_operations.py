@@ -653,12 +653,9 @@ def clone_vm_from_template(template_vmid: int, new_vmid: int, name: str, node: s
         
         proxmox = get_proxmox_admin_for_cluster(cluster_id)
 
-        # Verify template has disk before attempting clone
-        has_disk, disk_key = verify_template_has_disk(proxmox, node, template_vmid)
-        if not has_disk:
-            return False, f"Template {template_vmid} is missing boot disk - template may be corrupted"
-        logger.debug(f"Template {template_vmid} verified with disk: {disk_key}")
-
+        # Skip pre-clone verification - if template is bad, clone will fail anyway
+        # Verification here causes race conditions with freshly converted templates
+        
         safe_name = sanitize_vm_name(name)
 
         # If disk_clone_method is True, use direct storage API cloning (bypasses VM lock)

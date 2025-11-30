@@ -54,8 +54,22 @@
             <div id="user-classes" style="margin-bottom: 0.5rem; color: #666; font-size: 14px;">
                 <strong>Classes:</strong> <span id="user-classes-list">None</span>
             </div>
-            <div id="user-current-vms" style="color: #666; font-size: 14px;">
+            <div id="user-current-vms" style="color: #666; font-size: 14px; margin-bottom: 1rem;">
                 <strong>Current VM Assignments:</strong> <span id="user-vms-list">None</span>
+            </div>
+            
+            <!-- Class Assignment Section -->
+            <div id="class-assignment-section" style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid #ddd;">
+                <h4 style="font-size: 14px; margin-bottom: 0.5rem;">Assign to Class</h4>
+                <p style="font-size: 13px; color: #666; margin-bottom: 0.75rem;">Add this user to a class to auto-assign them a VM</p>
+                <div style="display: flex; gap: 0.5rem;">
+                    <select id="class-select" class="form-control" style="flex: 1;">
+                        <option value="">Select a class...</option>
+                    </select>
+                    <button id="assign-class-btn" class="btn-primary" style="white-space: nowrap;">
+                        Assign to Class
+                    </button>
+                </div>
             </div>
         </div>
 
@@ -125,6 +139,8 @@
     border-radius: 4px;
     padding: 0.75rem;
     background: #fafafa;
+    width: 100%;
+    box-sizing: border-box;
 }
 
 .vm-checkbox-container::-webkit-scrollbar {
@@ -220,6 +236,7 @@ let allUsers = [];
 let currentMappings = {};
 let selectedUser = '';
 let userClasses = {};
+let allClasses = [];
 
 async function loadMappingsData() {
     try {
@@ -240,12 +257,17 @@ async function loadMappingsData() {
         allUsers.forEach(u => {
             const option = document.createElement('option');
             option.value = u.userid;
-            option.textContent = u.userid;
+            const typeLabel = u.type === 'proxmox' ? '[PVE]' : '[Local]';
+            const roleLabel = u.role ? ` (${u.role})` : '';
+            option.textContent = `${typeLabel} ${u.userid}${roleLabel}`;
             userSelect.appendChild(option);
         });
         
         // Fetch user classes
         await loadUserClasses();
+        
+        // Populate class dropdown
+        populateClassDropdown();
         
         // Hide loading, show content
         document.getElementById('mappings-loading').style.display = 'none';
@@ -262,12 +284,12 @@ async function loadUserClasses() {
         if (!resp.ok) return;
         
         const data = await resp.json();
-        const classes = data.classes || [];
+        allClasses = data.classes || [];
         
         // Build a map of username -> class names
         userClasses = {};
         
-        classes.forEach(cls => {
+        allClasses.forEach(cls => {
             if (cls.students) {
                 cls.students.forEach(student => {
                     const username = student.username;
@@ -281,6 +303,17 @@ async function loadUserClasses() {
     } catch (e) {
         console.error("Failed to load user classes:", e);
     }
+}
+
+function populateClassDropdown() {
+    const classSelect = document.getElementById('class-select');
+    classSelect.innerHTML = '<option value="">Select a class...</option>';
+    allClasses.forEach(cls => {
+        const option = document.createElement('option');
+        option.value = cls.id;
+        option.textContent = `${cls.name} (${cls.students?.length || 0} students)`;
+        classSelect.appendChild(option);
+    });
 }
 
 function showError(message) {
@@ -414,6 +447,49 @@ document.addEventListener('DOMContentLoaded', () => {
         } finally {
             confirmBtn.disabled = false;
             confirmBtn.textContent = 'Confirm Selection';
+        }
+    });
+    
+    // Assign user to class button
+    const assignClassBtn = document.getElementById('assign-class-btn');
+    assignClassBtn.addEventListener('click', async () => {
+        const classId = document.getElementById('class-select').value;
+        if (!classId) {
+            showAlert('Please select a class', 'error');
+            return;
+        }
+        
+        assignClassBtn.disabled = true;
+        assignClassBtn.textContent = 'Assigning...';
+        
+        try {
+            // Use the class join API with the username
+            const resp = await fetch(`/api/classes/${classId}/students`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username: selectedUser })
+            });
+            
+            const data = await resp.json();
+            
+            if (data.ok) {
+                showAlert(`Successfully assigned ${selectedUser} to class`, 'success');
+                // Reload classes to update display
+                await loadUserClasses();
+                
+                // Update the user classes display
+                const classList = document.getElementById('user-classes-list');
+                const classes = userClasses[selectedUser] || [];
+                classList.textContent = classes.length > 0 ? classes.join(', ') : 'None';
+            } else {
+                showAlert(`Failed: ${data.error}`, 'error');
+            }
+        } catch (e) {
+            console.error('Failed to assign to class:', e);
+            showAlert('Error assigning to class', 'error');
+        } finally {
+            assignClassBtn.disabled = false;
+            assignClassBtn.textContent = 'Assign to Class';
         }
     });
 });
