@@ -252,11 +252,10 @@ def create_new_class():
             
             # Poll until teacher VM exists and is ready
             logger.info(f"Waiting for teacher VM {teacher_vm_vmid} to be fully ready...")
-            max_wait = 300  # 5 minutes
             waited = 0
             vm_ready = False
             
-            while waited < max_wait:
+            while True:
                 try:
                     config = proxmox.nodes(source_node).qemu(teacher_vm_vmid).config.get()
                     
@@ -283,17 +282,6 @@ def create_new_class():
                 
                 time.sleep(5)
                 waited += 5
-            
-            if not vm_ready:
-                # Try to diagnose the problem
-                try:
-                    config = proxmox.nodes(source_node).qemu(teacher_vm_vmid).config.get()
-                    logger.error(f"Teacher VM {teacher_vm_vmid} timeout. Final config: {config}")
-                except Exception as e:
-                    logger.error(f"Teacher VM {teacher_vm_vmid} timeout and cannot read config: {e}")
-                
-                update_clone_progress(task_id, status="failed", error=f"Teacher VM {teacher_vm_vmid} did not become ready after {max_wait}s")
-                return
             
             logger.info(f"Waiting 10 seconds for teacher VM to fully stabilize...")
             time.sleep(10)
@@ -335,6 +323,27 @@ def create_new_class():
             # ========================================
             update_clone_progress(task_id, completed=1, message=f"Step 2/4: Creating class base VM from '{source_name}'...")
             
+            # Wait for SOURCE TEMPLATE to be unlocked before cloning again
+            logger.info(f"Waiting for source template {source_vmid} to be unlocked...")
+            waited = 0
+            
+            while True:
+                try:
+                    config = proxmox.nodes(source_node).qemu(source_vmid).config.get()
+                    has_lock = config.get('lock')
+                    
+                    if not has_lock:
+                        logger.info(f"Source template {source_vmid} is ready (no lock) after {waited}s")
+                        source_ready = True
+                        break
+                    else:
+                        logger.info(f"Source template {source_vmid} still has lock '{has_lock}', waiting... ({waited}s)")
+                except Exception as e:
+                    logger.warning(f"Error checking source template {source_vmid}: {e}")
+                
+                time.sleep(5)
+                waited += 5
+            
             used_vmids = set(r.get('vmid') for r in proxmox.cluster.resources.get(type="vm"))
             class_base_vmid = max(used_vmids) + 1 if used_vmids else 300
             class_base_name = f"{class_prefix}-base"
@@ -357,11 +366,10 @@ def create_new_class():
             
             # Poll until class base VM exists and is ready
             logger.info(f"Waiting for class base VM {class_base_vmid} to be fully ready...")
-            max_wait = 300  # 5 minutes
             waited = 0
             vm_ready = False
             
-            while waited < max_wait:
+            while True:
                 try:
                     config = proxmox.nodes(source_node).qemu(class_base_vmid).config.get()
                     
@@ -389,17 +397,6 @@ def create_new_class():
                 time.sleep(5)
                 waited += 5
             
-            if not vm_ready:
-                # Try to diagnose the problem
-                try:
-                    config = proxmox.nodes(source_node).qemu(class_base_vmid).config.get()
-                    logger.error(f"Class base VM {class_base_vmid} timeout. Final config: {config}")
-                except Exception as e:
-                    logger.error(f"Class base VM {class_base_vmid} timeout and cannot read config: {e}")
-                
-                update_clone_progress(task_id, status="failed", error=f"Class base VM {class_base_vmid} did not become ready after {max_wait}s")
-                return
-            
             logger.info(f"Waiting 8 seconds for class base VM to stabilize...")
             time.sleep(8)
             
@@ -422,6 +419,27 @@ def create_new_class():
             if not convert_success:
                 update_clone_progress(task_id, status="failed", error=f"Step 3 failed - Could not convert to template: {convert_msg}")
                 return
+            
+            # Poll until template is unlocked and ready for cloning
+            logger.info(f"Waiting for template {class_base_vmid} to be unlocked and ready...")
+            waited = 0
+            
+            while True:
+                try:
+                    config = proxmox.nodes(source_node).qemu(class_base_vmid).config.get()
+                    has_lock = config.get('lock')
+                    
+                    if not has_lock:
+                        logger.info(f"Template {class_base_vmid} is ready (no lock) after {waited}s")
+                        template_ready = True
+                        break
+                    else:
+                        logger.info(f"Template {class_base_vmid} still has lock '{has_lock}', waiting... ({waited}s)")
+                except Exception as e:
+                    logger.warning(f"Error checking template {class_base_vmid}: {e}")
+                
+                time.sleep(5)
+                waited += 5
             
             logger.info(f"Template {class_base_vmid} is on local-lvm (builder node) for fast cloning")
             
