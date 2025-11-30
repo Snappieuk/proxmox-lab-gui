@@ -29,6 +29,7 @@ from app.services.class_service import (
     generate_class_invite,
     invalidate_class_invite,
     join_class_via_token,
+    auto_assign_vms_to_waiting_students,
     # Template management
     create_template,
     get_template_by_id,
@@ -186,7 +187,7 @@ def create_new_class():
     class_name = class_.name
     
     # Generate task ID for progress tracking
-    # 1 class template + 1 teacher editable + 1 teacher template + pool_size students
+    # 4 steps: teacher VM + class base + convert + student VMs
     import uuid
     task_id = str(uuid.uuid4())
     start_clone_progress(task_id, pool_size + 3)
@@ -207,6 +208,7 @@ def create_new_class():
             app_ctx = app.app_context()
             app_ctx.push()
             from datetime import datetime
+            import time
             from app.services.proxmox_service import get_proxmox_admin
             
             # Re-fetch class in thread context
@@ -223,51 +225,32 @@ def create_new_class():
             
             proxmox = get_proxmox_admin()
             
-            # STEP 1: Clone source template → "base clone" (regular VM, not template)
-            update_clone_progress(task_id, completed=0, message=f"Step 1/5: Cloning source template '{source_name}' (VMID {source_vmid})...")
+            # ========================================
+            # STEP 1: Clone source template → Teacher's Editable VM
+            # ========================================
+            update_clone_progress(task_id, completed=0, message=f"Step 1/4: Creating teacher's editable VM from '{source_name}'...")
             
             used_vmids = set(r.get('vmid') for r in proxmox.cluster.resources.get(type="vm"))
-            base_clone_vmid = max(used_vmids) + 1 if used_vmids else 200
-            base_clone_name = f"{class_prefix}-base-clone"
+            teacher_vm_vmid = max(used_vmids) + 1 if used_vmids else 200
+            teacher_vm_name = f"{class_prefix}-teacher"
             
             clone_success, clone_msg = clone_vm_from_template(
                 template_vmid=source_vmid,
-                new_vmid=base_clone_vmid,
-                name=base_clone_name,
-                node=source_node,
-                cluster_ip=CLASS_CLUSTER_IP,
-                full_clone=True,  # Full clone from original template
-                create_baseline=False,
-                wait_until_complete=True
-            )
-            
-            if not clone_success:
-                update_clone_progress(task_id, status="failed", error=f"Step 1 failed - Could not clone source template: {clone_msg}")
-                return
-            
-            logger.info(f"Step 1 complete: Base clone created (VMID {base_clone_vmid})")
-            
-            # STEP 2: Clone base clone → "teacher usable" (editable VM for teacher)
-            update_clone_progress(task_id, completed=1, message=f"Step 2/5: Creating teacher editable VM from base clone...")
-            
-            used_vmids = set(r.get('vmid') for r in proxmox.cluster.resources.get(type="vm"))
-            teacher_vm_vmid = max(used_vmids) + 1 if used_vmids else 300
-            teacher_vm_name = f"{class_prefix}-teacher-usable"
-            
-            clone_success, clone_msg = clone_vm_from_template(
-                template_vmid=base_clone_vmid,  # Clone from base clone (it's a regular VM, not a template)
                 new_vmid=teacher_vm_vmid,
                 name=teacher_vm_name,
                 node=source_node,
                 cluster_ip=CLASS_CLUSTER_IP,
-                full_clone=False,  # Linked clone
-                create_baseline=True,
+                full_clone=True,  # Full clone so teacher can customize freely
+                create_baseline=True,  # Create baseline snapshot for reset
                 wait_until_complete=True
             )
             
             if not clone_success:
-                update_clone_progress(task_id, status="failed", error=f"Step 2 failed - Could not create teacher VM: {clone_msg}")
+                update_clone_progress(task_id, status="failed", error=f"Step 1 failed - Could not create teacher VM: {clone_msg}")
                 return
+            
+            logger.info(f"Waiting 8 seconds for teacher VM to stabilize...")
+            time.sleep(8)
             
             # Assign teacher VM to the teacher
             assignment, _ = create_vm_assignment(
@@ -282,49 +265,62 @@ def create_new_class():
                 assignment.status = 'assigned'
                 db.session.commit()
             
-            logger.info(f"Step 2 complete: Teacher usable VM created and assigned (VMID {teacher_vm_vmid})")
+            logger.info(f"Step 1 complete: Teacher VM created and assigned (VMID {teacher_vm_vmid})")
             
-            # STEP 3: Clone base clone → "class template" (will become template for students)
-            update_clone_progress(task_id, completed=2, message=f"Step 3/5: Creating class template VM from base clone...")
+            # ========================================
+            # STEP 2: Clone source template → Class Base VM
+            # ========================================
+            update_clone_progress(task_id, completed=1, message=f"Step 2/4: Creating class base VM from '{source_name}'...")
             
             used_vmids = set(r.get('vmid') for r in proxmox.cluster.resources.get(type="vm"))
-            class_template_vmid = max(used_vmids) + 1 if used_vmids else 400
-            class_template_name = f"{class_prefix}-class-template"
+            class_base_vmid = max(used_vmids) + 1 if used_vmids else 300
+            class_base_name = f"{class_prefix}-base"
             
             clone_success, clone_msg = clone_vm_from_template(
-                template_vmid=base_clone_vmid,  # Clone from base clone
-                new_vmid=class_template_vmid,
-                name=class_template_name,
+                template_vmid=source_vmid,
+                new_vmid=class_base_vmid,
+                name=class_base_name,
                 node=source_node,
                 cluster_ip=CLASS_CLUSTER_IP,
-                full_clone=False,  # Linked clone
+                full_clone=True,  # Full clone for clean template
                 create_baseline=False,
                 wait_until_complete=True
             )
             
             if not clone_success:
-                update_clone_progress(task_id, status="failed", error=f"Step 3 failed - Could not create class template VM: {clone_msg}")
+                update_clone_progress(task_id, status="failed", error=f"Step 2 failed - Could not create class base VM: {clone_msg}")
                 return
             
-            logger.info(f"Step 3 complete: Class template VM created (VMID {class_template_vmid})")
+            logger.info(f"Waiting 8 seconds for class base VM to stabilize...")
+            time.sleep(8)
             
-            # STEP 4: Convert "class template" to actual Proxmox template
-            update_clone_progress(task_id, completed=3, message=f"Step 4/5: Converting class template to Proxmox template...")
+            logger.info(f"Step 2 complete: Class base VM created (VMID {class_base_vmid})")
+            
+            # ========================================
+            # STEP 3: Convert Class Base VM → Template
+            # ========================================
+            update_clone_progress(task_id, completed=2, message=f"Step 3/4: Converting class base to template...")
+            
+            logger.info(f"Waiting 5 seconds before template conversion...")
+            time.sleep(5)
             
             convert_success, convert_msg = convert_vm_to_template(
-                vmid=class_template_vmid,
+                vmid=class_base_vmid,
                 node=source_node,
                 cluster_ip=CLASS_CLUSTER_IP
             )
             
             if not convert_success:
-                update_clone_progress(task_id, status="failed", error=f"Step 4 failed - Could not convert to template: {convert_msg}")
+                update_clone_progress(task_id, status="failed", error=f"Step 3 failed - Could not convert to template: {convert_msg}")
                 return
+            
+            logger.info(f"Waiting 10 seconds for template conversion to complete...")
+            time.sleep(10)
             
             # Register class template in database
             class_specific_template, tpl_msg = create_template(
-                name=class_template_name,
-                proxmox_vmid=class_template_vmid,
+                name=class_base_name,
+                proxmox_vmid=class_base_vmid,
                 cluster_ip=CLASS_CLUSTER_IP,
                 node=source_node,
                 created_by_id=teacher_id,
@@ -338,32 +334,34 @@ def create_new_class():
                 class_obj.template_id = class_specific_template.id
                 db.session.commit()
             
-            logger.info(f"Step 4 complete: Class template converted to Proxmox template (VMID {class_template_vmid})")
-            
             # Register as template VM assignment
             assignment, _ = create_vm_assignment(
                 class_id=class_id_val,
-                proxmox_vmid=class_template_vmid,
+                proxmox_vmid=class_base_vmid,
                 node=source_node,
                 is_template_vm=True
             )
             
-            # STEP 5: Create student VMs from class template using Terraform
-            update_clone_progress(task_id, completed=4, message=f"Step 5/5: Creating {pool_size} student VMs from class template...")
+            logger.info(f"Step 3 complete: Class base converted to template (VMID {class_base_vmid})")
+            
+            # ========================================
+            # STEP 4: Create All Student VMs from Class Base Template
+            # ========================================
+            update_clone_progress(task_id, completed=3, message=f"Step 4/4: Creating {pool_size} student VMs...")
             
             for i in range(1, pool_size + 1):
                 used_vmids = set(r.get('vmid') for r in proxmox.cluster.resources.get(type="vm"))
-                student_vmid = max(used_vmids) + 1 if used_vmids else (500 + i)
+                student_vmid = max(used_vmids) + 1 if used_vmids else (400 + i)
                 student_name = f"{class_prefix}-student{i}"
                 
                 clone_success, clone_msg = clone_vm_from_template(
-                    template_vmid=class_template_vmid,  # Clone from class template (not teacher template!)
+                    template_vmid=class_base_vmid,  # Clone from class base template
                     new_vmid=student_vmid,
                     name=student_name,
                     node=source_node,
                     cluster_ip=CLASS_CLUSTER_IP,
-                    full_clone=False,
-                    create_baseline=True,
+                    full_clone=False,  # Linked clone for efficiency
+                    create_baseline=True,  # Students can reset to baseline
                     wait_until_complete=True
                 )
                 
@@ -377,19 +375,24 @@ def create_new_class():
                     logger.info(f"Student VM {i}/{pool_size} created: {student_name} (VMID {student_vmid})")
                     update_clone_progress(
                         task_id,
-                        completed=4 + (i * 1.0 / pool_size),
+                        completed=3 + (i * 1.0 / pool_size),
                         message=f"Created student VM {i}/{pool_size}: {student_name}"
                     )
                 else:
                     logger.warning(f"Failed to create student VM {i}: {clone_msg}")
                     update_clone_progress(
                         task_id,
-                        completed=4 + (i * 1.0 / pool_size),
+                        completed=3 + (i * 1.0 / pool_size),
                         message=f"Failed student VM {i}/{pool_size}: {clone_msg}"
                     )
                     # Continue with remaining VMs even if one fails
             
-            logger.info(f"Step 5 complete: Created {pool_size} student VMs")
+            logger.info(f"Step 4 complete: Created {pool_size} student VMs")
+            
+            # Auto-assign VMs to any students who joined while waiting
+            assigned_count = auto_assign_vms_to_waiting_students(class_id_val)
+            if assigned_count > 0:
+                logger.info(f"Auto-assigned {assigned_count} VMs to waiting students")
             
             # Clear task_id from class - creation complete
             class_obj.clone_task_id = None
@@ -398,7 +401,7 @@ def create_new_class():
             update_clone_progress(
                 task_id,
                 status="completed",
-                message=f"Class setup complete! Created: Base clone (VMID {base_clone_vmid}), Teacher usable (VMID {teacher_vm_vmid}), Class template (VMID {class_template_vmid}), and {pool_size} student VMs."
+                message=f"Class setup complete! Created: Teacher VM (VMID {teacher_vm_vmid}), Class base template (VMID {class_base_vmid}), and {pool_size} student VMs."
             )
             
         except Exception as e:
@@ -422,10 +425,10 @@ def create_new_class():
     
     return jsonify({
         "ok": True,
-        "message": f"Class '{class_.name}' created! Cloning template and creating VMs in background.",
+        "message": f"Class '{class_.name}' created! Cloning VMs in background.",
         "class": class_.to_dict(),
         "task_id": task_id,
-        "info": "Creating: 1) Base template (from source), 2) Teacher editable VM, 3) Teacher template VM, 4) Student VMs. Students will clone from the teacher template after teacher customization."
+        "info": "Creating: 1) Teacher's editable VM, 2) Class base VM, 3) Class base → template, 4) Student VMs from class base."
     })
 
 
@@ -1328,6 +1331,36 @@ def delete_vm_route(class_id: int, assignment_id: int):
         "message": msg,
         "proxmox_deleted": pve_success,
         "proxmox_message": pve_msg
+    })
+
+
+@api_classes_bp.route("/<int:class_id>/vms/auto-assign", methods=["POST"])
+@login_required
+def auto_assign_vms_route(class_id: int):
+    """Auto-assign available VMs to enrolled students without VMs.
+    
+    Useful after:
+    - Creating new VMs (called automatically in background)
+    - Destroying and recreating VMs
+    - When students join before VMs are ready
+    """
+    user, error = require_teacher_or_adminer()
+    if error:
+        return jsonify(error[0]), error[1]
+    
+    class_ = get_class_by_id(class_id)
+    if not class_:
+        return jsonify({"ok": False, "error": "Class not found"}), 404
+    
+    if not user.is_adminer and class_.teacher_id != user.id:
+        return jsonify({"ok": False, "error": "Access denied"}), 403
+    
+    assigned_count = auto_assign_vms_to_waiting_students(class_id)
+    
+    return jsonify({
+        "ok": True,
+        "message": f"Auto-assigned {assigned_count} VMs to waiting students",
+        "assigned_count": assigned_count
     })
 
 

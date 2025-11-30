@@ -445,6 +445,62 @@ def join_class_via_token(token: str, user_id: int) -> Tuple[bool, str, Optional[
             return False, f"Failed to join class: {str(e)}", None
 
 
+def auto_assign_vms_to_waiting_students(class_id: int) -> int:
+    """Auto-assign available VMs to enrolled students who don't have VMs yet.
+    
+    Returns: Number of students auto-assigned
+    """
+    class_ = Class.query.get(class_id)
+    if not class_:
+        logger.warning("Class %d not found for auto-assignment", class_id)
+        return 0
+    
+    # Find students enrolled in class without VM assignments
+    students_without_vms = []
+    for student in class_.students:
+        existing_assignment = VMAssignment.query.filter_by(
+            class_id=class_id,
+            assigned_user_id=student.id
+        ).first()
+        
+        if not existing_assignment:
+            students_without_vms.append(student)
+    
+    if not students_without_vms:
+        logger.info("No students waiting for VMs in class %s", class_.name)
+        return 0
+    
+    # Find available VMs
+    available_vms = VMAssignment.query.filter_by(
+        class_id=class_id,
+        assigned_user_id=None,
+        status='available',
+        is_template_vm=False
+    ).all()
+    
+    if not available_vms:
+        logger.info("No VMs available for auto-assignment in class %s", class_.name)
+        return 0
+    
+    # Assign VMs to students
+    assigned_count = 0
+    for student, vm in zip(students_without_vms, available_vms):
+        vm.assign_to_user(student)
+        logger.info("Auto-assigned VM %d to student %s in class %s", 
+                    vm.proxmox_vmid, student.username, class_.name)
+        assigned_count += 1
+    
+    try:
+        db.session.commit()
+        logger.info("Auto-assigned %d VMs to waiting students in class %s", 
+                    assigned_count, class_.name)
+        return assigned_count
+    except Exception as e:
+        db.session.rollback()
+        logger.exception("Failed to auto-assign VMs in class %s: %s", class_.name, e)
+        return 0
+
+
 # ---------------------------------------------------------------------------
 # Template Management
 # ---------------------------------------------------------------------------

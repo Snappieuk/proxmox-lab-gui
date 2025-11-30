@@ -64,8 +64,8 @@ def login():
 
 @auth_bp.route("/register", methods=["GET", "POST"])
 def register():
-    """Handle user registration."""
-    from app.services.user_manager import create_pve_user
+    """Handle user registration - creates LOCAL database accounts only."""
+    from app.services.class_service import create_local_user
     from app.utils.decorators import current_user
     
     if current_user():
@@ -83,12 +83,13 @@ def register():
         if password != password_confirm:
             error = "Passwords do not match."
         else:
-            success_flag, error_msg = create_pve_user(username, password)
-            if success_flag:
-                success = f"Account created successfully! You can now sign in as {username}@pve"
-                logger.info("New user registered: %s@pve", username)
+            # Create local database user (NOT Proxmox user)
+            user, error_msg = create_local_user(username, password, role='user')
+            if user:
+                success = f"Account created successfully! You can now sign in as {username}"
+                logger.info("New local user registered: %s", username)
             else:
-                error = error_msg
+                error = error_msg or "Failed to create account"
 
     return render_template("register.html", error=error, success=success)
 
