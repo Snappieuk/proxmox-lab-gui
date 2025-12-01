@@ -58,8 +58,9 @@ def api_vms():
         # Augment with RDP availability
         _augment_rdp_availability(vms)
         
-        # For admins, add mapped user information
-        if is_admin_user(username):
+        # For admins ONLY, add mapped user information
+        is_admin = is_admin_user(username)
+        if is_admin:
             for vm in vms:
                 vm['mapped_to'] = _get_vm_mapped_user(vm['vmid'])
         
@@ -68,7 +69,10 @@ def api_vms():
             from app.services.background_sync import trigger_immediate_sync
             trigger_immediate_sync()
         
-        return jsonify(vms)
+        return jsonify({
+            'vms': vms,
+            'is_admin': is_admin  # Tell frontend whether to show mapped_to field
+        })
         
     except Exception as e:
         logger.exception("Failed to fetch VMs for user %s", username)
