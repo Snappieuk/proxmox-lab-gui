@@ -186,8 +186,15 @@ def create_new_class():
                 app_ctx = app.app_context()
                 app_ctx.push()
                 
-                from app.services.proxmox_operations import create_vm_shells
+                from app.services.proxmox_operations import create_vm_shells, populate_vm_shell_with_disk
+                from app.models import VMAssignment, db, Class
                 import re
+                
+                # Re-fetch class to get template info
+                class_obj = Class.query.get(class_.id)
+                if not class_obj:
+                    logger.error(f"Class {class_.id} not found in background thread")
+                    return
                 
                 # Sanitize class name for VM naming
                 class_prefix = re.sub(r'[^a-z0-9-]', '', name.lower().replace(' ', '-').replace('_', '-'))
@@ -205,7 +212,7 @@ def create_new_class():
                 )
                 
                 # Register VM shells in database as VMAssignments
-                from app.models import VMAssignment, db
+                successful_shells = []
                 for shell in shells:
                     if shell['success']:
                         assignment = VMAssignment(
@@ -216,9 +223,28 @@ def create_new_class():
                             is_template_vm=False
                         )
                         db.session.add(assignment)
+                        successful_shells.append(shell)
                 
                 db.session.commit()
-                logger.info(f"Created {len([s for s in shells if s['success']])} VM shells for class {class_.id}")
+                logger.info(f"Created {len(successful_shells)} VM shells for class {class_.id}")
+                
+                # If template exists, populate VM shells with disk
+                if class_obj.template:
+                    template = class_obj.template
+                    logger.info(f"Populating {len(successful_shells)} VM shells with disk from template {template.proxmox_vmid}...")
+                    
+                    for shell in successful_shells:
+                        success, msg = populate_vm_shell_with_disk(
+                            vmid=shell['vmid'],
+                            node=shell['node'],
+                            template_vmid=template.proxmox_vmid,
+                            template_node=template.node,
+                            cluster_ip="10.220.15.249"
+                        )
+                        if success:
+                            logger.info(f"VM {shell['vmid']} disk populated: {msg}")
+                        else:
+                            logger.error(f"Failed to populate VM {shell['vmid']} disk: {msg}")
                 
             except Exception as e:
                 logger.exception(f"Failed to create VM shells for class {class_.id}: {e}")

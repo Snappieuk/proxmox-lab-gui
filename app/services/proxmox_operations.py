@@ -2325,6 +2325,8 @@ def populate_vm_shell_with_disk(vmid: int, node: str, template_vmid: int, templa
                                 cluster_ip: str = None) -> Tuple[bool, str]:
     """Populate an empty VM shell with a disk cloned from a template.
     
+    Uses Proxmox's disk clone API to copy the template's disk directly to the VM shell.
+    
     Args:
         vmid: VMID of the empty VM shell
         node: Node where the VM shell exists
@@ -2354,26 +2356,35 @@ def populate_vm_shell_with_disk(vmid: int, node: str, template_vmid: int, templa
         
         # Find the boot disk (usually scsi0 or virtio0)
         disk_key = None
+        disk_config = None
         for key in ['scsi0', 'virtio0', 'sata0', 'ide0']:
             if key in template_config:
                 disk_key = key
+                disk_config = template_config[key]
                 break
         
-        if not disk_key:
+        if not disk_key or not disk_config:
             return False, f"No disk found in template {template_vmid}"
         
-        disk_config = template_config[disk_key]
         logger.info(f"Template disk config: {disk_key}={disk_config}")
         
-        # Clone the disk from template to the VM shell
-        # This uses Proxmox's disk clone API
-        proxmox.nodes(node).qemu(vmid).clone.post(
-            newid=vmid,  # Clone to itself (just the disk)
-            target=node,
-            full=1
+        # Extract storage and format from disk config
+        # Format: "storage:volume,size=XXG" or "storage:vm-100-disk-0"
+        storage = disk_config.split(':')[0] if ':' in disk_config else 'local-lvm'
+        
+        # Use Proxmox's disk clone/copy API
+        # The moveDisk endpoint can clone a disk from one VM to another
+        logger.info(f"Cloning disk from template VM {template_vmid} to VM {vmid}")
+        
+        # Clone the template disk to the target VM using the disk copy operation
+        # This directly copies the disk without creating a full VM clone
+        proxmox.nodes(template_node).qemu(template_vmid).disk(disk_key).copy.post(
+            target_vmid=vmid,
+            target_storage=storage,
+            target_disk=disk_key
         )
         
-        logger.info(f"Populated VM {vmid} with disk from template {template_vmid}")
+        logger.info(f"Successfully populated VM {vmid} with disk from template {template_vmid}")
         return True, f"Disk cloned successfully to VM {vmid}"
         
     except Exception as e:
