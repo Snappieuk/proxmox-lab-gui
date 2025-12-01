@@ -787,7 +787,13 @@ async function sendPowerAction(vmid, action, btn) {
         btn.style.opacity = '0.5';
         icon.className = 'bi bi-hourglass-split';
         
-        const resp = await fetch(`/api/vm/${vmid}/${action}`, { method: "POST" });
+        const resp = await fetch(`/api/vm/${vmid}/${action}`, { 
+            method: "POST",
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({})
+        });
         const data = await resp.json();
         
         if (!resp.ok || !data.ok) {

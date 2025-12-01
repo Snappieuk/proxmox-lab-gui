@@ -10,8 +10,8 @@ A Flask webapp providing a lab VM portal similar to Azure Labs for self-service 
 **Deployment model**: This code is NOT run locally or in a codespace. It is pushed to a remote Proxmox server (typically via git) and runs there as a systemd service or standalone Flask process. The server has direct network access to Proxmox clusters.
 
 ## Current state & architecture decisions (READ THIS FIRST!)
-- **VMInventory + background_sync system**: **Core architecture** - database-first design where all VM reads come from `VMInventory` table (see `DATABASE_FIRST_ARCHITECTURE.md`). Background sync daemon updates DB every 5min (full) and 30sec (quick). Provides 100x faster page loads vs direct Proxmox API calls. Code in `app/__init__.py` (lines 114-115), `app/routes/api/vms.py`, `app/services/inventory_service.py`, `app/services/background_sync.py`.
-- **Terraform VM deployment**: Primary deployment method (see `TERRAFORM_MIGRATION.md`) replaces legacy Python cloning. Provides 10x speed improvement, parallel deployment, automatic VMID allocation, idempotency. Located at `app/services/terraform_service.py`.
+- **VMInventory + background_sync system**: **Core architecture** - database-first design where all VM reads come from `VMInventory` table (see `DATABASE_FIRST_ARCHITECTURE.md`). Background sync daemon updates DB every 5min (full) and 30sec (quick). Provides 100x faster page loads vs direct Proxmox API calls. Code in `app/__init__.py` (lines 138-140), `app/routes/api/vms.py`, `app/services/inventory_service.py`, `app/services/background_sync.py`.
+- **Terraform VM deployment**: Primary deployment method (see `terraform/README.md`) replaces legacy Python cloning. Provides 10x speed improvement, parallel deployment, automatic VMID allocation, idempotency. Located at `app/services/terraform_service.py`.
 - **Legacy Python cloning**: Old `clone_vms_for_class()` function (~800 lines in `app/services/proxmox_operations.py`) exists but is NOT used - Terraform handles all VM deployment. May be removed in future cleanup.
 - **Mappings.json system**: **DEPRECATED - Should be migrated to database**. Currently reads `app/mappings.json` to map Proxmox users → VMIDs. This should be replaced with database-backed VMAssignment records. The User model already has `vm_assignments` relationship - mappings.json is redundant.
 - **Authentication model**: **Proxmox users = Admins only**. Going forward, no application users (students/teachers) should have Proxmox accounts. All non-admin users managed via SQLite database.
@@ -66,13 +66,16 @@ admin/
   mappings.py    → /admin/mappings (legacy JSON editor)
   clusters.py    → /admin/clusters (add/edit Proxmox clusters)
   diagnostics.py → /admin (probe nodes, view system info)
+  users.py       → /admin/users (manage local users/roles)
 api/
-  vms.py         → /api/vms (fetch VM list), /api/vm/<vmid>/start|stop
+  vms.py         → /api/vms (fetch VM list), /api/vm/<vmid>/start|stop|status|ip
   classes.py     → /api/classes (CRUD), /api/class/<id>/pool, /api/class/<id>/assign
   rdp.py         → /rdp/<vmid>.rdp (download RDP file)
   ssh.py         → /ssh/<vmid> (WebSocket terminal, requires flask-sock)
   mappings.py    → /api/mappings (CRUD for mappings.json)
   clusters.py    → /api/clusters/switch (change active cluster)
+  templates.py   → /api/templates (list templates, by-name lookup, node distribution, stats)
+  sync.py        → /api/sync/status|trigger|inventory/summary (VMInventory sync control)
 ```
 
 
@@ -88,11 +91,12 @@ api/
 - Context processor: injects `is_admin`, `clusters`, `current_cluster`, `local_user` into all templates
 - Templates/static served from `app/templates/` and `app/static/` directories
 
-**`app/models.py`** (SQLAlchemy ORM, ~260 lines):
+**`app/models.py`** (SQLAlchemy ORM, ~300 lines):
 - `User`: Local accounts with roles (`adminer`/`teacher`/`user`), password hashing via Werkzeug
 - `Class`: Lab classes created by teachers, linked to `Template`, has `join_token` with expiry
 - `Template`: References Proxmox template VMIDs, can be cluster-wide or class-specific
 - `VMAssignment`: Tracks cloned VMs assigned to classes/users, status field (`available`/`assigned`/`deleting`)
+- `VMInventory`: **Database-first cache** - stores all VM metadata (identity, status, network, resources). Updated by background sync daemon. Single source of truth for GUI.
 - `init_db(app)`: Sets up SQLite at `app/lab_portal.db`, creates tables on first run
 
 **`app/services/proxmox_operations.py`** (VM cloning & template operations, ~410 lines):
@@ -162,12 +166,18 @@ api/
 **Production deployment files**:
 - `start.sh` – Activates venv, loads `.env`, runs `python3 run.py`
 - `deploy.sh` – Git pull, pip install, restart systemd service or standalone Flask
+- `restart.sh` – Quick restart (no git pull or pip install)
+- `clear_cache.sh` – Clears VM cache files
 - `proxmox-gui.service` – Systemd unit (edit User/Group/paths, then `systemctl enable/start`)
-- **Terraform config** (`terraform/` directory):
+- **Terraform config** (`terraform/` directory - see `terraform/README.md`):
   - `main.tf` – VM resource definitions (QEMU VMs with linked/full clones)
   - `variables.tf` – Input variables (cluster connection, VM specs, node list)
   - `terraform.tfvars.example` – Example configuration
   - `classes/` – Per-class Terraform workspaces (isolated state)
+  
+**Utility scripts**:
+- `debug_vminventory.py` – Query VMInventory table directly (for debugging sync issues)
+- `fix_vminventory.py` – Repair VMInventory table (remove stale records, fix sync errors)
 
 
 ## Developer workflows

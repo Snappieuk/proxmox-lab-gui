@@ -269,18 +269,19 @@
         let ws = null;
 
         function connect(username, password) {
-        function connect(username, password) {
             modal.classList.add('hidden');
             
             // Use wss:// for HTTPS, ws:// for HTTP
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
             const wsUrl = `${protocol}//${window.location.host}/ws/ssh/${vmid}?ip=${encodeURIComponent(ip)}`;
             
+            console.log('Attempting WebSocket connection to:', wsUrl);
             status.textContent = 'Connecting...';
             status.className = '';
             ws = new WebSocket(wsUrl);
             
             ws.onopen = () => {
+                console.log('WebSocket connected, sending credentials');
                 // Send credentials as first message (not in URL for security)
                 ws.send(JSON.stringify({
                     username: username,
@@ -294,6 +295,7 @@
             
             let authenticated = false;
             ws.onmessage = (event) => {
+                console.log('WebSocket message received:', event.data.substring(0, 100));
                 if (typeof event.data === 'string') {
                     term.write(event.data);
                     // Update status on first data (connection successful)
@@ -301,6 +303,7 @@
                         authenticated = true;
                         status.textContent = 'Connected';
                         status.className = 'connected';
+                        console.log('SSH authenticated successfully');
                         // Send initial terminal size
                         ws.send(JSON.stringify({
                             type: 'resize',
@@ -315,15 +318,21 @@
                 status.textContent = 'Connection error';
                 status.className = 'error';
                 console.error('WebSocket error:', error);
+                term.write('\r\n\x1b[1;31mWebSocket connection failed. Check browser console for details.\x1b[0m\r\n');
             };
             
             ws.onclose = (event) => {
                 status.textContent = 'Disconnected';
                 status.className = 'error';
-                console.log('WebSocket closed:', event.code, event.reason, event.wasClean);
+                console.log('WebSocket closed:', {code: event.code, reason: event.reason, wasClean: event.wasClean});
                 term.write('\r\n\x1b[1;31mConnection closed\x1b[0m\r\n');
                 if (event.reason) {
                     term.write(`\r\nReason: ${event.reason}\r\n`);
+                } else if (event.code === 1006) {
+                    term.write('\r\nPossible causes:\r\n');
+                    term.write('- flask-sock not installed (run: pip install flask-sock)\r\n');
+                    term.write('- WebSocket route not registered\r\n');
+                    term.write('- Server error during connection\r\n');
                 }
                 // Show modal again on disconnect
                 setTimeout(() => {
