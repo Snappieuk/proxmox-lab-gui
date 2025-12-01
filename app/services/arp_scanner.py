@@ -504,8 +504,13 @@ def has_rdp_port_open(ip: str) -> bool:
     """
     global _rdp_hosts_cache, _rdp_hosts_cache_time
     result = ip in _rdp_hosts_cache
-    cache_age = time.time() - _rdp_hosts_cache_time if _rdp_hosts_cache_time else None
-    logger.debug(f"RDP check for {ip}: {result} (cache has {len(_rdp_hosts_cache)} entries, age: {cache_age:.1f}s)" if cache_age else f"RDP check for {ip}: {result} (cache empty)")
+    
+    if _rdp_hosts_cache_time > 0:
+        cache_age = time.time() - _rdp_hosts_cache_time
+        logger.debug(f"RDP check for {ip}: {result} (cache has {len(_rdp_hosts_cache)} entries, age: {cache_age:.1f}s)")
+    else:
+        logger.debug(f"RDP check for {ip}: {result} (cache has {len(_rdp_hosts_cache)} entries, never scanned)")
+    
     return result
 
 
@@ -688,6 +693,12 @@ def discover_ips_via_arp(vm_mac_map: Dict[str, str], subnets: Optional[List[str]
     logger.info("Scanning network range 10.220.8.0/21 with parallel ping sweep")
     needed_macs = set(vm_mac_map.values())  # Set of MACs we're looking for
     alive_count, rdp_hosts = parallel_ping_sweep("10.220.8.0/21", timeout_ms=300, max_workers=300, check_rdp=True, needed_macs=needed_macs)
+    
+    # Update RDP hosts cache
+    global _rdp_hosts_cache, _rdp_hosts_cache_time
+    _rdp_hosts_cache = rdp_hosts
+    _rdp_hosts_cache_time = time.time()
+    logger.info("Updated RDP cache with %d hosts", len(rdp_hosts))
     
     if alive_count == 0:
         # Fallback to nmap if parallel ping found nothing
