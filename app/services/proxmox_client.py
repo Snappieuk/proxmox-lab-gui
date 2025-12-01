@@ -1253,6 +1253,7 @@ def _enrich_vms_with_arp_ips(vms: List[Dict[str, Any]], force_sync: bool = False
     Args:
         vms: List of VM dictionaries to enrich
         force_sync: If True, run scan synchronously (blocks until complete)
+                   If False, run scan in background (returns immediately)
     """
     from datetime import datetime, timedelta
     from app.models import db, VMAssignment, VMIPCache
@@ -1348,25 +1349,29 @@ def _enrich_vms_with_arp_ips(vms: List[Dict[str, Any]], force_sync: bool = False
                 logger.debug("VM %d (%s): ARP cache returned invalid IP: %s", vm["vmid"], vm["name"], cached_ip)
         # else leave existing IP
     
-    # Update RDP availability for ALL VMs with IPs (after ARP scan completes)
-    # This ensures RDP buttons show for VMs that got IPs from database cache too
-    rdp_updated = 0
-    for vm in vms:
-        ip = vm.get("ip")
-        if ip and ip not in ("N/A", "Fetching...", "") and vm.get("status") == "running":
-            if vm.get("category") == "windows":
-                vm["rdp_available"] = True
-                rdp_updated += 1
-            else:
-                # For non-Windows VMs, check RDP port cache
-                has_rdp = has_rdp_port_open(ip)
-                vm["rdp_available"] = has_rdp
-                if has_rdp:
+    # Update RDP availability for ALL VMs with IPs
+    # ONLY do this if force_sync=True (synchronous scan that just completed)
+    # For background scans, RDP availability will be updated when persisted to database
+    if force_sync:
+        rdp_updated = 0
+        for vm in vms:
+            ip = vm.get("ip")
+            if ip and ip not in ("N/A", "Fetching...", "") and vm.get("status") == "running":
+                if vm.get("category") == "windows":
+                    vm["rdp_available"] = True
                     rdp_updated += 1
-                logger.debug("VM %d (%s): RDP check for IP %s = %s", vm["vmid"], vm["name"], ip, has_rdp)
-    
-    if rdp_updated > 0:
-        logger.info("Updated RDP availability for %d VMs", rdp_updated)
+                else:
+                    # For non-Windows VMs, check RDP port cache (now populated by sync scan)
+                    has_rdp = has_rdp_port_open(ip)
+                    vm["rdp_available"] = has_rdp
+                    if has_rdp:
+                        rdp_updated += 1
+                    logger.debug("VM %d (%s): RDP check for IP %s = %s", vm["vmid"], vm["name"], ip, has_rdp)
+        
+        if rdp_updated > 0:
+            logger.info("Updated RDP availability for %d VMs (synchronous scan)", rdp_updated)
+    else:
+        logger.info("Skipping immediate RDP check (background scan - will update when persisted)")
     
     if updated_count == len(vm_mac_map):
         logger.info("=== ARP CACHE HIT === All %d VMs had cached IPs", updated_count)
