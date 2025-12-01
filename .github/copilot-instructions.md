@@ -3,14 +3,18 @@
 ## What this repo is
 A Flask webapp providing a lab VM portal similar to Azure Labs for self-service student VM access.
 
-**Architecture**: Modular blueprint-based Flask application with all code under `app/` directory. Uses SQLite for class management, Proxmox API for VM control, and Terraform for VM deployment.
+**Architecture**: Modular blueprint-based Flask application with all code under `app/` directory. Uses SQLite for class management, Proxmox API for VM control, VMInventory database-first caching, and Terraform for VM deployment.
 
 **Entry point**: `run.py` - imports `create_app()` factory from `app/` package and runs Flask with threaded mode.
 
 **Deployment model**: This code is NOT run locally or in a codespace. It is pushed to a remote Proxmox server (typically via git) and runs there as a systemd service or standalone Flask process. The server has direct network access to Proxmox clusters.
 
+**Performance architecture**: Database-first design with background sync daemon. All VM reads (<100ms) come from VMInventory table, never directly from slow Proxmox API (5-30s). Background sync updates database every 5min (full) and 30sec (quick status).
+
 ## Current state & architecture decisions (READ THIS FIRST!)
-- **VMInventory + background_sync system**: **Core architecture** - database-first design where all VM reads come from `VMInventory` table (see `DATABASE_FIRST_ARCHITECTURE.md`). Background sync daemon updates DB every 5min (full) and 30sec (quick). Provides 100x faster page loads vs direct Proxmox API calls. Code in `app/__init__.py` (lines 138-140), `app/routes/api/vms.py`, `app/services/inventory_service.py`, `app/services/background_sync.py`.
+- **VMInventory + background_sync system**: **Core architecture** - database-first design where all VM reads come from `VMInventory` table (see `DATABASE_FIRST_ARCHITECTURE.md`). Background sync daemon updates DB every 5min (full) and 30sec (quick). Provides 100x faster page loads vs direct Proxmox API calls. Code in `app/__init__.py` (lines 137-139), `app/routes/api/vms.py`, `app/services/inventory_service.py`, `app/services/background_sync.py`.
+- **Progressive UI loading**: Frontend shows "Starting..." badge for VMs that are running but have no IP yet. Only transitions to "Running" after IP is discovered. Polls at 2s and 10s intervals after VM start, background sync triggers IP discovery 15s after start operation.
+- **IP discovery workflow**: Multi-tier hierarchy - VMInventory DB cache → Proxmox guest agent `network-get-interfaces` API → LXC `.interfaces.get()` → ARP scanner with nmap → RDP port 3389 validation. Background thread triggers immediate IP sync 15 seconds after VM start (allows boot time before network check).
 - **Terraform VM deployment**: Primary deployment method (see `terraform/README.md`) replaces legacy Python cloning. Provides 10x speed improvement, parallel deployment, automatic VMID allocation, idempotency. Located at `app/services/terraform_service.py`.
 - **Legacy Python cloning**: Old `clone_vms_for_class()` function (~800 lines in `app/services/proxmox_operations.py`) exists but is NOT used - Terraform handles all VM deployment. May be removed in future cleanup.
 - **Mappings.json system**: **DEPRECATED - Should be migrated to database**. Currently reads `app/mappings.json` to map Proxmox users → VMIDs. This should be replaced with database-backed VMAssignment records. The User model already has `vm_assignments` relationship - mappings.json is redundant.
@@ -45,10 +49,14 @@ A Flask webapp providing a lab VM portal similar to Azure Labs for self-service 
 6. **IP lookup cache** (`_ip_cache` in `app/services/proxmox_client.py`): Separate 5min TTL for guest agent IP queries – **critical** to avoid timeout storms (guest agent calls are SLOW).
 
 **IP discovery hierarchy** (most complex subsystem):
-1. **LXC containers**: Fast via `.interfaces.get()` API (works even when stopped)
-2. **QEMU VMs with guest agent**: Slow via `.agent.get()` API (requires running VM + installed agent)
-3. **ARP scanner fallback** (`app/services/arp_scanner.py`): Uses `nmap -sn -PR` (requires root/CAP_NET_RAW) to populate kernel ARP table, matches VM MAC → IP. Cached 1hr, runs in background thread.
-4. **RDP port scan**: Optional validation that discovered IP has port 3389 open (Windows VMs only)
+1. **VMInventory database cache**: Check database first (updated by background sync every 30s for running VMs)
+2. **Proxmox guest agent**: For QEMU VMs, call `proxmox.nodes(node).qemu(vmid).agent('network-get-interfaces').get()` (requires running VM + guest agent installed)
+3. **LXC interfaces API**: For containers, fast via `.interfaces.get()` API (works even when stopped)
+4. **ARP scanner fallback** (`app/services/arp_scanner.py`): Uses `nmap -sn -PR` (requires root/CAP_NET_RAW) to populate kernel ARP table, matches VM MAC → IP. Cached 1hr, runs in background thread.
+5. **RDP port scan**: Optional validation that discovered IP has port 3389 open (Windows VMs + Linux with xrdp)
+6. **Background trigger on VM start**: After starting a VM, daemon thread waits 15 seconds (boot time) then triggers immediate background sync to discover IP address
+
+**Note**: IP discovery timing is critical for UX. After VM start: immediate database status update → 15s delay → background sync (guest agent + ARP scan) → 2s and 10s UI polls pick up discovered IP.
 
 **Authentication & authorization** (simplified model):
 - **Proxmox auth**: Any user who can authenticate via Proxmox API is automatically considered an **admin**. No student/teacher accounts should be created in Proxmox.
@@ -127,7 +135,7 @@ api/
 - **Singletons**: `proxmox_admin` (legacy single cluster), `proxmox_admin_wrapper` (cache adapter)
 - **Core VM functions**: `get_all_vms()` (fetch all VMs, applies mappings.json filter), `get_vms_for_user()` (user-specific view), `find_vm_for_user()` (permission check)
 - **VM operations**: `start_vm(vm)`, `shutdown_vm(vm)` – handle both QEMU and LXC, invalidate cache after operation
-- **IP discovery**: `_lookup_vm_ip(vm, proxmox, node, vmid, vm_type)` – tries guest agent (QEMU) or interfaces (LXC), falls back to ARP scan
+- **IP discovery**: `_lookup_vm_ip(node, vmid, vmtype)` – tries Proxmox guest agent `network-get-interfaces` API (QEMU) or `.interfaces.get()` (LXC), falls back to ARP scan
 - **RDP generation**: `build_rdp(vm)` – raises `ValueError` if VM has no IP (caller must catch)
 - **Admin operations**: `create_pve_user()`, `is_admin_user()`, `_user_in_group()` (handles dual membership format quirk)
 - **Caching**: Module-level `_vm_cache_data`, `_ip_cache` dicts with `_invalidate_vm_cache()` function
