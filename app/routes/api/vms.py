@@ -235,8 +235,25 @@ def api_vm_start(vmid: int):
         else:  # lxc
             proxmox.nodes(node).lxc(vmid).status.start.post()
         
-        # Immediately update database
+        # Immediately update database status
         update_vm_status(cluster_id, vmid, 'running')
+        
+        # Trigger background IP discovery for this VM after a delay (VM needs time to boot)
+        def _check_vm_ip_after_start():
+            """Background task to check VM IP after it boots."""
+            import time
+            time.sleep(15)  # Wait 15 seconds for VM to boot and get IP
+            try:
+                from flask import current_app
+                with current_app.app_context():
+                    from app.services.background_sync import trigger_immediate_sync
+                    logger.info(f"Triggering IP check for VM {vmid} after start")
+                    trigger_immediate_sync()
+            except Exception as e:
+                logger.error(f"Failed to trigger IP check for VM {vmid}: {e}")
+        
+        import threading
+        threading.Thread(target=_check_vm_ip_after_start, daemon=True).start()
         
         logger.info(f"Started VM {vmid} on node {node}")
         return jsonify({"ok": True})

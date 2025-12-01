@@ -711,11 +711,22 @@ function updateVMsFromData(data) {
         // Update status badge
         const badge = row.querySelector('.badge');
         if (badge) {
-            badge.className = 'badge';
-            badge.classList.add(vm.status === 'running' ? 'badge-success' : 
-                              vm.status === 'stopped' ? 'badge-danger' : 'badge-secondary');
-            badge.textContent = vm.status === 'running' ? '● Running' :
-                               vm.status === 'stopped' ? '● Stopped' : '● Unknown';
+            const currentBadge = badge.textContent;
+            const hasIP = vm.ip && vm.ip !== 'Fetching...' && vm.ip !== 'N/A';
+            
+            // If VM is running but no IP yet, show "Starting..." 
+            // Keep "Starting..." until IP is found
+            if (vm.status === 'running' && !hasIP && (currentBadge.includes('Starting') || !currentBadge.includes('Running'))) {
+                badge.className = 'badge badge-secondary';
+                badge.textContent = '● Starting...';
+            } else {
+                // Normal status update
+                badge.className = 'badge';
+                badge.classList.add(vm.status === 'running' ? 'badge-success' : 
+                                  vm.status === 'stopped' ? 'badge-danger' : 'badge-secondary');
+                badge.textContent = vm.status === 'running' ? '● Running' :
+                                   vm.status === 'stopped' ? '● Stopped' : '● Unknown';
+            }
         }
 
         // Update IP with status indicator
@@ -723,10 +734,17 @@ function updateVMsFromData(data) {
         if (ipCell) {
             const currentText = ipCell.textContent;
             if (vm.ip && vm.ip !== 'Fetching...' && vm.ip !== 'N/A') {
-                // Valid IP address
+                // Valid IP address - now we can show "Running"
                 ipCell.textContent = vm.ip;
                 ipCell.style.fontStyle = 'normal';
                 ipCell.style.color = '';
+                
+                // If we just got an IP and VM is running, update badge to "Running"
+                const badge = row.querySelector('.badge');
+                if (badge && badge.textContent.includes('Starting') && vm.status === 'running') {
+                    badge.className = 'badge badge-success';
+                    badge.textContent = '● Running';
+                }
             } else if (vm.ip === 'Fetching...' || currentText === 'Fetching...') {
                 // Show fetching status
                 ipCell.textContent = 'Fetching...';
