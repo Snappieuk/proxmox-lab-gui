@@ -1763,3 +1763,194 @@ def update_role(user_id: int):
         return jsonify({"ok": False, "error": msg}), 400
     
     return jsonify({"ok": True, "message": msg})
+
+
+# ===========================================================================
+# QCOW2-Based VM Deployment (New Overlay-Based Approach)
+# ===========================================================================
+
+@api_classes_bp.route("/<int:class_id>/qcow2-deploy", methods=["POST"])
+@login_required
+def qcow2_deploy_class_vms(class_id: int):
+    """
+    Deploy VMs for a class using QCOW2 overlay approach.
+    
+    This is the new, faster VM deployment method that:
+    1. Creates teacher VM as a full clone
+    2. Creates student VMs as QCOW2 overlays from a class base
+    3. Creates VMAssignment records in the database
+    
+    Request body:
+    - pool_size: Number of student VMs to create (default: class.pool_size)
+    - memory: Memory per VM in MB (default: 4096)
+    - cores: CPU cores per VM (default: 2)
+    - auto_start: Whether to start VMs (default: false)
+    """
+    user, error = require_teacher_or_adminer()
+    if error:
+        return jsonify(error[0]), error[1]
+    
+    class_ = get_class_by_id(class_id)
+    if not class_:
+        return jsonify({"ok": False, "error": "Class not found"}), 404
+    
+    # Ownership check
+    if not user.is_adminer and class_.teacher_id != user.id:
+        return jsonify({"ok": False, "error": "Access denied"}), 403
+    
+    # Get template info
+    if not class_.template:
+        return jsonify({"ok": False, "error": "Class has no template assigned"}), 400
+    
+    template = class_.template
+    
+    data = request.get_json() or {}
+    pool_size = data.get('pool_size', class_.pool_size or 10)
+    memory = data.get('memory', 4096)
+    cores = data.get('cores', 2)
+    auto_start = data.get('auto_start', False)
+    
+    # Start deployment in background
+    task_id = str(uuid.uuid4())
+    start_clone_progress(task_id, pool_size + 2)  # teacher + base + students
+    
+    # Capture Flask app context
+    from flask import current_app
+    app = current_app._get_current_object()
+    
+    def _background_qcow2_deploy():
+        try:
+            app_ctx = app.app_context()
+            app_ctx.push()
+            
+            from app.services.class_vm_service import create_class_vms
+            
+            update_clone_progress(task_id, completed=0, message="Starting QCOW2-based deployment...")
+            
+            result = create_class_vms(
+                class_id=class_id,
+                template_vmid=template.proxmox_vmid,
+                template_node=template.node,
+                pool_size=pool_size,
+                class_name=class_.name,
+                teacher_id=class_.teacher_id,
+                memory=memory,
+                cores=cores,
+                auto_start=auto_start,
+            )
+            
+            if result.error:
+                update_clone_progress(task_id, status="failed", error=result.error)
+            else:
+                update_clone_progress(
+                    task_id, 
+                    status="completed", 
+                    message=f"Created {result.successful} student VMs + teacher VM {result.teacher_vmid}"
+                )
+            
+        except Exception as e:
+            logger.exception(f"QCOW2 deployment failed for class {class_id}: {e}")
+            update_clone_progress(task_id, status="failed", error=str(e))
+        finally:
+            try:
+                app_ctx.pop()
+            except Exception:
+                pass
+    
+    threading.Thread(target=_background_qcow2_deploy, daemon=True).start()
+    
+    return jsonify({
+        "ok": True,
+        "message": f"QCOW2 deployment started for {pool_size} student VMs + teacher VM",
+        "task_id": task_id
+    })
+
+
+@api_classes_bp.route("/<int:class_id>/save-and-deploy", methods=["POST"])
+@login_required
+def save_and_deploy(class_id: int):
+    """
+    Save teacher VM changes and deploy to all student VMs.
+    
+    This uses the QCOW2 overlay approach to:
+    1. Stop teacher VM
+    2. Export teacher VM to new class base QCOW2
+    3. Recreate all student overlays pointing to new base
+    
+    Student VMs will be reset to the new base state.
+    """
+    user, error = require_teacher_or_adminer()
+    if error:
+        return jsonify(error[0]), error[1]
+    
+    class_ = get_class_by_id(class_id)
+    if not class_:
+        return jsonify({"ok": False, "error": "Class not found"}), 404
+    
+    # Ownership check
+    if not user.is_adminer and class_.teacher_id != user.id:
+        return jsonify({"ok": False, "error": "Access denied"}), 403
+    
+    # Find teacher VM
+    teacher_assignment = None
+    for assignment in class_.vm_assignments:
+        if not assignment.is_template_vm and assignment.assigned_user_id == class_.teacher_id:
+            teacher_assignment = assignment
+            break
+    
+    if not teacher_assignment:
+        return jsonify({"ok": False, "error": "Teacher VM not found"}), 404
+    
+    # Start save-and-deploy in background
+    task_id = str(uuid.uuid4())
+    student_count = len([a for a in class_.vm_assignments 
+                        if not a.is_template_vm and a.assigned_user_id != class_.teacher_id])
+    start_clone_progress(task_id, student_count + 2)
+    
+    # Capture Flask app context
+    from flask import current_app
+    app = current_app._get_current_object()
+    
+    teacher_vmid = teacher_assignment.proxmox_vmid
+    teacher_node = teacher_assignment.node
+    
+    def _background_save_deploy():
+        try:
+            app_ctx = app.app_context()
+            app_ctx.push()
+            
+            from app.services.class_vm_service import save_and_deploy_teacher_vm
+            
+            update_clone_progress(task_id, completed=0, message="Exporting teacher VM to new class base...")
+            
+            success, message, updated_count = save_and_deploy_teacher_vm(
+                class_id=class_id,
+                teacher_vmid=teacher_vmid,
+                node=teacher_node,
+            )
+            
+            if success:
+                update_clone_progress(
+                    task_id, 
+                    status="completed", 
+                    message=f"Updated {updated_count} student VMs from teacher VM"
+                )
+            else:
+                update_clone_progress(task_id, status="failed", error=message)
+            
+        except Exception as e:
+            logger.exception(f"Save and deploy failed for class {class_id}: {e}")
+            update_clone_progress(task_id, status="failed", error=str(e))
+        finally:
+            try:
+                app_ctx.pop()
+            except Exception:
+                pass
+    
+    threading.Thread(target=_background_save_deploy, daemon=True).start()
+    
+    return jsonify({
+        "ok": True,
+        "message": f"Save and deploy started - will update {student_count} student VMs",
+        "task_id": task_id
+    })
