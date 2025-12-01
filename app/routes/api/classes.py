@@ -173,8 +173,36 @@ def create_new_class():
     
     # If pool_size > 0, create VM shells immediately (empty VMs without disks)
     if pool_size > 0:
-        # Get source node from template, or use default
-        source_node = source_template.node if template_id and source_template else 'pve1'
+        # Get source node from template, or find first available node in cluster
+        if template_id and source_template:
+            source_node = source_template.node
+        else:
+            # No template - get first available node from cluster
+            try:
+                from app.services.proxmox_service import get_proxmox_admin_for_cluster
+                from app.config import CLUSTERS
+                
+                # Find cluster by IP
+                cluster_id = None
+                for cluster in CLUSTERS:
+                    if cluster["host"] == "10.220.15.249":
+                        cluster_id = cluster["id"]
+                        break
+                
+                if cluster_id:
+                    proxmox = get_proxmox_admin_for_cluster(cluster_id)
+                    nodes = proxmox.nodes.get()
+                    source_node = nodes[0]['node'] if nodes else None
+                else:
+                    source_node = None
+                
+                if not source_node:
+                    logger.error("No nodes available in cluster")
+                    return jsonify({"ok": False, "error": "No nodes available in cluster"}), 500
+                    
+            except Exception as e:
+                logger.exception(f"Failed to get cluster nodes: {e}")
+                return jsonify({"ok": False, "error": f"Failed to get cluster nodes: {str(e)}"}), 500
         
         # Create VM shells in background thread
         import threading
