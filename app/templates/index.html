@@ -675,10 +675,10 @@ async function refreshVmStatus() {
 }
 
 // Refresh single VM status (more efficient after power actions)
-async function refreshSingleVMStatus(vmid, skipIp = true) {
+async function refreshSingleVMStatus(vmid, skipIp = false) {
     try {
-        // Skip IP lookup since power actions don't change IPs
-        const url = skipIp ? `/api/vm/${vmid}/status?skip_ip=true` : `/api/vm/${vmid}/status`;
+        // Fetch IP by default since status changes often affect network
+        const url = `/api/vm/${vmid}/status`;
         const resp = await fetch(url);
         if (!resp.ok) return;
         const vm = await resp.json();
@@ -822,14 +822,34 @@ async function sendPowerAction(vmid, action, btn) {
             return;
         }
         
-        // Success - revert icon and refresh status
+        // Success - update to intermediate state immediately
+        const row = document.querySelector(`tr[data-vmid="${vmid}"]`);
+        if (row) {
+            const badge = row.querySelector('.badge');
+            if (badge && action === 'start') {
+                badge.className = 'badge badge-secondary';
+                badge.textContent = '● Starting...';
+            } else if (badge && action === 'stop') {
+                badge.className = 'badge badge-secondary';
+                badge.textContent = '● Stopping...';
+            }
+        }
+        
+        // Revert button icon
         icon.className = originalIcon;
         btn.style.opacity = '';
         
-        // Only refresh this specific VM's status instead of all VMs
+        // Refresh VM status after 2 seconds (Proxmox needs time to update)
         setTimeout(() => {
-            refreshSingleVMStatus(vmid);
+            refreshSingleVMStatus(vmid, false); // false = do fetch IP
         }, 2000);
+        
+        // If starting, poll again after 10 seconds to get IP (VM needs time to boot)
+        if (action === 'start') {
+            setTimeout(() => {
+                refreshSingleVMStatus(vmid, false);
+            }, 10000);
+        }
         
     } catch (e) {
         console.error("Power action exception:", e);
