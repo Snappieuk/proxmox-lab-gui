@@ -58,9 +58,16 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-# Default Proxmox storage paths (can be overridden via storage_path parameter)
-DEFAULT_TEMPLATE_STORAGE_PATH = "/var/lib/vz/images/template"
-DEFAULT_VM_IMAGES_PATH = "/var/lib/vz/images"
+# Default Proxmox storage paths (can be overridden via storage_path parameter or config)
+# These are set from app.config when available, with fallbacks for standalone use
+try:
+    from app.config import QCOW2_TEMPLATE_PATH, QCOW2_IMAGES_PATH
+    DEFAULT_TEMPLATE_STORAGE_PATH = QCOW2_TEMPLATE_PATH
+    DEFAULT_VM_IMAGES_PATH = QCOW2_IMAGES_PATH
+except ImportError:
+    # Fallback for standalone use or testing
+    DEFAULT_TEMPLATE_STORAGE_PATH = "/mnt/pve/TRUENAS-NFS/images"
+    DEFAULT_VM_IMAGES_PATH = "/mnt/pve/TRUENAS-NFS/images"
 
 # Thread-local storage for SSH connections
 _ssh_local = threading.local()

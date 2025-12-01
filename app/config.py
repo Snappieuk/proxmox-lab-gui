@@ -112,3 +112,17 @@ else:
 
 # Template replication at startup (disabled by default)
 ENABLE_TEMPLATE_REPLICATION = os.getenv("ENABLE_TEMPLATE_REPLICATION", "false").lower() in ("true", "1", "yes")
+
+# QCOW2 Bulk Cloner Configuration
+# Base path for QCOW2 template images (NFS shared storage)
+QCOW2_TEMPLATE_PATH = os.getenv("QCOW2_TEMPLATE_PATH", "/mnt/pve/TRUENAS-NFS/images")
+# Path for VM overlay images (same NFS storage)
+QCOW2_IMAGES_PATH = os.getenv("QCOW2_IMAGES_PATH", "/mnt/pve/TRUENAS-NFS/images")
+# Concurrency for parallel VM creation
+QCOW2_CLONER_CONCURRENCY = int(os.getenv("QCOW2_CLONER_CONCURRENCY", "5"))
+# Batch size for starting VMs
+QCOW2_CLONER_START_BATCH = int(os.getenv("QCOW2_CLONER_START_BATCH", "5"))
+# Default VM memory in MB
+QCOW2_CLONER_DEFAULT_MEMORY = int(os.getenv("QCOW2_CLONER_DEFAULT_MEMORY", "4096"))
+# Default VM cores
+QCOW2_CLONER_DEFAULT_CORES = int(os.getenv("QCOW2_CLONER_DEFAULT_CORES", "2"))
