@@ -197,22 +197,42 @@ class TestBulkCloneResult:
 class TestDryRun:
     """Test dry run functionality."""
     
-    def test_bulk_clone_dry_run_invalid_template(self):
-        """Test dry run with invalid template path."""
+    def test_bulk_clone_dry_run_skips_file_validation(self):
+        """Test that dry run skips file validation (for both local and SSH modes)."""
         from app.services.qcow2_bulk_cloner import bulk_clone_from_template
         
+        # In dry_run mode, file validation is skipped because:
+        # 1. With SSH: Can't check remote without actual connection
+        # 2. Without SSH: Allows testing without creating temp files
         result = bulk_clone_from_template(
             template_disk_path="/nonexistent/template.qcow2",
             base_storage_id="local-lvm",
             vmid_start=200,
-            count=5,
+            count=3,
             dry_run=True,
+            use_ssh=False,
         )
         
-        # Should fail validation even in dry run
-        assert result.error is not None
-        assert "not found" in result.error.lower()
-        assert result.successful == 0
+        # Dry run succeeds even with invalid path
+        assert result.successful == 3
+        assert result.error is None
+    
+    def test_bulk_clone_dry_run_logs_commands(self):
+        """Test that dry run logs planned commands without executing."""
+        from app.services.qcow2_bulk_cloner import bulk_clone_from_template
+        
+        result = bulk_clone_from_template(
+            template_disk_path="/tmp/test-template.qcow2",
+            base_storage_id="local-lvm",
+            vmid_start=200,
+            count=2,
+            dry_run=True,
+            use_ssh=False,
+        )
+        
+        # All VMs should be "created" in dry run
+        assert result.successful == 2
+        assert result.failed == 0
     
     def test_bulk_clone_dry_run_valid(self):
         """Test dry run with valid inputs."""

@@ -42,17 +42,166 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+# Import paramiko for SSH execution
+try:
+    import paramiko
+    PARAMIKO_AVAILABLE = True
+except ImportError:
+    PARAMIKO_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 # Default Proxmox storage paths (can be overridden via storage_path parameter)
 DEFAULT_TEMPLATE_STORAGE_PATH = "/var/lib/vz/images/template"
 DEFAULT_VM_IMAGES_PATH = "/var/lib/vz/images"
+
+# Thread-local storage for SSH connections
+_ssh_local = threading.local()
+
+# Module-level SSH executor context (set by bulk_clone_from_template)
+_current_ssh_executor: Optional['SSHExecutor'] = None
+
+
+class SSHExecutor:
+    """
+    Execute commands on a remote Proxmox node via SSH.
+    
+    Uses the same credentials as the Proxmox API connection.
+    Maintains a persistent connection for efficiency.
+    """
+    
+    def __init__(self, host: str, username: str, password: str, port: int = 22):
+        """
+        Initialize SSH executor.
+        
+        Args:
+            host: Proxmox node hostname/IP
+            username: SSH username (typically 'root')
+            password: SSH password
+            port: SSH port (default 22)
+        """
+        if not PARAMIKO_AVAILABLE:
+            raise RuntimeError("paramiko is required for SSH execution. Install with: pip install paramiko")
+        
+        self.host = host
+        self.username = username
+        self.password = password
+        self.port = port
+        self._client: Optional[paramiko.SSHClient] = None
+        self._lock = threading.Lock()
+    
+    def connect(self) -> None:
+        """Establish SSH connection."""
+        with self._lock:
+            if self._client is not None:
+                return
+            
+            self._client = paramiko.SSHClient()
+            self._client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            
+            logger.info(f"Connecting to Proxmox node via SSH: {self.username}@{self.host}:{self.port}")
+            self._client.connect(
+                hostname=self.host,
+                port=self.port,
+                username=self.username,
+                password=self.password,
+                timeout=30,
+                allow_agent=False,
+                look_for_keys=False,
+            )
+            logger.info(f"SSH connection established to {self.host}")
+    
+    def disconnect(self) -> None:
+        """Close SSH connection."""
+        with self._lock:
+            if self._client:
+                self._client.close()
+                self._client = None
+                logger.info(f"SSH connection closed to {self.host}")
+    
+    def execute(
+        self,
+        cmd: str,
+        timeout: int = 300,
+        check: bool = True,
+    ) -> Tuple[int, str, str]:
+        """
+        Execute a command via SSH.
+        
+        Args:
+            cmd: Command string to execute
+            timeout: Command timeout in seconds
+            check: Raise exception on non-zero exit code
+            
+        Returns:
+            Tuple of (exit_code, stdout, stderr)
+            
+        Raises:
+            RuntimeError: If command fails and check=True
+        """
+        self.connect()
+        
+        logger.debug(f"SSH executing: {cmd}")
+        
+        try:
+            stdin, stdout, stderr = self._client.exec_command(cmd, timeout=timeout)
+            exit_code = stdout.channel.recv_exit_status()
+            stdout_str = stdout.read().decode('utf-8', errors='replace')
+            stderr_str = stderr.read().decode('utf-8', errors='replace')
+            
+            if check and exit_code != 0:
+                logger.error(f"SSH command failed: {cmd}")
+                logger.error(f"Exit code: {exit_code}")
+                if stdout_str:
+                    logger.error(f"Stdout: {stdout_str}")
+                if stderr_str:
+                    logger.error(f"Stderr: {stderr_str}")
+                raise RuntimeError(f"SSH command failed with exit code {exit_code}: {stderr_str or stdout_str}")
+            
+            if stdout_str:
+                logger.debug(f"SSH stdout: {stdout_str[:500]}")
+            
+            return exit_code, stdout_str, stderr_str
+            
+        except paramiko.SSHException as e:
+            logger.error(f"SSH error executing command: {e}")
+            raise RuntimeError(f"SSH error: {e}")
+    
+    def __enter__(self):
+        self.connect()
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.disconnect()
+        return False
+
+
+def get_ssh_executor_from_config() -> SSHExecutor:
+    """
+    Create an SSH executor using the current Proxmox cluster configuration.
+    
+    Returns:
+        SSHExecutor configured with current cluster credentials
+    """
+    from app.services.proxmox_client import get_current_cluster
+    
+    cluster = get_current_cluster()
+    
+    # Extract username without realm (root@pam -> root)
+    username = cluster["user"].split("@")[0] if "@" in cluster["user"] else cluster["user"]
+    
+    return SSHExecutor(
+        host=cluster["host"],
+        username=username,
+        password=cluster["password"],
+    )
 
 
 @dataclass
@@ -95,6 +244,7 @@ def _run_command(
     timeout: int = 300,
     capture_output: bool = True,
     dry_run: bool = False,
+    ssh_executor: Optional[SSHExecutor] = None,
 ) -> subprocess.CompletedProcess:
     """
     Execute a shell command safely with proper error handling.
@@ -105,6 +255,8 @@ def _run_command(
         timeout: Command timeout in seconds
         capture_output: Capture stdout/stderr
         dry_run: If True, log command but don't execute
+        ssh_executor: If provided, execute via SSH on remote host.
+                     If None, uses module-level _current_ssh_executor if set.
         
     Returns:
         CompletedProcess result
@@ -113,6 +265,8 @@ def _run_command(
         subprocess.CalledProcessError: If command fails and check=True
         subprocess.TimeoutExpired: If command times out
     """
+    global _current_ssh_executor
+    
     cmd_str = " ".join(cmd)
     logger.debug(f"Running command: {cmd_str}")
     
@@ -120,6 +274,19 @@ def _run_command(
         logger.info(f"[DRY RUN] Would execute: {cmd_str}")
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
     
+    # Use provided executor or fall back to module-level one
+    executor = ssh_executor or _current_ssh_executor
+    
+    # Execute via SSH if executor available
+    if executor:
+        try:
+            exit_code, stdout, stderr = executor.execute(cmd_str, timeout=timeout, check=check)
+            return subprocess.CompletedProcess(cmd, exit_code, stdout=stdout, stderr=stderr)
+        except RuntimeError as e:
+            # Convert to CalledProcessError for consistency
+            raise subprocess.CalledProcessError(1, cmd, output=str(e), stderr=str(e))
+    
+    # Execute locally (fallback for local Proxmox installations)
     try:
         result = subprocess.run(
             cmd,
@@ -144,19 +311,42 @@ def _run_command(
         raise
 
 
-def _validate_template_disk(template_disk_path: str) -> Tuple[bool, str]:
+def _validate_template_disk(template_disk_path: str, dry_run: bool = False) -> Tuple[bool, str]:
     """
     Validate that template disk exists and is readable.
     
+    When SSH executor is set, checks on remote host.
+    
     Args:
         template_disk_path: Path to template disk file
+        dry_run: If True, skip actual validation
         
     Returns:
         Tuple of (is_valid, error_message)
     """
+    global _current_ssh_executor
+    
     if not template_disk_path:
         return False, "Template disk path is empty"
     
+    if dry_run:
+        return True, ""
+    
+    # If SSH executor is set, check remotely
+    if _current_ssh_executor:
+        try:
+            result = _run_command(
+                ["test", "-f", template_disk_path, "&&", "test", "-r", template_disk_path],
+                check=False,
+                timeout=30,
+            )
+            if result.returncode != 0:
+                return False, f"Template disk not found or not readable on remote host: {template_disk_path}"
+            return True, ""
+        except Exception as e:
+            return False, f"Failed to validate template disk: {e}"
+    
+    # Local validation
     path = Path(template_disk_path)
     
     if not path.exists():
@@ -171,17 +361,20 @@ def _validate_template_disk(template_disk_path: str) -> Tuple[bool, str]:
     return True, ""
 
 
-def _validate_storage(storage_id: str, storage_path: Optional[str] = None) -> Tuple[bool, str]:
+def _validate_storage(storage_id: str, storage_path: Optional[str] = None, dry_run: bool = False) -> Tuple[bool, str]:
     """
     Validate that storage exists and is accessible.
     
     Args:
         storage_id: Proxmox storage identifier
         storage_path: Optional explicit storage path to validate
+        dry_run: If True, skip actual validation
         
     Returns:
         Tuple of (is_valid, error_message)
     """
+    global _current_ssh_executor
+    
     if not storage_id:
         return False, "Storage ID is empty"
     
@@ -189,15 +382,30 @@ def _validate_storage(storage_id: str, storage_path: Optional[str] = None) -> Tu
     if not re.match(r'^[a-zA-Z][a-zA-Z0-9_-]*$', storage_id):
         return False, f"Invalid storage ID format: {storage_id}"
     
+    if dry_run:
+        return True, ""
+    
     # If explicit path provided, validate it
     if storage_path:
-        path = Path(storage_path)
-        if not path.exists():
-            return False, f"Storage path not found: {storage_path}"
-        if not path.is_dir():
-            return False, f"Storage path is not a directory: {storage_path}"
-        if not os.access(storage_path, os.W_OK):
-            return False, f"Storage path is not writable: {storage_path}"
+        if _current_ssh_executor:
+            try:
+                result = _run_command(
+                    ["test", "-d", storage_path, "&&", "test", "-w", storage_path],
+                    check=False,
+                    timeout=30,
+                )
+                if result.returncode != 0:
+                    return False, f"Storage path not found or not writable on remote host: {storage_path}"
+            except Exception as e:
+                return False, f"Failed to validate storage path: {e}"
+        else:
+            path = Path(storage_path)
+            if not path.exists():
+                return False, f"Storage path not found: {storage_path}"
+            if not path.is_dir():
+                return False, f"Storage path is not a directory: {storage_path}"
+            if not os.access(storage_path, os.W_OK):
+                return False, f"Storage path is not writable: {storage_path}"
     
     return True, ""
 
@@ -620,6 +828,7 @@ def bulk_clone_from_template(
     auto_start: bool = True,
     storage_path: Optional[str] = None,
     dry_run: bool = False,
+    use_ssh: bool = True,
 ) -> BulkCloneResult:
     """
     Bulk clone VMs from a template using QCOW2 overlay approach.
@@ -653,12 +862,15 @@ def bulk_clone_from_template(
         auto_start: Whether to start VMs after creation
         storage_path: Explicit storage path (overrides storage_id detection)
         dry_run: If True, log operations but don't execute
+        use_ssh: If True, execute commands via SSH using Proxmox credentials
         
     Returns:
         BulkCloneResult with details of all operations
     """
+    global _current_ssh_executor
+    
     logger.info(f"Starting bulk clone: {count} VMs from {template_disk_path}")
-    logger.info(f"Parameters: vmid_start={vmid_start}, memory={memory}MB, cores={cores}")
+    logger.info(f"Parameters: vmid_start={vmid_start}, memory={memory}MB, cores={cores}, use_ssh={use_ssh}")
     
     result = BulkCloneResult(
         total_requested=count,
@@ -666,220 +878,259 @@ def bulk_clone_from_template(
         failed=0,
     )
     
-    # Step 1: Validate inputs
-    logger.info("Step 1: Validating inputs...")
+    # Set up SSH executor if requested
+    ssh_executor = None
+    if use_ssh and not dry_run:
+        try:
+            ssh_executor = get_ssh_executor_from_config()
+            ssh_executor.connect()
+            _current_ssh_executor = ssh_executor
+            logger.info(f"SSH executor connected to {ssh_executor.host}")
+        except Exception as e:
+            result.error = f"Failed to connect via SSH: {e}"
+            logger.error(result.error)
+            return result
     
-    valid, error = _validate_template_disk(template_disk_path)
-    if not valid:
-        result.error = error
-        logger.error(f"Template validation failed: {error}")
-        return result
-    
-    valid, error = _validate_storage(base_storage_id, storage_path)
-    if not valid:
-        result.error = error
-        logger.error(f"Storage validation failed: {error}")
-        return result
-    
-    # Step 2: Prepare base QCOW2 image
-    logger.info("Step 2: Preparing base QCOW2 image...")
-    
-    # Determine base qcow2 path
-    if storage_path:
-        base_dir = Path(storage_path)
-    else:
-        # Use default Proxmox storage path for templates
-        base_dir = Path(DEFAULT_TEMPLATE_STORAGE_PATH)
-    
-    if not dry_run:
-        base_dir.mkdir(parents=True, exist_ok=True)
-    
-    template_name = Path(template_disk_path).stem
-    base_qcow2_path = base_dir / f"{template_name}-base.qcow2"
-    
-    # Convert or copy to base qcow2 if needed
-    if not base_qcow2_path.exists() or dry_run:
-        if template_disk_path.endswith('.qcow2'):
-            # Already qcow2, just copy if different location
-            if str(base_qcow2_path) != template_disk_path:
+    try:
+        # Step 1: Validate inputs
+        logger.info("Step 1: Validating inputs...")
+        
+        valid, error = _validate_template_disk(template_disk_path, dry_run=dry_run)
+        if not valid:
+            result.error = error
+            logger.error(f"Template validation failed: {error}")
+            return result
+        
+        valid, error = _validate_storage(base_storage_id, storage_path, dry_run=dry_run)
+        if not valid:
+            result.error = error
+            logger.error(f"Storage validation failed: {error}")
+            return result
+        
+        # Step 2: Prepare base QCOW2 image
+        logger.info("Step 2: Preparing base QCOW2 image...")
+        
+        # Determine base qcow2 path
+        if storage_path:
+            base_dir = Path(storage_path)
+        else:
+            # Use default Proxmox storage path for templates
+            base_dir = Path(DEFAULT_TEMPLATE_STORAGE_PATH)
+        
+        if not dry_run and _current_ssh_executor:
+            # Create directory via SSH
+            _run_command(["mkdir", "-p", str(base_dir)], check=False)
+        elif not dry_run:
+            base_dir.mkdir(parents=True, exist_ok=True)
+        
+        template_name = Path(template_disk_path).stem
+        base_qcow2_path = base_dir / f"{template_name}-base.qcow2"
+        
+        # Check if base already exists (via SSH or locally)
+        base_exists = False
+        if not dry_run:
+            if _current_ssh_executor:
+                check_result = _run_command(["test", "-f", str(base_qcow2_path)], check=False)
+                base_exists = check_result.returncode == 0
+            else:
+                base_exists = base_qcow2_path.exists()
+        
+        # Convert or copy to base qcow2 if needed
+        if not base_exists or dry_run:
+            if template_disk_path.endswith('.qcow2'):
+                # Already qcow2, just copy if different location
+                if str(base_qcow2_path) != template_disk_path:
+                    success, error = _export_disk_to_qcow2(
+                        template_disk_path,
+                        str(base_qcow2_path),
+                        dry_run=dry_run,
+                    )
+                    if not success:
+                        result.error = f"Failed to prepare base image: {error}"
+                        return result
+                else:
+                    logger.info(f"Using existing base QCOW2: {base_qcow2_path}")
+            else:
+                # Convert to qcow2
                 success, error = _export_disk_to_qcow2(
                     template_disk_path,
                     str(base_qcow2_path),
                     dry_run=dry_run,
                 )
                 if not success:
-                    result.error = f"Failed to prepare base image: {error}"
+                    result.error = f"Failed to convert template: {error}"
                     return result
-            else:
-                logger.info(f"Using existing base QCOW2: {base_qcow2_path}")
         else:
-            # Convert to qcow2
-            success, error = _export_disk_to_qcow2(
-                template_disk_path,
-                str(base_qcow2_path),
-                dry_run=dry_run,
-            )
-            if not success:
-                result.error = f"Failed to convert template: {error}"
-                return result
-    else:
-        logger.info(f"Using existing base QCOW2: {base_qcow2_path}")
-    
-    result.base_qcow2_path = str(base_qcow2_path)
-    
-    # Step 3: Get available VMIDs
-    logger.info("Step 3: Allocating VMIDs...")
-    vmids = _get_next_available_vmid(vmid_start, count, dry_run=dry_run)
-    
-    if len(vmids) < count:
-        result.error = f"Could only allocate {len(vmids)} of {count} VMIDs"
-        logger.error(result.error)
-        return result
-    
-    logger.info(f"Allocated VMIDs: {vmids[0]} - {vmids[-1]}")
-    
-    # Step 4: Create VMs in parallel
-    logger.info(f"Step 4: Creating {count} VM shells (concurrency={concurrency})...")
-    
-    created_vmids = []
-    
-    def create_single_vm(vmid: int, index: int) -> CloneResult:
-        """Create a single VM with overlay disk."""
-        name = f"{name_prefix}-{index + 1}"
-        clone_result = CloneResult(vmid=vmid, name=name, success=False)
+            logger.info(f"Using existing base QCOW2: {base_qcow2_path}")
         
-        try:
-            # Create VM shell
-            success, error = _create_vm_shell(
-                vmid=vmid,
-                name=name,
-                memory=memory,
-                cores=cores,
-                sockets=sockets,
-                net_bridge=net_bridge,
-                dry_run=dry_run,
-            )
+        result.base_qcow2_path = str(base_qcow2_path)
+        
+        # Step 3: Get available VMIDs
+        logger.info("Step 3: Allocating VMIDs...")
+        vmids = _get_next_available_vmid(vmid_start, count, dry_run=dry_run)
+        
+        if len(vmids) < count:
+            result.error = f"Could only allocate {len(vmids)} of {count} VMIDs"
+            logger.error(result.error)
+            return result
+        
+        logger.info(f"Allocated VMIDs: {vmids[0]} - {vmids[-1]}")
+        
+        # Step 4: Create VMs in parallel
+        logger.info(f"Step 4: Creating {count} VM shells (concurrency={concurrency})...")
+        
+        created_vmids = []
+        
+        def create_single_vm(vmid: int, index: int) -> CloneResult:
+            """Create a single VM with overlay disk."""
+            name = f"{name_prefix}-{index + 1}"
+            clone_result = CloneResult(vmid=vmid, name=name, success=False)
             
-            if not success:
-                clone_result.error = f"VM shell creation failed: {error}"
-                return clone_result
-            
-            # Create overlay disk
-            if storage_path:
-                overlay_dir = Path(storage_path) / str(vmid)
-            else:
-                # Use default Proxmox VM images path
-                overlay_dir = Path(DEFAULT_VM_IMAGES_PATH) / str(vmid)
-            
-            if not dry_run:
-                overlay_dir.mkdir(parents=True, exist_ok=True)
-            
-            overlay_path = overlay_dir / f"vm-{vmid}-disk-0.qcow2"
-            
-            success, error = _create_overlay_disk(
-                str(base_qcow2_path),
-                str(overlay_path),
-                dry_run=dry_run,
-            )
-            
-            if not success:
-                clone_result.error = f"Overlay creation failed: {error}"
-                # Cleanup: delete VM shell
-                _delete_vm(vmid, dry_run=dry_run)
-                return clone_result
-            
-            # Attach disk to VM
-            success, error = _attach_disk_to_vm(
-                vmid=vmid,
-                disk_path=str(overlay_path),
-                disk_slot="scsi0",
-                dry_run=dry_run,
-            )
-            
-            if not success:
-                clone_result.error = f"Disk attach failed: {error}"
-                _delete_vm(vmid, dry_run=dry_run)
-                return clone_result
-            
-            # Configure cloud-init if requested
-            if cloud_init_opts:
-                success, error = _configure_cloud_init(
+            try:
+                # Create VM shell
+                success, error = _create_vm_shell(
                     vmid=vmid,
-                    options=cloud_init_opts,
-                    storage_id=cloud_init_storage,
+                    name=name,
+                    memory=memory,
+                    cores=cores,
+                    sockets=sockets,
+                    net_bridge=net_bridge,
                     dry_run=dry_run,
                 )
                 
                 if not success:
-                    logger.warning(f"Cloud-init config failed for VM {vmid}: {error}")
-                    # Continue anyway - VM is usable without cloud-init
-            
-            clone_result.success = True
-            return clone_result
-            
-        except Exception as e:
-            clone_result.error = f"Unexpected error: {str(e)}"
-            logger.exception(f"Error creating VM {vmid}: {e}")
-            # Attempt cleanup
-            _delete_vm(vmid, dry_run=dry_run)
-            return clone_result
-    
-    # Execute VM creation in parallel
-    with ThreadPoolExecutor(max_workers=concurrency) as executor:
-        futures = {
-            executor.submit(create_single_vm, vmid, i): vmid
-            for i, vmid in enumerate(vmids)
-        }
-        
-        for future in as_completed(futures):
-            vmid = futures[future]
-            try:
-                clone_result = future.result()
-                result.results.append(clone_result)
+                    clone_result.error = f"VM shell creation failed: {error}"
+                    return clone_result
                 
-                if clone_result.success:
-                    result.successful += 1
-                    created_vmids.append(vmid)
-                    logger.info(f"Created VM {vmid} ({clone_result.name})")
+                # Create overlay disk
+                if storage_path:
+                    overlay_dir = Path(storage_path) / str(vmid)
                 else:
-                    result.failed += 1
-                    logger.error(f"Failed VM {vmid}: {clone_result.error}")
-                    
-            except Exception as e:
-                result.failed += 1
-                result.results.append(CloneResult(
+                    # Use default Proxmox VM images path
+                    overlay_dir = Path(DEFAULT_VM_IMAGES_PATH) / str(vmid)
+                
+                if not dry_run:
+                    if _current_ssh_executor:
+                        _run_command(["mkdir", "-p", str(overlay_dir)], check=False)
+                    else:
+                        overlay_dir.mkdir(parents=True, exist_ok=True)
+                
+                overlay_path = overlay_dir / f"vm-{vmid}-disk-0.qcow2"
+                
+                success, error = _create_overlay_disk(
+                    str(base_qcow2_path),
+                    str(overlay_path),
+                    dry_run=dry_run,
+                )
+                
+                if not success:
+                    clone_result.error = f"Overlay creation failed: {error}"
+                    # Cleanup: delete VM shell
+                    _delete_vm(vmid, dry_run=dry_run)
+                    return clone_result
+                
+                # Attach disk to VM
+                success, error = _attach_disk_to_vm(
                     vmid=vmid,
-                    name=f"{name_prefix}-?",
-                    success=False,
-                    error=str(e),
-                ))
-                logger.exception(f"Future failed for VM {vmid}: {e}")
-    
-    # Step 5: Start VMs in batches
-    if auto_start and created_vmids:
-        logger.info(f"Step 5: Starting {len(created_vmids)} VMs in batches of {start_batch_size}...")
+                    disk_path=str(overlay_path),
+                    disk_slot="scsi0",
+                    dry_run=dry_run,
+                )
+                
+                if not success:
+                    clone_result.error = f"Disk attach failed: {error}"
+                    _delete_vm(vmid, dry_run=dry_run)
+                    return clone_result
+                
+                # Configure cloud-init if requested
+                if cloud_init_opts:
+                    success, error = _configure_cloud_init(
+                        vmid=vmid,
+                        options=cloud_init_opts,
+                        storage_id=cloud_init_storage,
+                        dry_run=dry_run,
+                    )
+                    
+                    if not success:
+                        logger.warning(f"Cloud-init config failed for VM {vmid}: {error}")
+                        # Continue anyway - VM is usable without cloud-init
+                
+                clone_result.success = True
+                return clone_result
+                
+            except Exception as e:
+                clone_result.error = f"Unexpected error: {str(e)}"
+                logger.exception(f"Error creating VM {vmid}: {e}")
+                # Attempt cleanup
+                _delete_vm(vmid, dry_run=dry_run)
+                return clone_result
         
-        start_results = _start_vms_in_batches(
-            vmids=created_vmids,
-            batch_size=start_batch_size,
-            batch_delay=start_batch_delay,
-            dry_run=dry_run,
-        )
+        # Execute VM creation in parallel
+        with ThreadPoolExecutor(max_workers=concurrency) as executor:
+            futures = {
+                executor.submit(create_single_vm, vmid, i): vmid
+                for i, vmid in enumerate(vmids)
+            }
+            
+            for future in as_completed(futures):
+                vmid = futures[future]
+                try:
+                    clone_result = future.result()
+                    result.results.append(clone_result)
+                    
+                    if clone_result.success:
+                        result.successful += 1
+                        created_vmids.append(vmid)
+                        logger.info(f"Created VM {vmid} ({clone_result.name})")
+                    else:
+                        result.failed += 1
+                        logger.error(f"Failed VM {vmid}: {clone_result.error}")
+                        
+                except Exception as e:
+                    result.failed += 1
+                    result.results.append(CloneResult(
+                        vmid=vmid,
+                        name=f"{name_prefix}-?",
+                        success=False,
+                        error=str(e),
+                    ))
+                    logger.exception(f"Future failed for VM {vmid}: {e}")
         
-        # Update results with start status
-        for clone_result in result.results:
-            if clone_result.vmid in start_results:
-                started, start_error = start_results[clone_result.vmid]
-                clone_result.started = started
-                if not started:
-                    logger.warning(f"VM {clone_result.vmid} created but failed to start: {start_error}")
-    else:
-        logger.info("Step 5: Skipping VM start (auto_start=False or no VMs created)")
+        # Step 5: Start VMs in batches
+        if auto_start and created_vmids:
+            logger.info(f"Step 5: Starting {len(created_vmids)} VMs in batches of {start_batch_size}...")
+            
+            start_results = _start_vms_in_batches(
+                vmids=created_vmids,
+                batch_size=start_batch_size,
+                batch_delay=start_batch_delay,
+                dry_run=dry_run,
+            )
+            
+            # Update results with start status
+            for clone_result in result.results:
+                if clone_result.vmid in start_results:
+                    started, start_error = start_results[clone_result.vmid]
+                    clone_result.started = started
+                    if not started:
+                        logger.warning(f"VM {clone_result.vmid} created but failed to start: {start_error}")
+        else:
+            logger.info("Step 5: Skipping VM start (auto_start=False or no VMs created)")
+        
+        # Summary
+        logger.info(f"Bulk clone complete: {result.successful}/{result.total_requested} successful, {result.failed} failed")
+        
+        return result
     
-    # Summary
-    logger.info(f"Bulk clone complete: {result.successful}/{result.total_requested} successful, {result.failed} failed")
-    
-    return result
+    finally:
+        # Cleanup SSH connection
+        if ssh_executor:
+            try:
+                ssh_executor.disconnect()
+                logger.info("SSH connection closed")
+            except Exception as e:
+                logger.warning(f"Error closing SSH connection: {e}")
+        _current_ssh_executor = None
 
 
 def estimate_clone_time(
