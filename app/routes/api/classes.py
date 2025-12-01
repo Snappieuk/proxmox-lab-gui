@@ -148,15 +148,14 @@ def create_new_class():
     description = data.get('description', '').strip()
     template_id = data.get('template_id')
     pool_size = data.get('pool_size', 0)
+    cpu_cores = data.get('cpu_cores', 2)
+    memory_mb = data.get('memory_mb', 2048)
     
     if not name:
         return jsonify({"ok": False, "error": "Class name is required"}), 400
     
-    if not template_id:
-        return jsonify({"ok": False, "error": "Template is required"}), 400
-    
-    if pool_size < 1:
-        return jsonify({"ok": False, "error": "Pool size must be at least 1"}), 400
+    # Template is now optional - classes can be created without templates
+    # Pool size can be 0 - VMs can be added manually later
     
     # Create class in database
     class_, msg = create_class(
@@ -164,11 +163,87 @@ def create_new_class():
         teacher_id=user.id,
         description=description,
         template_id=template_id,
-        pool_size=pool_size
+        pool_size=pool_size,
+        cpu_cores=cpu_cores,
+        memory_mb=memory_mb
     )
     
     if not class_:
         return jsonify({"ok": False, "error": msg}), 400
+    
+    # If pool_size > 0, create VM shells immediately (empty VMs without disks)
+    if pool_size > 0:
+        # Get source node from template, or use default
+        source_node = source_template.node if template_id and source_template else 'pve1'
+        
+        # Create VM shells in background thread
+        import threading
+        from flask import current_app
+        app = current_app._get_current_object()
+        
+        def _create_shells():
+            try:
+                app_ctx = app.app_context()
+                app_ctx.push()
+                
+                from app.services.proxmox_operations import create_vm_shells
+                import re
+                
+                # Sanitize class name for VM naming
+                class_prefix = re.sub(r'[^a-z0-9-]', '', name.lower().replace(' ', '-').replace('_', '-'))
+                if not class_prefix:
+                    class_prefix = f"class-{class_.id}"
+                
+                logger.info(f"Creating {pool_size} VM shells for class '{name}'...")
+                shells = create_vm_shells(
+                    count=pool_size,
+                    name_prefix=f"{class_prefix}-student",
+                    node=source_node,
+                    cluster_ip="10.220.15.249",
+                    cpu_cores=class_.cpu_cores,
+                    memory_mb=class_.memory_mb
+                )
+                
+                # Register VM shells in database as VMAssignments
+                from app.models import VMAssignment, db
+                for shell in shells:
+                    if shell['success']:
+                        assignment = VMAssignment(
+                            class_id=class_.id,
+                            proxmox_vmid=shell['vmid'],
+                            node=shell['node'],
+                            status='available',
+                            is_template_vm=False
+                        )
+                        db.session.add(assignment)
+                
+                db.session.commit()
+                logger.info(f"Created {len([s for s in shells if s['success']])} VM shells for class {class_.id}")
+                
+            except Exception as e:
+                logger.exception(f"Failed to create VM shells for class {class_.id}: {e}")
+            finally:
+                try:
+                    app_ctx.pop()
+                except:
+                    pass
+        
+        threading.Thread(target=_create_shells, daemon=True).start()
+    
+    # If no template provided, return immediately (class created without VMs)
+    if not template_id:
+        message = f"Class created successfully"
+        if pool_size > 0:
+            message += f" - creating {pool_size} VM shells in background"
+        else:
+            message += " (no template - add VMs manually)"
+        
+        logger.info(f"Class {class_.id} '{class_.name}' created without template")
+        return jsonify({
+            "ok": True,
+            "message": message,
+            "class": class_.to_dict()
+        })
     
     logger.info(f"Class {class_.id} created, now cloning template exclusively for this class")
     

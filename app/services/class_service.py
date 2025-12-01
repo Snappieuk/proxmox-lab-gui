@@ -146,7 +146,8 @@ def delete_user(user_id: int) -> Tuple[bool, str]:
 # ---------------------------------------------------------------------------
 
 def create_class(name: str, teacher_id: int, description: str = None, 
-                 template_id: int = None, pool_size: int = 0) -> Tuple[Optional[Class], str]:
+                 template_id: int = None, pool_size: int = 0,
+                 cpu_cores: int = 2, memory_mb: int = 2048) -> Tuple[Optional[Class], str]:
     """Create a new class.
     
     Template is optional - classes can be created without templates and VMs can be added manually later.
@@ -239,7 +240,9 @@ def create_class(name: str, teacher_id: int, description: str = None,
             description=description,
             teacher_id=teacher_id,
             template_id=cloned_template_id,
-            pool_size=pool_size
+            pool_size=pool_size,
+            cpu_cores=cpu_cores,
+            memory_mb=memory_mb
         )
         db.session.add(class_)
         db.session.flush()

@@ -30,11 +30,25 @@
         </div>
         
         <div class="form-group">
-            <label for="template-select">Template *</label>
-            <select id="template-select" name="template_id" required>
+            <label for="cpu-cores">CPU Cores per VM</label>
+            <input type="number" id="cpu-cores" name="cpu_cores" min="1" max="16" value="2"
+                   placeholder="Number of CPU cores">
+            <small class="form-help">Number of CPU cores allocated to each VM</small>
+        </div>
+        
+        <div class="form-group">
+            <label for="memory-mb">RAM per VM (MB)</label>
+            <input type="number" id="memory-mb" name="memory_mb" min="512" max="32768" step="512" value="2048"
+                   placeholder="RAM in megabytes">
+            <small class="form-help">RAM allocated to each VM (2048 MB = 2 GB)</small>
+        </div>
+        
+        <div class="form-group">
+            <label for="template-select">Template</label>
+            <select id="template-select" name="template_id">
                 <option value="">Loading templates...</option>
             </select>
-            <small class="form-help">Select a VM template from cluster 10.220.15.249</small>
+            <small class="form-help">Optional - VMs can be added manually later if no template selected</small>
         </div>
         
         <div class="form-actions">
@@ -189,6 +203,8 @@ document.getElementById('create-class-form').addEventListener('submit', async fu
     const name = document.getElementById('class-name').value.trim();
     const description = document.getElementById('class-description').value.trim();
     const poolSize = parseInt(document.getElementById('pool-size').value) || 0;
+    const cpuCores = parseInt(document.getElementById('cpu-cores').value) || 2;
+    const memoryMb = parseInt(document.getElementById('memory-mb').value) || 2048;
     const templateVmid = parseInt(document.getElementById('template-select').value);
     
     if (!name) {
@@ -196,44 +212,41 @@ document.getElementById('create-class-form').addEventListener('submit', async fu
         return;
     }
     
-    if (!templateVmid) {
-        alert('Please select a template.');
-        return;
-    }
-    
+    // Template is now optional
     const submitBtn = this.querySelector('button[type="submit"]');
     submitBtn.disabled = true;
     submitBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Creating...';
     
     try {
-        // Check if template is already registered, if not register it
-        let templateId = window.templateData.registered[templateVmid];
+        let templateId = null;
         
-        if (!templateId) {
-            // Template not registered yet - register it
-            const selectedOption = document.querySelector(`#template-select option[value="${templateVmid}"]`);
-            const templateName = selectedOption.dataset.name || `Template ${templateVmid}`;
-            const templateNode = selectedOption.dataset.node;
+        // Only register template if one was selected
+        if (templateVmid) {
+            // Check if template is already registered, if not register it
+            templateId = window.templateData.registered[templateVmid];
             
-            const templateResp = await fetch('/api/classes/templates', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    name: templateName,
-                    proxmox_vmid: templateVmid,
-                    node: templateNode
-                })
-            });
-            const templateData = await templateResp.json();
-            if (templateData.ok && templateData.template) {
-                templateId = templateData.template.id;
-            } else {
-                throw new Error(templateData.error || 'Failed to register template');
+            if (!templateId) {
+                // Template not registered yet - register it
+                const selectedOption = document.querySelector(`#template-select option[value="${templateVmid}"]`);
+                const templateName = selectedOption.dataset.name || `Template ${templateVmid}`;
+                const templateNode = selectedOption.dataset.node;
+                
+                const templateResp = await fetch('/api/classes/templates', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name: templateName,
+                        proxmox_vmid: templateVmid,
+                        node: templateNode
+                    })
+                });
+                const templateData = await templateResp.json();
+                if (templateData.ok && templateData.template) {
+                    templateId = templateData.template.id;
+                } else {
+                    throw new Error(templateData.error || 'Failed to register template');
+                }
             }
-        }
-        
-        if (!templateId) {
-            throw new Error('No template ID available');
         }
         
         // Create the class with the template ID
@@ -244,6 +257,8 @@ document.getElementById('create-class-form').addEventListener('submit', async fu
                 name: name,
                 description: description,
                 pool_size: poolSize,
+                cpu_cores: cpuCores,
+                memory_mb: memoryMb,
                 template_id: templateId
             })
         });

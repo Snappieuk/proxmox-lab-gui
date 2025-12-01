@@ -4,10 +4,9 @@ API endpoints for managing class co-owners.
 """
 
 import logging
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, session
 
 from app.utils.decorators import login_required
-from app.services.user_manager import get_current_user
 from app.services.class_service import get_class_by_id, get_user_by_username, get_user_by_id
 from app.models import db, User
 
@@ -20,9 +19,15 @@ api_class_owners_bp = Blueprint('api_class_owners', __name__, url_prefix='/api')
 @login_required
 def get_class_co_owners(class_id: int):
     """Get list of co-owners for a class."""
-    user = get_current_user()
-    if not user:
+    username = session.get('user')
+    if not username:
         return jsonify({"ok": False, "error": "Not authenticated"}), 401
+    # Remove @pve suffix if present
+    if '@' in username:
+        username = username.split('@')[0]
+    user = get_user_by_username(username)
+    if not user:
+        return jsonify({"ok": False, "error": "User not found"}), 401
     
     class_ = get_class_by_id(class_id)
     if not class_:
@@ -55,9 +60,15 @@ def get_class_co_owners(class_id: int):
 @login_required
 def add_class_co_owner(class_id: int):
     """Add a co-owner to a class."""
-    user = get_current_user()
-    if not user:
+    username = session.get('user')
+    if not username:
         return jsonify({"ok": False, "error": "Not authenticated"}), 401
+    # Remove @pve suffix if present
+    if '@' in username:
+        username = username.split('@')[0]
+    user = get_user_by_username(username)
+    if not user:
+        return jsonify({"ok": False, "error": "User not found"}), 401
     
     class_ = get_class_by_id(class_id)
     if not class_:
@@ -114,9 +125,15 @@ def add_class_co_owner(class_id: int):
 @login_required
 def remove_class_co_owner(class_id: int, user_id: int):
     """Remove a co-owner from a class."""
-    user = get_current_user()
-    if not user:
+    username = session.get('user')
+    if not username:
         return jsonify({"ok": False, "error": "Not authenticated"}), 401
+    # Remove @pve suffix if present
+    if '@' in username:
+        username = username.split('@')[0]
+    user = get_user_by_username(username)
+    if not user:
+        return jsonify({"ok": False, "error": "User not found"}), 401
     
     class_ = get_class_by_id(class_id)
     if not class_:
@@ -154,9 +171,15 @@ def remove_class_co_owner(class_id: int, user_id: int):
 @login_required
 def get_teachers_list():
     """Get list of all users who can be teachers (teachers and adminers)."""
-    user = get_current_user()
-    if not user:
+    username = session.get('user')
+    if not username:
         return jsonify({"ok": False, "error": "Not authenticated"}), 401
+    # Remove @pve suffix if present
+    if '@' in username:
+        username = username.split('@')[0]
+    user = get_user_by_username(username)
+    if not user:
+        return jsonify({"ok": False, "error": "User not found"}), 401
     
     # Get all users with teacher or adminer role
     teachers = User.query.filter(

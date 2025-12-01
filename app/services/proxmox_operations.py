@@ -2229,3 +2229,154 @@ def clone_template_for_class(template_vmid: int, node: str, name: str,
     except Exception as e:
         logger.exception(f"Failed to clone template: {e}")
         return False, None, f"Clone failed: {str(e)}"
+
+
+def create_vm_shells(count: int, name_prefix: str, node: str, cluster_ip: str = None,
+                    cpu_cores: int = 2, memory_mb: int = 2048) -> List[Dict[str, Any]]:
+    """Create empty VM shells (VMs without disks) that can be populated later.
+    
+    This is much faster than full cloning and allows for progressive disk population.
+    
+    Args:
+        count: Number of VM shells to create
+        name_prefix: Prefix for VM names (e.g., "class-intro-linux")
+        node: Target node for VMs
+        cluster_ip: IP of the Proxmox cluster
+        cpu_cores: Number of CPU cores per VM (default: 2)
+        memory_mb: RAM in MB per VM (default: 2048)
+        
+    Returns:
+        List of dicts with keys: vmid, name, node, success, error
+    """
+    results = []
+    target_ip = cluster_ip or CLASS_CLUSTER_IP
+    cluster_id = None
+    
+    for cluster in CLUSTERS:
+        if cluster["host"] == target_ip:
+            cluster_id = cluster["id"]
+            break
+    
+    if not cluster_id:
+        logger.error(f"Cluster not found for IP: {target_ip}")
+        return []
+    
+    try:
+        proxmox = get_proxmox_admin_for_cluster(cluster_id)
+        
+        # Get all used VMIDs
+        used_vmids = set()
+        resources = proxmox.cluster.resources.get(type="vm")
+        for r in resources:
+            used_vmids.add(r["vmid"])
+        
+        logger.info(f"Creating {count} VM shells on node '{node}'...")
+        
+        for i in range(1, count + 1):
+            # Find next available VMID
+            new_vmid = 100
+            while new_vmid in used_vmids:
+                new_vmid += 1
+            used_vmids.add(new_vmid)  # Reserve this VMID
+            
+            vm_name = sanitize_vm_name(f"{name_prefix}-{i}", fallback=f"vm-{new_vmid}")
+            
+            try:
+                # Create VM shell with minimal config (no disks)
+                proxmox.nodes(node).qemu.post(
+                    vmid=new_vmid,
+                    name=vm_name,
+                    memory=memory_mb,
+                    cores=cpu_cores,
+                    sockets=1,
+                    cpu='host',
+                    ostype='l26',  # Linux 2.6+ kernel
+                    net0='virtio,bridge=vmbr0',  # Network interface
+                    # No disk attached - that comes later
+                )
+                
+                logger.info(f"Created VM shell: {vm_name} (VMID {new_vmid})")
+                results.append({
+                    'vmid': new_vmid,
+                    'name': vm_name,
+                    'node': node,
+                    'success': True,
+                    'error': None
+                })
+                
+            except Exception as e:
+                logger.error(f"Failed to create VM shell {vm_name}: {e}")
+                results.append({
+                    'vmid': new_vmid,
+                    'name': vm_name,
+                    'node': node,
+                    'success': False,
+                    'error': str(e)
+                })
+        
+        return results
+        
+    except Exception as e:
+        logger.exception(f"Failed to create VM shells: {e}")
+        return []
+
+
+def populate_vm_shell_with_disk(vmid: int, node: str, template_vmid: int, template_node: str, 
+                                cluster_ip: str = None) -> Tuple[bool, str]:
+    """Populate an empty VM shell with a disk cloned from a template.
+    
+    Args:
+        vmid: VMID of the empty VM shell
+        node: Node where the VM shell exists
+        template_vmid: VMID of the template to clone disk from
+        template_node: Node where the template exists
+        cluster_ip: IP of the Proxmox cluster
+        
+    Returns:
+        Tuple of (success, message)
+    """
+    target_ip = cluster_ip or CLASS_CLUSTER_IP
+    cluster_id = None
+    
+    for cluster in CLUSTERS:
+        if cluster["host"] == target_ip:
+            cluster_id = cluster["id"]
+            break
+    
+    if not cluster_id:
+        return False, f"Cluster not found for IP: {target_ip}"
+    
+    try:
+        proxmox = get_proxmox_admin_for_cluster(cluster_id)
+        
+        # Get template disk configuration
+        template_config = proxmox.nodes(template_node).qemu(template_vmid).config.get()
+        
+        # Find the boot disk (usually scsi0 or virtio0)
+        disk_key = None
+        for key in ['scsi0', 'virtio0', 'sata0', 'ide0']:
+            if key in template_config:
+                disk_key = key
+                break
+        
+        if not disk_key:
+            return False, f"No disk found in template {template_vmid}"
+        
+        disk_config = template_config[disk_key]
+        logger.info(f"Template disk config: {disk_key}={disk_config}")
+        
+        # Clone the disk from template to the VM shell
+        # This uses Proxmox's disk clone API
+        proxmox.nodes(node).qemu(vmid).clone.post(
+            newid=vmid,  # Clone to itself (just the disk)
+            target=node,
+            full=1
+        )
+        
+        logger.info(f"Populated VM {vmid} with disk from template {template_vmid}")
+        return True, f"Disk cloned successfully to VM {vmid}"
+        
+    except Exception as e:
+        logger.exception(f"Failed to populate VM shell {vmid} with disk: {e}")
+        return False, f"Disk population failed: {str(e)}"
+        return False, None, f"Clone failed: {str(e)}"

@@ -56,13 +56,15 @@ def create_app(config=None):
     try:
         from flask_sock import Sock
         sock = Sock(app)
-        logger.info("WebSocket support ENABLED (flask-sock loaded)")
         
         # Initialize WebSocket routes
         from app.routes.api.ssh import init_websocket
         init_websocket(app, sock)
-    except ImportError:
-        logger.warning("WebSocket support DISABLED (flask-sock not available)")
+        logger.info("WebSocket support ENABLED (flask-sock loaded)")
+    except ImportError as e:
+        logger.warning(f"WebSocket support DISABLED (flask-sock not available): {e}")
+    except Exception as e:
+        logger.error(f"WebSocket initialization failed: {e}", exc_info=True)
     
     # Register blueprints
     from app.routes import register_blueprints
