@@ -204,15 +204,15 @@ document.addEventListener('DOMContentLoaded', async function() {
         console.error('Failed to load templates:', e);
         selectElement.innerHTML = '<option value="">None</option>';
     }
-});
+    
+    // Handle template selection and checkbox changes
+    document.getElementById('template-select').addEventListener('change', function() {
+        updateSpecsVisibility();
+    });
 
-// Handle template selection and checkbox changes
-document.getElementById('template-select').addEventListener('change', function() {
-    updateSpecsVisibility();
-});
-
-document.getElementById('alter-specs-checkbox').addEventListener('change', function() {
-    updateSpecsVisibility();
+    document.getElementById('alter-specs-checkbox').addEventListener('change', function() {
+        updateSpecsVisibility();
+    });
 });
 
 function updateSpecsVisibility() {
