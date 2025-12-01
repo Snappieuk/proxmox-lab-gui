@@ -14,6 +14,7 @@ creates QCOW2 overlay disks for efficient, fast cloning.
 """
 
 import logging
+import os
 import re
 import time
 from dataclasses import dataclass, field
@@ -35,6 +36,13 @@ from app.services.qcow2_bulk_cloner import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Storage name for Proxmox (configurable via environment)
+PROXMOX_STORAGE_NAME = os.getenv("PROXMOX_STORAGE_NAME", "TRUENAS-NFS")
+
+# VM stop timeout in seconds
+VM_STOP_TIMEOUT = int(os.getenv("VM_STOP_TIMEOUT", "60"))
+VM_STOP_POLL_INTERVAL = int(os.getenv("VM_STOP_POLL_INTERVAL", "3"))
 
 
 @dataclass
@@ -61,6 +69,52 @@ def sanitize_vm_name(name: str) -> str:
     # Remove leading/trailing hyphens
     name = name.strip('-')
     return name or 'vm'
+
+
+def wait_for_vm_stopped(ssh_executor: SSHExecutor, vmid: int, timeout: int = None) -> bool:
+    """
+    Wait for a VM to fully stop.
+    
+    Polls the VM status until it's stopped or timeout is reached.
+    
+    Args:
+        ssh_executor: SSH executor for running commands
+        vmid: VMID to check
+        timeout: Max time to wait in seconds (default: VM_STOP_TIMEOUT)
+        
+    Returns:
+        True if VM is stopped, False if timeout reached
+    """
+    if timeout is None:
+        timeout = VM_STOP_TIMEOUT
+    
+    start_time = time.time()
+    while time.time() - start_time < timeout:
+        try:
+            exit_code, stdout, stderr = ssh_executor.execute(
+                f"qm status {vmid}",
+                check=False,
+                timeout=10
+            )
+            
+            if exit_code != 0:
+                # VM doesn't exist or error - consider stopped
+                return True
+            
+            # Check if status is 'stopped'
+            if 'stopped' in stdout.lower():
+                logger.debug(f"VM {vmid} confirmed stopped")
+                return True
+            
+            logger.debug(f"VM {vmid} status: {stdout.strip()}, waiting...")
+            
+        except Exception as e:
+            logger.warning(f"Error checking VM {vmid} status: {e}")
+        
+        time.sleep(VM_STOP_POLL_INTERVAL)
+    
+    logger.warning(f"Timeout waiting for VM {vmid} to stop")
+    return False
 
 
 def get_next_available_vmid(ssh_executor: SSHExecutor, start: int = 200) -> int:
@@ -326,9 +380,8 @@ def create_class_vms(
                     
                     # Attach disk to VM
                     # Use storage:vmid/disk format for Proxmox
-                    storage_name = "TRUENAS-NFS"  # TODO: Make configurable
                     exit_code, stdout, stderr = ssh_executor.execute(
-                        f"qm set {vmid} --scsi0 {storage_name}:{vmid}/vm-{vmid}-disk-0.qcow2 --boot c --bootdisk scsi0",
+                        f"qm set {vmid} --scsi0 {PROXMOX_STORAGE_NAME}:{vmid}/vm-{vmid}-disk-0.qcow2 --boot c --bootdisk scsi0",
                         timeout=60
                     )
                     
@@ -437,7 +490,10 @@ def save_and_deploy_teacher_vm(
         # Step 1: Stop teacher VM (required for disk export)
         logger.info(f"Stopping teacher VM {teacher_vmid}...")
         ssh_executor.execute(f"qm stop {teacher_vmid}", check=False, timeout=60)
-        time.sleep(5)  # Wait for VM to fully stop
+        
+        # Wait for VM to fully stop
+        if not wait_for_vm_stopped(ssh_executor, teacher_vmid):
+            return False, f"Teacher VM {teacher_vmid} did not stop in time", 0
         
         # Step 2: Create new class base from teacher's VM
         new_base_path = f"{DEFAULT_TEMPLATE_STORAGE_PATH}/{class_prefix}-base.qcow2"
@@ -468,7 +524,9 @@ def save_and_deploy_teacher_vm(
             try:
                 # Stop student VM if running
                 ssh_executor.execute(f"qm stop {vmid}", check=False, timeout=30)
-                time.sleep(2)
+                
+                # Wait for VM to stop (shorter timeout for students)
+                wait_for_vm_stopped(ssh_executor, vmid, timeout=30)
                 
                 # Get current disk path
                 overlay_path = f"{DEFAULT_VM_IMAGES_PATH}/{vmid}/vm-{vmid}-disk-0.qcow2"
