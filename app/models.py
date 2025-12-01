@@ -32,6 +32,13 @@ class_enrollments = db.Table('class_enrollments',
     db.Column('enrolled_at', db.DateTime, default=datetime.utcnow)
 )
 
+# Association table for class co-owners (many-to-many)
+class_co_owners = db.Table('class_co_owners',
+    db.Column('user_id', db.Integer, db.ForeignKey('users.id'), primary_key=True),
+    db.Column('class_id', db.Integer, db.ForeignKey('classes.id'), primary_key=True),
+    db.Column('added_at', db.DateTime, default=datetime.utcnow)
+)
+
 
 class User(db.Model):
     """Local user account with role-based access."""
@@ -49,6 +56,8 @@ class User(db.Model):
     vm_assignments = db.relationship('VMAssignment', back_populates='assigned_user', lazy='dynamic')
     enrolled_classes = db.relationship('Class', secondary=class_enrollments, 
                                       backref=db.backref('students', lazy='dynamic'))
+    co_owned_classes = db.relationship('Class', secondary=class_co_owners,
+                                       backref=db.backref('co_owners', lazy='dynamic'))
     
     def set_password(self, password: str) -> None:
         """Hash and store password."""
@@ -147,6 +156,16 @@ class Class(db.Model):
         """Number of students enrolled in this class."""
         return self.students.count()
     
+    def is_owner(self, user) -> bool:
+        """Check if user is an owner (primary teacher or co-owner) of this class."""
+        if not user:
+            return False
+        # Check if primary teacher
+        if self.teacher_id == user.id:
+            return True
+        # Check if co-owner
+        return user in self.co_owners.all()
+    
     def to_dict(self) -> dict:
         # Get enrolled students with their VM assignments
         students_list = []
@@ -170,6 +189,7 @@ class Class(db.Model):
             'description': self.description,
             'teacher_id': self.teacher_id,
             'teacher_name': self.teacher.username if self.teacher else None,
+            'co_owners': [{'id': co.id, 'username': co.username} for co in self.co_owners.all()],
             'template_id': self.template_id,
             'template_name': self.template.name if self.template else None,
             'template_original_name': self.template.original_template.name if (self.template and getattr(self.template, 'original_template', None)) else None,
@@ -258,6 +278,7 @@ class VMAssignment(db.Model):
     assigned_user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True, index=True)
     status = db.Column(db.String(20), default='available')  # available, assigned, deleting
     is_template_vm = db.Column(db.Boolean, default=False)  # True if this is the template reference VM
+    manually_added = db.Column(db.Boolean, default=False)  # True if VM was manually added (don't auto-assign)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     assigned_at = db.Column(db.DateTime, nullable=True)
     

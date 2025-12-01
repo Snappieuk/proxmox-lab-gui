@@ -149,6 +149,8 @@ def create_class(name: str, teacher_id: int, description: str = None,
                  template_id: int = None, pool_size: int = 0) -> Tuple[Optional[Class], str]:
     """Create a new class.
     
+    Template is optional - classes can be created without templates and VMs can be added manually later.
+    
     Returns: (class, message/error)
     """
     if not name:
@@ -161,7 +163,7 @@ def create_class(name: str, teacher_id: int, description: str = None,
     if not teacher.is_teacher and not teacher.is_adminer:
         return None, "User must be a teacher or adminer to create classes"
     
-    # Verify template exists if specified
+    # Verify template exists if specified (template is now optional)
     original_template = None
     if template_id:
         original_template = Template.query.get(template_id)
@@ -169,10 +171,10 @@ def create_class(name: str, teacher_id: int, description: str = None,
             return None, "Template not found"
     
     try:
-        # Delay class creation until after successful template clone (if template provided)
+        # Skip template cloning if no template provided (classes can exist without templates)
         cloned_template_id = None
         teacher_vm_id = None
-        if original_template:
+        if original_template and template_id:
             if not original_template.node:
                 logger.error(f"Template {original_template.id} ({original_template.name}) has no node specified")
                 return None, "Template configuration error: node not set. Please ensure the template has a valid Proxmox node."
@@ -456,11 +458,12 @@ def join_class_via_token(token: str, user_id: int) -> Tuple[bool, str, Optional[
     # Enroll user in class
     class_.students.append(user)
     
-    # Try to find an unassigned VM in the class
+    # Try to find an unassigned VM in the class (exclude manually added VMs)
     available_vm = VMAssignment.query.filter_by(
         class_id=class_.id,
         assigned_user_id=None,
-        status='available'
+        status='available',
+        manually_added=False  # Don't auto-assign manually added VMs
     ).first()
     
     if available_vm:
@@ -514,12 +517,13 @@ def auto_assign_vms_to_waiting_students(class_id: int) -> int:
         logger.info("No students waiting for VMs in class %s", class_.name)
         return 0
     
-    # Find available VMs
+    # Find available VMs (exclude manually added VMs)
     available_vms = VMAssignment.query.filter_by(
         class_id=class_id,
         assigned_user_id=None,
         status='available',
-        is_template_vm=False
+        is_template_vm=False,
+        manually_added=False  # Don't auto-assign manually added VMs
     ).all()
     
     if not available_vms:

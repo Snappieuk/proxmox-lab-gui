@@ -1,0 +1,381 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-header">
+    <h1>VM:Class Mappings</h1>
+    <p class="page-subtitle">Manually add VMs to classes without auto-assignment to students</p>
+</div>
+
+<div style="max-width: 1200px; margin: 0 auto; padding: 20px;">
+    <!-- Add VM to Class Form -->
+    <div class="card" style="margin-bottom: 20px;">
+        <div class="card-header">
+            <h3>Add VM to Class</h3>
+        </div>
+        <div class="card-body">
+            <form id="add-vm-form" style="display: grid; grid-template-columns: 1fr 1fr 1fr auto; gap: 10px; align-items: end;">
+                <div>
+                    <label for="select-class">Class</label>
+                    <select id="select-class" class="form-control" required>
+                        <option value="">-- Select Class --</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="select-vm">Available VM</label>
+                    <select id="select-vm" class="form-control" required disabled>
+                        <option value="">-- Select Class First --</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="vm-node">Node</label>
+                    <input type="text" id="vm-node" class="form-control" readonly>
+                </div>
+                <div>
+                    <button type="submit" class="btn btn-primary" style="margin-bottom: 0;">
+                        <i class="bi bi-plus-circle"></i> Add VM
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Current Mappings Table -->
+    <div class="card">
+        <div class="card-header">
+            <h3>Current Mappings</h3>
+        </div>
+        <div class="card-body">
+            <table class="table" id="mappings-table">
+                <thead>
+                    <tr>
+                        <th>VMID</th>
+                        <th>Node</th>
+                        <th>Class</th>
+                        <th>Assigned To</th>
+                        <th>Status</th>
+                        <th>Added</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="mappings-tbody">
+                    <tr>
+                        <td colspan="7" style="text-align: center; padding: 40px; color: #666;">
+                            <i class="bi bi-hourglass-split"></i> Loading...
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<style>
+.card {
+    background: white;
+    border: 1px solid #e0e0e0;
+    border-radius: 4px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.card-header {
+    background: #f5f5f5;
+    border-bottom: 1px solid #e0e0e0;
+    padding: 15px 20px;
+}
+
+.card-header h3 {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 600;
+}
+
+.card-body {
+    padding: 20px;
+}
+
+.form-control {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 14px;
+}
+
+.form-control:disabled {
+    background-color: #f5f5f5;
+    cursor: not-allowed;
+}
+
+.btn {
+    padding: 8px 16px;
+    border: none;
+    border-radius: 4px;
+    font-size: 14px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.btn-primary {
+    background-color: #0078d4;
+    color: white;
+}
+
+.btn-primary:hover {
+    background-color: #106ebe;
+}
+
+.btn-danger {
+    background-color: #d13438;
+    color: white;
+    font-size: 13px;
+    padding: 6px 12px;
+}
+
+.btn-danger:hover {
+    background-color: #a80000;
+}
+
+.table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.table th {
+    background: #f8f8f8;
+    padding: 12px;
+    text-align: left;
+    border-bottom: 2px solid #e0e0e0;
+    font-weight: 600;
+    font-size: 13px;
+}
+
+.table td {
+    padding: 12px;
+    border-bottom: 1px solid #e0e0e0;
+    font-size: 14px;
+}
+
+.table tbody tr:hover {
+    background-color: #f9f9f9;
+}
+
+.badge {
+    display: inline-block;
+    padding: 4px 8px;
+    border-radius: 3px;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+.badge-success {
+    background-color: #d4edda;
+    color: #155724;
+}
+
+.badge-warning {
+    background-color: #fff3cd;
+    color: #856404;
+}
+
+label {
+    display: block;
+    margin-bottom: 5px;
+    font-size: 13px;
+    font-weight: 500;
+    color: #333;
+}
+</style>
+
+<script>
+let allClasses = [];
+let currentMappings = [];
+
+async function loadClasses() {
+    try {
+        const resp = await fetch('/api/classes');
+        const data = await resp.json();
+        allClasses = data.classes || [];
+        
+        const select = document.getElementById('select-class');
+        select.innerHTML = '<option value="">-- Select Class --</option>';
+        
+        allClasses.forEach(cls => {
+            const option = document.createElement('option');
+            option.value = cls.id;
+            option.textContent = cls.name;
+            select.appendChild(option);
+        });
+    } catch (e) {
+        console.error('Failed to load classes:', e);
+    }
+}
+
+async function loadAvailableVMs(classId) {
+    const vmSelect = document.getElementById('select-vm');
+    const nodeInput = document.getElementById('vm-node');
+    
+    if (!classId) {
+        vmSelect.disabled = true;
+        vmSelect.innerHTML = '<option value="">-- Select Class First --</option>';
+        nodeInput.value = '';
+        return;
+    }
+    
+    vmSelect.disabled = true;
+    vmSelect.innerHTML = '<option value="">Loading...</option>';
+    
+    try {
+        const resp = await fetch(`/api/classes/${classId}/available-vms`);
+        const data = await resp.json();
+        
+        if (data.ok) {
+            vmSelect.innerHTML = '<option value="">-- Select VM --</option>';
+            
+            (data.vms || []).forEach(vm => {
+                const option = document.createElement('option');
+                option.value = vm.vmid;
+                option.textContent = `${vm.name} (VMID: ${vm.vmid}, Node: ${vm.node})`;
+                option.dataset.node = vm.node;
+                vmSelect.appendChild(option);
+            });
+            
+            vmSelect.disabled = false;
+        } else {
+            vmSelect.innerHTML = '<option value="">Error loading VMs</option>';
+        }
+    } catch (e) {
+        console.error('Failed to load VMs:', e);
+        vmSelect.innerHTML = '<option value="">Error loading VMs</option>';
+    }
+}
+
+async function loadMappings() {
+    try {
+        const resp = await fetch('/api/vm-class-mappings');
+        const data = await resp.json();
+        
+        const tbody = document.getElementById('mappings-tbody');
+        
+        if (data.ok && data.mappings && data.mappings.length > 0) {
+            currentMappings = data.mappings;
+            
+            tbody.innerHTML = data.mappings.map(m => `
+                <tr>
+                    <td><strong>${m.vmid}</strong></td>
+                    <td>${m.node || 'N/A'}</td>
+                    <td>${m.class_name}</td>
+                    <td>${m.assigned_user_name || '<em>Unassigned</em>'}</td>
+                    <td><span class="badge ${m.status === 'assigned' ? 'badge-success' : 'badge-warning'}">${m.status}</span></td>
+                    <td>${new Date(m.created_at).toLocaleDateString()}</td>
+                    <td>
+                        <button class="btn btn-danger" onclick="removeMapping(${m.id}, ${m.vmid}, '${m.class_name}')">
+                            <i class="bi bi-trash"></i> Remove
+                        </button>
+                    </td>
+                </tr>
+            `).join('');
+        } else {
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="7" style="text-align: center; padding: 40px; color: #666;">
+                        No manual VM:Class mappings yet. Use the form above to add VMs to classes.
+                    </td>
+                </tr>
+            `;
+        }
+    } catch (e) {
+        console.error('Failed to load mappings:', e);
+        document.getElementById('mappings-tbody').innerHTML = `
+            <tr>
+                <td colspan="7" style="text-align: center; padding: 40px; color: #d13438;">
+                    Error loading mappings
+                </td>
+            </tr>
+        `;
+    }
+}
+
+async function removeMapping(id, vmid, className) {
+    if (!confirm(`Remove VM ${vmid} from class "${className}"?`)) {
+        return;
+    }
+    
+    try {
+        const resp = await fetch(`/api/vm-class-mappings/${id}`, {
+            method: 'DELETE'
+        });
+        const data = await resp.json();
+        
+        if (data.ok) {
+            alert(data.message);
+            loadMappings();
+        } else {
+            alert('Error: ' + data.error);
+        }
+    } catch (e) {
+        console.error('Failed to remove mapping:', e);
+        alert('Failed to remove mapping');
+    }
+}
+
+// Event listeners
+document.getElementById('select-class').addEventListener('change', (e) => {
+    loadAvailableVMs(e.target.value);
+});
+
+document.getElementById('select-vm').addEventListener('change', (e) => {
+    const selectedOption = e.target.options[e.target.selectedIndex];
+    const node = selectedOption.dataset.node || '';
+    document.getElementById('vm-node').value = node;
+});
+
+document.getElementById('add-vm-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    
+    const classId = document.getElementById('select-class').value;
+    const vmid = document.getElementById('select-vm').value;
+    const node = document.getElementById('vm-node').value;
+    
+    if (!classId || !vmid) {
+        alert('Please select both a class and a VM');
+        return;
+    }
+    
+    try {
+        const resp = await fetch('/api/vm-class-mappings', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                class_id: parseInt(classId),
+                vmid: parseInt(vmid),
+                node: node
+            })
+        });
+        
+        const data = await resp.json();
+        
+        if (data.ok) {
+            alert(data.message);
+            // Reset form
+            document.getElementById('add-vm-form').reset();
+            document.getElementById('select-vm').disabled = true;
+            document.getElementById('select-vm').innerHTML = '<option value="">-- Select Class First --</option>';
+            document.getElementById('vm-node').value = '';
+            // Reload mappings
+            loadMappings();
+        } else {
+            alert('Error: ' + data.error);
+        }
+    } catch (e) {
+        console.error('Failed to add mapping:', e);
+        alert('Failed to add VM to class');
+    }
+});
+
+// Load data on page load
+loadClasses();
+loadMappings();
+</script>
+{% endblock %}

@@ -423,7 +423,7 @@ def get_class(class_id: int):
     
     # Check access permissions
     if not user.is_adminer:
-        if user.is_teacher and class_.teacher_id != user.id:
+        if user.is_teacher and not class_.is_owner(user):
             return jsonify({"ok": False, "error": "Access denied"}), 403
         if not user.is_teacher:
             # Student - check if they have a VM in this class
@@ -450,7 +450,7 @@ def update_class_route(class_id: int):
         return jsonify({"ok": False, "error": "Class not found"}), 404
     
     # Check ownership
-    if not user.is_adminer and class_.teacher_id != user.id:
+    if not user.is_adminer and not class_.is_owner(user):
         return jsonify({"ok": False, "error": "Access denied"}), 403
     
     data = request.get_json()
@@ -492,7 +492,7 @@ def delete_class_route(class_id: int):
         return jsonify({"ok": False, "error": "Class not found"}), 404
     
     # Check ownership
-    if not user.is_adminer and class_.teacher_id != user.id:
+    if not user.is_adminer and not class_.is_owner(user):
         logger.error(f"User {user.username} not authorized to delete class {class_id}")
         return jsonify({"ok": False, "error": "Access denied"}), 403
     
@@ -632,7 +632,7 @@ def manage_invite(class_id: int):
     if not class_:
         return jsonify({"ok": False, "error": "Class not found"}), 404
     
-    if not user.is_adminer and class_.teacher_id != user.id:
+    if not user.is_adminer and not class_.is_owner(user):
         return jsonify({"ok": False, "error": "Access denied"}), 403
     
     data = request.get_json() or {}
@@ -663,7 +663,7 @@ def disable_invite(class_id: int):
     if not class_:
         return jsonify({"ok": False, "error": "Class not found"}), 404
     
-    if not user.is_adminer and class_.teacher_id != user.id:
+    if not user.is_adminer and not class_.is_owner(user):
         return jsonify({"ok": False, "error": "Access denied"}), 403
     
     success, msg = invalidate_class_invite(class_id)
@@ -795,7 +795,7 @@ def list_class_vms(class_id: int):
         })
     
     # Teacher/adminer sees all VMs
-    if not user.is_adminer and class_.teacher_id != user.id:
+    if not user.is_adminer and not class_.is_owner(user):
         return jsonify({"ok": False, "error": "Access denied"}), 403
     
     assignments = get_vm_assignments_for_class(class_id)
@@ -829,7 +829,7 @@ def create_class_vms(class_id: int):
     if not class_:
         return jsonify({"ok": False, "error": "Class not found"}), 404
     
-    if not user.is_adminer and class_.teacher_id != user.id:
+    if not user.is_adminer and not class_.is_owner(user):
         return jsonify({"ok": False, "error": "Access denied"}), 403
     
     data = request.get_json()
@@ -1063,7 +1063,7 @@ def promote_editable_to_base_template(class_id: int):
         return jsonify({"ok": False, "error": "Class not found"}), 404
 
     # Ownership check
-    if not user.is_adminer and class_.teacher_id != user.id:
+    if not user.is_adminer and not class_.is_owner(user):
         return jsonify({"ok": False, "error": "Access denied"}), 403
 
     # Find Teacher Editable VM (is_template_vm=False, preferably assigned to teacher)
@@ -1228,7 +1228,7 @@ def redeploy_student_vms(class_id: int):
         return jsonify({"ok": False, "error": "Class not found"}), 404
 
     # Ownership check
-    if not user.is_adminer and class_.teacher_id != user.id:
+    if not user.is_adminer and not class_.is_owner(user):
         return jsonify({"ok": False, "error": "Access denied"}), 403
     
     # Get class base template
@@ -1364,7 +1364,7 @@ def assign_vm_route(class_id: int, assignment_id: int):
     if not class_:
         return jsonify({"ok": False, "error": "Class not found"}), 404
     
-    if not user.is_adminer and class_.teacher_id != user.id:
+    if not user.is_adminer and not class_.is_owner(user):
         return jsonify({"ok": False, "error": "Access denied"}), 403
     
     data = request.get_json()
@@ -1393,7 +1393,7 @@ def unassign_vm_route(class_id: int, assignment_id: int):
     if not class_:
         return jsonify({"ok": False, "error": "Class not found"}), 404
     
-    if not user.is_adminer and class_.teacher_id != user.id:
+    if not user.is_adminer and not class_.is_owner(user):
         return jsonify({"ok": False, "error": "Access denied"}), 403
     
     success, msg = unassign_vm(assignment_id)
@@ -1416,7 +1416,7 @@ def delete_vm_route(class_id: int, assignment_id: int):
     if not class_:
         return jsonify({"ok": False, "error": "Class not found"}), 404
     
-    if not user.is_adminer and class_.teacher_id != user.id:
+    if not user.is_adminer and not class_.is_owner(user):
         return jsonify({"ok": False, "error": "Access denied"}), 403
     
     # Get assignment to find Proxmox VMID
@@ -1469,7 +1469,7 @@ def auto_assign_vms_route(class_id: int):
     if not class_:
         return jsonify({"ok": False, "error": "Class not found"}), 404
     
-    if not user.is_adminer and class_.teacher_id != user.id:
+    if not user.is_adminer and not class_.is_owner(user):
         return jsonify({"ok": False, "error": "Access denied"}), 403
     
     assigned_count = auto_assign_vms_to_waiting_students(class_id)
@@ -1596,7 +1596,7 @@ def push_updates(class_id: int):
     if not class_:
         return jsonify({"ok": False, "error": "Class not found"}), 404
     
-    if not user.is_adminer and class_.teacher_id != user.id:
+    if not user.is_adminer and not class_.is_owner(user):
         return jsonify({"ok": False, "error": "Access denied"}), 403
     
     # Find Teacher VM 1 (editable, is_template_vm=False)
@@ -1795,7 +1795,7 @@ def qcow2_deploy_class_vms(class_id: int):
         return jsonify({"ok": False, "error": "Class not found"}), 404
     
     # Ownership check
-    if not user.is_adminer and class_.teacher_id != user.id:
+    if not user.is_adminer and not class_.is_owner(user):
         return jsonify({"ok": False, "error": "Access denied"}), 403
     
     # Get template info
@@ -1888,7 +1888,7 @@ def save_and_deploy(class_id: int):
         return jsonify({"ok": False, "error": "Class not found"}), 404
     
     # Ownership check
-    if not user.is_adminer and class_.teacher_id != user.id:
+    if not user.is_adminer and not class_.is_owner(user):
         return jsonify({"ok": False, "error": "Access denied"}), 403
     
     # Find teacher VM

@@ -71,6 +71,10 @@
                    href="{{ url_for('admin_mappings.admin_mappings') }}">
                     <i class="bi bi-arrow-left-right"></i> Mappings
                 </a>
+                <a class="sidebar-link {% if request.endpoint == 'admin_vm_mappings.vm_class_mappings' %}sidebar-link-active{% endif %}"
+                   href="{{ url_for('admin_vm_mappings.vm_class_mappings') }}">
+                    <i class="bi bi-diagram-3"></i> VM:Class Mappings
+                </a>
                 <a class="sidebar-link {% if request.endpoint == 'admin_diagnostics.admin_probe' %}sidebar-link-active{% endif %}"
                    href="{{ url_for('admin_diagnostics.admin_probe') }}">
                     <i class="bi bi-activity"></i> Proxmox probe

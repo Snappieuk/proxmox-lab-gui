@@ -165,6 +165,9 @@
             <a class="sidebar-link" href="#students" onclick="showSection('students'); return false;">
                 <i class="bi bi-people"></i> Students
             </a>
+            <a class="sidebar-link" href="#owners" onclick="showSection('owners'); return false;">
+                <i class="bi bi-person-badge"></i> Co-Owners
+            </a>
         {% else %}
             <!-- Student View -->
             <a class="sidebar-link sidebar-link-active" href="#my-vm" onclick="showSection('my-vm'); return false;">
@@ -365,6 +368,41 @@
                     <div id="students-list">
                         <p style="color: #666;">Loading...</p>
                     </div>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+        
+        <!-- Co-Owners Section (Teacher/Admin) -->
+        {% if can_manage %}
+        <div id="owners-section" class="content-section" style="display: none;">
+            <div class="page-header">
+                <div>
+                    <h1><i class="bi bi-person-badge"></i> Class Co-Owners</h1>
+                    <p class="page-subtitle">Manage who can co-teach and manage this class</p>
+                </div>
+                <div>
+                    <button onclick="showAddCoOwnerModal()" class="btn-primary">
+                        <i class="bi bi-person-plus"></i> Add Co-Owner
+                    </button>
+                </div>
+            </div>
+            
+            <div class="content-card">
+                <h3 style="margin: 0 0 1rem 0;">Primary Teacher</h3>
+                <div style="display: flex; align-items: center; gap: 1rem; padding: 1rem; background: #f5f5f5; border-radius: 6px; margin-bottom: 2rem;">
+                    <i class="bi bi-star-fill" style="font-size: 1.5rem; color: #ffc107;"></i>
+                    <div>
+                        <div style="font-weight: 600; font-size: 1.1rem;" id="primary-teacher-name">{{ class_.teacher.username if class_.teacher else 'Unknown' }}</div>
+                        <div style="color: #666; font-size: 0.9rem;">Creator and primary owner</div>
+                    </div>
+                </div>
+                
+                <h3 style="margin: 2rem 0 1rem 0;">Co-Owners</h3>
+                <div id="co-owners-list">
+                    <p style="text-align: center; color: #666; padding: 2rem;">
+                        <i class="bi bi-hourglass-split"></i> Loading...
+                    </p>
                 </div>
             </div>
         </div>
@@ -1560,6 +1598,169 @@ document.addEventListener('DOMContentLoaded', () => {
     loadTemplateInfo();
     loadStudentsList();
 });
+
+// Co-Owners Management
+let availableTeachers = [];
+
+async function loadCoOwners() {
+    try {
+        const resp = await fetch(`/api/classes/{{ class_.id }}/co-owners`);
+        const data = await resp.json();
+        
+        if (data.ok) {
+            const list = document.getElementById('co-owners-list');
+            
+            if (!data.co_owners || data.co_owners.length === 0) {
+                list.innerHTML = `
+                    <p style="text-align: center; color: #666; padding: 2rem;">
+                        No co-owners added yet. Click "Add Co-Owner" to grant others access to manage this class.
+                    </p>
+                `;
+            } else {
+                list.innerHTML = data.co_owners.map(co => `
+                    <div style="display: flex; align-items: center; justify-content: space-between; padding: 1rem; border: 1px solid #e0e0e0; border-radius: 6px; margin-bottom: 0.5rem;">
+                        <div style="display: flex; align-items: center; gap: 1rem;">
+                            <i class="bi bi-person-circle" style="font-size: 1.5rem; color: #0078d4;"></i>
+                            <div>
+                                <div style="font-weight: 600;">${co.username}</div>
+                                <div style="color: #666; font-size: 0.9rem;">${co.role}</div>
+                            </div>
+                        </div>
+                        <button onclick="removeCoOwner(${co.id}, '${co.username}')" class="btn-secondary" style="background: #dc3545; color: white;">
+                            <i class="bi bi-trash"></i> Remove
+                        </button>
+                    </div>
+                `).join('');
+            }
+        }
+    } catch (e) {
+        console.error('Failed to load co-owners:', e);
+        document.getElementById('co-owners-list').innerHTML = `
+            <p style="text-align: center; color: #dc3545; padding: 2rem;">
+                Failed to load co-owners
+            </p>
+        `;
+    }
+}
+
+async function loadAvailableTeachers() {
+    try {
+        const resp = await fetch('/api/users/teachers');
+        const data = await resp.json();
+        if (data.ok) {
+            availableTeachers = data.teachers || [];
+        }
+    } catch (e) {
+        console.error('Failed to load teachers:', e);
+    }
+}
+
+function showAddCoOwnerModal() {
+    // Create modal if not exists
+    if (!document.getElementById('add-co-owner-modal')) {
+        const modalHTML = `
+            <div id="add-co-owner-modal" class="modal" style="display: none;">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h3>Add Co-Owner</h3>
+                        <button class="modal-close" onclick="closeAddCoOwnerModal()">&times;</button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="form-group">
+                            <label>Select Teacher/Admin</label>
+                            <select id="co-owner-select" class="form-control">
+                                <option value="">-- Select a user --</option>
+                            </select>
+                        </div>
+                        <div class="form-actions">
+                            <button class="btn-secondary" onclick="closeAddCoOwnerModal()">Cancel</button>
+                            <button class="btn-primary" onclick="addCoOwner()">
+                                <i class="bi bi-person-plus"></i> Add Co-Owner
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+        document.body.insertAdjacentHTML('beforeend', modalHTML);
+    }
+    
+    // Populate dropdown
+    const select = document.getElementById('co-owner-select');
+    select.innerHTML = '<option value="">-- Select a user --</option>' +
+        availableTeachers.map(t => `<option value="${t.id}">${t.username} (${t.role})</option>`).join('');
+    
+    document.getElementById('add-co-owner-modal').style.display = 'flex';
+}
+
+function closeAddCoOwnerModal() {
+    document.getElementById('add-co-owner-modal').style.display = 'none';
+}
+
+async function addCoOwner() {
+    const userId = document.getElementById('co-owner-select').value;
+    
+    if (!userId) {
+        showAlert('Please select a user', 'error');
+        return;
+    }
+    
+    try {
+        const resp = await fetch(`/api/classes/{{ class_.id }}/co-owners`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({user_id: parseInt(userId)})
+        });
+        
+        const data = await resp.json();
+        
+        if (data.ok) {
+            showAlert(data.message, 'success');
+            closeAddCoOwnerModal();
+            loadCoOwners();
+        } else {
+            showAlert('Error: ' + data.error, 'error');
+        }
+    } catch (e) {
+        console.error('Failed to add co-owner:', e);
+        showAlert('Failed to add co-owner', 'error');
+    }
+}
+
+async function removeCoOwner(userId, username) {
+    if (!confirm(`Remove ${username} as co-owner?`)) {
+        return;
+    }
+    
+    try {
+        const resp = await fetch(`/api/classes/{{ class_.id }}/co-owners/${userId}`, {
+            method: 'DELETE'
+        });
+        
+        const data = await resp.json();
+        
+        if (data.ok) {
+            showAlert(data.message, 'success');
+            loadCoOwners();
+        } else {
+            showAlert('Error: ' + data.error, 'error');
+        }
+    } catch (e) {
+        console.error('Failed to remove co-owner:', e);
+        showAlert('Failed to remove co-owner', 'error');
+    }
+}
+
+// Load co-owners when owners section is shown
+const originalShowSection = showSection;
+showSection = function(section) {
+    originalShowSection(section);
+    if (section === 'owners') {
+        loadCoOwners();
+        loadAvailableTeachers();
+    }
+};
+
 {% endif %}
 </script>
 

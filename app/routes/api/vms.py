@@ -58,6 +58,11 @@ def api_vms():
         # Augment with RDP availability
         _augment_rdp_availability(vms)
         
+        # For admins, add mapped user information
+        if is_admin_user(username):
+            for vm in vms:
+                vm['mapped_to'] = _get_vm_mapped_user(vm['vmid'])
+        
         # Trigger background refresh if requested
         if force_refresh:
             from app.services.background_sync import trigger_immediate_sync
@@ -143,6 +148,21 @@ def _resolve_user_owned_vmids(username: str) -> set:
         logger.exception("Failed to gather VM assignments for %s", username)
 
     return owned
+
+
+def _get_vm_mapped_user(vmid: int) -> str:
+    """Get the username that owns this VM from VMAssignment table.
+    
+    Returns username or 'Nobody' if not assigned.
+    """
+    try:
+        assignment = VMAssignment.query.filter_by(proxmox_vmid=vmid).first()
+        if assignment and assignment.assigned_user_id:
+            user = User.query.get(assignment.assigned_user_id)
+            return user.username if user else 'Nobody'
+    except Exception:
+        logger.exception("Failed to check VM assignment for VMID %d", vmid)
+    return 'Nobody'
 
 
 def _augment_rdp_availability(vms: list):
