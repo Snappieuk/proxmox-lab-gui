@@ -75,10 +75,11 @@ def create_app(config=None):
         from flask import request, jsonify
         import traceback
         
+        # Log all errors with the URL that caused them
+        logger.error(f"Error on {request.method} {request.path}: {error}", exc_info=True)
+        
         # Only apply to /api/ routes
         if request.path.startswith('/api/'):
-            logger.error(f"API error on {request.path}: {error}", exc_info=True)
-            
             # Get HTTP status code if available
             status_code = getattr(error, 'code', 500)
             
