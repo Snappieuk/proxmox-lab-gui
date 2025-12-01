@@ -502,8 +502,11 @@ def has_rdp_port_open(ip: str) -> bool:
     Returns:
         True if IP is in the RDP hosts cache, False otherwise
     """
-    global _rdp_hosts_cache
-    return ip in _rdp_hosts_cache
+    global _rdp_hosts_cache, _rdp_hosts_cache_time
+    result = ip in _rdp_hosts_cache
+    cache_age = time.time() - _rdp_hosts_cache_time if _rdp_hosts_cache_time else None
+    logger.debug(f"RDP check for {ip}: {result} (cache has {len(_rdp_hosts_cache)} entries, age: {cache_age:.1f}s)" if cache_age else f"RDP check for {ip}: {result} (cache empty)")
+    return result
 
 
 def get_rdp_cache_time() -> float:
