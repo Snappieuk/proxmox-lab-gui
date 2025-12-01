@@ -9,9 +9,9 @@ import logging
 from flask import Blueprint, jsonify, request, session
 
 from app.utils.decorators import login_required
-from app.services.user_manager import is_admin_user, get_current_user
-from app.models import db, Class, VMAssignment
-from app.services.class_service import get_class_by_id
+from app.services.user_manager import is_admin_user
+from app.models import db, Class, VMAssignment, User
+from app.services.class_service import get_class_by_id, get_user_by_username
 
 logger = logging.getLogger(__name__)
 
@@ -174,7 +174,7 @@ def get_available_vms_for_class(class_id: int):
     
     # For teachers (non-admins), filter to only VMs they personally own
     if not is_admin_user(user):
-        from app.services.proxmox_client import _resolve_user_owned_vmids
+        from app.routes.api.vms import _resolve_user_owned_vmids
         owned_vmids = _resolve_user_owned_vmids(user)
         # Filter to VMs the teacher owns that aren't already in the class and aren't templates
         available_vms = [
