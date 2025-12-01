@@ -348,7 +348,9 @@ class TestIntegrationWithExistingCode:
         # Test that existing sanitization works
         # Our new module uses similar inline logic
         name1 = sanitize_vm_name("Test VM 123!")
-        assert name1.islower() or name1.replace('-', '').isalnum()
+        # Sanitized name should be lowercase and only contain alphanumeric chars and hyphens
+        assert name1.islower()
+        assert all(c.isalnum() or c == '-' for c in name1)
         
         name2 = sanitize_vm_name("with--double--dashes")
         assert "--" not in name2

@@ -50,6 +50,10 @@ from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
+# Default Proxmox storage paths (can be overridden via storage_path parameter)
+DEFAULT_TEMPLATE_STORAGE_PATH = "/var/lib/vz/images/template"
+DEFAULT_VM_IMAGES_PATH = "/var/lib/vz/images"
+
 
 @dataclass
 class CloudInitOptions:
@@ -114,7 +118,7 @@ def _run_command(
     
     if dry_run:
         logger.info(f"[DRY RUN] Would execute: {cmd_str}")
-        return subprocess.CompletedProcess(cmd, 0, stdout=b"", stderr=b"")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
     
     try:
         result = subprocess.run(
@@ -684,8 +688,8 @@ def bulk_clone_from_template(
     if storage_path:
         base_dir = Path(storage_path)
     else:
-        # Default Proxmox storage paths
-        base_dir = Path(f"/var/lib/vz/images/template")
+        # Use default Proxmox storage path for templates
+        base_dir = Path(DEFAULT_TEMPLATE_STORAGE_PATH)
     
     if not dry_run:
         base_dir.mkdir(parents=True, exist_ok=True)
@@ -764,7 +768,8 @@ def bulk_clone_from_template(
             if storage_path:
                 overlay_dir = Path(storage_path) / str(vmid)
             else:
-                overlay_dir = Path(f"/var/lib/vz/images/{vmid}")
+                # Use default Proxmox VM images path
+                overlay_dir = Path(DEFAULT_VM_IMAGES_PATH) / str(vmid)
             
             if not dry_run:
                 overlay_dir.mkdir(parents=True, exist_ok=True)
