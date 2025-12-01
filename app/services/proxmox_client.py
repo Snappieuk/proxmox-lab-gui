@@ -1054,7 +1054,33 @@ def _build_vm_dict(raw: Dict[str, Any], skip_ips: bool = False) -> Dict[str, Any
                 # For stopped VMs or LXC, trust cache
                 ip = cached_ip
         
-        # Second: For LXC, try direct API lookup (works for static IPs)
+        # Second: For QEMU, try guest agent network interface API (works when guest agent running)
+        if not ip and vmtype == "qemu" and status == "running":
+            try:
+                proxmox = get_proxmox_admin()
+                # Try to get network interfaces from guest agent
+                result = proxmox.nodes(node).qemu(vmid).agent('network-get-interfaces').get()
+                if result and 'result' in result:
+                    interfaces = result['result']
+                    # Look for first non-loopback IPv4 address
+                    for iface in interfaces:
+                        if iface.get('name') in ('lo', 'loopback'):
+                            continue
+                        ip_addresses = iface.get('ip-addresses', [])
+                        for addr in ip_addresses:
+                            if addr.get('ip-address-type') == 'ipv4':
+                                found_ip = addr.get('ip-address')
+                                if found_ip and not found_ip.startswith('127.'):
+                                    ip = found_ip
+                                    logger.debug(f"QEMU {vmid} ({cluster_id}): Found IP via guest agent: {ip}")
+                                    _cache_ip_to_db(cluster_id, vmid, ip)
+                                    break
+                        if ip:
+                            break
+            except Exception as e:
+                logger.debug(f"QEMU {vmid} ({cluster_id}): Guest agent network lookup failed: {e}")
+        
+        # Third: For LXC, try direct API lookup (works for static IPs)
         if not ip and vmtype == "lxc":
             # LXC containers: network config API
             ip = _lookup_vm_ip(node, vmid, vmtype)
@@ -1071,14 +1097,15 @@ def _build_vm_dict(raw: Dict[str, Any], skip_ips: bool = False) -> Dict[str, Any
         # - Frontend will show "Fetching..." until scan completes
     
     # Check if RDP port is available
-    # - All Windows VMs assumed to have RDP (default enabled)
+    # - All Windows VMs assumed to have RDP (default enabled) when running
     # - Any other VM with port 3389 open (e.g., Linux with xrdp)
     rdp_available = False
-    if ip and ip not in ("N/A", "Fetching...", ""):
+    if ip and ip not in ("N/A", "Fetching...", "") and status == "running":
         if category == "windows":
-            rdp_available = True  # Windows always has RDP
+            rdp_available = True  # Windows always has RDP when running
         else:
-            rdp_available = has_rdp_port_open(ip)  # Check non-Windows VMs via scan cache
+            # For non-Windows VMs, check if RDP port is actually open
+            rdp_available = has_rdp_port_open(ip)  # Check via scan cache
 
     return {
         "vmid": vmid,

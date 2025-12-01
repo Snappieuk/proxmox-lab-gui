@@ -91,6 +91,15 @@ def create_app(config=None):
         # For non-API routes, use default Flask error handling
         raise error
     
+    # Add favicon route to prevent 404 errors
+    @app.route('/favicon.ico')
+    def favicon():
+        """Favicon endpoint - return 204 No Content to prevent errors."""
+        from flask import make_response
+        response = make_response('', 204)
+        response.headers['Cache-Control'] = 'public, max-age=86400'
+        return response
+    
     # Register context processor
     @app.context_processor
     def inject_admin_flag():
