@@ -79,7 +79,7 @@ def persist_vm_inventory(vms: List[Dict], cleanup_missing: bool = True) -> int:
                     
                     if not inventory:
                         # Extremely rare - skip this VM
-                        logger.warning(f"Could not create or fetch {cluster_id}/{vmid} after race condition")
+                        #logger.warning(f"Could not create or fetch {cluster_id}/{vmid} after race condition")
                         continue
                 except Exception as e:
                     # Unexpected database error
@@ -93,14 +93,14 @@ def persist_vm_inventory(vms: List[Dict], cleanup_missing: bool = True) -> int:
             inventory.status = vm.get('status')
             # Update IP from sync (always update to capture changes, but preserve if missing)
             new_ip = vm.get('ip')
-            logger.info(f"persist_vm_inventory: VM {vmid} ({vm.get('name')}): new_ip={new_ip}, existing_ip={inventory.ip}")
+            #logger.info(f"persist_vm_inventory: VM {vmid} ({vm.get('name')}): new_ip={new_ip}, existing_ip={inventory.ip}")
             if new_ip and new_ip not in ('N/A', 'Fetching...', ''):
                 inventory.ip = new_ip
-                logger.info(f"Updated IP for VM {vmid} to: {new_ip}")
+                #logger.info(f"Updated IP for VM {vmid} to: {new_ip}")
             elif not inventory.ip:
                 # First time seeing this VM - set placeholder
                 inventory.ip = vm.get('ip') or 'N/A'
-                logger.info(f"Set placeholder IP for VM {vmid}: {inventory.ip}")
+                #logger.info(f"Set placeholder IP for VM {vmid}: {inventory.ip}")
             # Update MAC address if provided
             new_mac = vm.get('mac_address')
             if new_mac:
@@ -147,7 +147,7 @@ def persist_vm_inventory(vms: List[Dict], cleanup_missing: bool = True) -> int:
                         db.session.delete(rec)
         
         db.session.commit()
-        logger.info(f"Persisted {updated_count} VMs to inventory")
+        #logger.info(f"Persisted {updated_count} VMs to inventory")
         return updated_count
         
     except Exception as e:

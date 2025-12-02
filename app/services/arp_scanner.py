@@ -32,7 +32,6 @@ Cache:
 
 import subprocess
 import re
-import logging
 import os
 import threading
 import time
@@ -40,8 +39,6 @@ import ipaddress
 from typing import Dict, Optional, List, Union
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
-
-logger = logging.getLogger(__name__)
 
 # Module-level cache for ARP results
 _arp_cache: Dict[str, str] = {}  # mac -> ip
@@ -82,7 +79,6 @@ def get_arp_table() -> Dict[str, str]:
         )
         
         if result.returncode == 0 and result.stdout:
-            logger.debug("ip neigh output:\n%s", result.stdout)
             
             # Parse output like:
             # 10.220.15.100 dev eth0 lladdr 52:54:00:12:34:56 REACHABLE
@@ -98,21 +94,19 @@ def get_arp_table() -> Dict[str, str]:
                         mac_normalized = raw_mac.lower().replace(':', '').replace('-', '')
                         if len(mac_normalized) == 12:
                             arp_map[mac_normalized] = ip
-                            logger.debug("ARP entry: %s (%s) -> %s", raw_mac, mac_normalized, ip)
                         else:
-                            logger.warning("Invalid MAC length after normalization: %s -> %s", raw_mac, mac_normalized)
+                            pass
                     except (ValueError, IndexError):
                         continue
             
-            logger.info("ARP table (via ip neigh) contains %d entries", len(arp_map))
             return arp_map
     
     except FileNotFoundError:
-        logger.debug("ip command not found, trying arp")
+        pass
     except subprocess.TimeoutExpired:
-        logger.warning("ip neigh command timed out")
+        pass
     except Exception as e:
-        logger.debug("ip neigh failed: %s", e)
+        pass
     
     # Method 2: arp -a (traditional)
     for arp_cmd in ['/usr/sbin/arp', '/sbin/arp', 'arp']:
@@ -127,8 +121,6 @@ def get_arp_table() -> Dict[str, str]:
             if result.returncode != 0:
                 continue
             
-            logger.debug("arp -a output:\n%s", result.stdout)
-            
             # Parse output like:
             # ? (192.168.1.100) at 52:54:00:12:34:56 [ether] on eth0
             for line in result.stdout.splitlines():
@@ -139,23 +131,20 @@ def get_arp_table() -> Dict[str, str]:
                     ip = ip_match.group(1)
                     mac = mac_match.group(0).lower().replace(':', '').replace('-', '')
                     arp_map[mac] = ip
-                    logger.debug("ARP entry: %s -> %s", mac, ip)
             
-            logger.info("ARP table (via %s) contains %d entries", arp_cmd, len(arp_map))
             return arp_map
         
         except FileNotFoundError:
             continue
         except subprocess.TimeoutExpired:
-            logger.warning("%s command timed out", arp_cmd)
+            pass
         except Exception as e:
-            logger.debug("%s failed: %s", arp_cmd, e)
+            pass
     
     # Method 3: /proc/net/arp (Linux fallback)
     try:
         with open('/proc/net/arp', 'r') as f:
             lines = f.readlines()
-            logger.debug("/proc/net/arp output:\n%s", ''.join(lines))
             
             # Skip header line
             for line in lines[1:]:
@@ -165,17 +154,14 @@ def get_arp_table() -> Dict[str, str]:
                     mac = parts[3].lower().replace(':', '').replace('-', '')
                     if len(mac) == 12 and mac != '000000000000':
                         arp_map[mac] = ip
-                        logger.debug("ARP entry: %s -> %s", mac, ip)
         
-        logger.info("ARP table (via /proc/net/arp) contains %d entries", len(arp_map))
         return arp_map
     
     except FileNotFoundError:
-        logger.warning("/proc/net/arp not found")
+        pass
     except Exception as e:
-        logger.error("Failed to read /proc/net/arp: %s", e)
+        pass
     
-    logger.warning("All ARP table methods failed, returning empty table")
     return arp_map
 
 
@@ -204,12 +190,6 @@ def broadcast_ping(subnet: str = "192.168.1.255", count: int = 1) -> bool:
                 timeout=5
             )
             
-            logger.info("Broadcast ping to %s: returncode=%d", subnet, result.returncode)
-            if result.stdout:
-                logger.debug("Ping stdout: %s", result.stdout[:200])
-            if result.stderr:
-                logger.debug("Ping stderr: %s", result.stderr[:200])
-            
             # Return true even if ping fails - the attempt might still populate ARP
             # Some systems don't allow broadcast ping but it still triggers ARP
             return True
@@ -217,13 +197,10 @@ def broadcast_ping(subnet: str = "192.168.1.255", count: int = 1) -> bool:
         except FileNotFoundError:
             continue
         except subprocess.TimeoutExpired:
-            logger.warning("Broadcast ping timed out")
             return False
         except Exception as e:
-            logger.warning("Broadcast ping with %s failed: %s", ping_cmd, e)
             continue
     
-    logger.warning("All ping commands failed or not found")
     return False
 
 
@@ -254,10 +231,6 @@ def parallel_ping_sweep(subnet_cidr: str, timeout_ms: int = 300, max_workers: in
         network = ipaddress.ip_network(subnet_cidr, strict=False)
         total_hosts = network.num_addresses - 2  # Exclude network and broadcast
         
-        logger.info("Starting parallel ping sweep of %s (%d hosts, %d workers%s)%s", 
-                   subnet_cidr, total_hosts, max_workers,
-                   ", checking RDP ports" if check_rdp else "",
-                   f", looking for {len(needed_macs)} MACs" if needed_macs else "")
         start_time = time.time()
         
         def ping_host(ip: str) -> bool:
@@ -310,8 +283,6 @@ def parallel_ping_sweep(subnet_cidr: str, timeout_ms: int = 300, max_workers: in
                     current_arp = get_arp_table()
                     found_macs = needed_macs.intersection(current_arp.keys())
                     if len(found_macs) == len(needed_macs):
-                        logger.info("Found all %d needed MACs after checking %d hosts, stopping early", 
-                                   len(needed_macs), checked_count)
                         # Cancel remaining futures
                         for f in future_to_ip.keys():
                             f.cancel()
@@ -322,7 +293,6 @@ def parallel_ping_sweep(subnet_cidr: str, timeout_ms: int = 300, max_workers: in
         
         # If RDP check requested, scan all alive hosts in parallel
         if check_rdp and alive_hosts:
-            logger.info("Checking RDP ports on %d alive hosts in parallel...", alive_count)
             rdp_start = time.time()
             
             with ThreadPoolExecutor(max_workers=min(100, alive_count)) as rdp_executor:
@@ -340,22 +310,12 @@ def parallel_ping_sweep(subnet_cidr: str, timeout_ms: int = 300, max_workers: in
                         rdp_hosts.add(ip)
             
             rdp_duration = time.time() - rdp_start
-            logger.info("RDP port check completed in %.2fs: %d/%d hosts have RDP open", 
-                       rdp_duration, len(rdp_hosts), alive_count)
         
         elapsed = time.time() - start_time
-        
-        if check_rdp:
-            logger.info("Parallel ping sweep completed in %.2f seconds: %d/%d hosts checked, %d alive, %d with RDP", 
-                       elapsed, checked_count, total_hosts, alive_count, len(rdp_hosts))
-        else:
-            logger.info("Parallel ping sweep completed in %.2f seconds: %d/%d hosts checked, %d alive", 
-                       elapsed, checked_count, total_hosts, alive_count)
         
         return (alive_count, rdp_hosts)
         
     except Exception as e:
-        logger.error("Parallel ping sweep failed: %s", e)
         return (0, set())
 
 
@@ -399,14 +359,11 @@ def scan_network_range(subnet_cidr: str = "10.220.8.0/21", timeout: int = 3) -> 
                     '--max-retries', '2', '--host-timeout', '3s', subnet_cidr]
         scan_type = "ICMP/TCP ping (unprivileged)"
     
-    logger.info("Starting %s scan on %s (timeout: %ds)", scan_type, subnet_cidr, timeout)
-    
     # Try nmap with different paths
     for nmap_cmd in ['/usr/bin/nmap', '/usr/local/bin/nmap', 'nmap']:
         try:
             scan_timeout = timeout + NMAP_SCAN_TIMEOUT_BUFFER
             
-            logger.info("Executing: %s %s", nmap_cmd, ' '.join(nmap_args))
             start_time = time.time()
             
             result = subprocess.run(
@@ -417,17 +374,8 @@ def scan_network_range(subnet_cidr: str = "10.220.8.0/21", timeout: int = 3) -> 
             )
             
             elapsed = time.time() - start_time
-            logger.info("nmap completed in %.2f seconds (returncode=%d)", elapsed, result.returncode)
-            
-            # Log nmap output for debugging
-            if result.stdout:
-                logger.info("nmap stdout: %s", result.stdout[:500])  # First 500 chars
-            if result.stderr:
-                logger.info("nmap stderr: %s", result.stderr[:500])
             
             if result.returncode != 0:
-                logger.warning("nmap returned non-zero: %d, stderr: %s", 
-                             result.returncode, result.stderr[:200] if result.stderr else "")
                 # Check if it's a privilege error for -PR (nmap exits with code 1)
                 # We check stderr for common privilege-related messages
                 stderr_lower = (result.stderr or "").lower()
@@ -441,7 +389,6 @@ def scan_network_range(subnet_cidr: str = "10.220.8.0/21", timeout: int = 3) -> 
                     ])
                 )
                 if is_privilege_error:
-                    logger.warning("nmap -PR requires root privileges, falling back to unprivileged scan")
                     # Retry without -PR
                     result = subprocess.run(
                         [nmap_cmd, '-sn', '-T4', '--max-retries', '1', '--host-timeout', '2s', subnet_cidr],
@@ -450,23 +397,15 @@ def scan_network_range(subnet_cidr: str = "10.220.8.0/21", timeout: int = 3) -> 
                         timeout=scan_timeout
                     )
             
-            logger.info("Network scan with nmap completed: returncode=%d", result.returncode)
-            if result.stdout:
-                # Count how many hosts were found
-                host_count = result.stdout.count("Host is up")
-                logger.info("nmap found %d hosts up", host_count)
             return True
             
         except FileNotFoundError:
             continue
         except subprocess.TimeoutExpired:
-            logger.warning("nmap scan timed out after %d seconds", scan_timeout)
             return False
         except Exception as e:
-            logger.debug("nmap scan failed: %s", e)
             continue
     
-    logger.warning("nmap not found, network scan unavailable")
     
     # Fallback: use fping if available
     for fping_cmd in ['/usr/bin/fping', '/usr/sbin/fping', 'fping']:
@@ -477,18 +416,12 @@ def scan_network_range(subnet_cidr: str = "10.220.8.0/21", timeout: int = 3) -> 
                 text=True,
                 timeout=timeout + 5
             )
-            logger.info("Network scan with fping completed: returncode=%d", result.returncode)
-            if result.stdout:
-                alive_hosts = len(result.stdout.strip().split('\n'))
-                logger.info("fping found %d alive hosts", alive_hosts)
             return True
         except FileNotFoundError:
             continue
         except Exception as e:
-            logger.debug("fping scan failed: %s", e)
             continue
     
-    logger.warning("No network scanner available (nmap/fping not found), falling back to broadcast ping")
     return False
 
 
@@ -504,12 +437,6 @@ def has_rdp_port_open(ip: str) -> bool:
     """
     global _rdp_hosts_cache, _rdp_hosts_cache_time
     result = ip in _rdp_hosts_cache
-    
-    if _rdp_hosts_cache_time > 0:
-        cache_age = time.time() - _rdp_hosts_cache_time
-        logger.debug(f"RDP check for {ip}: {result} (cache has {len(_rdp_hosts_cache)} entries, age: {cache_age:.1f}s)")
-    else:
-        logger.debug(f"RDP check for {ip}: {result} (cache has {len(_rdp_hosts_cache)} entries, never scanned)")
     
     return result
 
@@ -531,7 +458,6 @@ def invalidate_arp_cache():
     Call this after VM operations (start/stop/restart) to ensure IPs are updated.
     """
     global _arp_cache_time, _rdp_hosts_cache_time
-    logger.info("ARP cache invalidated (forced refresh on next scan)")
     _arp_cache_time = 0
     _rdp_hosts_cache_time = 0
 
@@ -560,7 +486,6 @@ def _background_scan_worker(vm_mac_map: Dict[str, str], subnets: Optional[List[s
     global _scan_in_progress, _scan_status, _arp_cache, _arp_cache_time
     
     try:
-        logger.info("Background scan started for %d VMs", len(vm_mac_map))
         
         # Update status for all VMs
         with _scan_lock:
@@ -568,18 +493,15 @@ def _background_scan_worker(vm_mac_map: Dict[str, str], subnets: Optional[List[s
                 _scan_status[key] = "Scanning network..."
         
         # Try parallel ping sweep first (most reliable for ARP population)
-        logger.info("Background: Scanning network range 10.220.8.0/21 with parallel ping sweep")
         needed_macs = set(vm_mac_map.values())  # Set of MACs we're looking for
         alive_count, rdp_hosts = parallel_ping_sweep("10.220.8.0/21", timeout_ms=300, max_workers=300, check_rdp=True, needed_macs=needed_macs)
         
         if alive_count == 0:
             # Fallback to nmap if parallel ping found nothing
-            logger.info("Background: Parallel ping found no hosts, trying nmap")
             scan_success = scan_network_range("10.220.8.0/21", timeout=1)
         
         # Get updated ARP table
         arp_table = get_arp_table()
-        logger.info("Post-scan ARP table has %d entries", len(arp_table))
         
         # Cache RDP hosts globally
         global _rdp_hosts_cache, _rdp_hosts_cache_time
@@ -596,17 +518,12 @@ def _background_scan_worker(vm_mac_map: Dict[str, str], subnets: Optional[List[s
                     _arp_cache[mac] = ip
                     _scan_status[key] = ip
                     found_count += 1
-                    logger.info("SCAN key %s (MAC %s) -> IP %s", key, mac, ip)
                 else:
                     _scan_status[key] = "Not found in ARP"
-                    logger.warning("SCAN key %s (MAC %s) not found in ARP table", key, mac)
             
             _arp_cache_time = time.time()
         
-        logger.info("Background scan complete: discovered IPs for %d/%d keys", found_count, len(vm_mac_map))
-        
     except Exception as e:
-        logger.error("Background scan failed: %s", e)
         with _scan_lock:
             for key in vm_mac_map.keys():
                 _scan_status[key] = f"Scan error: {e}"
@@ -636,19 +553,10 @@ def discover_ips_via_arp(vm_mac_map: Dict[str, str], subnets: Optional[List[str]
     if not vm_mac_map:
         return {}
     
-    logger.debug("VM MAC map: %s", vm_mac_map)
-    
     # Check if cache is still valid (1 hour TTL)
     cache_age = time.time() - _arp_cache_time
     cache_valid = cache_age < _arp_cache_ttl and not force_refresh
     
-    if cache_valid:
-        logger.debug("ARP cache is valid (age: %.1f seconds), checking for matches", cache_age)
-    else:
-        if force_refresh:
-            logger.info("Force refresh requested, invalidating cache")
-        else:
-            logger.info("ARP cache expired (age: %.1f seconds, TTL: %d seconds)", cache_age, _arp_cache_ttl)
     
     # Check if we already have matches in cache
     vm_ips: Dict[str, str] = {}
@@ -656,12 +564,9 @@ def discover_ips_via_arp(vm_mac_map: Dict[str, str], subnets: Optional[List[str]
         for key, mac in vm_mac_map.items():
             if mac in _arp_cache:
                 vm_ips[key] = _arp_cache[mac]
-                logger.debug("SCAN key %s (MAC %s) -> IP %s (cached)", key, mac, _arp_cache[mac])
     
     # If we found all IPs and cache is valid, no need to scan at all
     if len(vm_ips) == len(vm_mac_map) and cache_valid:
-        logger.info("All %d IPs found in valid cache (age: %.1f seconds), skipping network scan entirely", 
-                   len(vm_ips), cache_age)
         return vm_ips
     
     # If background mode, start scan thread and return immediately
@@ -675,22 +580,19 @@ def discover_ips_via_arp(vm_mac_map: Dict[str, str], subnets: Optional[List[str]
                     daemon=True
                 )
                 _scan_thread.start()
-                logger.info("Started background network scan")
                 
                 # Set initial status for VMs without IPs
                 for key in vm_mac_map.keys():
                     if key not in vm_ips:
                         _scan_status[key] = "Scan starting..."
             else:
-                logger.info("Background scan already in progress")
+                pass
         
         return vm_ips  # Return whatever we have cached
     
     # Synchronous mode (old behavior)
-    logger.info("Running synchronous network scan")
     
     # Try parallel ping sweep first (most reliable for ARP population)
-    logger.info("Scanning network range 10.220.8.0/21 with parallel ping sweep")
     needed_macs = set(vm_mac_map.values())  # Set of MACs we're looking for
     alive_count, rdp_hosts = parallel_ping_sweep("10.220.8.0/21", timeout_ms=300, max_workers=300, check_rdp=True, needed_macs=needed_macs)
     
@@ -698,20 +600,13 @@ def discover_ips_via_arp(vm_mac_map: Dict[str, str], subnets: Optional[List[str]
     global _rdp_hosts_cache, _rdp_hosts_cache_time
     _rdp_hosts_cache = rdp_hosts
     _rdp_hosts_cache_time = time.time()
-    logger.info("Updated RDP cache with %d hosts", len(rdp_hosts))
     
     if alive_count == 0:
         # Fallback to nmap if parallel ping found nothing
-        logger.info("Parallel ping found no hosts, trying nmap")
         scan_success = scan_network_range("10.220.8.0/21", timeout=5)
     
     # Get updated ARP table
     arp_table = get_arp_table()
-    logger.info("Post-scan ARP table has %d entries, looking for %d VM MACs", len(arp_table), len(vm_mac_map))
-    
-    # Show what MACs we're looking for vs what's in ARP table
-    logger.info("VM MACs we're looking for: %s", list(vm_mac_map.values()))
-    logger.info("Sample ARP table MACs (first 10): %s", list(arp_table.keys())[:10])
     
     # Map remaining VM MACs to IPs
     for key, mac in vm_mac_map.items():
@@ -719,19 +614,9 @@ def discover_ips_via_arp(vm_mac_map: Dict[str, str], subnets: Optional[List[str]
             continue  # Already found
         if mac in arp_table:
             vm_ips[key] = arp_table[mac]
-            logger.info("SCAN key %s (MAC %s) -> IP %s", key, mac, arp_table[mac])
         else:
-            logger.warning("SCAN key %s (MAC %s) NOT in ARP table (len=%d)", key, mac, len(arp_table))
-            # Show actual ARP table entries for comparison
-            if len(arp_table) > 0:
-                sample_entries = list(arp_table.items())[:5]
-                logger.warning("Sample ARP entries: %s", sample_entries)
-                # Check if any partial match exists
-                partial_matches = [k for k in arp_table.keys() if mac[:8] in k or k[:8] in mac]
-                if partial_matches:
-                    logger.warning("Partial MAC matches found: %s", partial_matches)
+            pass
     
-    logger.info("Discovered IPs for %d/%d keys via ARP", len(vm_ips), len(vm_mac_map))
     return vm_ips
 
 
@@ -760,7 +645,6 @@ def normalize_mac(mac: Optional[str]) -> Optional[str]:
 
 if __name__ == '__main__':
     # Test the ARP scanner
-    logging.basicConfig(level=logging.DEBUG)
     
     print("Testing ARP scanner...")
     print("\n1. Getting current ARP table:")

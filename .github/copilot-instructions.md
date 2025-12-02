@@ -3,7 +3,7 @@
 ## What this repo is
 A Flask webapp providing a lab VM portal similar to Azure Labs for self-service student VM access.
 
-**Architecture**: Modular blueprint-based Flask application with all code under `app/` directory. Uses SQLite for class management, Proxmox API for VM control, VMInventory database-first caching, and Terraform for VM deployment.
+**Architecture**: Modular blueprint-based Flask application with all code under `app/` directory. Uses SQLite for class management, Proxmox API for VM control, VMInventory database-first caching, and multiple VM deployment strategies (Terraform, legacy Python cloning, QCOW2 overlay bulk cloning).
 
 **Entry point**: `run.py` - imports `create_app()` factory from `app/` package and runs Flask with threaded mode.
 
@@ -15,9 +15,14 @@ A Flask webapp providing a lab VM portal similar to Azure Labs for self-service 
 - **VMInventory + background_sync system**: **Core architecture** - database-first design where all VM reads come from `VMInventory` table (see `DATABASE_FIRST_ARCHITECTURE.md`). Background sync daemon updates DB every 5min (full) and 30sec (quick). Provides 100x faster page loads vs direct Proxmox API calls. Code in `app/__init__.py` (lines 137-139), `app/routes/api/vms.py`, `app/services/inventory_service.py`, `app/services/background_sync.py`.
 - **Progressive UI loading**: Frontend shows "Starting..." badge for VMs that are running but have no IP yet. Only transitions to "Running" after IP is discovered. Polls at 2s and 10s intervals after VM start, background sync triggers IP discovery 15s after start operation.
 - **IP discovery workflow**: Multi-tier hierarchy - VMInventory DB cache → Proxmox guest agent `network-get-interfaces` API → LXC `.interfaces.get()` → ARP scanner with nmap → RDP port 3389 validation. Background thread triggers immediate IP sync 15 seconds after VM start (allows boot time before network check).
-- **Terraform VM deployment**: Primary deployment method (see `terraform/README.md`) replaces legacy Python cloning. Provides 10x speed improvement, parallel deployment, automatic VMID allocation, idempotency. Located at `app/services/terraform_service.py`.
-- **Legacy Python cloning**: Old `clone_vms_for_class()` function (~800 lines in `app/services/proxmox_operations.py`) exists but is NOT used - Terraform handles all VM deployment. May be removed in future cleanup.
-- **Mappings.json system**: **DEPRECATED - Should be migrated to database**. Currently reads `app/mappings.json` to map Proxmox users → VMIDs. This should be replaced with database-backed VMAssignment records. The User model already has `vm_assignments` relationship - mappings.json is redundant.
+- **VM Deployment strategies** (3 options, choose based on use case):
+  - **QCOW2 bulk cloning** (PRIMARY, fastest): Uses overlay disks with backing-file references. Located at `app/services/qcow2_bulk_cloner.py` and `app/services/class_vm_service.py`. Requires SSH to Proxmox nodes. Provides 100x speed improvement over traditional cloning, parallel deployment, no template locking. Used by class-based lab workflow.
+  - **Terraform** (alternative): Located at `app/services/terraform_service.py`. Provides 10x speed improvement, parallel deployment, automatic VMID allocation, idempotency. See `terraform/README.md`.
+  - **Legacy Python cloning** (deprecated): Old `clone_vms_for_class()` function (~800 lines in `app/services/proxmox_operations.py`) exists but is NOT used. May be removed in future cleanup.
+- **Class co-owners feature** (see `CLASS_CO_OWNERS.md`): Teachers can grant other teachers/admins full class management permissions. Uses many-to-many relationship via `class_co_owners` association table. Check permissions with `Class.is_owner(user)` method.
+- **Template publishing workflow**: Teachers can publish VM changes to class template, then propagate to all student VMs. Located at `app/routes/api/publish_template.py`. Long-running background operation that copies disk changes via QCOW2 rebasing.
+- **User VM assignments**: Direct VM→user mappings outside class context. Located at `app/routes/api/user_vm_assignments.py`. Replaces legacy `mappings.json` system. All assignments use VMAssignment table with `class_id=NULL` for direct assignments.
+- **Mappings.json system**: **DEPRECATED - Being migrated to database**. Currently reads `app/mappings.json` to map Proxmox users → VMIDs. This should be replaced with database-backed VMAssignment records. The User model already has `vm_assignments` relationship - mappings.json is redundant.
 - **Authentication model**: **Proxmox users = Admins only**. Going forward, no application users (students/teachers) should have Proxmox accounts. All non-admin users managed via SQLite database.
 
 ## Architecture patterns
@@ -75,12 +80,18 @@ admin/
   clusters.py    → /admin/clusters (add/edit Proxmox clusters)
   diagnostics.py → /admin (probe nodes, view system info)
   users.py       → /admin/users (manage local users/roles)
+  vm_class_mappings.py → /admin/vm-class-mappings (manage VM↔class assignments)
 api/
   vms.py         → /api/vms (fetch VM list), /api/vm/<vmid>/start|stop|status|ip
   classes.py     → /api/classes (CRUD), /api/class/<id>/pool, /api/class/<id>/assign
+  class_owners.py → /api/classes/<id>/co-owners (GET/POST/DELETE co-owner management)
+  class_template.py → /api/class/<id>/template/* (reimage, save, push operations)
+  publish_template.py → /api/classes/<id>/publish-template (teacher→student VM propagation)
+  user_vm_assignments.py → /api/user-vm-assignments (direct VM assignments, no class)
+  vm_class_mappings.py → /api/vm-class-mappings (bulk assign VMs to classes)
   rdp.py         → /rdp/<vmid>.rdp (download RDP file)
   ssh.py         → /ssh/<vmid> (WebSocket terminal, requires flask-sock)
-  mappings.py    → /api/mappings (CRUD for mappings.json)
+  mappings.py    → /api/mappings (CRUD for mappings.json - DEPRECATED)
   clusters.py    → /api/clusters/switch (change active cluster)
   templates.py   → /api/templates (list templates, by-name lookup, node distribution, stats)
   sync.py        → /api/sync/status|trigger|inventory/summary (VMInventory sync control)
@@ -116,13 +127,28 @@ api/
 - **Template replication**: `replicate_templates_to_all_nodes()` – still useful for multi-node clusters
 - Multi-cluster aware: Takes `cluster_ip` param, looks up cluster by IP in `CLUSTERS` config
 
-**`app/services/terraform_service.py`** (NEW - Terraform-based VM deployment, ~480 lines):
-- **Primary deployment method**: `deploy_class_vms()` – deploys teacher + student VMs in parallel using Terraform
+**`app/services/terraform_service.py`** (Terraform-based VM deployment, ~480 lines):
+- **Alternative deployment method**: `deploy_class_vms()` – deploys teacher + student VMs in parallel using Terraform
 - **Node selection**: `_get_best_nodes()` – queries Proxmox for least-loaded nodes
 - **Workspace isolation**: Each class gets isolated Terraform workspace in `terraform/classes/<class_id>/`
 - **State management**: `get_class_vms()` reads Terraform state, `destroy_class_vms()` removes all VMs
 - **Idempotent**: Safe to re-run deployment (creates only missing VMs)
 - **Benefits**: 10x faster than Python cloning, automatic VMID allocation, built-in error handling
+
+**`app/services/qcow2_bulk_cloner.py`** (QCOW2 overlay bulk cloning, ~1170 lines):
+- **PRIMARY deployment method**: Fast parallel VM cloning using QCOW2 overlay disks with backing-file references
+- **Core functions**: `bulk_clone_from_template()` (creates VM shells + overlay disks), `SSHExecutor` (SSH command execution)
+- **Why not Terraform**: Terraform provider cannot create empty VM shells with custom QCOW2 overlays - requires direct `qm` commands
+- **Benefits**: 100x speed improvement, parallel deployment, no template locking, instant disk creation
+- **Requirements**: SSH access to Proxmox nodes, QCOW2 storage backend
+- **Design**: Creates overlay files on node storage, attaches as VM disks, supports cloud-init configuration
+
+**`app/services/class_vm_service.py`** (Class VM integration layer, ~575 lines):
+- **High-level workflow**: Integrates QCOW2 bulk cloning with class management database
+- **Key functions**: `deploy_class_vms()` (creates teacher + class template + student VMs), `save_and_deploy_class_vms()` (update student VMs)
+- **Template workflow**: Original template → Teacher VM + Class base template → Student overlay VMs
+- **VMAssignment management**: Creates/updates database records for all cloned VMs
+- **SSH configuration**: `get_ssh_executor_from_config()` reads SSH credentials from environment/config
 
 **`app/services/class_service.py`** (Class management logic, ~560 lines):
 - User CRUD: `create_local_user()`, `authenticate_local_user()`, `update_user_role()`
@@ -240,9 +266,11 @@ git add . && git commit -m "Changes" && git push
 2. **Register templates**: Teacher visits `/admin/probe` to see available templates, registers them via API or DB
 3. **Create class**: Teacher creates class at `/classes/create`, selects template, sets pool size
 4. **Generate invite**: Teacher generates never-expiring or time-limited invite link (7-day default)
-5. **Clone VMs**: Teacher adds VMs to pool via Terraform (deploys teacher + student VMs in parallel)
+5. **Clone VMs**: Teacher adds VMs to pool via QCOW2 bulk cloning (preferred) or Terraform (deploys teacher + student VMs in parallel)
 6. **Student enrollment**: Students visit invite link, auto-assigned first available VM in class pool (creates VMAssignment record)
 7. **Student access**: Student sees assigned VM in `/portal`, can start/stop/revert to baseline snapshot
+8. **Template publishing**: Teacher can publish changes from their VM → class template → all student VMs via `/api/classes/<id>/publish-template`
+9. **Co-owner management**: Teacher can add co-owners (other teachers) via `/api/classes/<id>/co-owners` for shared class management
 **Note**: All users (teachers and students) are local database accounts. No Proxmox accounts needed except for admins.
 
 **Database migrations** (no formal tool, manual process):
