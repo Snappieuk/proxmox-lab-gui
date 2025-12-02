@@ -1263,7 +1263,11 @@ function viewVM(vmid) {
 // VM actions for student VMs
 async function startVm(vmid, node) {
     try {
-        const resp = await fetch(`/api/vm/${vmid}/start`, { method: 'POST' });
+        const resp = await fetch(`/api/vm/${vmid}/start`, { 
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+        });
         const data = await resp.json();
         if (!data.ok) {
             showAlert('Failed to start VM: ' + (data.error || 'Unknown error'), 'error');
@@ -1278,7 +1282,11 @@ async function startVm(vmid, node) {
 
 async function stopVm(vmid, node) {
     try {
-        const resp = await fetch(`/api/vm/${vmid}/stop`, { method: 'POST' });
+        const resp = await fetch(`/api/vm/${vmid}/stop`, { 
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+        });
         const data = await resp.json();
         if (!data.ok) {
             showAlert('Failed to stop VM: ' + (data.error || 'Unknown error'), 'error');

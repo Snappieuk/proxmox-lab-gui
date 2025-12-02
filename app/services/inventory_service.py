@@ -101,6 +101,10 @@ def persist_vm_inventory(vms: List[Dict], cleanup_missing: bool = True) -> int:
                 # First time seeing this VM - set placeholder
                 inventory.ip = vm.get('ip') or 'N/A'
                 logger.info(f"Set placeholder IP for VM {vmid}: {inventory.ip}")
+            # Update MAC address if provided
+            new_mac = vm.get('mac_address')
+            if new_mac:
+                inventory.mac_address = new_mac
             inventory.type = vm.get('type')
             inventory.category = vm.get('category')
             

@@ -213,6 +213,9 @@ document.addEventListener('DOMContentLoaded', async function() {
     document.getElementById('alter-specs-checkbox').addEventListener('change', function() {
         updateSpecsVisibility();
     });
+    
+    // Call on initial load to show specs if "None" is selected
+    updateSpecsVisibility();
 });
 
 function updateSpecsVisibility() {

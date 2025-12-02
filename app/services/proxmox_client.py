@@ -1107,6 +1107,32 @@ def _build_vm_dict(raw: Dict[str, Any], skip_ips: bool = False) -> Dict[str, Any
             # For non-Windows VMs, check if RDP port is actually open
             rdp_available = has_rdp_port_open(ip)  # Check via scan cache
 
+    # Try to get MAC address from VM config (for network interface)
+    mac_address = None
+    try:
+        proxmox = get_proxmox_admin()
+        if vmtype == "qemu":
+            config = proxmox.nodes(node).qemu(vmid).config.get()
+            net0 = config.get('net0', '')
+            # Parse MAC from net0 config (format: "virtio=XX:XX:XX:XX:XX:XX,bridge=vmbr0")
+            if '=' in net0:
+                parts = net0.split(',')
+                for part in parts:
+                    if ':' in part and len(part.replace(':', '')) >= 12:
+                        # Found MAC address
+                        mac_address = part.split('=')[-1] if '=' in part else part
+                        break
+        elif vmtype == "lxc":
+            config = proxmox.nodes(node).lxc(vmid).config.get()
+            net0 = config.get('net0', '')
+            # LXC format: "name=eth0,bridge=vmbr0,hwaddr=XX:XX:XX:XX:XX:XX,ip=dhcp,type=veth"
+            for part in net0.split(','):
+                if part.startswith('hwaddr='):
+                    mac_address = part.split('=')[1]
+                    break
+    except Exception as e:
+        logger.debug(f"Could not fetch MAC address for {vmtype} {vmid}: {e}")
+    
     return {
         "vmid": vmid,
         "node": node,
@@ -1115,6 +1141,7 @@ def _build_vm_dict(raw: Dict[str, Any], skip_ips: bool = False) -> Dict[str, Any
         "type": vmtype,      # 'qemu' or 'lxc'
         "category": category,
         "ip": ip,
+        "mac_address": mac_address,  # Add MAC address
         "rdp_available": rdp_available,
         "user_mappings": [],  # Will be populated by _enrich_with_user_mappings()
         "cluster_id": cluster_id,

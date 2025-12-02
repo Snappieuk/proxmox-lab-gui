@@ -238,7 +238,10 @@ def api_vm_start(vmid: int):
     from app.services.proxmox_service import get_proxmox_admin
     
     user = require_user()
-    cluster_id = request.json.get('cluster_id') if request.json else session.get("cluster_id", CLUSTERS[0]["id"])
+    # Handle both JSON and non-JSON requests
+    cluster_id = session.get("cluster_id", CLUSTERS[0]["id"])
+    if request.is_json and request.json:
+        cluster_id = request.json.get('cluster_id', cluster_id)
     
     try:
         # Get VM from database for validation
@@ -303,7 +306,10 @@ def api_vm_stop(vmid: int):
     from app.services.proxmox_service import get_proxmox_admin
     
     user = require_user()
-    cluster_id = request.json.get('cluster_id') if request.json else session.get("cluster_id", CLUSTERS[0]["id"])
+    # Handle both JSON and non-JSON requests
+    cluster_id = session.get("cluster_id", CLUSTERS[0]["id"])
+    if request.is_json and request.json:
+        cluster_id = request.json.get('cluster_id', cluster_id)
     
     try:
         # Get VM from database for validation

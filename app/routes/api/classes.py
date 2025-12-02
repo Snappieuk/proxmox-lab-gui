@@ -171,87 +171,135 @@ def create_new_class():
     if not class_:
         return jsonify({"ok": False, "error": msg}), 400
     
-    # If pool_size > 0, create VM shells immediately (empty VMs without disks)
-    if pool_size > 0:
-        # Get source node from template, or find first available node in cluster
-        if template_id and source_template:
+    # Always create VM shells (template + teacher + students) - even if pool_size=0
+    # Get source node from template, or find first available node in cluster
+    source_node = None
+    if template_id:
+        source_template = class_.template
+        if source_template:
             source_node = source_template.node
-        else:
-            # No template - get first available node from cluster
-            try:
-                from app.services.proxmox_service import get_proxmox_admin_for_cluster
-                from app.config import CLUSTERS
+    
+    if not source_node:
+        # No template or no node from template - get first available node from cluster
+        try:
+            from app.services.proxmox_service import get_proxmox_admin_for_cluster
+            from app.config import CLUSTERS
+            
+            # Find cluster by IP
+            cluster_id = None
+            for cluster in CLUSTERS:
+                if cluster["host"] == "10.220.15.249":
+                    cluster_id = cluster["id"]
+                    break
+            
+            if cluster_id:
+                proxmox = get_proxmox_admin_for_cluster(cluster_id)
+                nodes = proxmox.nodes.get()
+                source_node = nodes[0]['node'] if nodes else None
+            else:
+                source_node = None
+            
+            if not source_node:
+                logger.error("No nodes available in cluster")
+                return jsonify({"ok": False, "error": "No nodes available in cluster"}), 500
                 
-                # Find cluster by IP
-                cluster_id = None
-                for cluster in CLUSTERS:
-                    if cluster["host"] == "10.220.15.249":
-                        cluster_id = cluster["id"]
-                        break
-                
-                if cluster_id:
-                    proxmox = get_proxmox_admin_for_cluster(cluster_id)
-                    nodes = proxmox.nodes.get()
-                    source_node = nodes[0]['node'] if nodes else None
-                else:
-                    source_node = None
-                
-                if not source_node:
-                    logger.error("No nodes available in cluster")
-                    return jsonify({"ok": False, "error": "No nodes available in cluster"}), 500
-                    
-            except Exception as e:
-                logger.exception(f"Failed to get cluster nodes: {e}")
-                return jsonify({"ok": False, "error": f"Failed to get cluster nodes: {str(e)}"}), 500
-        
-        # Create VM shells in background thread
-        import threading
-        from flask import current_app
-        app = current_app._get_current_object()
-        
-        def _create_shells():
-            try:
-                app_ctx = app.app_context()
-                app_ctx.push()
-                
-                from app.services.proxmox_operations import create_vm_shells, populate_vm_shell_with_disk
-                from app.models import VMAssignment, db, Class
-                import re
-                
-                # Re-fetch class to get template info
-                class_obj = Class.query.get(class_.id)
-                if not class_obj:
-                    logger.error(f"Class {class_.id} not found in background thread")
-                    return
-                
-                # Sanitize class name for VM naming
-                class_prefix = re.sub(r'[^a-z0-9-]', '', name.lower().replace(' ', '-').replace('_', '-'))
-                if not class_prefix:
-                    class_prefix = f"class-{class_.id}"
-                
-                # Create 1 template VM (master copy for students)
-                logger.info(f"Creating 1 template VM for class '{name}'...")
-                template_shells = create_vm_shells(
-                    count=1,
-                    name_prefix=f"{class_prefix}-template",
+        except Exception as e:
+            logger.exception(f"Failed to get cluster nodes: {e}")
+            return jsonify({"ok": False, "error": f"Failed to get cluster nodes: {str(e)}"}), 500
+    
+    # Create VM shells in background thread
+    import threading
+    from flask import current_app
+    app = current_app._get_current_object()
+    
+    def _create_shells():
+        try:
+            app_ctx = app.app_context()
+            app_ctx.push()
+            
+            from app.services.proxmox_operations import create_vm_shells, populate_vm_shell_with_disk
+            from app.models import VMAssignment, db, Class
+            import re
+            
+            # Re-fetch class to get template info
+            class_obj = Class.query.get(class_.id)
+            if not class_obj:
+                logger.error(f"Class {class_.id} not found in background thread")
+                return
+            
+            # Sanitize class name for VM naming
+            class_prefix = re.sub(r'[^a-z0-9-]', '', name.lower().replace(' ', '-').replace('_', '-'))
+            if not class_prefix:
+                class_prefix = f"class-{class_.id}"
+            
+            # Create 1 template VM (master copy for students)
+            logger.info(f"Creating 1 template VM for class '{name}'...")
+            template_shells = create_vm_shells(
+                count=1,
+                name_prefix=f"{class_prefix}-template",
+                node=source_node,
+                cluster_ip="10.220.15.249",
+                cpu_cores=class_.cpu_cores,
+                memory_mb=class_.memory_mb
+            )
+            
+            # Register template VM
+            template_vm = None
+            template_shell = None
+            if template_shells and template_shells[0]['success']:
+                template_shell = template_shells[0]
+                template_vm = VMAssignment(
+                    class_id=class_.id,
+                    proxmox_vmid=template_shell['vmid'],
+                    node=template_shell['node'],
+                    mac_address=template_shell.get('mac_address'),
+                    status='available',
+                    is_template_vm=True  # Mark as template VM
+                )
+                db.session.add(template_vm)
+                db.session.commit()
+                logger.info(f"Created template VM {template_shell['vmid']} for class {class_.id}")
+            
+            # Create 1 teacher VM
+            logger.info(f"Creating 1 teacher VM for class '{name}'...")
+            teacher_shells = create_vm_shells(
+                count=1,
+                name_prefix=f"{class_prefix}-teacher",
+                node=source_node,
+                cluster_ip="10.220.15.249",
+                cpu_cores=class_.cpu_cores,
+                memory_mb=class_.memory_mb
+            )
+            
+            # Register teacher VM with special column
+            teacher_vm_assignment = None
+            teacher_shell = None
+            if teacher_shells and teacher_shells[0]['success']:
+                teacher_shell = teacher_shells[0]
+                teacher_vm_assignment = VMAssignment(
+                    class_id=class_.id,
+                    proxmox_vmid=teacher_shell['vmid'],
+                    node=teacher_shell['node'],
+                    mac_address=teacher_shell.get('mac_address'),
+                    status='available',
+                    is_template_vm=False,
+                    is_teacher_vm=True  # Mark as teacher VM
+                )
+                db.session.add(teacher_vm_assignment)
+                db.session.commit()
+                logger.info(f"Created teacher VM {teacher_shell['vmid']} for class {class_.id}")
+            
+            # Create student VMs (exactly pool_size VMs)
+            successful_shells = []
+            if pool_size > 0:
+                logger.info(f"Creating {pool_size} student VM shells for class '{name}'...")
+                shells = create_vm_shells(
+                    count=pool_size,
+                    name_prefix=f"{class_prefix}-student",
                     node=source_node,
                     cluster_ip="10.220.15.249",
                     cpu_cores=class_.cpu_cores,
                     memory_mb=class_.memory_mb
-                )
-                
-                # Register template VM
-                template_vm = None
-                template_shell = None
-                if template_shells and template_shells[0]['success']:
-                    template_shell = template_shells[0]
-                    template_vm = VMAssignment(
-                        class_id=class_.id,
-                        proxmox_vmid=template_shell['vmid'],
-                        node=template_shell['node'],
-                        mac_address=template_shell.get('mac_address'),
-                        status='available',
-                        is_template_vm=True  # Mark as template VM
                     )
                     db.session.add(template_vm)
                     db.session.commit()
@@ -364,10 +412,11 @@ def create_new_class():
                     app_ctx.pop()
                 except:
                     pass
-        
-        threading.Thread(target=_create_shells, daemon=True).start()
     
-    # If no template provided, return immediately (class created without VMs)
+    # Start the background thread to create VMs
+    threading.Thread(target=_create_shells, daemon=True).start()
+    
+    # If no template provided, return immediately (class created without VMs in background)
     if not template_id:
         message = f"Class created successfully"
         if pool_size > 0:
