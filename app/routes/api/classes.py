@@ -229,50 +229,133 @@ def create_new_class():
                 if not class_prefix:
                     class_prefix = f"class-{class_.id}"
                 
-                logger.info(f"Creating {pool_size} VM shells for class '{name}'...")
-                shells = create_vm_shells(
-                    count=pool_size,
-                    name_prefix=f"{class_prefix}-student",
+                # Create 1 template VM (master copy for students)
+                logger.info(f"Creating 1 template VM for class '{name}'...")
+                template_shells = create_vm_shells(
+                    count=1,
+                    name_prefix=f"{class_prefix}-template",
                     node=source_node,
                     cluster_ip="10.220.15.249",
                     cpu_cores=class_.cpu_cores,
                     memory_mb=class_.memory_mb
                 )
                 
-                # Register VM shells in database as VMAssignments
+                # Register template VM
+                template_vm = None
+                template_shell = None
+                if template_shells and template_shells[0]['success']:
+                    template_shell = template_shells[0]
+                    template_vm = VMAssignment(
+                        class_id=class_.id,
+                        proxmox_vmid=template_shell['vmid'],
+                        node=template_shell['node'],
+                        mac_address=template_shell.get('mac_address'),
+                        status='available',
+                        is_template_vm=True  # Mark as template VM
+                    )
+                    db.session.add(template_vm)
+                    db.session.commit()
+                    logger.info(f"Created template VM {template_shell['vmid']} for class {class_.id}")
+                
+                # Create 1 teacher VM
+                logger.info(f"Creating 1 teacher VM for class '{name}'...")
+                teacher_shells = create_vm_shells(
+                    count=1,
+                    name_prefix=f"{class_prefix}-teacher",
+                    node=source_node,
+                    cluster_ip="10.220.15.249",
+                    cpu_cores=class_.cpu_cores,
+                    memory_mb=class_.memory_mb
+                )
+                
+                # Register teacher VM with special column
+                teacher_vm_assignment = None
+                teacher_shell = None
+                if teacher_shells and teacher_shells[0]['success']:
+                    teacher_shell = teacher_shells[0]
+                    teacher_vm_assignment = VMAssignment(
+                        class_id=class_.id,
+                        proxmox_vmid=teacher_shell['vmid'],
+                        node=teacher_shell['node'],
+                        mac_address=teacher_shell.get('mac_address'),
+                        status='available',
+                        is_template_vm=False,
+                        is_teacher_vm=True  # Mark as teacher VM
+                    )
+                    db.session.add(teacher_vm_assignment)
+                    db.session.commit()
+                    logger.info(f"Created teacher VM {teacher_shell['vmid']} for class {class_.id}")
+                
+                # Create student VMs (exactly pool_size VMs)
                 successful_shells = []
-                for shell in shells:
-                    if shell['success']:
-                        assignment = VMAssignment(
-                            class_id=class_.id,
-                            proxmox_vmid=shell['vmid'],
-                            node=shell['node'],
-                            status='available',
-                            is_template_vm=False
-                        )
-                        db.session.add(assignment)
-                        successful_shells.append(shell)
-                
-                db.session.commit()
-                logger.info(f"Created {len(successful_shells)} VM shells for class {class_.id}")
-                
-                # If template exists, populate VM shells with disk
-                if class_obj.template:
-                    template = class_obj.template
-                    logger.info(f"Populating {len(successful_shells)} VM shells with disk from template {template.proxmox_vmid}...")
+                if pool_size > 0:
+                    logger.info(f"Creating {pool_size} student VM shells for class '{name}'...")
+                    shells = create_vm_shells(
+                        count=pool_size,
+                        name_prefix=f"{class_prefix}-student",
+                        node=source_node,
+                        cluster_ip="10.220.15.249",
+                        cpu_cores=class_.cpu_cores,
+                        memory_mb=class_.memory_mb
+                    )
                     
-                    for shell in successful_shells:
-                        success, msg = populate_vm_shell_with_disk(
-                            vmid=shell['vmid'],
-                            node=shell['node'],
-                            template_vmid=template.proxmox_vmid,
-                            template_node=template.node,
-                            cluster_ip="10.220.15.249"
-                        )
-                        if success:
-                            logger.info(f"VM {shell['vmid']} disk populated: {msg}")
-                        else:
-                            logger.error(f"Failed to populate VM {shell['vmid']} disk: {msg}")
+                    # Register student VM shells in database as VMAssignments
+                    for shell in shells:
+                        if shell['success']:
+                            assignment = VMAssignment(
+                                class_id=class_.id,
+                                proxmox_vmid=shell['vmid'],
+                                node=shell['node'],
+                                mac_address=shell.get('mac_address'),  # Store MAC address
+                                status='available',
+                                is_template_vm=False
+                            )
+                            db.session.add(assignment)
+                            successful_shells.append(shell)
+                    
+                    db.session.commit()
+                    logger.info(f"Created {len(successful_shells)} student VM shells for class {class_.id} with MAC addresses")
+                
+                # If external template exists, populate the class template VM first, then copy from it to others
+                if class_obj.template and template_shell:
+                    external_template = class_obj.template
+                    
+                    # Step 1: Populate the class template VM with disk from external template
+                    logger.info(f"Populating class template VM {template_shell['vmid']} with disk from external template {external_template.proxmox_vmid}...")
+                    success, msg = populate_vm_shell_with_disk(
+                        vmid=template_shell['vmid'],
+                        node=template_shell['node'],
+                        template_vmid=external_template.proxmox_vmid,
+                        template_node=external_template.node,
+                        cluster_ip="10.220.15.249"
+                    )
+                    
+                    if success:
+                        logger.info(f"Class template VM {template_shell['vmid']} disk populated: {msg}")
+                        
+                        # Step 2: Copy from class template VM to teacher and student VMs
+                        all_vms_to_populate = []
+                        if teacher_shell:
+                            all_vms_to_populate.append(teacher_shell)
+                        all_vms_to_populate.extend(successful_shells)
+                        
+                        logger.info(f"Populating {len(all_vms_to_populate)} VM shells with disk from class template {template_shell['vmid']}...")
+                        
+                        for shell in all_vms_to_populate:
+                            success, msg = populate_vm_shell_with_disk(
+                                vmid=shell['vmid'],
+                                node=shell['node'],
+                                template_vmid=template_shell['vmid'],
+                                template_node=template_shell['node'],
+                                cluster_ip="10.220.15.249"
+                            )
+                            if success:
+                                logger.info(f"VM {shell['vmid']} disk populated: {msg}")
+                            else:
+                                logger.error(f"Failed to populate VM {shell['vmid']} disk: {msg}")
+                    else:
+                        logger.error(f"Failed to populate class template VM {template_shell['vmid']} disk: {msg}")
+                        logger.error("Cannot populate student/teacher VMs without template disk")
                 
             except Exception as e:
                 logger.exception(f"Failed to create VM shells for class {class_.id}: {e}")
@@ -288,9 +371,10 @@ def create_new_class():
     if not template_id:
         message = f"Class created successfully"
         if pool_size > 0:
-            message += f" - creating {pool_size} VM shells in background"
+            total_vms = pool_size + 2  # pool_size students + 1 teacher + 1 template
+            message += f" - creating {total_vms} VM shells ({pool_size} student + 1 teacher + 1 template) in background"
         else:
-            message += " (no template - add VMs manually)"
+            message += " - creating 2 VMs in background (1 template + 1 teacher, no students)"
         
         logger.info(f"Class {class_.id} '{class_.name}' created without template")
         return jsonify({

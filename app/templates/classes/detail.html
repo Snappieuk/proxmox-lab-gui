@@ -1231,25 +1231,23 @@ async function saveTemplate() {
 }
 
 async function pushTemplate() {
-    if (!confirm('Push template to all VMs? This will DELETE and RECREATE all student VMs. Students will lose any changes. Are you sure?')) return;
+    if (!confirm('Push template to all VMs?\n\nThis will:\n1. Copy your teacher VM changes to the class template\n2. Update all student VMs with the new template\n\nThis operation runs in the background and may take several minutes. Are you sure?')) return;
     
-    showAlert('Pushing template to all VMs... This may take several minutes.', 'info');
+    showAlert('Publishing template changes... This runs in the background and may take several minutes.', 'info');
     
     try {
-        const resp = await fetch(`/api/class/${classId}/template/push`, { method: 'POST' });
+        const resp = await fetch(`/api/classes/${classId}/publish-template`, { method: 'POST' });
         const data = await resp.json();
         
         if (data.ok) {
-            showAlert(data.message + (data.errors.length > 0 ? '. Some errors occurred.' : ''), 'success');
-            if (data.errors.length > 0) {
-                console.error('Push errors:', data.errors);
-            }
-            refreshVMs();
+            showAlert(data.message, 'success');
+            // Refresh VMs after a delay to see updated status
+            setTimeout(() => refreshVMs(), 5000);
         } else {
-            showAlert(data.error || 'Failed to push template', 'error');
+            showAlert(data.error || 'Failed to publish template', 'error');
         }
     } catch (e) {
-        showAlert('Failed to push template', 'error');
+        showAlert('Failed to publish template: ' + e.message, 'error');
     }
 }
 

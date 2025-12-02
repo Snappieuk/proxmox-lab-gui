@@ -2295,11 +2295,31 @@ def create_vm_shells(count: int, name_prefix: str, node: str, cluster_ip: str = 
                     # No disk attached - that comes later
                 )
                 
+                # Fetch MAC address from VM config
+                mac_address = None
+                try:
+                    import time
+                    time.sleep(0.5)  # Brief delay to ensure config is written
+                    vm_config = proxmox.nodes(node).qemu(new_vmid).config.get()
+                    net0 = vm_config.get('net0', '')
+                    # Parse MAC from net0 config (format: "virtio=XX:XX:XX:XX:XX:XX,bridge=vmbr0")
+                    if '=' in net0:
+                        parts = net0.split(',')
+                        for part in parts:
+                            if ':' in part and len(part.replace(':', '')) == 12:
+                                # Found MAC address
+                                mac_address = part.split('=')[-1] if '=' in part else part
+                                break
+                    logger.info(f"VM {new_vmid} MAC address: {mac_address}")
+                except Exception as e:
+                    logger.warning(f"Failed to fetch MAC address for VM {new_vmid}: {e}")
+                
                 logger.info(f"Created VM shell: {vm_name} (VMID {new_vmid})")
                 results.append({
                     'vmid': new_vmid,
                     'name': vm_name,
                     'node': node,
+                    'mac_address': mac_address,
                     'success': True,
                     'error': None
                 })
@@ -2390,4 +2410,120 @@ def populate_vm_shell_with_disk(vmid: int, node: str, template_vmid: int, templa
     except Exception as e:
         logger.exception(f"Failed to populate VM shell {vmid} with disk: {e}")
         return False, f"Disk population failed: {str(e)}"
-        return False, None, f"Clone failed: {str(e)}"
+
+
+def remove_vm_disk(vmid: int, node: str, cluster_ip: str = None) -> Tuple[bool, str]:
+    """Remove the disk from a VM (detach and delete).
+    
+    Args:
+        vmid: VMID of the VM
+        node: Node where the VM exists
+        cluster_ip: IP of the Proxmox cluster
+        
+    Returns:
+        Tuple of (success, message)
+    """
+    target_ip = cluster_ip or CLASS_CLUSTER_IP
+    cluster_id = None
+    
+    for cluster in CLUSTERS:
+        if cluster["host"] == target_ip:
+            cluster_id = cluster["id"]
+            break
+    
+    if not cluster_id:
+        return False, f"Cluster not found for IP: {target_ip}"
+    
+    try:
+        proxmox = get_proxmox_admin_for_cluster(cluster_id)
+        
+        # Get VM config to find the disk
+        vm_config = proxmox.nodes(node).qemu(vmid).config.get()
+        
+        # Find the boot disk (usually scsi0 or virtio0)
+        disk_key = None
+        for key in ['scsi0', 'virtio0', 'sata0', 'ide0']:
+            if key in vm_config:
+                disk_key = key
+                break
+        
+        if not disk_key:
+            return False, f"No disk found in VM {vmid}"
+        
+        logger.info(f"Removing disk {disk_key} from VM {vmid}")
+        
+        # Remove the disk by setting it to "none" in the VM config
+        # This detaches and deletes the disk
+        proxmox.nodes(node).qemu(vmid).config.put(**{disk_key: 'none'})
+        
+        logger.info(f"Successfully removed disk from VM {vmid}")
+        return True, f"Disk removed from VM {vmid}"
+        
+    except Exception as e:
+        logger.exception(f"Failed to remove disk from VM {vmid}: {e}")
+        return False, f"Disk removal failed: {str(e)}"
+
+
+def copy_vm_disk(source_vmid: int, source_node: str, target_vmid: int, target_node: str, 
+                 cluster_ip: str = None) -> Tuple[bool, str]:
+    """Copy disk from source VM to target VM (target must have no disk or disk removed first).
+    
+    Args:
+        source_vmid: VMID of the source VM
+        source_node: Node where the source VM exists
+        target_vmid: VMID of the target VM
+        target_node: Node where the target VM exists
+        cluster_ip: IP of the Proxmox cluster
+        
+    Returns:
+        Tuple of (success, message)
+    """
+    target_ip = cluster_ip or CLASS_CLUSTER_IP
+    cluster_id = None
+    
+    for cluster in CLUSTERS:
+        if cluster["host"] == target_ip:
+            cluster_id = cluster["id"]
+            break
+    
+    if not cluster_id:
+        return False, f"Cluster not found for IP: {target_ip}"
+    
+    try:
+        proxmox = get_proxmox_admin_for_cluster(cluster_id)
+        
+        # Get source VM disk configuration
+        source_config = proxmox.nodes(source_node).qemu(source_vmid).config.get()
+        
+        # Find the boot disk (usually scsi0 or virtio0)
+        disk_key = None
+        disk_config = None
+        for key in ['scsi0', 'virtio0', 'sata0', 'ide0']:
+            if key in source_config:
+                disk_key = key
+                disk_config = source_config[key]
+                break
+        
+        if not disk_key or not disk_config:
+            return False, f"No disk found in source VM {source_vmid}"
+        
+        logger.info(f"Source VM disk config: {disk_key}={disk_config}")
+        
+        # Extract storage from disk config
+        storage = disk_config.split(':')[0] if ':' in disk_config else 'local-lvm'
+        
+        logger.info(f"Copying disk from VM {source_vmid} to VM {target_vmid}")
+        
+        # Clone the source disk to the target VM
+        proxmox.nodes(source_node).qemu(source_vmid).disk(disk_key).copy.post(
+            target_vmid=target_vmid,
+            target_storage=storage,
+            target_disk=disk_key
+        )
+        
+        logger.info(f"Successfully copied disk from VM {source_vmid} to VM {target_vmid}")
+        return True, f"Disk copied from VM {source_vmid} to VM {target_vmid}"
+        
+    except Exception as e:
+        logger.exception(f"Failed to copy disk from VM {source_vmid} to VM {target_vmid}: {e}")
+        return False, f"Disk copy failed: {str(e)}"

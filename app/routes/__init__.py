@@ -21,6 +21,7 @@ from app.routes.api.sync import sync_bp as api_sync_bp
 from app.routes.api.vm_class_mappings import api_vm_class_mappings_bp
 from app.routes.api.class_owners import api_class_owners_bp
 from app.routes.api.user_vm_assignments import api_user_vm_assignments_bp
+from app.routes.api.publish_template import api_publish_template_bp
 
 
 def register_blueprints(app):
@@ -45,3 +46,4 @@ def register_blueprints(app):
     app.register_blueprint(api_vm_class_mappings_bp)
     app.register_blueprint(api_class_owners_bp)
     app.register_blueprint(api_user_vm_assignments_bp)
+    app.register_blueprint(api_publish_template_bp)
