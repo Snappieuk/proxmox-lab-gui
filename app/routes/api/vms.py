@@ -13,7 +13,7 @@ from flask import Blueprint, jsonify, request, current_app, session
 
 from app.utils.decorators import login_required
 from app.models import User, VMAssignment
-from app.config import MAPPINGS_FILE, CLUSTERS
+from app.config import CLUSTERS
 
 logger = logging.getLogger(__name__)
 
@@ -129,7 +129,7 @@ def api_vm_ip(vmid: int):
 def _resolve_user_owned_vmids(username: str) -> set:
     """Resolve VMIDs the user should see from database VMAssignments.
 
-    Only uses class-based assignments from database (VMAssignment table).
+    Database-first architecture: Only uses VMAssignment table.
     Accepts realm-suffixed usernames (e.g., student1@pve) and normalizes variants.
     """
     variants = {username}
@@ -141,16 +141,19 @@ def _resolve_user_owned_vmids(username: str) -> set:
     variants.update({v + '@pam' for v in list(variants)})
 
     owned = set()
+    
+    # Query database for VM assignments
     try:
-        # Database-based assignments (VMAssignment table)
         user_row = User.query.filter(User.username.in_(variants)).first()
         if user_row:
             for assign in user_row.vm_assignments:
                 if assign.proxmox_vmid:
                     owned.add(assign.proxmox_vmid)
+            logger.debug("Found %d VMs for %s in database", len(user_row.vm_assignments.all()), username)
     except Exception:
         logger.exception("Failed to gather VM assignments for %s", username)
 
+    logger.info("User %s has access to %d VMs from database", username, len(owned))
     return owned
 
 

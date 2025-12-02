@@ -30,7 +30,7 @@
             <small class="form-help">Select a template or choose "None" to create VMs without a template</small>
         </div>
         
-        <div class="form-group">
+        <div class="form-group" id="alter-specs-container" style="display: none;">
             <label>
                 <input type="checkbox" id="alter-specs-checkbox" style="width: auto; margin-right: 8px;">
                 Alter VM Specs
@@ -217,17 +217,25 @@ document.addEventListener('DOMContentLoaded', async function() {
 
 function updateSpecsVisibility() {
     const templateSelect = document.getElementById('template-select');
+    const alterCheckboxContainer = document.getElementById('alter-specs-container');
     const alterCheckbox = document.getElementById('alter-specs-checkbox');
     const specsSection = document.getElementById('vm-specs-section');
     
     const noTemplate = templateSelect.value === '';
     const alterChecked = alterCheckbox.checked;
     
-    // Show specs if: no template selected (None) OR alter specs checkbox is checked
-    if (noTemplate || alterChecked) {
+    if (noTemplate) {
+        // No template selected - always show specs, hide checkbox
+        alterCheckboxContainer.style.display = 'none';
         specsSection.style.display = 'block';
     } else {
-        specsSection.style.display = 'none';
+        // Template selected - show checkbox, show specs only if checked
+        alterCheckboxContainer.style.display = 'block';
+        if (alterChecked) {
+            specsSection.style.display = 'block';
+        } else {
+            specsSection.style.display = 'none';
+        }
     }
 }
 

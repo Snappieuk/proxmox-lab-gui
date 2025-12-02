@@ -74,10 +74,10 @@
         </div>
 
         <!-- VM Selection Area (shown when user selected) -->
-        <div id="vm-selection-area" style="display: none; margin-top: 2rem; padding-top: 2rem; border-top: 1px solid #ddd;">
+        <div id="vm-selection-area" style="display: none; margin-top: 2rem; padding-top: 2rem; border-top: 1px solid #ddd; width: 100%; box-sizing: border-box;">
             
             <!-- VM Checkboxes -->
-            <div style="margin-bottom: 1.5rem;">
+            <div style="margin-bottom: 1.5rem; width: 100%;">
                 <label style="display: block; font-weight: 600; margin-bottom: 0.5rem;">
                     Assign VMs
                     <span style="font-weight: normal; color: #666; font-size: 13px;" id="selected-count">(0 selected)</span>
@@ -88,7 +88,7 @@
                 
                 <!-- Search/Filter -->
                 <input type="text" id="vm-search" placeholder="Search VMs by ID or name..." 
-                       style="width: 100%; padding: 0.5rem; border: 1px solid #ddd; border-radius: 4px; margin-bottom: 0.75rem;">
+                       style="width: 100%; padding: 0.5rem; border: 1px solid #ddd; border-radius: 4px; margin-bottom: 0.75rem; box-sizing: border-box;">
                 
                 <!-- Scrollable VM List -->
                 <div class="vm-checkbox-container" id="vm-checkbox-container">
