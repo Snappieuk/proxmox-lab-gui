@@ -2,7 +2,25 @@
 """
 Proxmox Operations - VM cloning, template management, and snapshots.
 
-This module provides higher-level operations for class-based VM management.
+This module provides higher-level operations for class-based VM management
+using the Proxmox API. It is intended for API-based VM operations.
+
+REFACTORING NOTE (2024):
+For SSH-based VM operations (qm/qemu-img commands), see:
+- app/services/vm_core.py       - Low-level VM operations (create, destroy, disks)
+- app/services/vm_template.py   - Template export and overlay generation
+- app/services/vm_utils.py      - Utility functions (naming, VMID lookup, MAC)
+
+The SSH-based approach in those modules is preferred for disk/overlay operations
+per the repository's documented deployment strategy (disk export + overlay).
+
+This module (proxmox_operations.py) retains API-based functions for:
+- Legacy workflows that use Proxmox API cloning
+- Cluster orchestration (replicate_templates_to_all_nodes)
+- Functions called by existing code that expects API-based operations
+
+When adding new VM functionality, prefer using vm_core.py/vm_template.py
+with SSHExecutor for direct qm/qemu-img operations.
 """
 
 import logging
@@ -13,6 +31,10 @@ from app.services.proxmox_service import get_proxmox_admin_for_cluster
 from app.config import CLUSTERS
 
 logger = logging.getLogger(__name__)
+
+# Re-export sanitize_vm_name from vm_utils for backward compatibility
+# New code should import from vm_utils directly
+from app.services.vm_utils import sanitize_vm_name  # noqa: F401
 
 # Default cluster IP for class operations (restricted to single cluster)
 CLASS_CLUSTER_IP = "10.220.15.249"
@@ -531,39 +553,10 @@ def _clone_vm_via_disk_api(proxmox, node: str, template_vmid: int, new_vmid: int
         return False, f"Clone failed: {e}"
 
 
-def sanitize_vm_name(name: str, fallback: str = "vm") -> str:
-    """Sanitize a proposed VM name to satisfy Proxmox (DNS-style) constraints.
+# NOTE: sanitize_vm_name is now imported from vm_utils at the top of this file.
+# The original implementation has been moved to app/services/vm_utils.py.
+# This preserves backward compatibility for callers that import from proxmox_operations.
 
-    Rules applied (approx RFC 1123 hostname subset):
-    - Lowercase all characters
-    - Allow only a-z, 0-9, hyphen; replace others with '-'
-    - Collapse consecutive hyphens
-    - Trim leading/trailing hyphens
-    - Ensure starts/ends with alphanumeric (prepend/append fallback tokens if needed)
-    - Limit length to 63 chars
-    - If result empty, use fallback
-    """
-    if not isinstance(name, str):
-        name = str(name) if name is not None else ""
-    original = name
-    name = name.lower().strip()
-    name = re.sub(r"[^a-z0-9-]", "-", name)
-    name = re.sub(r"-+", "-", name)
-    name = name.strip('-')
-    if not name:
-        name = fallback
-    # Ensure starts with alphanumeric
-    if not name[0].isalnum():
-        name = f"{fallback}-{name}" if name else fallback
-    # Ensure ends with alphanumeric
-    if not name[-1].isalnum():
-        name = f"{name}0"
-    # Truncate to 63 characters
-    if len(name) > 63:
-        name = name[:63].rstrip('-') or fallback
-    if name != original:
-        logger.info(f"sanitize_vm_name: '{original}' -> '{name}'")
-    return name
 def list_proxmox_templates(cluster_ip: str = None) -> List[Dict[str, Any]]:
     """List all VM templates on a Proxmox cluster.
     

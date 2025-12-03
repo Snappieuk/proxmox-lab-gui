@@ -11,6 +11,16 @@ This service provides the high-level workflow for creating class VMs:
 
 The service uses SSH to execute commands on Proxmox nodes and
 creates QCOW2 overlay disks for efficient, fast cloning.
+
+REFACTORING NOTE (2024):
+This service now imports helper functions from the new modular structure:
+- app/services/vm_utils.py       - sanitize_vm_name, get_next_available_vmid_ssh, get_vm_mac_address_ssh
+- app/services/vm_core.py        - create_vm_shell, create_overlay_disk, destroy_vm, etc.
+- app/services/vm_template.py    - export_template_to_qcow2, create_overlay_vm, etc.
+
+While some functions are reimplemented here for workflow-specific reasons,
+the new modules provide the canonical implementations. For new features,
+prefer importing from vm_core.py and vm_template.py.
 """
 
 import logging
@@ -25,6 +35,14 @@ from app.models import db, Class, VMAssignment, Template
 from app.services.ssh_executor import (
     SSHExecutor,
     get_ssh_executor_from_config,
+)
+
+# Import utility functions from new modular structure
+# These provide the canonical implementations
+from app.services.vm_utils import (
+    sanitize_vm_name as _sanitize_vm_name_canonical,
+    get_next_available_vmid_ssh as _get_next_available_vmid_canonical,
+    get_vm_mac_address_ssh as _get_vm_mac_address_canonical,
 )
 
 logger = logging.getLogger(__name__)
@@ -54,30 +72,26 @@ class ClassVMDeployResult:
     details: List[str] = field(default_factory=list)
 
 
+# ---------------------------------------------------------------------------
+# Utility functions - delegate to canonical implementations in vm_utils.py
+# These wrappers are kept for backward compatibility with existing callers.
+# New code should import directly from app.services.vm_utils
+# ---------------------------------------------------------------------------
+
 def get_next_available_vmid(ssh_executor: SSHExecutor, start_vmid: int = 100) -> int:
-    """Get the next available VMID in Proxmox."""
-    exit_code, stdout, stderr = ssh_executor.execute(
-        f"pvesh get /cluster/nextid --vmid {start_vmid}",
-        check=False
-    )
+    """Get the next available VMID in Proxmox.
     
-    if exit_code == 0 and stdout.strip().isdigit():
-        return int(stdout.strip())
-    
-    # Fallback: increment and check
-    vmid = start_vmid
-    while True:
-        exit_code, stdout, stderr = ssh_executor.execute(
-            f"qm status {vmid}",
-            check=False
-        )
-        if exit_code != 0:  # VMID doesn't exist
-            return vmid
-        vmid += 1
+    NOTE: This delegates to vm_utils.get_next_available_vmid_ssh().
+    For new code, import directly from app.services.vm_utils.
+    """
+    return _get_next_available_vmid_canonical(ssh_executor, start=start_vmid)
 
 
 def get_vm_mac_address(ssh_executor: SSHExecutor, vmid: int) -> Optional[str]:
     """Get the MAC address of a VM's first network interface.
+    
+    NOTE: This delegates to vm_utils.get_vm_mac_address_ssh().
+    For new code, import directly from app.services.vm_utils.
     
     Args:
         ssh_executor: SSH executor
@@ -86,44 +100,16 @@ def get_vm_mac_address(ssh_executor: SSHExecutor, vmid: int) -> Optional[str]:
     Returns:
         MAC address string or None
     """
-    try:
-        exit_code, stdout, stderr = ssh_executor.execute(
-            f"qm config {vmid}",
-            check=False,
-            timeout=10
-        )
-        
-        if exit_code == 0 and stdout:
-            # Look for net0 line and extract MAC
-            # Format can be: "net0: virtio=AA:BB:CC:DD:EE:FF,bridge=vmbr0"
-            # Or with generated MAC: "net0: virtio=12:34:56:78:9A:BC,bridge=vmbr0,firewall=1"
-            for line in stdout.split('\n'):
-                if line.startswith('net0:'):
-                    # Extract everything after 'net0:'
-                    net_config = line.split(':', 1)[1].strip()
-                    # Look for MAC address pattern (XX:XX:XX:XX:XX:XX)
-                    import re
-                    mac_match = re.search(r'([0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2})', net_config)
-                    if mac_match:
-                        return mac_match.group(1).upper()
-        
-        return None
-    except Exception as e:
-        logger.warning(f"Failed to get MAC address for VM {vmid}: {e}")
-        return None
+    return _get_vm_mac_address_canonical(ssh_executor, vmid)
 
 
 def sanitize_vm_name(name: str) -> str:
-    """Sanitize a string for use as a Proxmox VM name."""
-    # Convert to lowercase, replace spaces and underscores with hyphens
-    name = name.lower().replace(' ', '-').replace('_', '-')
-    # Remove any non-alphanumeric characters except hyphens
-    name = re.sub(r'[^a-z0-9-]', '', name)
-    # Remove consecutive hyphens
-    name = re.sub(r'-+', '-', name)
-    # Remove leading/trailing hyphens
-    name = name.strip('-')
-    return name or 'vm'
+    """Sanitize a string for use as a Proxmox VM name.
+    
+    NOTE: This delegates to vm_utils.sanitize_vm_name().
+    For new code, import directly from app.services.vm_utils.
+    """
+    return _sanitize_vm_name_canonical(name)
 
 
 def deploy_class_vms(
@@ -384,6 +370,9 @@ def wait_for_vm_stopped(ssh_executor: SSHExecutor, vmid: int, timeout: int = Non
     
     Polls the VM status until it's stopped or timeout is reached.
     
+    NOTE: A similar function exists in vm_core.wait_for_vm_stopped().
+    This implementation is kept here for workflow-specific error handling.
+    
     Args:
         ssh_executor: SSH executor for running commands
         vmid: VMID to check
@@ -424,36 +413,9 @@ def wait_for_vm_stopped(ssh_executor: SSHExecutor, vmid: int, timeout: int = Non
     return False
 
 
-def get_next_available_vmid(ssh_executor: SSHExecutor, start: int = 200) -> int:
-    """
-    Find the next available VMID on the Proxmox cluster.
-    
-    Args:
-        ssh_executor: SSH executor for running commands
-        start: Starting VMID to search from
-        
-    Returns:
-        Next available VMID
-    """
-    vmid = start
-    max_attempts = 1000
-    
-    for _ in range(max_attempts):
-        try:
-            exit_code, stdout, stderr = ssh_executor.execute(
-                f"qm status {vmid}",
-                check=False,
-                timeout=10
-            )
-            if exit_code != 0:
-                # VMID not in use
-                return vmid
-            vmid += 1
-        except Exception:
-            # Error checking - assume available
-            return vmid
-    
-    raise RuntimeError(f"Could not find available VMID after {max_attempts} attempts starting from {start}")
+# NOTE: The second get_next_available_vmid definition below was a duplicate.
+# It has been removed. Use the get_next_available_vmid() function at the top of this file
+# which delegates to vm_utils.get_next_available_vmid_ssh().
 
 
 def export_template_to_qcow2(
@@ -468,6 +430,10 @@ def export_template_to_qcow2(
     
     This creates a base QCOW2 file that can be used as a backing file
     for overlay disks.
+    
+    NOTE: A canonical implementation exists in vm_template.export_template_to_qcow2().
+    This version is kept for workflow-specific usage in class VM deployment.
+    For new features, prefer using the vm_template version.
     
     Args:
         ssh_executor: SSH executor for running commands
