@@ -1819,14 +1819,15 @@ def revert_vm_to_snapshot(vmid: int, node: str, snapname: str,
 
 
 def delete_vm(vmid: int, node: str, cluster_ip: str = None) -> Tuple[bool, str]:
-    """Delete a VM using SSH commands (no Proxmox API connection required).
+    """Delete a VM using Proxmox API for stop and SSH for deletion.
     
     Ensures VM is stopped before deletion to prevent errors.
+    Uses Proxmox API for VM control (better than SSH) and SSH for actual deletion.
     
     Args:
         vmid: VM ID
-        node: Node name (optional - SSH executor will use configured node)
-        cluster_ip: IP of the Proxmox cluster (not used with SSH)
+        node: Node name
+        cluster_ip: IP of the Proxmox cluster
     
     Returns:
         Tuple of (success, message)
@@ -1835,35 +1836,58 @@ def delete_vm(vmid: int, node: str, cluster_ip: str = None) -> Tuple[bool, str]:
     from app.services.vm_core import wait_for_vm_stopped
     
     try:
-        # Get SSH executor - uses config from environment
+        # Get Proxmox API connection for VM control
+        cluster_id = None
+        for cluster in CLUSTERS:
+            if cluster["host"] == (cluster_ip or CLASS_CLUSTER_IP):
+                cluster_id = cluster["id"]
+                break
+        
+        if not cluster_id:
+            return False, "Cluster not found"
+        
+        proxmox = get_proxmox_admin_for_cluster(cluster_id)
+        
+        # Get SSH executor for status checking and deletion
         ssh_executor = get_ssh_executor_from_config()
         
-        # Stop the VM first (if it's running)
-        logger.info(f"Stopping VM {vmid} before deletion...")
+        # Check current VM status using SSH
         try:
             exit_code, stdout, stderr = ssh_executor.execute(
-                f"qm stop {vmid}",
+                f"qm status {vmid}",
                 check=False,
                 timeout=10
             )
-            if exit_code == 0:
-                logger.info(f"Stop command sent for VM {vmid}")
+            
+            if exit_code == 0 and 'running' in stdout.lower():
+                # VM is running - need to stop it
+                logger.info(f"VM {vmid} is running, stopping it before deletion...")
+                
+                try:
+                    # Use Proxmox API to stop VM (better than SSH)
+                    proxmox.nodes(node).qemu(vmid).status.shutdown.post()
+                    logger.info(f"Stop command sent for VM {vmid} via Proxmox API")
+                except Exception as e:
+                    logger.warning(f"Proxmox API stop failed, trying SSH: {e}")
+                    # Fallback to SSH if API fails
+                    ssh_executor.execute(f"qm stop {vmid}", check=False, timeout=10)
+                
+                # Wait for VM to be fully stopped (timeout 120 seconds)
+                logger.info(f"Waiting for VM {vmid} to be fully stopped...")
+                stopped = wait_for_vm_stopped(ssh_executor, vmid, timeout=120)
+                if not stopped:
+                    # CRITICAL: Proxmox won't delete running VMs - must fail here
+                    error_msg = f"VM {vmid} did not stop within 120 seconds - cannot delete running VM"
+                    logger.error(error_msg)
+                    return False, error_msg
+                
+                logger.info(f"VM {vmid} confirmed stopped")
             else:
-                # VM might already be stopped or doesn't exist, continue anyway
-                logger.info(f"Stop command for VM {vmid} returned exit code {exit_code}: {stderr.strip()}")
+                # VM is already stopped or doesn't exist
+                logger.info(f"VM {vmid} is already stopped or doesn't exist, proceeding with deletion")
+        
         except Exception as e:
-            logger.warning(f"Failed to send stop command for VM {vmid}: {e}")
-        
-        # Wait for VM to be fully stopped (timeout 120 seconds - increased for slow VMs)
-        logger.info(f"Waiting for VM {vmid} to be fully stopped...")
-        stopped = wait_for_vm_stopped(ssh_executor, vmid, timeout=120)
-        if not stopped:
-            # CRITICAL: Proxmox won't delete running VMs - must fail here
-            error_msg = f"VM {vmid} did not stop within 120 seconds - cannot delete running VM"
-            logger.error(error_msg)
-            return False, error_msg
-        
-        logger.info(f"VM {vmid} confirmed stopped, proceeding with deletion")
+            logger.warning(f"Error checking VM {vmid} status: {e}, attempting deletion anyway")
         
         # Delete the VM using SSH command (only if stopped)
         exit_code, stdout, stderr = ssh_executor.execute(

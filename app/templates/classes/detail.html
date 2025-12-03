@@ -317,7 +317,7 @@
                     </thead>
                     <tbody id="vms-tbody">
                         {% for vm in vm_assignments %}
-                        {% if not vm.is_template_vm %}
+                        {% if not vm.is_template_vm and not vm.is_teacher_vm and not ('-teacher' in (vm.vm_name or '').lower()) %}
                         <tr data-vmid="{{ vm.proxmox_vmid }}" data-node="{{ vm.node }}">
                             <td><strong>{{ vm.proxmox_vmid }}</strong></td>
                             <td><span id="name-{{ vm.proxmox_vmid }}">{{ vm.vm_name or 'N/A' }}</span></td>
@@ -1341,6 +1341,25 @@ async function updateVmRow(vmid) {
     } catch {}
 }
 
+async function refreshAllVMs() {
+    try {
+        const resp = await fetch(`/api/classes/${classId}/vms`);
+        const data = await resp.json();
+        if (!data.ok) return;
+        
+        (data.vms || []).forEach(vm => {
+            const statusEl = document.getElementById(`status-${vm.proxmox_vmid}`);
+            const macEl = document.getElementById(`mac-${vm.proxmox_vmid}`);
+            const ipEl = document.getElementById(`ip-${vm.proxmox_vmid}`);
+            if (statusEl) statusEl.textContent = vm.status || 'unknown';
+            if (macEl) macEl.textContent = vm.mac || 'N/A';
+            if (ipEl) ipEl.textContent = vm.ip || 'N/A';
+        });
+    } catch (e) {
+        console.error('Failed to refresh VMs:', e);
+    }
+}
+
 function showAlert(message, type = 'info') {
     const container = document.getElementById('alert-container');
     const alert = document.createElement('div');
@@ -1605,6 +1624,7 @@ async function createVMs() {
 document.addEventListener('DOMContentLoaded', () => {
     loadTemplateInfo();
     loadStudentsList();
+    refreshAllVMs(); // Load VM status, MAC, and IP addresses
 });
 
 // Co-Owners Management
