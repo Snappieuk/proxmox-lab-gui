@@ -80,7 +80,7 @@ def rdp_file(vmid: int):
         'vmid': vm_data.vmid,
         'name': vm_data.name,
         'node': vm_data.node,
-        'type': vm_data.vmtype,
+        'type': vm_data.type,  # Fixed: column name is 'type' not 'vmtype'
         'status': vm_data.status,
         'ip': vm_data.ip,
         'cluster_id': vm_data.cluster_id,

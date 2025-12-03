@@ -585,18 +585,26 @@ def create_class_vms(
             
             result.details.append(f"Class base created: {base_qcow2_path}")
             
-            # Step 2: Create teacher VM (full clone)
-            result.details.append("Creating teacher VM...")
+            # Step 2: Create teacher VM as overlay (NOT full clone)
+            result.details.append("Creating teacher VM as overlay...")
             teacher_vmid = get_next_available_vmid(ssh_executor)
             teacher_name = f"{class_prefix}-teacher"
             
-            exit_code, stdout, stderr = ssh_executor.execute(
-                f"qm clone {template_vmid} {teacher_vmid} --name {teacher_name} --full",
-                timeout=300
+            # Import create_overlay_vm from vm_template module
+            from app.services.vm_template import create_overlay_vm
+            
+            success, error, teacher_mac = create_overlay_vm(
+                ssh_executor=ssh_executor,
+                vmid=teacher_vmid,
+                name=teacher_name,
+                base_qcow2_path=base_qcow2_path,
+                node=template_node,
+                memory=memory,
+                cores=cores,
             )
             
-            if exit_code != 0:
-                result.error = f"Failed to create teacher VM: {stderr}"
+            if not success:
+                result.error = f"Failed to create teacher VM: {error}"
                 return result
             
         else:
@@ -618,6 +626,9 @@ def create_class_vms(
                 return result
             
             result.details.append(f"Teacher VM shell created with 32GB disk")
+            
+            # Get teacher VM MAC address (not returned by qm create)
+            teacher_mac = get_vm_mac_address(ssh_executor, teacher_vmid)
             
             # Create class-base VM (empty shell for student overlays)
             class_base_vmid = get_next_available_vmid(ssh_executor, teacher_vmid + 1)
@@ -656,8 +667,8 @@ def create_class_vms(
         result.teacher_vmid = teacher_vmid
         result.details.append(f"Teacher VM created: {teacher_vmid} ({teacher_name})")
         
-        # Get MAC address for teacher VM
-        teacher_mac = get_vm_mac_address(ssh_executor, teacher_vmid)
+        # Use MAC address returned by create_overlay_vm (already retrieved)
+        # No need to fetch it again with get_vm_mac_address()
         
         # Create VMAssignment for teacher
         teacher_assignment = VMAssignment(
