@@ -567,10 +567,10 @@ def create_class_vms(
             result.details.append("Creating teacher VM as overlay...")
             
             # Retry logic for VMID conflicts
-            max_retries = 5
+            max_retries = 30
             teacher_vmid = None
             teacher_mac = None
-            start_vmid = 100  # Track starting point for VMID search
+            start_vmid = 300  # Track starting point for VMID search
             
             for retry in range(max_retries):
                 teacher_vmid = get_next_available_vmid(ssh_executor, start_vmid)
@@ -615,7 +615,7 @@ def create_class_vms(
             result.details.append("Creating teacher VM shell (no template)...")
             
             # Retry logic for VMID conflicts
-            max_retries = 5
+            max_retries = 30
             teacher_vmid = None
             teacher_mac = None
             start_vmid = 100  # Track starting point for VMID search
@@ -746,20 +746,44 @@ def create_class_vms(
         db.session.add(teacher_assignment)
         
         # Track used VMIDs in memory to avoid collisions during creation
-        used_vmids_in_this_session = {teacher_vmid}
+        # Include both teacher and class-base VMIDs if created
+        if base_qcow2_path is None and 'class_base_vmid' in locals():
+            # Template-less workflow: track teacher + class-base
+            used_vmids_in_this_session = {teacher_vmid, class_base_vmid}
+        else:
+            # Template-based workflow: only teacher (no class-base in this flow)
+            used_vmids_in_this_session = {teacher_vmid}
         
         # Step 3: Create student VMs as QCOW2 overlays
         if pool_size > 0:
             result.details.append(f"Creating {pool_size} student VMs...")
             
             for i in range(pool_size):
-                # Get next available VMID that's not in our session's used set
-                start_search = teacher_vmid + 1 if i == 0 else vmid + 1
-                vmid = get_next_available_vmid(ssh_executor, start_search)
+                # Find next available VMID that's not in our session's used set
+                # Start search from last used VMID + 1
+                start_search = max(used_vmids_in_this_session) + 1 if used_vmids_in_this_session else teacher_vmid + 1
                 
-                # Keep searching until we find one not in our session
-                while vmid in used_vmids_in_this_session:
-                    vmid = get_next_available_vmid(ssh_executor, vmid + 1)
+                # Keep incrementing until we find an unused VMID
+                vmid = start_search
+                max_attempts = 200
+                for attempt in range(max_attempts):
+                    if vmid not in used_vmids_in_this_session:
+                        # Double-check with cluster query
+                        check_vmid = get_next_available_vmid(ssh_executor, vmid)
+                        if check_vmid == vmid:
+                            # This VMID is available both locally and in cluster
+                            break
+                        else:
+                            # Cluster says this VMID is taken, use cluster's suggestion
+                            vmid = check_vmid
+                            if vmid not in used_vmids_in_this_session:
+                                break
+                    vmid += 1
+                else:
+                    # Exhausted attempts
+                    logger.error(f"Could not find available VMID after {max_attempts} attempts")
+                    result.failed += 1
+                    continue
                 
                 used_vmids_in_this_session.add(vmid)
                 student_name = f"{class_prefix}-student-{i + 1}"
