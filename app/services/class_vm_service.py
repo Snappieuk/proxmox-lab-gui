@@ -694,39 +694,25 @@ def create_class_vms(
             
             logger.info(f"Creating teacher VM with VMID {teacher_vmid}")
             
-            # Create teacher VM (no retry loop needed - VMID is pre-allocated)
-            for retry in range(1):  # Keep loop structure but only 1 attempt
-                teacher_name = f"{class_prefix}-teacher"
-                
-                # Import create_overlay_vm from vm_template module
-                from app.services.vm_template import create_overlay_vm
-                
-                success, error, teacher_mac = create_overlay_vm(
-                    ssh_executor=ssh_executor,
-                    vmid=teacher_vmid,
-                    name=teacher_name,
-                    base_qcow2_path=base_qcow2_path,
-                    node=template_node,
-                    memory=memory,
-                    cores=cores,
-                )
-                
-                if success:
-                    break
-                    
-                # Check if error is due to VMID conflict
-                if "already exists" in error.lower():
-                    logger.warning(f"VMID {teacher_vmid} already exists (attempt {retry + 1}/{max_retries}), retrying with next VMID...")
-                    start_vmid = teacher_vmid + 1  # Skip this VMID next time
-                    continue
-                else:
-                    # Different error, don't retry
-                    result.error = f"Failed to create teacher VM: {error}"
-                    return result
+            # Import create_overlay_vm from vm_template module
+            from app.services.vm_template import create_overlay_vm
+            
+            success, error, teacher_mac = create_overlay_vm(
+                ssh_executor=ssh_executor,
+                vmid=teacher_vmid,
+                name=teacher_name,
+                base_qcow2_path=base_qcow2_path,
+                node=template_node,
+                memory=memory,
+                cores=cores,
+            )
             
             if not success:
-                result.error = f"Failed to create teacher VM after {max_retries} retries: {error}"
+                result.error = f"Failed to create teacher VM: {error}"
+                logger.error(f"Teacher VM creation failed: {error}")
                 return result
+            
+            logger.info(f"Teacher VM {teacher_vmid} created successfully")
             
             # Note: For template-based workflow, teacher VM is created on template_node
             # Migration could be added here if needed, but shared storage allows cross-node access
@@ -774,10 +760,15 @@ def create_class_vms(
             if not success:
                 logger.warning(f"Failed to migrate teacher VM to {teacher_optimal_node}: {error_msg}. Continuing on current node.")
                 result.details.append(f"Warning: Migration failed, teacher VM remains on current node")
+                # Use the node where VM was created (connected SSH node)
+                teacher_optimal_node = template_node
             else:
                 result.details.append(f"Teacher VM migrated to {teacher_optimal_node}")
+                # Wait briefly for migration to fully complete
+                import time
+                time.sleep(2)
             
-            # Get teacher VM MAC address (not returned by qm create)
+            # Get teacher VM MAC address after migration completes
             teacher_mac = get_vm_mac_address(ssh_executor, teacher_vmid)
             
             # Now attach storage after migration (was included in qm create, need to add separately)
@@ -909,11 +900,14 @@ def create_class_vms(
                     
                     # Migrate to optimal node BEFORE attaching storage
                     logger.info(f"Migrating student VM {vmid} to {student_optimal_node}...")
-                    success, error_msg = migrate_vm_to_node(ssh_executor, vmid, student_optimal_node, timeout=120)
-                    if not success:
+                    migration_success, error_msg = migrate_vm_to_node(ssh_executor, vmid, student_optimal_node, timeout=120)
+                    if not migration_success:
                         logger.warning(f"Failed to migrate VM {vmid} to {student_optimal_node}: {error_msg}. Continuing on current node.")
                     else:
                         logger.info(f"VM {vmid} migrated to {student_optimal_node}")
+                        # Wait briefly for migration to complete
+                        import time
+                        time.sleep(2)
                     
                     # Create disk - overlay if template exists, empty disk if not
                     if base_qcow2_path:
