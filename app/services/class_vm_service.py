@@ -736,6 +736,10 @@ def create_class_vms(
             # WITHOUT TEMPLATE: Create empty VM shells
             result.details.append("Creating teacher VM shell (no template)...")
             
+            # Select optimal node for teacher VM
+            teacher_optimal_node = get_optimal_node(ssh_executor, proxmox)
+            logger.info(f"Selected optimal node for teacher VM: {teacher_optimal_node}")
+            
             # Retry logic for VMID conflicts
             max_retries = 30
             teacher_vmid = None
@@ -765,13 +769,13 @@ def create_class_vms(
             result.details.append(f"Teacher VM shell created (VMID: {teacher_vmid})")
             
             # Migrate to optimal node BEFORE attaching storage
-            result.details.append(f"Migrating teacher VM to optimal node {optimal_node}...")
-            success, error_msg = migrate_vm_to_node(ssh_executor, teacher_vmid, optimal_node, timeout=120)
+            result.details.append(f"Migrating teacher VM to optimal node {teacher_optimal_node}...")
+            success, error_msg = migrate_vm_to_node(ssh_executor, teacher_vmid, teacher_optimal_node, timeout=120)
             if not success:
-                logger.warning(f"Failed to migrate teacher VM to {optimal_node}: {error_msg}. Continuing on current node.")
+                logger.warning(f"Failed to migrate teacher VM to {teacher_optimal_node}: {error_msg}. Continuing on current node.")
                 result.details.append(f"Warning: Migration failed, teacher VM remains on current node")
             else:
-                result.details.append(f"Teacher VM migrated to {optimal_node}")
+                result.details.append(f"Teacher VM migrated to {teacher_optimal_node}")
             
             # Get teacher VM MAC address (not returned by qm create)
             teacher_mac = get_vm_mac_address(ssh_executor, teacher_vmid)
@@ -782,7 +786,7 @@ def create_class_vms(
             # Get VM's current node after migration
             current_node = get_vm_current_node(ssh_executor, teacher_vmid)
             if not current_node:
-                current_node = optimal_node  # Fallback to expected node
+                current_node = teacher_optimal_node  # Fallback to expected node
             
             # Use pvesh to set storage (works cluster-wide regardless of which node VM is on)
             exit_code, stdout, stderr = ssh_executor.execute(
@@ -802,10 +806,9 @@ def create_class_vms(
             # No base_qcow2_path in template-less workflow (students get empty disks)
             base_qcow2_path = None
             
-            # Create class-base VM (empty shell for student overlays)
-            # Note: In template-less workflow, we reserve index 100 for class-base VM
-            # to avoid conflicts with student VMs (indices 1-99)
-            class_base_vmid = vmid_prefix * 100 + 100  # e.g., 234 * 100 + 100 = 23500
+            # Create class-base VM (acts as placeholder/reference, not used for overlays in template-less workflow)
+            # Use index 99 (last student slot) to keep it within allocated range
+            class_base_vmid = vmid_prefix * 100 + 99  # e.g., 234 * 100 + 99 = 23499
             class_base_name = f"{class_prefix}-base"
             
             result.details.append(f"Creating class-base VM shell (no template)...")
@@ -823,7 +826,7 @@ def create_class_vms(
             result.class_base_vmid = class_base_vmid
             result.details.append(f"Class-base VM created: {class_base_vmid} ({class_base_name})")
             
-            # Create VMAssignment for class-base
+            # Create VMAssignment for class-base (marked as template VM so it's hidden from students)
             base_mac = get_vm_mac_address(ssh_executor, class_base_vmid)
             class_base_assignment = VMAssignment(
                 class_id=class_id,
@@ -833,7 +836,7 @@ def create_class_vms(
                 node=template_node,
                 assigned_user_id=None,
                 status='available',
-                is_template_vm=True,
+                is_template_vm=True,  # Mark as template so it's hidden from student view
                 is_teacher_vm=False,
             )
             db.session.add(class_base_assignment)
@@ -860,7 +863,6 @@ def create_class_vms(
         db.session.add(teacher_assignment)
         
         # Track used VMIDs in memory to avoid collisions during creation
-        # Include both teacher and class-base VMIDs if created
         if base_qcow2_path is None and 'class_base_vmid' in locals():
             # Template-less workflow: track teacher + class-base
             used_vmids_in_this_session = {teacher_vmid, class_base_vmid}
