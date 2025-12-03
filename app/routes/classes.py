@@ -23,50 +23,18 @@ from app.services.class_service import (
     get_user_vm_in_class,
     join_class_via_token,
 )
+from app.utils.auth_helpers import get_current_user
 
 logger = logging.getLogger(__name__)
 
 classes_bp = Blueprint('classes', __name__, url_prefix='/classes')
 
 
-def get_current_user():
-    """Get current logged-in user from database, or create admin user if needed."""
-    username = session.get('user')
-    if not username:
-        return None
-    
-    # Remove @pve suffix if present for local user lookup
-    if '@' in username:
-        username_clean = username.split('@')[0]
-    else:
-        username_clean = username
-    
-    user = get_user_by_username(username_clean)
-    
-    # If no local user exists but they're a Proxmox admin, auto-create admin account
-    if not user:
-        from app.services.user_manager import is_admin_user
-        from app.services.class_service import create_local_user
-        
-        if is_admin_user(session.get('user')):
-            # Auto-create local admin account for Proxmox admins
-            logger.info(f"Auto-creating local admin account for Proxmox admin: {username_clean}")
-            # Use a placeholder password since admins authenticate via Proxmox
-            success, msg = create_local_user(username_clean, 'proxmox-admin-placeholder', role='adminer')
-            if success:
-                user = get_user_by_username(username_clean)
-                logger.info(f"Successfully created local admin account for: {username_clean}")
-            else:
-                logger.error(f"Failed to create local admin account: {msg}")
-    
-    return user
-
-
 @classes_bp.route("")
 @login_required
 def classes_list():
     """List all classes accessible to current user."""
-    user = get_current_user()
+    user = get_current_user(auto_create_admin=True)
     
     if not user:
         # User doesn't have a local account yet
@@ -96,7 +64,7 @@ def classes_list():
 @login_required
 def create_class():
     """Create new class form (teacher/adminer only)."""
-    user = get_current_user()
+    user = get_current_user(auto_create_admin=True)
     
     if not user or (not user.is_teacher and not user.is_adminer):
         flash("You need teacher or admin privileges to create classes.", "error")
@@ -113,7 +81,7 @@ def create_class():
 @login_required
 def view_class(class_id: int):
     """View class details with dynamic sidebar."""
-    user = get_current_user()
+    user = get_current_user(auto_create_admin=True)
     class_ = get_class_by_id(class_id)
     
     if not class_:
@@ -159,7 +127,7 @@ def view_class(class_id: int):
 @login_required
 def join_class_page(token: str):
     """Join class via invite link."""
-    user = get_current_user()
+    user = get_current_user(auto_create_admin=True)
     
     if not user:
         flash("You need a local account to join classes. Please register first.", "error")
@@ -194,7 +162,7 @@ def join_class_page(token: str):
 @login_required
 def confirm_join_class(token: str):
     """Confirm joining a class via invite link."""
-    user = get_current_user()
+    user = get_current_user(auto_create_admin=True)
     
     if not user:
         flash("You need a local account to join classes.", "error")

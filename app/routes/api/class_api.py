@@ -68,21 +68,11 @@ from app.services.proxmox_operations import (
 from app.config import CLUSTERS
 
 from app.services.clone_progress import start_clone_progress, get_clone_progress, update_clone_progress
+from app.utils.auth_helpers import get_current_user
 
 logger = logging.getLogger(__name__)
 
 api_classes_bp = Blueprint('api_classes', __name__, url_prefix='/api/classes')
-
-
-def get_current_user() -> User:
-    """Get current logged-in user from session."""
-    username = session.get('user')
-    if not username:
-        return None
-    # Remove @pve suffix if present for local user lookup
-    if '@' in username:
-        username = username.split('@')[0]
-    return get_user_by_username(username)
 
 
 def require_teacher_or_adminer():

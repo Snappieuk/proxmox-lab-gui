@@ -29,7 +29,9 @@ def rdp_file(vmid: int):
     user = require_user()
     logger.info("rdp_file: user=%s requesting vmid=%s", user, vmid)
     
-    vm = find_vm_for_user(user, vmid)
+    # Use skip_ip=True for initial lookup to avoid triggering ARP scan
+    # We'll verify the IP separately if needed
+    vm = find_vm_for_user(user, vmid, skip_ip=True)
     if not vm:
         logger.warning("rdp_file: VM %s not found for user %s", vmid, user)
         abort(404)
@@ -38,7 +40,7 @@ def rdp_file(vmid: int):
                 vm.get('vmid'), vm.get('name'), vm.get('type'), vm.get('category'), 
                 vm.get('ip'), vm.get('rdp_available'))
 
-    # Trust cached IP if available (ARP scan keeps it fresh)
+    # Trust cached IP if available (background sync and ARP cache keep it fresh)
     cached_ip = vm.get('ip')
     if cached_ip and cached_ip not in ("Checking...", "N/A", "Fetching...", ""):
         logger.info("rdp_file: Using cached IP %s for VM %s", cached_ip, vmid)

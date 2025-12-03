@@ -344,3 +344,51 @@ def create_pve_user(username: str, password: str) -> tuple:
             return False, "Username already exists"
         logger.exception("Failed to create user %s: %s", username, e)
         return False, f"Failed to create user: {error_msg}"
+
+
+def probe_proxmox() -> Dict[str, Any]:
+    """Return diagnostics information for admin troubleshooting.
+    
+    Contains node list, resource count, sample resources, and any error messages.
+    """
+    from app.config import VALID_NODES
+    
+    info: Dict[str, Any] = {
+        "ok": True,
+        "nodes": [],
+        "nodes_count": 0,
+        "resources_count": 0,
+        "resources_sample": [],
+        "valid_nodes": VALID_NODES,
+        "admin_users": ADMIN_USERS,
+        "admin_group": ADMIN_GROUP,
+        "error": None,
+    }
+    
+    try:
+        from app.services.proxmox_service import get_proxmox_admin
+        nodes = get_proxmox_admin().nodes.get() or []
+        info["nodes"] = [n.get("node") for n in nodes if isinstance(n, dict) and "node" in n]
+        info["nodes_count"] = len(info["nodes"])
+    except Exception as e:
+        info["ok"] = False
+        info["error"] = f"nodes error: {e}"
+        logger.exception("probe_proxmox: nodes error")
+        return info
+    
+    try:
+        from app.services.proxmox_service import get_proxmox_admin
+        resources = get_proxmox_admin().cluster.resources.get(type="vm") or []
+        info["resources_count"] = len(resources)
+        info["resources_sample"] = [
+            {"vmid": r.get("vmid"), "node": r.get("node"), "name": r.get("name")}
+            for r in resources[:10]
+        ]
+    except Exception as e:
+        info["ok"] = False
+        info["error"] = f"resources error: {e}"
+        logger.exception("probe_proxmox: resources error")
+        return info
+    
+    return info
+

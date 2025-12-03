@@ -21,7 +21,7 @@ from app.services.user_manager import (
     remove_user_from_admin_group
 )
 from app.services.class_service import (
-    get_all_users,
+    list_all_users,
     create_local_user,
     get_user_by_username,
     update_user_role,
@@ -54,7 +54,7 @@ def api_get_users():
         admin_members = get_admin_group_members()
         
         # Get local users
-        local_users = get_all_users()
+        local_users = list_all_users()
         
         # Combine and enrich
         users_data = []

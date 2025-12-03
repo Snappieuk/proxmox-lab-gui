@@ -57,8 +57,7 @@ def test_cluster_cache_thread_safety():
 
 def test_mappings_cache_thread_safety():
     """Test that mappings cache is thread-safe for concurrent access."""
-    from proxmox_client import (
-        _mappings_cache_lock,
+    from app.services.mappings_service import (
         get_user_vm_map,
         set_user_vm_mapping,
         invalidate_mappings_cache,

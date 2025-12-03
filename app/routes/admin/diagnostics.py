@@ -13,10 +13,10 @@ from app.utils.decorators import login_required, admin_required
 
 
 from app.services.proxmox_client import (
-    probe_proxmox,
     get_all_vms,
     _get_vm_mac,
 )
+from app.services.user_manager import probe_proxmox
 from app.services.arp_scanner import get_arp_table
 
 logger = logging.getLogger(__name__)

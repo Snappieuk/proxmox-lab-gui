@@ -103,11 +103,6 @@ def list_all_users() -> List[User]:
     return User.query.order_by(User.username).all()
 
 
-def get_all_users() -> List[User]:
-    """Alias for list_all_users() - get all users."""
-    return list_all_users()
-
-
 def delete_user(user_id: int) -> Tuple[bool, str]:
     """Delete a user and their assignments.
     

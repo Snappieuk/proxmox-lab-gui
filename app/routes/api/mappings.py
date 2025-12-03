@@ -15,7 +15,7 @@ from flask import Blueprint, jsonify, request
 from app.utils.decorators import admin_required
 
 
-from app.services.proxmox_client import (
+from app.services.mappings_service import (
     get_user_vm_map,
     save_user_vm_map,
     get_all_vm_ids_and_names,

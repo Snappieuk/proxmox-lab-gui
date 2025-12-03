@@ -20,7 +20,6 @@ from app.config import (
     VALID_NODES,
     ADMIN_USERS,
     ADMIN_GROUP,
-    MAPPINGS_FILE,
     VM_CACHE_FILE,
     VM_CACHE_TTL,
     PROXMOX_CACHE_TTL,
@@ -39,6 +38,25 @@ except ImportError:
     ARP_SCANNER_AVAILABLE = False
     logger = logging.getLogger(__name__)
     logger.warning("ARP scanner not available, falling back to guest agent only")
+
+# Import mappings service (DEPRECATED - migrate to database VMAssignment)
+from app.services.mappings_service import (
+    get_user_vm_map,
+    save_user_vm_map,
+    get_all_vm_ids_and_names,
+    set_user_vm_mapping,
+    invalidate_mappings_cache,
+)
+
+# Import user manager for admin functions
+from app.services.user_manager import (
+    is_admin_user,
+    get_admin_group_members,
+    add_user_to_admin_group,
+    remove_user_from_admin_group,
+    get_pve_users,
+    create_pve_user,
+)
 
 # No additional SSL warning suppression needed - already done above
 
@@ -219,7 +237,6 @@ logger = logging.getLogger(__name__)
 
 # Thread-safe locks for caches
 _vm_cache_lock = threading.Lock()
-_mappings_cache_lock = threading.Lock()
 
 # Per-cluster VM cache - dict mapping cluster_id to cache data
 _vm_cache_data: Dict[str, Optional[List[Dict[str, Any]]]] = {}
@@ -231,10 +248,6 @@ _vm_cache_loaded: Dict[str, bool] = {}
 _cluster_cache_data: Dict[str, Optional[List[Dict[str, Any]]]] = {}
 _cluster_cache_ts: Dict[str, float] = {}
 _cluster_cache_lock = threading.Lock()
-
-# In-memory mappings cache (write-through to disk)
-_mappings_cache: Optional[Dict[str, List[int]]] = None
-_mappings_cache_loaded = False
 
 # Auto-tuned ThreadPoolExecutor for parallel IP lookups
 # Uses CPU count - 1 for workers, bounded between 2 and 8
@@ -1768,209 +1781,52 @@ def get_all_vms(skip_ips: bool = False, force_refresh: bool = False) -> List[Dic
 
 
 # ---------------------------------------------------------------------------
-# User ↔ VM mappings (JSON file with in-memory cache and write-through)
+# User ↔ VM mappings (JSON file - DEPRECATED, migrate to VMAssignment table)
+# ---------------------------------------------------------------------------
+# Public API functions moved to app/services/mappings_service.py:
+# - get_user_vm_map()
+# - save_user_vm_map()
+# - get_all_vm_ids_and_names()
+# - set_user_vm_mapping()
+# - invalidate_mappings_cache()
+#
+# These functions are imported at the top of this file and re-exported
+# ---------------------------------------------------------------------------
+# User ↔ VM mappings - MIGRATED TO DATABASE (VMAssignment table)
+# ---------------------------------------------------------------------------
+# All VM assignment functions moved to database-backed system in:
+# - app/services/mappings_service.py (database queries)
+# - app/models.py (VMAssignment table)
+# - app/routes/api/user_vm_assignments.py (API endpoints)
+#
+# Legacy _load_mapping() and _save_mapping() functions REMOVED.
+# All mappings now use VMAssignment database table.
 # ---------------------------------------------------------------------------
 
-def _load_mapping() -> Dict[str, List[int]]:
-    """Load mappings from disk, using in-memory cache if available. Thread-safe."""
-    global _mappings_cache, _mappings_cache_loaded
-    
-    # Fast path: return cached data if loaded
-    with _mappings_cache_lock:
-        if _mappings_cache_loaded and _mappings_cache is not None:
-            return dict(_mappings_cache)  # Return a copy
-    
-    # Load from disk
-    if not os.path.exists(MAPPINGS_FILE):
-        with _mappings_cache_lock:
-            _mappings_cache = {}
-            _mappings_cache_loaded = True
-        return {}
+# ---------------------------------------------------------------------------
+# Admin group management (DEPRECATED - use user_manager.py)
+# ---------------------------------------------------------------------------
+# Public API functions moved to app/services/user_manager.py:
+# - is_admin_user()
+# - get_admin_group_members()
+# - add_user_to_admin_group()
+# - remove_user_from_admin_group()
+# - get_pve_users()
+# - create_pve_user()
+# - probe_proxmox()
+#
+# These functions are imported at the top of this file and re-exported
+# for backward compatibility with existing code.
+#
+# INTERNAL functions (used by user_manager.py):
+# - _get_admin_group_members_cached()
+# - _user_in_group()
+# - _debug_is_admin_user()
+# - _invalidate_admin_group_cache()
+# ---------------------------------------------------------------------------
 
-    try:
-        with open(MAPPINGS_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except Exception as e:
-        logger.debug("failed to load mappings file %s: %s", MAPPINGS_FILE, e)
-        with _mappings_cache_lock:
-            _mappings_cache = {}
-            _mappings_cache_loaded = True
-        return {}
-
-    out: Dict[str, List[int]] = {}
-    for user, vmids in data.items():
-        try:
-            out[user] = sorted({int(v) for v in vmids})
-        except Exception:
-            continue
-    
-    # Cache the loaded data
-    with _mappings_cache_lock:
-        _mappings_cache = dict(out)
-        _mappings_cache_loaded = True
-    
-    return out
-
-
-def _save_mapping(mapping: Dict[str, List[int]]) -> None:
-    """Save mappings to disk and update in-memory cache. Thread-safe."""
-    global _mappings_cache
-    
-    tmp = {}
-    for user, vmids in mapping.items():
-        tmp[user] = sorted({int(v) for v in vmids})
-    
-    # Update in-memory cache first (write-through)
-    with _mappings_cache_lock:
-        _mappings_cache = dict(tmp)
-    
-    # Write to disk
-    try:
-        with open(MAPPINGS_FILE, "w", encoding="utf-8") as f:
-            json.dump(tmp, f, indent=2)
-    except Exception as e:
-        logger.exception("failed to save mappings file %s: %s", MAPPINGS_FILE, e)
-
-
-def get_user_vm_map() -> Dict[str, List[int]]:
-    """
-    Returns { 'user@pve': [vmid, ...], ... }
-    
-    Uses in-memory cache with write-through to disk on updates.
-    Thread-safe.
-    """
-    return _load_mapping()
-
-
-def save_user_vm_map(mapping: Dict[str, List[int]]) -> None:
-    """
-    Save the entire user-VM mapping dictionary.
-    
-    Thread-safe write-through to disk.
-    """
-    _save_mapping(mapping)
-
-
-def get_all_vm_ids_and_names() -> List[Dict[str, Any]]:
-    """
-    Get lightweight VM list (ID, name, cluster, node only - no IP lookups).
-    
-    Much faster than get_all_vms() because it skips expensive IP address lookups.
-    Used by the mappings page where we only need to display VM IDs and names.
-    
-    Returns: List of {vmid, name, cluster_id, node}
-    """
-    results = []
-    
-    for cluster in CLUSTERS:
-        cluster_id = cluster["id"]
-        cluster_name = cluster["name"]
-        try:
-            proxmox = get_proxmox_admin_for_cluster(cluster_id)
-            
-            # Try cluster resources API first (fastest)
-            try:
-                resources = proxmox.cluster.resources.get(type="vm") or []
-                for vm in resources:
-                    # Skip templates
-                    if vm.get("template") == 1:
-                        continue
-                    
-                    node = vm.get("node")
-                    if VALID_NODES and node not in VALID_NODES:
-                        continue
-                    
-                    results.append({
-                        "vmid": int(vm["vmid"]),
-                        "name": vm.get("name", f"vm-{vm['vmid']}"),
-                        "cluster_id": cluster_id,
-                        "cluster_name": cluster_name,
-                        "node": node,
-                    })
-                continue
-            except Exception as e:
-                logger.warning("Cluster resources API failed for %s, using node queries: %s", cluster_name, e)
-            
-            # Fallback: per-node queries
-            nodes = proxmox.nodes.get() or []
-            for node_data in nodes:
-                node_name = node_data["node"]
-                
-                # Skip nodes not in VALID_NODES filter
-                if VALID_NODES and node_name not in VALID_NODES:
-                    continue
-                
-                # Get QEMU VMs
-                try:
-                    qemu_vms = proxmox.nodes(node_name).qemu.get()
-                    for vm in qemu_vms:
-                        # Skip templates
-                        if vm.get("template") == 1:
-                            continue
-                        results.append({
-                            "vmid": int(vm["vmid"]),
-                            "name": vm.get("name", f"vm-{vm['vmid']}"),
-                            "cluster_id": cluster_id,
-                            "cluster_name": cluster_name,
-                            "node": node_name,
-                        })
-                except Exception as e:
-                    logger.warning("Failed to fetch QEMU VMs from %s/%s: %s", cluster_id, node_name, e)
-                
-                # Get LXC containers
-                try:
-                    lxc_vms = proxmox.nodes(node_name).lxc.get()
-                    for vm in lxc_vms:
-                        results.append({
-                            "vmid": int(vm["vmid"]),
-                            "name": vm.get("name", f"ct-{vm['vmid']}"),
-                            "cluster_id": cluster_id,
-                            "cluster_name": cluster_name,
-                            "node": node_name,
-                        })
-                except Exception as e:
-                    logger.warning("Failed to fetch LXC containers from %s/%s: %s", cluster_id, node_name, e)
-        
-        except Exception as e:
-            logger.error("Failed to fetch VMs from cluster %s: %s", cluster_id, e)
-    
-    # Sort by vmid
-    results.sort(key=lambda x: x["vmid"])
-    return results
-
-
-def set_user_vm_mapping(user: str, vmids: List[int]) -> None:
-    """
-    Update mapping for one user. Empty list removes mapping.
-    
-    Uses in-memory cache with write-through to disk.
-    Thread-safe.
-    """
-    user = (user or "").strip()
-    mapping = _load_mapping()
-    if not user:
-        return
-
-    vmids_clean = sorted({int(v) for v in vmids if v is not None})
-
-    if vmids_clean:
-        mapping[user] = vmids_clean
-    else:
-        mapping.pop(user, None)
-
-    _save_mapping(mapping)
-
-
-def invalidate_mappings_cache() -> None:
-    """Invalidate the in-memory mappings cache.
-    
-    Call this to force a reload from disk on next access.
-    """
-    global _mappings_cache, _mappings_cache_loaded
-    with _mappings_cache_lock:
-        _mappings_cache = None
-        _mappings_cache_loaded = False
-
+# These internal functions are still here because they're used by user_manager.py
+# or for backward compatibility with code that directly accesses them
 
 def _get_admin_group_members_cached() -> List[str]:
     """
@@ -2074,6 +1930,7 @@ def _user_in_group(user: str, groupid: str) -> bool:
 
 
 def _debug_is_admin_user(user: str) -> bool:
+    """Internal debug function for admin checking (used by tests)."""
     try:
         grp = get_proxmox_admin().access.groups(ADMIN_GROUP).get()
     except Exception:
@@ -2089,116 +1946,16 @@ def _debug_is_admin_user(user: str) -> bool:
     return user in members
 
 
-def is_admin_user(user: str) -> bool:
-    """
-    Admin if:
-    - explicitly listed in ADMIN_USERS, OR
-    - member of ADMIN_GROUP (if configured).
-    """
-    if not user:
-        return False
-    if user in ADMIN_USERS:
-        return True
-    if ADMIN_GROUP:
-        res = _user_in_group(user, ADMIN_GROUP)
-        logger.debug("is_admin_user(%s) -> %s (ADMIN_USERS=%s, ADMIN_GROUP=%s)", user, res, ADMIN_USERS, ADMIN_GROUP)
-        return res
-    return False
-
-
-def get_admin_group_members() -> List[str]:
-    """Get list of users in the admin group.
-    
-    Uses the in-memory cache to avoid repeated Proxmox API calls.
-    """
-    return _get_admin_group_members_cached()
-
-
 def _invalidate_admin_group_cache() -> None:
-    """Invalidate the admin group cache to force a refresh on next access."""
+    """Invalidate the admin group cache to force a refresh on next access.
+    
+    INTERNAL FUNCTION: Used by user_manager.py functions.
+    """
     global _admin_group_cache, _admin_group_ts
     with _admin_group_lock:
         _admin_group_cache = None
         _admin_group_ts = 0.0
     logger.debug("Invalidated admin group cache")
-
-
-def add_user_to_admin_group(user: str) -> bool:
-    """
-    Add a user to the admin group in Proxmox.
-    Returns True if successful, False otherwise.
-    """
-    if not ADMIN_GROUP:
-        logger.warning("ADMIN_GROUP not configured, cannot add user")
-        return False
-    
-    try:
-        # Get current group info
-        current_members = get_admin_group_members()
-        if user in current_members:
-            logger.info("User %s already in admin group", user)
-            return True
-        
-        # Add user to group by updating the group
-        # Proxmox API requires comment parameter even if empty
-        current_members.append(user)
-        
-        # Get current group to fetch comment
-        try:
-            group_info = get_proxmox_admin().access.groups(ADMIN_GROUP).get()
-            comment = group_info.get('comment', '') if group_info else ''
-        except:
-            comment = ''
-        
-        get_proxmox_admin().access.groups(ADMIN_GROUP).put(
-            comment=comment,
-            members=",".join(current_members)
-        )
-        # Invalidate cache after modification
-        _invalidate_admin_group_cache()
-        logger.info("Added user %s to admin group %s", user, ADMIN_GROUP)
-        return True
-    except Exception as e:
-        logger.exception("Failed to add user %s to admin group: %s", user, e)
-        return False
-
-
-def remove_user_from_admin_group(user: str) -> bool:
-    """
-    Remove a user from the admin group in Proxmox.
-    Returns True if successful, False otherwise.
-    """
-    if not ADMIN_GROUP:
-        logger.warning("ADMIN_GROUP not configured, cannot remove user")
-        return False
-    
-    try:
-        current_members = get_admin_group_members()
-        if user not in current_members:
-            logger.info("User %s not in admin group", user)
-            return True
-        
-        # Remove user from group by updating the group
-        current_members.remove(user)
-        
-        # Get current group to fetch comment
-        try:
-            group_info = get_proxmox_admin().access.groups(ADMIN_GROUP).get()
-            comment = group_info.get('comment', '') if group_info else ''
-        except:
-            comment = ''
-        
-        get_proxmox_admin().access.groups(ADMIN_GROUP).put(
-            comment=comment,
-            members=",".join(current_members)
-        )
-        # Invalidate cache after modification
-        _invalidate_admin_group_cache()
-        logger.info("Removed user %s from admin group %s", user, ADMIN_GROUP)
-        return True
-    except Exception as e:
-        logger.exception("Failed to remove user %s from admin group: %s", user, e)
-        return False
 
 
 def get_vm_ip(cluster_id: str, vmid: int, node: str, vmtype: str) -> Optional[str]:
@@ -2327,76 +2084,9 @@ def find_vm_for_user(user: str, vmid: int, skip_ip: bool = False) -> Optional[Di
 
 
 # ---------------------------------------------------------------------------
-# Actions: RDP file + power control
+# Actions: Power control
 # ---------------------------------------------------------------------------
-
-def build_rdp(vm: Dict[str, Any]) -> str:
-    """
-    Build a minimal .rdp file content for a Windows VM.
-    Raises ValueError if VM is missing required fields or has no IP.
-    """
-    if not vm:
-        raise ValueError("VM dict is None or empty")
-    
-    vmid = vm.get("vmid")
-    if not vmid:
-        raise ValueError("VM missing vmid field")
-    
-    ip = vm.get("ip")
-    if not ip or ip == "<ip>":
-        raise ValueError(f"VM {vmid} has no IP address - ensure guest agent is installed and VM is running")
-    
-    name = vm.get("name") or f"vm-{vmid}"
-    
-    # Minimal valid RDP file format that Windows Remote Desktop will accept
-    # Using only essential fields to avoid compatibility issues
-    return (
-        f"full address:s:{ip}:3389\r\n"
-        f"prompt for credentials:i:1\r\n"
-        f"administrative session:i:0\r\n"
-        f"authentication level:i:2\r\n"
-        f"screen mode id:i:2\r\n"
-        f"desktopwidth:i:1920\r\n"
-        f"desktopheight:i:1080\r\n"
-        f"session bpp:i:32\r\n"
-        f"compression:i:1\r\n"
-        f"keyboardhook:i:2\r\n"
-        f"audiocapturemode:i:0\r\n"
-        f"videoplaybackmode:i:1\r\n"
-        f"connection type:i:7\r\n"
-        f"networkautodetect:i:1\r\n"
-        f"bandwidthautodetect:i:1\r\n"
-        f"displayconnectionbar:i:1\r\n"
-        f"enableworkspacereconnect:i:0\r\n"
-        f"disable wallpaper:i:0\r\n"
-        f"allow font smoothing:i:0\r\n"
-        f"allow desktop composition:i:0\r\n"
-        f"disable full window drag:i:1\r\n"
-        f"disable menu anims:i:1\r\n"
-        f"disable themes:i:0\r\n"
-        f"disable cursor setting:i:0\r\n"
-        f"bitmapcachepersistenable:i:1\r\n"
-        f"audiomode:i:0\r\n"
-        f"redirectprinters:i:1\r\n"
-        f"redirectcomports:i:0\r\n"
-        f"redirectsmartcards:i:1\r\n"
-        f"redirectclipboard:i:1\r\n"
-        f"redirectposdevices:i:0\r\n"
-        f"autoreconnection enabled:i:1\r\n"
-        f"negotiate security layer:i:1\r\n"
-        f"remoteapplicationmode:i:0\r\n"
-        f"alternate shell:s:\r\n"
-        f"shell working directory:s:\r\n"
-        f"gatewayhostname:s:\r\n"
-        f"gatewayusagemethod:i:4\r\n"
-        f"gatewaycredentialssource:i:4\r\n"
-        f"gatewayprofileusagemethod:i:0\r\n"
-        f"promptcredentialonce:i:0\r\n"
-        f"gatewaybrokeringtype:i:0\r\n"
-        f"use redirection server name:i:0\r\n"
-        f"rdgiskdcproxy:i:0\r\n"
-        f"kdcproxyname:s:\r\n"
-    )
+# Note: build_rdp() removed - use app.services.rdp_service.build_rdp() instead
 
 
 def start_vm(vm: Dict[str, Any]) -> None:
@@ -2437,115 +2127,3 @@ def shutdown_vm(vm: Dict[str, Any]) -> None:
     _invalidate_vm_cache()
     _clear_vm_ip_cache(cluster_id, vmid)  # Clear IP cache - VM no longer has IP when stopped
     invalidate_arp_cache()  # Force fresh network scan to update ARP table
-
-
-# ---------------------------------------------------------------------------
-# User listing for mappings UI
-# ---------------------------------------------------------------------------
-
-def get_pve_users() -> List[Dict[str, str]]:
-    """
-    Return list of enabled PVE-realm users: [{ 'userid': 'user@pve' }, ...]
-    """
-    try:
-        users = get_proxmox_admin().access.users.get()
-    except Exception as e:
-        logger.debug("failed to list pve users: %s", e)
-        return []
-
-    if users is None:
-        users = []
-
-    out: List[Dict[str, str]] = []
-    for u in users:
-        userid = u.get("userid")
-        enable = u.get("enable", 1)
-        if not userid or "@" not in userid:
-            continue
-        name, realm = userid.split("@", 1)
-        if realm != "pve":
-            continue
-        if enable == 0:
-            continue
-        out.append({"userid": userid})
-
-    out.sort(key=lambda x: x["userid"])
-    return out
-
-
-def probe_proxmox() -> Dict[str, Any]:
-    """Return diagnostics information helpful for admin troubleshooting.
-
-    Contains node list, resource count, a small sample of resources, and any error
-    messages encountered while querying the Proxmox API.
-    """
-    info: Dict[str, Any] = {
-        "ok": True,
-        "nodes": [],
-        "nodes_count": 0,
-        "resources_count": 0,
-        "resources_sample": [],
-        "valid_nodes": VALID_NODES,
-        "admin_users": ADMIN_USERS,
-        "admin_group": ADMIN_GROUP,
-        "error": None,
-    }
-    try:
-        nodes = get_proxmox_admin().nodes.get() or []
-        info["nodes"] = [n.get("node") for n in nodes if isinstance(n, dict) and "node" in n]
-        info["nodes_count"] = len(info["nodes"])
-    except Exception as e:
-        info["ok"] = False
-        info["error"] = f"nodes error: {e}"
-        logger.exception("probe_proxmox: nodes error")
-        return info
-
-    try:
-        resources = get_proxmox_admin().cluster.resources.get(type="vm") or []
-        info["resources_count"] = len(resources)
-        info["resources_sample"] = [
-            {"vmid": r.get("vmid"), "node": r.get("node"), "name": r.get("name")} for r in resources[:10]
-        ]
-    except Exception as e:
-        info["ok"] = False
-        info["error"] = f"resources error: {e}"
-        logger.exception("probe_proxmox: resources error")
-        return info
-
-    return info
-
-
-def create_pve_user(username: str, password: str) -> tuple[bool, Optional[str]]:
-    """Create a new user in Proxmox pve realm.
-    
-    Returns: (success: bool, error_message: Optional[str])
-    """
-    if not username or not password:
-        return False, "Username and password are required"
-    
-    # Validate username (alphanumeric, underscore, dash)
-    if not re.match(r'^[a-zA-Z0-9_-]+$', username):
-        return False, "Username can only contain letters, numbers, underscore, and dash"
-    
-    if len(username) < 3:
-        return False, "Username must be at least 3 characters"
-    
-    if len(password) < 8:
-        return False, "Password must be at least 8 characters"
-    
-    try:
-        userid = f"{username}@pve"
-        get_proxmox_admin().access.users.post(
-            userid=userid,
-            password=password,
-            enable=1,
-            comment="Self-registered user"
-        )
-        logger.info("Created pve user: %s", userid)
-        return True, None
-    except Exception as e:
-        error_msg = str(e)
-        if "already exists" in error_msg.lower():
-            return False, "Username already exists"
-        logger.exception("Failed to create user %s: %s", username, e)
-        return False, f"Failed to create user: {error_msg}"

@@ -60,7 +60,8 @@ else:
 ADMIN_GROUP = os.getenv("ADMIN_GROUP", "adminers")   # set to None to disable group-based admin
 
 # Where per-user VM mappings are stored (JSON file on disk)
-MAPPINGS_FILE = os.getenv("MAPPINGS_FILE") or os.path.join(os.path.dirname(__file__), "mappings.json")
+# DEPRECATED: mappings.json system removed - all VM assignments now in database via VMAssignment table
+# MAPPINGS_FILE = os.getenv("MAPPINGS_FILE") or os.path.join(os.path.dirname(__file__), "mappings.json")
 
 # Cluster configuration file (JSON file on disk)
 CLUSTER_CONFIG_FILE = os.getenv("CLUSTER_CONFIG_FILE") or os.path.join(os.path.dirname(__file__), "clusters.json")

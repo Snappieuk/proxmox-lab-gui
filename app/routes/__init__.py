@@ -14,7 +14,7 @@ from app.routes.api.mappings import api_mappings_bp
 from app.routes.api.clusters import api_clusters_bp
 from app.routes.api.rdp import api_rdp_bp
 from app.routes.api.ssh import api_ssh_bp
-from app.routes.api.classes import api_classes_bp
+from app.routes.api.class_api import api_classes_bp
 from app.routes.api.class_template import api_class_template_bp
 from app.routes.api.templates import bp as api_templates_bp
 from app.routes.api.sync import sync_bp as api_sync_bp

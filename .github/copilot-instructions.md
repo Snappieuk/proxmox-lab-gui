@@ -21,16 +21,17 @@ A Flask webapp providing a lab VM portal similar to Azure Labs for self-service 
   - **Legacy Python cloning** (deprecated): Old `clone_vms_for_class()` function (~800 lines in `app/services/proxmox_operations.py`) exists but is NOT used. May be removed in future cleanup.
 - **Class co-owners feature** (see `CLASS_CO_OWNERS.md`): Teachers can grant other teachers/admins full class management permissions. Uses many-to-many relationship via `class_co_owners` association table. Check permissions with `Class.is_owner(user)` method.
 - **Template publishing workflow**: Teachers can publish VM changes to class template, then propagate to all student VMs. Located at `app/routes/api/publish_template.py`. Long-running background operation that copies disk changes via QCOW2 rebasing.
-- **User VM assignments**: Direct VM→user mappings outside class context. Located at `app/routes/api/user_vm_assignments.py`. Replaces legacy `mappings.json` system. All assignments use VMAssignment table with `class_id=NULL` for direct assignments.
-- **Mappings.json system**: **DEPRECATED - Being migrated to database**. Currently reads `app/mappings.json` to map Proxmox users → VMIDs. This should be replaced with database-backed VMAssignment records. The User model already has `vm_assignments` relationship - mappings.json is redundant.
+- **User VM assignments**: All VM→user mappings stored in database via VMAssignment table. Direct assignments (no class) use `class_id=NULL`. Located at `app/routes/api/user_vm_assignments.py`. NO JSON files used.
 - **Authentication model**: **Proxmox users = Admins only**. Going forward, no application users (students/teachers) should have Proxmox accounts. All non-admin users managed via SQLite database.
 
 ## Architecture patterns
-**Dual system coexistence** (user access - MIGRATION IN PROGRESS):
-- **Legacy mappings.json system**: **DEPRECATED** - Admins manually map Proxmox users → VMIDs in JSON file at `app/mappings.json`. Read by `_resolve_user_owned_vmids()` function. Should be migrated to VMAssignment table in database.
-- **Class-based system**: Teachers create classes linked to Proxmox templates, VMs auto-cloned and assigned to students via invite links. SQLite-backed (`app/lab_portal.db`). Uses VMAssignment table.
-- **Future state**: Only class-based system. All VM→user mappings in database via VMAssignment records. No JSON files. Function `_resolve_user_owned_vmids()` should only query database.
-- Both systems query same Proxmox clusters via `app/services/proxmox_client.py` and render same templates. User sees combined VM list (mappings.json + class assignments). Function `_resolve_user_owned_vmids()` merges both sources.
+**Database-first user access control**:
+- **VMAssignment table**: All VM→user mappings stored in database. Uses `assigned_user_id` FK to User table, `class_id` FK to Class table (NULL for direct assignments).
+- **Permission check**: `_resolve_user_owned_vmids()` function queries VMAssignment table, returns set of accessible VMIDs.
+- **Admin bypass**: Admins see all VMs (permission check skipped).
+- Both class-based assignments and direct assignments use same VMAssignment table, differentiated by `class_id` field.
+- Function `_resolve_user_owned_vmids()` in `app/routes/api/vms.py` handles all permission logic.
+- All systems query Proxmox clusters via `app/services/proxmox_client.py` and render same templates.
 
 **Multi-cluster support** (`app/config.py` + `app/services/cluster_manager.py`):
 - `CLUSTERS` list defines multiple Proxmox clusters (can load from `clusters.json` for persistence)
@@ -83,7 +84,7 @@ admin/
   vm_class_mappings.py → /admin/vm-class-mappings (manage VM↔class assignments)
 api/
   vms.py         → /api/vms (fetch VM list), /api/vm/<vmid>/start|stop|status|ip
-  classes.py     → /api/classes (CRUD), /api/class/<id>/pool, /api/class/<id>/assign
+  class_api.py   → /api/classes (CRUD), /api/class/<id>/pool, /api/class/<id>/assign
   class_owners.py → /api/classes/<id>/co-owners (GET/POST/DELETE co-owner management)
   class_template.py → /api/class/<id>/template/* (reimage, save, push operations)
   publish_template.py → /api/classes/<id>/publish-template (teacher→student VM propagation)
@@ -91,7 +92,7 @@ api/
   vm_class_mappings.py → /api/vm-class-mappings (bulk assign VMs to classes)
   rdp.py         → /rdp/<vmid>.rdp (download RDP file)
   ssh.py         → /ssh/<vmid> (WebSocket terminal, requires flask-sock)
-  mappings.py    → /api/mappings (CRUD for mappings.json - DEPRECATED)
+  mappings.py    → /api/mappings (DEPRECATED - migrated to database, kept for legacy compat)
   clusters.py    → /api/clusters/switch (change active cluster)
   templates.py   → /api/templates (list templates, by-name lookup, node distribution, stats)
   sync.py        → /api/sync/status|trigger|inventory/summary (VMInventory sync control)
@@ -159,7 +160,7 @@ api/
 
 **`app/services/proxmox_client.py`** (Proxmox integration, ~1800 lines):
 - **Singletons**: `proxmox_admin` (legacy single cluster), `proxmox_admin_wrapper` (cache adapter)
-- **Core VM functions**: `get_all_vms()` (fetch all VMs, applies mappings.json filter), `get_vms_for_user()` (user-specific view), `find_vm_for_user()` (permission check)
+- **Core VM functions**: `get_all_vms()` (fetch all VMs from database), `get_vms_for_user()` (user-specific view), `find_vm_for_user()` (permission check)
 - **VM operations**: `start_vm(vm)`, `shutdown_vm(vm)` – handle both QEMU and LXC, invalidate cache after operation
 - **IP discovery**: `_lookup_vm_ip(node, vmid, vmtype)` – tries Proxmox guest agent `network-get-interfaces` API (QEMU) or `.interfaces.get()` (LXC), falls back to ARP scan
 - **RDP generation**: `build_rdp(vm)` – raises `ValueError` if VM has no IP (caller must catch)
@@ -181,7 +182,7 @@ api/
 - **Legacy single-cluster**: `PVE_HOST`, `PVE_ADMIN_USER`, `PVE_ADMIN_PASS` (still used as defaults)
 - **Admin privileges**: `ADMIN_USERS` (comma-separated), `ADMIN_GROUP` (Proxmox group name, default "adminers")
 - **Performance**: `VM_CACHE_TTL` (300s), `PROXMOX_CACHE_TTL` (30s), `ENABLE_IP_LOOKUP` (bool), `ENABLE_IP_PERSISTENCE` (slow, disabled by default)
-- **Persistence files**: `MAPPINGS_FILE` (JSON), `CLUSTER_CONFIG_FILE` (JSON), `IP_CACHE_FILE` (JSON), `VM_CACHE_FILE` (JSON)
+- **Persistence files**: `CLUSTER_CONFIG_FILE` (JSON for cluster definitions), `VM_CACHE_FILE` (deprecated), `IP_CACHE_FILE` (deprecated)
 - **ARP scanner**: `ARP_SUBNETS` (broadcast addresses, default `["10.220.15.255"]` for 10.220.8.0/21 network)
 - **Template replication**: `ENABLE_TEMPLATE_REPLICATION` (bool, default False) – auto-replicate templates at startup
 
@@ -340,13 +341,10 @@ git add . && git commit -m "Changes" && git push
 **RDP file generation failures**:
 - `build_rdp(vm)` raises `ValueError` if VM has no IP address (stopped VMs, missing guest agent)
 - `app.py` catches this in `/rdp/<vmid>.rdp` route, renders `error.html` with 503 status
-**mappings.json path resolution** (DEPRECATED - MIGRATE TO DATABASE):
-- File at `app/mappings.json` currently read by `_resolve_user_owned_vmids()` to determine VM access
-- **Should be removed**: All VM assignments should use VMAssignment table in database
-- User model already has `vm_assignments` relationship - JSON file is redundant
-- Migration path: Create VMAssignment records for any mappings in JSON, then delete JSON file and related code
-- Override with `MAPPINGS_FILE` env var (absolute path recommended for production)
-- Auto-created on first write if missing – parent dir must exist!
+**No JSON files used for data storage**:
+- All user/class/VM data in SQLite database (`app/lab_portal.db`)
+- Configuration in environment variables or `clusters.json` (cluster definitions only)
+- No mappings.json, no vm_cache.json, no ip_cache.json (deprecated files may still exist but are not used)
 
 **SSL verification disabled by default** (`PVE_VERIFY=False`):
 - Required for self-signed Proxmox certs in dev/lab environments

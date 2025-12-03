@@ -553,7 +553,7 @@ def discover_ips_via_arp(vm_mac_map: Dict[str, str], subnets: Optional[List[str]
     if not vm_mac_map:
         return {}
     
-    # Check if cache is still valid (1 hour TTL)
+    # Check if cache is still valid (5 minute TTL)
     cache_age = time.time() - _arp_cache_time
     cache_valid = cache_age < _arp_cache_ttl and not force_refresh
     
@@ -569,26 +569,31 @@ def discover_ips_via_arp(vm_mac_map: Dict[str, str], subnets: Optional[List[str]
     if len(vm_ips) == len(vm_mac_map) and cache_valid:
         return vm_ips
     
-    # If background mode, start scan thread and return immediately
+    # If background mode, start scan thread ONLY if cache is expired or force refresh
+    # DO NOT start scan just because some IPs are missing - respect the cache TTL!
     if background:
-        with _scan_lock:
-            if not _scan_in_progress:
-                _scan_in_progress = True
-                _scan_thread = threading.Thread(
-                    target=_background_scan_worker,
-                    args=(vm_mac_map, subnets),
-                    daemon=True
-                )
-                _scan_thread.start()
-                
-                # Set initial status for VMs without IPs
-                for key in vm_mac_map.keys():
-                    if key not in vm_ips:
-                        _scan_status[key] = "Scan starting..."
-            else:
-                pass
+        # Only start a new scan if:
+        # 1. Cache is expired (older than TTL) OR force_refresh is True
+        # 2. AND we're not already scanning
+        should_scan = (not cache_valid) and not _scan_in_progress
         
-        return vm_ips  # Return whatever we have cached
+        if should_scan:
+            with _scan_lock:
+                if not _scan_in_progress:
+                    _scan_in_progress = True
+                    _scan_thread = threading.Thread(
+                        target=_background_scan_worker,
+                        args=(vm_mac_map, subnets),
+                        daemon=True
+                    )
+                    _scan_thread.start()
+                    
+                    # Set initial status for VMs without IPs
+                    for key in vm_mac_map.keys():
+                        if key not in vm_ips:
+                            _scan_status[key] = "Scan starting..."
+        
+        return vm_ips  # Return whatever we have cached (even if incomplete)
     
     # Synchronous mode (old behavior)
     

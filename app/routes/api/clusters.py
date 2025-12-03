@@ -20,6 +20,7 @@ from app.services.proxmox_client import (
     get_cluster_config,
     save_cluster_config,
 )
+from app.services.mappings_service import invalidate_mappings_cache
 
 logger = logging.getLogger(__name__)
 
