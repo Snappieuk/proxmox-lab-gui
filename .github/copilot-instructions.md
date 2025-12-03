@@ -3,7 +3,7 @@
 ## What this repo is
 A Flask webapp providing a lab VM portal similar to Azure Labs for self-service student VM access.
 
-**Architecture**: Modular blueprint-based Flask application with all code under `app/` directory. Uses SQLite for class management, Proxmox API for VM control, VMInventory database-first caching, and multiple VM deployment strategies (Terraform, legacy Python cloning, QCOW2 overlay bulk cloning).
+**Architecture**: Modular blueprint-based Flask application with all code under `app/` directory. Uses SQLite for class management, Proxmox API for VM control, VMInventory database-first caching, and VM shell + disk copy deployment strategy.
 
 **Entry point**: `run.py` - imports `create_app()` factory from `app/` package and runs Flask with threaded mode.
 
@@ -15,10 +15,19 @@ A Flask webapp providing a lab VM portal similar to Azure Labs for self-service 
 - **VMInventory + background_sync system**: **Core architecture** - database-first design where all VM reads come from `VMInventory` table (see `DATABASE_FIRST_ARCHITECTURE.md`). Background sync daemon updates DB every 5min (full) and 30sec (quick). Provides 100x faster page loads vs direct Proxmox API calls. Code in `app/__init__.py` (lines 137-139), `app/routes/api/vms.py`, `app/services/inventory_service.py`, `app/services/background_sync.py`.
 - **Progressive UI loading**: Frontend shows "Starting..." badge for VMs that are running but have no IP yet. Only transitions to "Running" after IP is discovered. Polls at 2s and 10s intervals after VM start, background sync triggers IP discovery 15s after start operation.
 - **IP discovery workflow**: Multi-tier hierarchy - VMInventory DB cache → Proxmox guest agent `network-get-interfaces` API → LXC `.interfaces.get()` → ARP scanner with nmap → RDP port 3389 validation. Background thread triggers immediate IP sync 15 seconds after VM start (allows boot time before network check).
-- **VM Deployment strategies** (3 options, choose based on use case):
-  - **QCOW2 bulk cloning** (PRIMARY, fastest): Uses overlay disks with backing-file references. Located at `app/services/qcow2_bulk_cloner.py` and `app/services/class_vm_service.py`. Requires SSH to Proxmox nodes. Provides 100x speed improvement over traditional cloning, parallel deployment, no template locking. Used by class-based lab workflow.
-  - **Terraform** (alternative): Located at `app/services/terraform_service.py`. Provides 10x speed improvement, parallel deployment, automatic VMID allocation, idempotency. See `terraform/README.md`.
-  - **Legacy Python cloning** (deprecated): Old `clone_vms_for_class()` function (~800 lines in `app/services/proxmox_operations.py`) exists but is NOT used. May be removed in future cleanup.
+- **VM Deployment strategy** (VM shell + disk copy/overlay):
+  - **Location**: All disk operations in `app/services/class_vm_service.py` using direct SSH `qm` and `qemu-img` commands
+  - **Workflow with template**:
+    1. Export template disk: `qemu-img convert -O qcow2` creates base QCOW2 file
+    2. Teacher VM: `qm clone --full` creates full clone from template
+    3. Class-base VM: Created as reference for student overlays
+    4. Student VMs: `qemu-img create -f qcow2 -F qcow2 -b <base>` creates copy-on-write overlays
+  - **Workflow without template**:
+    1. Teacher/class-base/student VMs: `qm create --scsi0 STORAGE:SIZE` creates empty shells with disks
+  - **Disk cloning**: Uses `qemu-img` with backing files (QCOW2 overlays) for efficient copy-on-write
+  - **Template push**: Should use same disk copy approach - clone template disk to class-base, recreate student overlays
+  - **Key functions**: `create_class_vms()`, `export_template_to_qcow2()`, `save_and_deploy_class_vms()`, `get_vm_mac_address()`
+  - **SSH helper**: `SSHExecutor` from `ssh_executor.py` provides SSH connection wrapper
 - **Class co-owners feature** (see `CLASS_CO_OWNERS.md`): Teachers can grant other teachers/admins full class management permissions. Uses many-to-many relationship via `class_co_owners` association table. Check permissions with `Class.is_owner(user)` method.
 - **Template publishing workflow**: Teachers can publish VM changes to class template, then propagate to all student VMs. Located at `app/routes/api/publish_template.py`. Long-running background operation that copies disk changes via QCOW2 rebasing.
 - **User VM assignments**: All VM→user mappings stored in database via VMAssignment table. Direct assignments (no class) use `class_id=NULL`. Located at `app/routes/api/user_vm_assignments.py`. NO JSON files used.
@@ -119,37 +128,34 @@ api/
 - `VMInventory`: **Database-first cache** - stores all VM metadata (identity, status, network, resources). Updated by background sync daemon. Single source of truth for GUI.
 - `init_db(app)`: Sets up SQLite at `app/lab_portal.db`, creates tables on first run
 
-**`app/services/proxmox_operations.py`** (VM cloning & template operations, ~410 lines):
+**`app/services/proxmox_operations.py`** (VM operations & template management, ~2500 lines):
 - Template management: `list_proxmox_templates()` (scans clusters for template VMs)
-- **VM cloning (UNUSED)**: `clone_vm_from_template()`, `clone_vms_for_class()` – replaced by Terraform, not imported anywhere
+- **Legacy cloning**: `clone_vms_for_class()` (~800 lines) - old sequential cloning approach, should be refactored to use disk copy approach from `class_vm_service.py`
 - VM lifecycle: `start_class_vm()`, `stop_class_vm()`, `delete_vm()`, `get_vm_status()`
 - Snapshot operations: `create_vm_snapshot()`, `revert_vm_to_snapshot()` – still used
 - Template conversion: `convert_vm_to_template()` (converts VM → template)
-- **Template replication**: `replicate_templates_to_all_nodes()` – still useful for multi-node clusters
 - Multi-cluster aware: Takes `cluster_ip` param, looks up cluster by IP in `CLUSTERS` config
 
-**`app/services/terraform_service.py`** (Terraform-based VM deployment, ~480 lines):
-- **Alternative deployment method**: `deploy_class_vms()` – deploys teacher + student VMs in parallel using Terraform
-- **Node selection**: `_get_best_nodes()` – queries Proxmox for least-loaded nodes
-- **Workspace isolation**: Each class gets isolated Terraform workspace in `terraform/classes/<class_id>/`
-- **State management**: `get_class_vms()` reads Terraform state, `destroy_class_vms()` removes all VMs
-- **Idempotent**: Safe to re-run deployment (creates only missing VMs)
-- **Benefits**: 10x faster than Python cloning, automatic VMID allocation, built-in error handling
+**`app/services/ssh_executor.py`** (SSH helper, ~170 lines):
+- **SSH operations**: `SSHExecutor` class for executing commands on Proxmox nodes via paramiko
+- **Helper function**: `get_ssh_executor_from_config()` creates configured SSH executor from current cluster config
+- **Purpose**: Provides low-level SSH command execution for VM operations
+- **Used by**: `class_vm_service.py` for all `qm` and `qemu-img` commands
 
-**`app/services/qcow2_bulk_cloner.py`** (QCOW2 overlay bulk cloning, ~1170 lines):
-- **PRIMARY deployment method**: Fast parallel VM cloning using QCOW2 overlay disks with backing-file references
-- **Core functions**: `bulk_clone_from_template()` (creates VM shells + overlay disks), `SSHExecutor` (SSH command execution)
-- **Why not Terraform**: Terraform provider cannot create empty VM shells with custom QCOW2 overlays - requires direct `qm` commands
-- **Benefits**: 100x speed improvement, parallel deployment, no template locking, instant disk creation
-- **Requirements**: SSH access to Proxmox nodes, QCOW2 storage backend
-- **Design**: Creates overlay files on node storage, attaches as VM disks, supports cloud-init configuration
-
-**`app/services/class_vm_service.py`** (Class VM integration layer, ~575 lines):
-- **High-level workflow**: Integrates QCOW2 bulk cloning with class management database
-- **Key functions**: `deploy_class_vms()` (creates teacher + class template + student VMs), `save_and_deploy_class_vms()` (update student VMs)
-- **Template workflow**: Original template → Teacher VM + Class base template → Student overlay VMs
-- **VMAssignment management**: Creates/updates database records for all cloned VMs
-- **SSH configuration**: `get_ssh_executor_from_config()` reads SSH credentials from environment/config
+**`app/services/class_vm_service.py`** (Class VM service with disk operations, ~800 lines):
+- **Primary VM creation service**: All disk cloning/overlay operations happen here using direct `qm` and `qemu-img` commands
+- **Disk operations**:
+  - `export_template_to_qcow2()`: Exports template disk using `qemu-img convert -O qcow2`
+  - Student overlays: `qemu-img create -f qcow2 -F qcow2 -b <base>` creates copy-on-write overlay disks
+  - Teacher VM: `qm clone --full` for full clone from template
+  - Empty shells: `qm create --scsi0 STORAGE:SIZE` for template-less classes
+- **Key functions**: 
+  - `deploy_class_vms()`: Entry point - orchestrates VM creation and VMInventory update
+  - `create_class_vms()`: Core logic - handles template/no-template workflows, creates all VMs
+  - `get_vm_mac_address()`: Parses `qm config` output to extract MAC from net0 line
+  - `save_and_deploy_class_vms()`: Updates student VMs - should use same disk copy approach
+- **VMAssignment management**: Creates database records for all VMs with vm_name and mac_address
+- **SSH execution**: Uses `SSHExecutor` from `ssh_executor.py` for remote command execution
 
 **`app/services/class_service.py`** (Class management logic, ~560 lines):
 - User CRUD: `create_local_user()`, `authenticate_local_user()`, `update_user_role()`
@@ -204,11 +210,6 @@ api/
 - `restart.sh` – Quick restart (no git pull or pip install)
 - `clear_cache.sh` – Clears VM cache files
 - `proxmox-gui.service` – Systemd unit (edit User/Group/paths, then `systemctl enable/start`)
-- **Terraform config** (`terraform/` directory - see `terraform/README.md`):
-  - `main.tf` – VM resource definitions (QEMU VMs with linked/full clones)
-  - `variables.tf` – Input variables (cluster connection, VM specs, node list)
-  - `terraform.tfvars.example` – Example configuration
-  - `classes/` – Per-class Terraform workspaces (isolated state)
   
 **Utility scripts**:
 - `debug_vminventory.py` – Query VMInventory table directly (for debugging sync issues)
@@ -267,7 +268,7 @@ git add . && git commit -m "Changes" && git push
 2. **Register templates**: Teacher visits `/admin/probe` to see available templates, registers them via API or DB
 3. **Create class**: Teacher creates class at `/classes/create`, selects template, sets pool size
 4. **Generate invite**: Teacher generates never-expiring or time-limited invite link (7-day default)
-5. **Clone VMs**: Teacher adds VMs to pool via QCOW2 bulk cloning (preferred) or Terraform (deploys teacher + student VMs in parallel)
+5. **Clone VMs**: Teacher adds VMs to pool via VM shell + disk copy workflow (deploys teacher + class-base + student VMs in background)
 6. **Student enrollment**: Students visit invite link, auto-assigned first available VM in class pool (creates VMAssignment record)
 7. **Student access**: Student sees assigned VM in `/portal`, can start/stop/revert to baseline snapshot
 8. **Template publishing**: Teacher can publish changes from their VM → class template → all student VMs via `/api/classes/<id>/publish-template`

@@ -22,23 +22,19 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.models import db, Class, VMAssignment, Template
-from app.services.qcow2_bulk_cloner import (
+from app.services.ssh_executor import (
     SSHExecutor,
     get_ssh_executor_from_config,
-    bulk_clone_from_template,
-    CloudInitOptions,
-    BulkCloneResult,
-    CloneResult,
-    _run_command,
-    _current_ssh_executor,
-    DEFAULT_TEMPLATE_STORAGE_PATH,
-    DEFAULT_VM_IMAGES_PATH,
 )
 
 logger = logging.getLogger(__name__)
 
 # Storage name for Proxmox (configurable via environment)
 PROXMOX_STORAGE_NAME = os.getenv("PROXMOX_STORAGE_NAME", "TRUENAS-NFS")
+
+# Default storage paths for QCOW2 files
+DEFAULT_TEMPLATE_STORAGE_PATH = os.getenv("QCOW2_TEMPLATE_PATH", "/mnt/pve/TRUENAS-NFS/images")
+DEFAULT_VM_IMAGES_PATH = os.getenv("QCOW2_IMAGES_PATH", "/mnt/pve/TRUENAS-NFS/images")
 
 # VM stop timeout in seconds
 VM_STOP_TIMEOUT = int(os.getenv("VM_STOP_TIMEOUT", "60"))
