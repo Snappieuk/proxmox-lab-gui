@@ -14,6 +14,7 @@ DB_PATH = 'app/lab_portal.db'
 CRITICAL_MIGRATIONS = [
     ('classes', 'cpu_cores', 'INTEGER', '2'),
     ('classes', 'memory_mb', 'INTEGER', '2048'),
+    ('classes', 'disk_size_gb', 'INTEGER', '32'),
     ('vm_assignments', 'manually_added', 'BOOLEAN', '0'),
     ('vm_assignments', 'is_teacher_vm', 'BOOLEAN', '0'),
     ('vm_assignments', 'vm_name', 'TEXT', 'NULL'),
