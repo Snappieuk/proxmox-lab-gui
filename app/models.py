@@ -106,6 +106,7 @@ class Class(db.Model):
     pool_size = db.Column(db.Integer, default=0)  # Target number of VMs in pool
     cpu_cores = db.Column(db.Integer, default=2)  # CPU cores per VM
     memory_mb = db.Column(db.Integer, default=2048)  # RAM in MB per VM
+    disk_size_gb = db.Column(db.Integer, default=32)  # Disk size in GB (for template-less classes)
     clone_task_id = db.Column(db.String(64), nullable=True)  # Track ongoing class creation
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

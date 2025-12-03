@@ -140,6 +140,7 @@ def create_new_class():
     pool_size = data.get('pool_size', 0)
     cpu_cores = data.get('cpu_cores', 2)
     memory_mb = data.get('memory_mb', 2048)
+    disk_size_gb = data.get('disk_size_gb', 32)
     
     if not name:
         return jsonify({"ok": False, "error": "Class name is required"}), 400
@@ -155,7 +156,8 @@ def create_new_class():
         template_id=template_id,
         pool_size=pool_size,
         cpu_cores=cpu_cores,
-        memory_mb=memory_mb
+        memory_mb=memory_mb,
+        disk_size_gb=disk_size_gb
     )
     
     if not class_:

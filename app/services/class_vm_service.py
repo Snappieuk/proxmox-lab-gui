@@ -222,6 +222,7 @@ def deploy_class_vms(
             teacher_id=class_obj.teacher_id,
             memory=class_obj.memory_mb or 2048,
             cores=class_obj.cpu_cores or 2,
+            disk_size_gb=class_obj.disk_size_gb or 32,
             auto_start=False,
         )
         
@@ -431,6 +432,7 @@ def create_class_vms(
     teacher_id: int,
     memory: int = 4096,
     cores: int = 2,
+    disk_size_gb: int = 32,
     auto_start: bool = False,
 ) -> ClassVMDeployResult:
     """
@@ -458,6 +460,7 @@ def create_class_vms(
         teacher_id: User ID of the teacher
         memory: Memory per VM in MB
         cores: CPU cores per VM
+        disk_size_gb: Disk size in GB (only used for template-less classes)
         auto_start: Whether to start VMs after creation
         
     Returns:
@@ -617,9 +620,9 @@ def create_class_vms(
             teacher_mac = get_vm_mac_address(ssh_executor, teacher_vmid)
             
             # Now attach storage after migration (was included in qm create, need to add separately)
-            result.details.append(f"Attaching storage to teacher VM...")
+            result.details.append(f"Attaching storage to teacher VM ({disk_size_gb}GB)...")
             exit_code, stdout, stderr = ssh_executor.execute(
-                f"qm set {teacher_vmid} --scsi0 {PROXMOX_STORAGE_NAME}:32 --boot order=scsi0",
+                f"qm set {teacher_vmid} --scsi0 {PROXMOX_STORAGE_NAME}:{disk_size_gb} --boot order=scsi0",
                 timeout=120,
                 check=False
             )
@@ -630,7 +633,7 @@ def create_class_vms(
                 ssh_executor.execute(f"qm destroy {teacher_vmid}", check=False)
                 return result
             
-            result.details.append(f"Teacher VM storage attached (32GB disk)")
+            result.details.append(f"Teacher VM storage attached ({disk_size_gb}GB disk)")
             
             # No base_qcow2_path in template-less workflow (students get empty disks)
             base_qcow2_path = None
@@ -643,7 +646,7 @@ def create_class_vms(
             exit_code, stdout, stderr = ssh_executor.execute(
                 f"qm create {class_base_vmid} --name {class_base_name} --memory {memory} --cores {cores} "
                 f"--net0 virtio,bridge=vmbr0 --scsihw virtio-scsi-pci "
-                f"--scsi0 {PROXMOX_STORAGE_NAME}:32 --boot order=scsi0",
+                f"--scsi0 {PROXMOX_STORAGE_NAME}:{disk_size_gb} --boot order=scsi0",
                 timeout=120
             )
             
@@ -762,7 +765,7 @@ def create_class_vms(
                     else:
                         # No template - create VM with empty disk
                         exit_code, stdout, stderr = ssh_executor.execute(
-                            f"qm set {vmid} --scsi0 {PROXMOX_STORAGE_NAME}:32 --boot order=scsi0",
+                            f"qm set {vmid} --scsi0 {PROXMOX_STORAGE_NAME}:{disk_size_gb} --boot order=scsi0",
                             timeout=60
                         )
                     

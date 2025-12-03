@@ -52,6 +52,13 @@
                        placeholder="RAM in megabytes">
                 <small class="form-help">RAM allocated to each VM (2048 MB = 2 GB)</small>
             </div>
+            
+            <div class="form-group" id="disk-size-group">
+                <label for="disk-size-gb">Disk Size per VM (GB)</label>
+                <input type="number" id="disk-size-gb" name="disk_size_gb" min="8" max="500" value="32"
+                       placeholder="Disk size in gigabytes">
+                <small class="form-help">Disk size for template-less VMs (32 GB default). Ignored when using a template.</small>
+            </div>
         </div>
         
         <div class="form-group">
@@ -255,6 +262,7 @@ document.getElementById('create-class-form').addEventListener('submit', async fu
     const poolSize = parseInt(document.getElementById('pool-size').value) || 0;
     const cpuCores = parseInt(document.getElementById('cpu-cores').value) || 2;
     const memoryMb = parseInt(document.getElementById('memory-mb').value) || 2048;
+    const diskSizeGb = parseInt(document.getElementById('disk-size-gb').value) || 32;
     const templateVmid = parseInt(document.getElementById('template-select').value);
     
     if (!name) {
@@ -309,6 +317,7 @@ document.getElementById('create-class-form').addEventListener('submit', async fu
                 pool_size: poolSize,
                 cpu_cores: cpuCores,
                 memory_mb: memoryMb,
+                disk_size_gb: diskSizeGb,
                 template_id: templateId
             })
         });
