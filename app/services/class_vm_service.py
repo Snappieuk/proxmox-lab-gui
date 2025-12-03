@@ -587,42 +587,81 @@ def create_class_vms(
             
             # Step 2: Create teacher VM as overlay (NOT full clone)
             result.details.append("Creating teacher VM as overlay...")
-            teacher_vmid = get_next_available_vmid(ssh_executor)
-            teacher_name = f"{class_prefix}-teacher"
             
-            # Import create_overlay_vm from vm_template module
-            from app.services.vm_template import create_overlay_vm
+            # Retry logic for VMID conflicts
+            max_retries = 5
+            teacher_vmid = None
+            teacher_mac = None
             
-            success, error, teacher_mac = create_overlay_vm(
-                ssh_executor=ssh_executor,
-                vmid=teacher_vmid,
-                name=teacher_name,
-                base_qcow2_path=base_qcow2_path,
-                node=template_node,
-                memory=memory,
-                cores=cores,
-            )
+            for retry in range(max_retries):
+                teacher_vmid = get_next_available_vmid(ssh_executor)
+                teacher_name = f"{class_prefix}-teacher"
+                
+                # Import create_overlay_vm from vm_template module
+                from app.services.vm_template import create_overlay_vm
+                
+                success, error, teacher_mac = create_overlay_vm(
+                    ssh_executor=ssh_executor,
+                    vmid=teacher_vmid,
+                    name=teacher_name,
+                    base_qcow2_path=base_qcow2_path,
+                    node=template_node,
+                    memory=memory,
+                    cores=cores,
+                )
+                
+                if success:
+                    break
+                    
+                # Check if error is due to VMID conflict
+                if "already exists" in error.lower():
+                    logger.warning(f"VMID {teacher_vmid} already exists (attempt {retry + 1}/{max_retries}), retrying with next VMID...")
+                    continue
+                else:
+                    # Different error, don't retry
+                    result.error = f"Failed to create teacher VM: {error}"
+                    return result
             
             if not success:
-                result.error = f"Failed to create teacher VM: {error}"
+                result.error = f"Failed to create teacher VM after {max_retries} retries: {error}"
                 return result
             
         else:
             # WITHOUT TEMPLATE: Create empty VM shells
             result.details.append("Creating teacher VM shell (no template)...")
-            teacher_vmid = get_next_available_vmid(ssh_executor)
-            teacher_name = f"{class_prefix}-teacher"
             
-            # Create empty VM with custom specs and disk
-            exit_code, stdout, stderr = ssh_executor.execute(
-                f"qm create {teacher_vmid} --name {teacher_name} --memory {memory} --cores {cores} "
-                f"--net0 virtio,bridge=vmbr0 --scsihw virtio-scsi-pci "
-                f"--scsi0 {PROXMOX_STORAGE_NAME}:32 --boot order=scsi0",
-                timeout=120
-            )
+            # Retry logic for VMID conflicts
+            max_retries = 5
+            teacher_vmid = None
+            teacher_mac = None
+            
+            for retry in range(max_retries):
+                teacher_vmid = get_next_available_vmid(ssh_executor)
+                teacher_name = f"{class_prefix}-teacher"
+                
+                # Create empty VM with custom specs and disk
+                exit_code, stdout, stderr = ssh_executor.execute(
+                    f"qm create {teacher_vmid} --name {teacher_name} --memory {memory} --cores {cores} "
+                    f"--net0 virtio,bridge=vmbr0 --scsihw virtio-scsi-pci "
+                    f"--scsi0 {PROXMOX_STORAGE_NAME}:32 --boot order=scsi0",
+                    timeout=120,
+                    check=False
+                )
+                
+                if exit_code == 0:
+                    break
+                    
+                # Check if error is due to VMID conflict
+                if "already exists" in stderr.lower():
+                    logger.warning(f"VMID {teacher_vmid} already exists (attempt {retry + 1}/{max_retries}), retrying with next VMID...")
+                    continue
+                else:
+                    # Different error, don't retry
+                    result.error = f"Failed to create teacher VM shell: {stderr}"
+                    return result
             
             if exit_code != 0:
-                result.error = f"Failed to create teacher VM shell: {stderr}"
+                result.error = f"Failed to create teacher VM shell after {max_retries} retries: {stderr}"
                 return result
             
             result.details.append(f"Teacher VM shell created with 32GB disk")

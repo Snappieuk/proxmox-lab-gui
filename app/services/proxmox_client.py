@@ -842,8 +842,8 @@ def _get_vm_mac(node: str, vmid: int, vmtype: str, cluster_id: str = None) -> Op
     """
     Get MAC address for a VM.
     
-    Checks all network interfaces (net0, net1, net2, ...) to find the first valid MAC.
-    This handles VMs with multiple NICs or where net0 is not the primary interface.
+    This delegates to vm_utils.get_vm_mac_address_api() and normalizes the result
+    for ARP scanning compatibility.
     
     Args:
         node: Proxmox node name
@@ -861,62 +861,18 @@ def _get_vm_mac(node: str, vmid: int, vmtype: str, cluster_id: str = None) -> Op
         else:
             proxmox = get_proxmox_admin()
         
-        if vmtype == "lxc":
-            # LXC: get config to find MAC
-            config = proxmox.nodes(node).lxc(vmid).config.get()
-            if not config:
-                logger.debug("VM %d: No config returned", vmid)
-                return None
-            
-            # Check net0-net9 for LXC containers
-            for i in range(10):
-                net_key = f"net{i}"
-                net_config = config.get(net_key, "")
-                if not net_config:
-                    continue
-                
-                # LXC format: "name=eth0,bridge=vmbr0,hwaddr=XX:XX:XX:XX:XX:XX,ip=dhcp"
-                logger.debug("VM %d LXC %s: %s", vmid, net_key, net_config)
-                mac_match = re.search(r'hwaddr=([0-9a-fA-F:]+)', net_config)
-                if mac_match and ARP_SCANNER_AVAILABLE:
-                    mac = normalize_mac(mac_match.group(1))
-                    if mac:
-                        logger.debug("VM %d: Extracted MAC %s from %s", vmid, mac, net_key)
-                        return mac
+        # Use canonical implementation from vm_utils
+        from app.services.vm_utils import get_vm_mac_address_api, normalize_mac_address
         
-        elif vmtype == "qemu":
-            # QEMU: get config to find MAC from any net interface
-            config = proxmox.nodes(node).qemu(vmid).config.get()
-            if not config:
-                logger.debug("VM %d: No config returned", vmid)
-                return None
-            
-            # Check net0-net9 for QEMU VMs
-            for i in range(10):
-                net_key = f"net{i}"
-                net_config = config.get(net_key, "")
-                if not net_config:
-                    continue
-                
-                # QEMU format: "virtio=XX:XX:XX:XX:XX:XX,bridge=vmbr0"
-                # or: "e1000=XX:XX:XX:XX:XX:XX,bridge=vmbr0"
-                logger.info("VM %d QEMU %s config: %s", vmid, net_key, net_config)
-                # Match MAC address pattern (6 hex pairs separated by colons)
-                mac_match = re.search(r'([0-9a-fA-F]{2}[:-]){5}([0-9a-fA-F]{2})', net_config)
-                if mac_match:
-                    raw_mac = mac_match.group(0)
-                    logger.info("VM %d: Found MAC in regex: %s", vmid, raw_mac)
-                    if ARP_SCANNER_AVAILABLE:
-                        mac = normalize_mac(raw_mac)
-                        if mac:
-                            logger.info("VM %d: Normalized MAC %s -> %s from %s", vmid, raw_mac, mac, net_key)
-                            return mac
-                        else:
-                            logger.warning("VM %d: normalize_mac failed for %s", vmid, raw_mac)
-                else:
-                    logger.warning("VM %d: No MAC regex match in %s: %s", vmid, net_key, net_config)
-            
-            logger.debug("VM %d: No MAC found in any net interface", vmid)
+        raw_mac = get_vm_mac_address_api(proxmox, node, vmid, vmtype)
+        if not raw_mac:
+            return None
+        
+        # Normalize for ARP scanner (lowercase, no separators)
+        if ARP_SCANNER_AVAILABLE:
+            return normalize_mac_address(raw_mac)
+        
+        return None
     
     except Exception as e:
         logger.debug("Failed to get MAC for %s/%s: %s", node, vmid, e)
