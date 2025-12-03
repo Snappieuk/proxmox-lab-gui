@@ -92,21 +92,24 @@ def get_vm_mac_address(ssh_executor: SSHExecutor, vmid: int) -> Optional[str]:
     """
     try:
         exit_code, stdout, stderr = ssh_executor.execute(
-            f"qm config {vmid} | grep 'net0'",
+            f"qm config {vmid}",
             check=False,
             timeout=10
         )
         
         if exit_code == 0 and stdout:
-            # Parse net0 config: "virtio=AA:BB:CC:DD:EE:FF,bridge=vmbr0"
-            for part in stdout.split(','):
-                if '=' in part:
-                    key, value = part.split('=', 1)
-                    if key.strip() == 'virtio' or key.strip() == 'e1000' or key.strip() == 'rtl8139':
-                        # The value is the MAC address
-                        mac = value.strip().upper()
-                        if ':' in mac:
-                            return mac
+            # Look for net0 line and extract MAC
+            # Format can be: "net0: virtio=AA:BB:CC:DD:EE:FF,bridge=vmbr0"
+            # Or with generated MAC: "net0: virtio=12:34:56:78:9A:BC,bridge=vmbr0,firewall=1"
+            for line in stdout.split('\n'):
+                if line.startswith('net0:'):
+                    # Extract everything after 'net0:'
+                    net_config = line.split(':', 1)[1].strip()
+                    # Look for MAC address pattern (XX:XX:XX:XX:XX:XX)
+                    import re
+                    mac_match = re.search(r'([0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2})', net_config)
+                    if mac_match:
+                        return mac_match.group(1).upper()
         
         return None
     except Exception as e:
@@ -486,28 +489,53 @@ def create_class_vms(
             teacher_vmid = get_next_available_vmid(ssh_executor)
             teacher_name = f"{class_prefix}-teacher"
             
-            # Create empty VM with custom specs
+            # Create empty VM with custom specs and disk
             exit_code, stdout, stderr = ssh_executor.execute(
                 f"qm create {teacher_vmid} --name {teacher_name} --memory {memory} --cores {cores} "
-                f"--net0 virtio,bridge=vmbr0 --scsihw virtio-scsi-pci --bootdisk scsi0",
-                timeout=60
+                f"--net0 virtio,bridge=vmbr0 --scsihw virtio-scsi-pci "
+                f"--scsi0 {PROXMOX_STORAGE_NAME}:32 --boot order=scsi0",
+                timeout=120
             )
             
             if exit_code != 0:
                 result.error = f"Failed to create teacher VM shell: {stderr}"
                 return result
             
-            # Create a small disk for the teacher VM
+            result.details.append(f"Teacher VM shell created with 32GB disk")
+            
+            # Create class-base VM (empty shell for student overlays)
+            class_base_vmid = get_next_available_vmid(ssh_executor, teacher_vmid + 1)
+            class_base_name = f"{class_prefix}-base"
+            
+            result.details.append(f"Creating class-base VM shell (no template)...")
             exit_code, stdout, stderr = ssh_executor.execute(
-                f"qm disk resize {teacher_vmid} scsi0 32G",
-                check=False,
-                timeout=60
-            )
-            # Add disk first
-            exit_code, stdout, stderr = ssh_executor.execute(
-                f"qm set {teacher_vmid} --scsi0 {PROXMOX_STORAGE_NAME}:32",
+                f"qm create {class_base_vmid} --name {class_base_name} --memory {memory} --cores {cores} "
+                f"--net0 virtio,bridge=vmbr0 --scsihw virtio-scsi-pci "
+                f"--scsi0 {PROXMOX_STORAGE_NAME}:32 --boot order=scsi0",
                 timeout=120
             )
+            
+            if exit_code != 0:
+                result.error = f"Failed to create class-base VM shell: {stderr}"
+                return result
+            
+            result.class_base_vmid = class_base_vmid
+            result.details.append(f"Class-base VM created: {class_base_vmid} ({class_base_name})")
+            
+            # Create VMAssignment for class-base
+            base_mac = get_vm_mac_address(ssh_executor, class_base_vmid)
+            class_base_assignment = VMAssignment(
+                class_id=class_id,
+                proxmox_vmid=class_base_vmid,
+                vm_name=class_base_name,
+                mac_address=base_mac,
+                node=template_node,
+                assigned_user_id=None,
+                status='available',
+                is_template_vm=True,
+                is_teacher_vm=False,
+            )
+            db.session.add(class_base_assignment)
         
         result.teacher_vmid = teacher_vmid
         result.details.append(f"Teacher VM created: {teacher_vmid} ({teacher_name})")
@@ -591,14 +619,20 @@ def create_class_vms(
                     result.student_vmids.append(vmid)
                     result.successful += 1
                     
+                    # Get MAC address for student VM
+                    student_mac = get_vm_mac_address(ssh_executor, vmid)
+                    
                     # Create VMAssignment for student VM (unassigned)
                     assignment = VMAssignment(
                         class_id=class_id,
                         proxmox_vmid=vmid,
+                        vm_name=student_name,
+                        mac_address=student_mac,
                         node=template_node,
                         assigned_user_id=None,
                         status='available',
                         is_template_vm=False,
+                        is_teacher_vm=False,
                     )
                     db.session.add(assignment)
                     
