@@ -1701,7 +1701,7 @@ def delete_vm(vmid: int, node: str, cluster_ip: str = None) -> Tuple[bool, str]:
     
     Args:
         vmid: VM ID
-        node: Node name
+        node: Node name (will be auto-discovered if VM was migrated)
         cluster_ip: IP of the Proxmox cluster
     
     Returns:
@@ -1718,9 +1718,30 @@ def delete_vm(vmid: int, node: str, cluster_ip: str = None) -> Tuple[bool, str]:
             return False, "Cluster not found"
         
         proxmox = get_proxmox_admin_for_cluster(cluster_id)
-        proxmox.nodes(node).qemu(vmid).delete()
         
-        logger.info(f"Deleted VM {vmid} on {node}")
+        # Query cluster-wide to find which node actually has this VM
+        # (VM may have been migrated since database record was created)
+        actual_node = None
+        try:
+            resources = proxmox.cluster.resources.get(type="vm")
+            for r in resources:
+                if int(r.get('vmid', -1)) == int(vmid):
+                    actual_node = r.get('node')
+                    if actual_node != node:
+                        logger.info(f"VM {vmid} was migrated from {node} to {actual_node}, using actual node")
+                    break
+        except Exception as e:
+            logger.warning(f"Cluster resources query failed: {e}, using provided node {node}")
+            actual_node = node
+        
+        # Fallback to provided node if not found in cluster resources
+        if not actual_node:
+            logger.warning(f"VM {vmid} not found in cluster resources, attempting delete on provided node {node}")
+            actual_node = node
+        
+        proxmox.nodes(actual_node).qemu(vmid).delete()
+        
+        logger.info(f"Deleted VM {vmid} on {actual_node}")
         return True, "VM deleted successfully"
         
     except Exception as e:
