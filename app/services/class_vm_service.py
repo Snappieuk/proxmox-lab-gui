@@ -544,6 +544,9 @@ def create_class_vms(
             # Get teacher VM MAC address (not returned by qm create)
             teacher_mac = get_vm_mac_address(ssh_executor, teacher_vmid)
             
+            # No base_qcow2_path in template-less workflow (students get empty disks)
+            base_qcow2_path = None
+            
             # Create class-base VM (empty shell for student overlays)
             class_base_vmid = get_next_available_vmid(ssh_executor, teacher_vmid + 1)
             class_base_name = f"{class_prefix}-base"
@@ -599,15 +602,23 @@ def create_class_vms(
         )
         db.session.add(teacher_assignment)
         
+        # Track used VMIDs in memory to avoid collisions during creation
+        used_vmids_in_this_session = {teacher_vmid}
+        
         # Step 3: Create student VMs as QCOW2 overlays
         if pool_size > 0:
             result.details.append(f"Creating {pool_size} student VMs...")
             
-            # Get starting VMID for students
-            student_start_vmid = get_next_available_vmid(ssh_executor, teacher_vmid + 1)
-            
             for i in range(pool_size):
-                vmid = student_start_vmid + i
+                # Get next available VMID that's not in our session's used set
+                start_search = teacher_vmid + 1 if i == 0 else vmid + 1
+                vmid = get_next_available_vmid(ssh_executor, start_search)
+                
+                # Keep searching until we find one not in our session
+                while vmid in used_vmids_in_this_session:
+                    vmid = get_next_available_vmid(ssh_executor, vmid + 1)
+                
+                used_vmids_in_this_session.add(vmid)
                 student_name = f"{class_prefix}-student-{i + 1}"
                 
                 try:
@@ -623,33 +634,40 @@ def create_class_vms(
                         result.failed += 1
                         continue
                     
-                    # Create overlay disk
-                    overlay_dir = f"{DEFAULT_VM_IMAGES_PATH}/{vmid}"
-                    overlay_path = f"{overlay_dir}/vm-{vmid}-disk-0.qcow2"
-                    
-                    ssh_executor.execute(f"mkdir -p {overlay_dir}", check=False)
-                    
-                    exit_code, stdout, stderr = ssh_executor.execute(
-                        f"qemu-img create -f qcow2 -F qcow2 -b {base_qcow2_path} {overlay_path}",
-                        timeout=60
-                    )
-                    
-                    if exit_code != 0:
-                        logger.error(f"Failed to create overlay for {vmid}: {stderr}")
-                        ssh_executor.execute(f"qm destroy {vmid}", check=False)
-                        result.failed += 1
-                        continue
-                    
-                    # Set permissions
-                    ssh_executor.execute(f"chmod 600 {overlay_path}", check=False)
-                    ssh_executor.execute(f"chown root:root {overlay_path}", check=False)
-                    
-                    # Attach disk to VM
-                    # Use storage:vmid/disk format for Proxmox
-                    exit_code, stdout, stderr = ssh_executor.execute(
-                        f"qm set {vmid} --scsi0 {PROXMOX_STORAGE_NAME}:{vmid}/vm-{vmid}-disk-0.qcow2 --boot c --bootdisk scsi0",
-                        timeout=60
-                    )
+                    # Create disk - overlay if template exists, empty disk if not
+                    if base_qcow2_path:
+                        # Create overlay disk pointing to base
+                        overlay_dir = f"{DEFAULT_VM_IMAGES_PATH}/{vmid}"
+                        overlay_path = f"{overlay_dir}/vm-{vmid}-disk-0.qcow2"
+                        
+                        ssh_executor.execute(f"mkdir -p {overlay_dir}", check=False)
+                        
+                        exit_code, stdout, stderr = ssh_executor.execute(
+                            f"qemu-img create -f qcow2 -F qcow2 -b {base_qcow2_path} {overlay_path}",
+                            timeout=60
+                        )
+                        
+                        if exit_code != 0:
+                            logger.error(f"Failed to create overlay for {vmid}: {stderr}")
+                            ssh_executor.execute(f"qm destroy {vmid}", check=False)
+                            result.failed += 1
+                            continue
+                        
+                        # Set permissions
+                        ssh_executor.execute(f"chmod 600 {overlay_path}", check=False)
+                        ssh_executor.execute(f"chown root:root {overlay_path}", check=False)
+                        
+                        # Attach disk to VM
+                        exit_code, stdout, stderr = ssh_executor.execute(
+                            f"qm set {vmid} --scsi0 {PROXMOX_STORAGE_NAME}:{vmid}/vm-{vmid}-disk-0.qcow2 --boot c --bootdisk scsi0",
+                            timeout=60
+                        )
+                    else:
+                        # No template - create VM with empty disk
+                        exit_code, stdout, stderr = ssh_executor.execute(
+                            f"qm set {vmid} --scsi0 {PROXMOX_STORAGE_NAME}:32 --boot order=scsi0",
+                            timeout=60
+                        )
                     
                     if exit_code != 0:
                         logger.error(f"Failed to attach disk to {vmid}: {stderr}")
