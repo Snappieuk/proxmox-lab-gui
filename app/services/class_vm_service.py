@@ -49,6 +49,49 @@ from app.services.vm_core import wait_for_vm_stopped
 
 logger = logging.getLogger(__name__)
 
+
+def migrate_vm_to_node(ssh_executor: SSHExecutor, vmid: int, target_node: str, timeout: int = 300) -> Tuple[bool, str]:
+    """
+    Migrate a VM to the target node using qm migrate.
+    
+    Args:
+        ssh_executor: SSH connection to Proxmox cluster
+        vmid: VM ID to migrate
+        target_node: Target node name (e.g., 'netlab1', 'netlab3')
+        timeout: Migration timeout in seconds
+    
+    Returns:
+        Tuple of (success: bool, error_message: str)
+    """
+    try:
+        # First check current node
+        exit_code, stdout, stderr = ssh_executor.execute(
+            f"qm status {vmid}",
+            timeout=30,
+            check=False
+        )
+        
+        if exit_code != 0:
+            return False, f"Failed to get VM status: {stderr}"
+        
+        # Online migration without shared storage (--online flag not needed for offline migration)
+        # Since VMs have no disk attached yet, this should be very fast
+        exit_code, stdout, stderr = ssh_executor.execute(
+            f"qm migrate {vmid} {target_node}",
+            timeout=timeout,
+            check=False
+        )
+        
+        if exit_code != 0:
+            return False, f"Migration failed: {stderr}"
+        
+        logger.info(f"Successfully migrated VM {vmid} to {target_node}")
+        return True, ""
+        
+    except Exception as e:
+        logger.error(f"Error migrating VM {vmid} to {target_node}: {e}")
+        return False, str(e)
+
 # Storage name for Proxmox (configurable via environment)
 PROXMOX_STORAGE_NAME = os.getenv("PROXMOX_STORAGE_NAME", "TRUENAS-NFS")
 
@@ -515,6 +558,10 @@ def create_class_vms(
                 result.error = f"Failed to create teacher VM after {max_retries} retries: {error}"
                 return result
             
+            # Note: For template-based workflow, teacher VM is created on template_node
+            # Migration could be added here if needed, but shared storage allows cross-node access
+            result.details.append(f"Teacher VM {teacher_vmid} created on {template_node}")
+            
         else:
             # WITHOUT TEMPLATE: Create empty VM shells
             result.details.append("Creating teacher VM shell (no template)...")
@@ -529,12 +576,11 @@ def create_class_vms(
                 teacher_vmid = get_next_available_vmid(ssh_executor, start_vmid)
                 teacher_name = f"{class_prefix}-teacher"
                 
-                # Create empty VM with custom specs and disk on optimal node
+                # Create empty VM shell without storage (will attach after migration)
                 exit_code, stdout, stderr = ssh_executor.execute(
-                    f"qm create {teacher_vmid} --name {teacher_name} --node {optimal_node} "
+                    f"qm create {teacher_vmid} --name {teacher_name} "
                     f"--memory {memory} --cores {cores} "
-                    f"--net0 virtio,bridge=vmbr0 --scsihw virtio-scsi-pci "
-                    f"--scsi0 {PROXMOX_STORAGE_NAME}:32 --boot order=scsi0",
+                    f"--net0 virtio,bridge=vmbr0 --scsihw virtio-scsi-pci",
                     timeout=120,
                     check=False
                 )
@@ -556,10 +602,35 @@ def create_class_vms(
                 result.error = f"Failed to create teacher VM shell after {max_retries} retries: {stderr}"
                 return result
             
-            result.details.append(f"Teacher VM shell created with 32GB disk")
+            result.details.append(f"Teacher VM shell created (VMID: {teacher_vmid})")
+            
+            # Migrate to optimal node BEFORE attaching storage
+            result.details.append(f"Migrating teacher VM to optimal node {optimal_node}...")
+            success, error_msg = migrate_vm_to_node(ssh_executor, teacher_vmid, optimal_node, timeout=120)
+            if not success:
+                logger.warning(f"Failed to migrate teacher VM to {optimal_node}: {error_msg}. Continuing on current node.")
+                result.details.append(f"Warning: Migration failed, teacher VM remains on current node")
+            else:
+                result.details.append(f"Teacher VM migrated to {optimal_node}")
             
             # Get teacher VM MAC address (not returned by qm create)
             teacher_mac = get_vm_mac_address(ssh_executor, teacher_vmid)
+            
+            # Now attach storage after migration (was included in qm create, need to add separately)
+            result.details.append(f"Attaching storage to teacher VM...")
+            exit_code, stdout, stderr = ssh_executor.execute(
+                f"qm set {teacher_vmid} --scsi0 {PROXMOX_STORAGE_NAME}:32 --boot order=scsi0",
+                timeout=120,
+                check=False
+            )
+            
+            if exit_code != 0:
+                result.error = f"Failed to attach storage to teacher VM: {stderr}"
+                # Clean up the VM
+                ssh_executor.execute(f"qm destroy {teacher_vmid}", check=False)
+                return result
+            
+            result.details.append(f"Teacher VM storage attached (32GB disk)")
             
             # No base_qcow2_path in template-less workflow (students get empty disks)
             base_qcow2_path = None
@@ -639,9 +710,9 @@ def create_class_vms(
                 student_name = f"{class_prefix}-student-{i + 1}"
                 
                 try:
-                    # Create VM shell on optimal node
+                    # Create VM shell (will be on the connected node)
                     exit_code, stdout, stderr = ssh_executor.execute(
-                        f"qm create {vmid} --name {student_name} --node {optimal_node} "
+                        f"qm create {vmid} --name {student_name} "
                         f"--memory {memory} --cores {cores} "
                         f"--scsihw virtio-scsi-pci --net0 virtio,bridge=vmbr0",
                         timeout=60
@@ -651,6 +722,14 @@ def create_class_vms(
                         logger.error(f"Failed to create VM shell {vmid}: {stderr}")
                         result.failed += 1
                         continue
+                    
+                    # Migrate to optimal node BEFORE attaching storage
+                    logger.info(f"Migrating student VM {vmid} to {optimal_node}...")
+                    success, error_msg = migrate_vm_to_node(ssh_executor, vmid, optimal_node, timeout=120)
+                    if not success:
+                        logger.warning(f"Failed to migrate VM {vmid} to {optimal_node}: {error_msg}. Continuing on current node.")
+                    else:
+                        logger.info(f"VM {vmid} migrated to {optimal_node}")
                     
                     # Create disk - overlay if template exists, empty disk if not
                     if base_qcow2_path:
