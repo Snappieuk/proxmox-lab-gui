@@ -1621,11 +1621,12 @@ def get_vm_status_from_inventory(vmid: int, cluster_ip: str = None) -> Dict[str,
         
         # VM not in VMInventory yet - fallback to VMAssignment (newly created VMs)
         # This happens right after VM creation, before background sync runs
-        logger.debug(f"VM {vmid} not in VMInventory yet, checking VMAssignment...")
+        logger.info(f"VM {vmid} not in VMInventory yet, checking VMAssignment...")
         assignment = VMAssignment.query.filter_by(proxmox_vmid=vmid).first()
         
         if assignment:
             # Return data from VMAssignment (created during VM deployment)
+            logger.info(f"Found VM {vmid} in VMAssignment: MAC={assignment.mac_address}, IP={assignment.cached_ip}")
             return {
                 "status": "stopped",  # Newly created VMs are stopped
                 "uptime": 0,
@@ -1640,7 +1641,7 @@ def get_vm_status_from_inventory(vmid: int, cluster_ip: str = None) -> Dict[str,
             }
         
         # VM not found anywhere
-        logger.debug(f"VM {vmid} not found in VMInventory or VMAssignment")
+        logger.warning(f"VM {vmid} not found in VMInventory or VMAssignment")
         return {"status": "unknown", "mac": "N/A", "ip": "N/A"}
         
     except Exception as e:

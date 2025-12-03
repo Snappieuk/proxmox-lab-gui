@@ -129,6 +129,21 @@
         .btn-primary:hover {
             background-color: #1976D2;
         }
+        
+        .spinner-border {
+            display: inline-block;
+            width: 1rem;
+            height: 1rem;
+            vertical-align: text-bottom;
+            border: 0.25em solid currentColor;
+            border-right-color: transparent;
+            border-radius: 50%;
+            animation: spinner-border 0.75s linear infinite;
+        }
+        
+        @keyframes spinner-border {
+            to { transform: rotate(360deg); }
+        }
     </style>
 </head>
 <body>
@@ -298,6 +313,25 @@
                     <button onclick="refreshVMs()" class="btn-primary">
                         <i class="bi bi-arrow-clockwise"></i> Refresh
                     </button>
+                </div>
+            </div>
+            
+            <!-- Deployment Progress Bar (shown during VM creation) -->
+            <div id="deployment-progress" style="display: none; margin-bottom: 1.5rem;">
+                <div class="content-card" style="background: #f8f9fa; border-left: 4px solid #0078d4;">
+                    <div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 1rem;">
+                        <div class="spinner-border" style="width: 24px; height: 24px; border-width: 3px;"></div>
+                        <div>
+                            <h3 style="margin: 0; font-size: 1rem; color: #333;">Creating Virtual Machines</h3>
+                            <p style="margin: 0; color: #666; font-size: 0.9rem;" id="deployment-status">Initializing...</p>
+                        </div>
+                    </div>
+                    <div style="background: #e9ecef; height: 24px; border-radius: 12px; overflow: hidden; position: relative;">
+                        <div id="deployment-progress-bar" style="background: linear-gradient(90deg, #0078d4, #00a8e8); height: 100%; width: 0%; transition: width 0.3s ease; display: flex; align-items: center; justify-content: center; color: white; font-weight: 600; font-size: 0.85rem;">
+                            <span id="deployment-percentage">0%</span>
+                        </div>
+                    </div>
+                    <div style="margin-top: 0.5rem; font-size: 0.85rem; color: #666;" id="deployment-details"></div>
                 </div>
             </div>
             
@@ -1347,7 +1381,10 @@ async function refreshAllVMs() {
         const data = await resp.json();
         if (!data.ok) return;
         
+        console.log('refreshAllVMs received:', data.vms);  // Debug logging
+        
         (data.vms || []).forEach(vm => {
+            console.log(`Updating VM ${vm.proxmox_vmid}: mac=${vm.mac}, ip=${vm.ip}, status=${vm.status}`);  // Debug logging
             const statusEl = document.getElementById(`status-${vm.proxmox_vmid}`);
             const macEl = document.getElementById(`mac-${vm.proxmox_vmid}`);
             const ipEl = document.getElementById(`ip-${vm.proxmox_vmid}`);
@@ -1595,6 +1632,9 @@ async function createVMs() {
         closeAddVMsModal();
         showAlert(`Creating ${count} VMs... This may take a few minutes.`, 'info');
         
+        // Show progress bar
+        showDeploymentProgress();
+        
         const resp = await fetch(`/api/classes/${classId}/vms`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -1608,14 +1648,79 @@ async function createVMs() {
         
         if (data.ok) {
             showAlert(`Successfully created ${data.vms.length} VMs`, 'success');
+            hideDeploymentProgress();
             // Refresh the VMs section
             setTimeout(() => location.reload(), 2000);
         } else {
             showAlert('Failed to create VMs: ' + data.error, 'error');
+            hideDeploymentProgress();
         }
     } catch (e) {
         console.error('Failed to create VMs:', e);
         showAlert('Failed to create VMs', 'error');
+        hideDeploymentProgress();
+    }
+}
+
+let deploymentPollInterval = null;
+
+function showDeploymentProgress() {
+    document.getElementById('deployment-progress').style.display = 'block';
+    document.getElementById('deployment-status').textContent = 'Starting deployment...';
+    document.getElementById('deployment-percentage').textContent = '0%';
+    document.getElementById('deployment-progress-bar').style.width = '0%';
+    
+    // Poll for progress every 2 seconds
+    deploymentPollInterval = setInterval(checkDeploymentProgress, 2000);
+}
+
+function hideDeploymentProgress() {
+    document.getElementById('deployment-progress').style.display = 'none';
+    if (deploymentPollInterval) {
+        clearInterval(deploymentPollInterval);
+        deploymentPollInterval = null;
+    }
+}
+
+async function checkDeploymentProgress() {
+    try {
+        const resp = await fetch(`/api/classes/${classId}/vms`);
+        const data = await resp.json();
+        
+        if (!data.ok) return;
+        
+        const vms = data.vms || [];
+        const total = vms.length;
+        
+        if (total === 0) {
+            document.getElementById('deployment-status').textContent = 'Waiting for VMs to appear...';
+            return;
+        }
+        
+        // Count VMs by status
+        const running = vms.filter(v => v.status === 'running').length;
+        const stopped = vms.filter(v => v.status === 'stopped').length;
+        const withMac = vms.filter(v => v.mac && v.mac !== 'N/A').length;
+        
+        // Calculate progress (VM exists + has MAC = fully created)
+        const progress = Math.round((withMac / total) * 100);
+        
+        document.getElementById('deployment-percentage').textContent = `${progress}%`;
+        document.getElementById('deployment-progress-bar').style.width = `${progress}%`;
+        document.getElementById('deployment-status').textContent = `Creating VMs: ${withMac} of ${total} ready`;
+        document.getElementById('deployment-details').textContent = 
+            `Running: ${running} • Stopped: ${stopped} • Total: ${total}`;
+        
+        // If all VMs are ready, hide progress bar after 2 seconds
+        if (progress >= 100) {
+            document.getElementById('deployment-status').textContent = 'Deployment complete!';
+            setTimeout(() => {
+                hideDeploymentProgress();
+                refreshAllVMs();
+            }, 2000);
+        }
+    } catch (e) {
+        console.error('Failed to check deployment progress:', e);
     }
 }
 

@@ -512,6 +512,7 @@ def recreate_student_vms_from_template(
                 
                 # Get MAC address
                 student_mac = get_vm_mac_address(ssh_executor, vmid)
+                logger.info(f"Retrieved MAC address for VM {vmid}: {student_mac}")
                 
                 # Create VMAssignment
                 assignment = VMAssignment(
@@ -528,7 +529,7 @@ def recreate_student_vms_from_template(
                 db.session.add(assignment)
                 
                 created_vmids.append(vmid)
-                logger.info(f"Created student VM {vmid} ({student_name})")
+                logger.info(f"Created student VM {vmid} ({student_name}) with MAC {student_mac}")
                 
             except Exception as e:
                 logger.exception(f"Error creating student VM: {e}")
