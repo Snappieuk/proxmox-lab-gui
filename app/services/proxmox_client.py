@@ -679,6 +679,100 @@ def verify_vm_ip(cluster_id: str, node: str, vmid: int, vmtype: str, cached_ip: 
         logger.debug("Failed to verify IP for VM %s:%d: %s", cluster_id, vmid, e)
         return cached_ip  # Return cached IP if verification fails
 
+
+def fast_verify_vm_ip(cluster_id: str, node: str, vmid: int, vmtype: str, cached_ip: str, subnets: List[str] = None) -> Optional[str]:
+    """
+    Fast IP verification using ping + ARP check.
+    
+    Workflow:
+    1. Ping the cached IP
+    2. Check if ARP table MAC matches VM's MAC
+    3. If match: return cached_ip (verified)
+    4. If no match: run full ARP scan and return discovered IP
+    
+    Args:
+        cluster_id: Cluster ID
+        node: Proxmox node name
+        vmid: VM ID
+        vmtype: 'qemu' or 'lxc'
+        cached_ip: Cached IP to verify
+        subnets: Subnets to scan if verification fails (defaults to ARP_SUBNETS from config)
+    
+    Returns:
+        Verified or newly discovered IP, or cached_ip if nothing else works
+    """
+    if not cached_ip or cached_ip in ("Checking...", "N/A", "Fetching...", ""):
+        # No cached IP to verify - skip to full scan
+        return _fallback_arp_scan(cluster_id, node, vmid, vmtype, subnets)
+    
+    # Get VM's MAC address
+    vm_mac = _get_vm_mac(node, vmid, vmtype, cluster_id)
+    if not vm_mac:
+        logger.debug("fast_verify_vm_ip: VM %s:%d has no MAC, cannot verify", cluster_id, vmid)
+        return cached_ip
+    
+    # Quick verification: ping IP and check ARP table
+    if ARP_SCANNER_AVAILABLE:
+        from app.services.arp_scanner import verify_single_ip
+        try:
+            if verify_single_ip(cached_ip, vm_mac, timeout=1):
+                logger.debug("fast_verify_vm_ip: VM %s:%d IP %s verified via ARP", cluster_id, vmid, cached_ip)
+                return cached_ip
+            else:
+                logger.info("fast_verify_vm_ip: VM %s:%d cached IP %s failed verification, running full scan", 
+                           cluster_id, vmid, cached_ip)
+        except Exception as e:
+            logger.debug("fast_verify_vm_ip: ARP verification failed for VM %s:%d: %s", cluster_id, vmid, e)
+    
+    # Verification failed - run full ARP scan
+    return _fallback_arp_scan(cluster_id, node, vmid, vmtype, subnets)
+
+
+def _fallback_arp_scan(cluster_id: str, node: str, vmid: int, vmtype: str, subnets: List[str] = None) -> Optional[str]:
+    """
+    Fallback: run full ARP scan to discover VM IP.
+    
+    Args:
+        cluster_id: Cluster ID
+        node: Proxmox node name
+        vmid: VM ID
+        vmtype: 'qemu' or 'lxc'
+        subnets: Subnets to scan (defaults to ARP_SUBNETS from config)
+    
+    Returns:
+        Discovered IP or None
+    """
+    if not ARP_SCANNER_AVAILABLE:
+        return None
+    
+    from app.services.arp_scanner import discover_ips_via_arp
+    
+    # Get VM MAC
+    vm_mac = _get_vm_mac(node, vmid, vmtype, cluster_id)
+    if not vm_mac:
+        return None
+    
+    # Use configured subnets or default
+    if not subnets:
+        from app.config import ARP_SUBNETS
+        subnets = ARP_SUBNETS
+    
+    # Run synchronous ARP scan (background=False for immediate results)
+    try:
+        vm_mac_map = {vmid: vm_mac}
+        discovered = discover_ips_via_arp(vm_mac_map, subnets, background=False)
+        new_ip = discovered.get(vmid)
+        
+        if new_ip:
+            logger.info("fast_verify_vm_ip: VM %s:%d discovered new IP via ARP scan: %s", cluster_id, vmid, new_ip)
+            _cache_ip_to_db(cluster_id, vmid, new_ip)
+            return new_ip
+    except Exception as e:
+        logger.debug("fast_verify_vm_ip: ARP scan failed for VM %s:%d: %s", cluster_id, vmid, e)
+    
+    return None
+
+
 def _save_ip_to_proxmox(node: str, vmid: int, vmtype: str, ip: Optional[str]) -> None:
     """
     Save discovered IP to Proxmox VM/LXC notes field for persistence.

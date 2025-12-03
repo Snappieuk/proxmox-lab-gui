@@ -13,7 +13,7 @@ from app.utils.decorators import login_required
 from app.services.rdp_service import build_rdp
 
 
-from app.services.proxmox_client import find_vm_for_user, verify_vm_ip
+from app.services.proxmox_client import find_vm_for_user, fast_verify_vm_ip
 
 logger = logging.getLogger(__name__)
 
@@ -40,21 +40,29 @@ def rdp_file(vmid: int):
                 vm.get('vmid'), vm.get('name'), vm.get('type'), vm.get('category'), 
                 vm.get('ip'), vm.get('rdp_available'))
 
-    # Trust cached IP if available (background sync and ARP cache keep it fresh)
+    # Fast IP verification: ping cached IP and check ARP table MAC
+    # Only does full network scan if verification fails
     cached_ip = vm.get('ip')
     if cached_ip and cached_ip not in ("Checking...", "N/A", "Fetching...", ""):
-        logger.info("rdp_file: Using cached IP %s for VM %s", cached_ip, vmid)
-    else:
-        # Only verify if IP is missing - last resort
-        logger.info("rdp_file: No cached IP for VM %s, attempting verification", vmid)
+        logger.info("rdp_file: Verifying cached IP %s for VM %s", cached_ip, vmid)
         try:
             cluster_id = vm.get('cluster_id', 'cluster1')
-            verified_ip = verify_vm_ip(cluster_id, vm['node'], vmid, vm.get('type', 'qemu'), cached_ip or "")
-            if verified_ip:
+            verified_ip = fast_verify_vm_ip(
+                cluster_id, 
+                vm['node'], 
+                vmid, 
+                vm.get('type', 'qemu'), 
+                cached_ip
+            )
+            if verified_ip and verified_ip != cached_ip:
                 vm['ip'] = verified_ip
-                logger.info("rdp_file: Verified IP %s for VM %s", verified_ip, vmid)
+                logger.info("rdp_file: Updated IP for VM %s: %s -> %s", vmid, cached_ip, verified_ip)
+            elif verified_ip:
+                logger.info("rdp_file: IP %s verified for VM %s", verified_ip, vmid)
         except Exception as e:
-            logger.warning("rdp_file: IP verification failed for VM %s: %s", vmid, e)
+            logger.warning("rdp_file: Fast IP verification failed for VM %s: %s", vmid, e)
+    else:
+        logger.info("rdp_file: No cached IP for VM %s, will use VM name as fallback", vmid)
 
     try:
         content = build_rdp(vm)

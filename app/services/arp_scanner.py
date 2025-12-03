@@ -625,6 +625,59 @@ def discover_ips_via_arp(vm_mac_map: Dict[str, str], subnets: Optional[List[str]
     return vm_ips
 
 
+def verify_single_ip(ip: str, expected_mac: str, timeout: int = 2) -> bool:
+    """
+    Fast verification: ping a single IP and check if ARP table MAC matches expected MAC.
+    
+    Args:
+        ip: IP address to verify
+        expected_mac: Expected MAC address (will be normalized)
+        timeout: Ping timeout in seconds
+    
+    Returns:
+        True if IP is reachable and MAC matches, False otherwise
+    """
+    if not ip or not expected_mac:
+        return False
+    
+    # Normalize expected MAC
+    expected_mac_normalized = normalize_mac(expected_mac)
+    if not expected_mac_normalized:
+        return False
+    
+    # Try to ping the IP to populate ARP table
+    for ping_cmd in ['/usr/bin/ping', '/bin/ping', 'ping']:
+        try:
+            subprocess.run(
+                [ping_cmd, '-c', '1', '-W', str(timeout), ip],
+                capture_output=True,
+                text=True,
+                timeout=timeout + 1
+            )
+            # Don't care if ping succeeds - just need ARP entry
+            break
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            continue
+        except Exception:
+            break
+    
+    # Check ARP table for this IP
+    arp_table = get_arp_table()
+    actual_mac = None
+    
+    # Find MAC for this IP (reverse lookup)
+    for mac, arp_ip in arp_table.items():
+        if arp_ip == ip:
+            actual_mac = mac
+            break
+    
+    # Compare MACs
+    if actual_mac and actual_mac == expected_mac_normalized:
+        return True
+    
+    return False
+
+
 def normalize_mac(mac: Optional[str]) -> Optional[str]:
     """
     Normalize MAC address to lowercase without separators.
