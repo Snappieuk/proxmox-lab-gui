@@ -463,9 +463,10 @@ def create_class_vms(
             max_retries = 5
             teacher_vmid = None
             teacher_mac = None
+            start_vmid = 100  # Track starting point for VMID search
             
             for retry in range(max_retries):
-                teacher_vmid = get_next_available_vmid(ssh_executor)
+                teacher_vmid = get_next_available_vmid(ssh_executor, start_vmid)
                 teacher_name = f"{class_prefix}-teacher"
                 
                 # Import create_overlay_vm from vm_template module
@@ -487,6 +488,7 @@ def create_class_vms(
                 # Check if error is due to VMID conflict
                 if "already exists" in error.lower():
                     logger.warning(f"VMID {teacher_vmid} already exists (attempt {retry + 1}/{max_retries}), retrying with next VMID...")
+                    start_vmid = teacher_vmid + 1  # Skip this VMID next time
                     continue
                 else:
                     # Different error, don't retry
@@ -505,9 +507,10 @@ def create_class_vms(
             max_retries = 5
             teacher_vmid = None
             teacher_mac = None
+            start_vmid = 100  # Track starting point for VMID search
             
             for retry in range(max_retries):
-                teacher_vmid = get_next_available_vmid(ssh_executor)
+                teacher_vmid = get_next_available_vmid(ssh_executor, start_vmid)
                 teacher_name = f"{class_prefix}-teacher"
                 
                 # Create empty VM with custom specs and disk
@@ -525,6 +528,7 @@ def create_class_vms(
                 # Check if error is due to VMID conflict
                 if "already exists" in stderr.lower():
                     logger.warning(f"VMID {teacher_vmid} already exists (attempt {retry + 1}/{max_retries}), retrying with next VMID...")
+                    start_vmid = teacher_vmid + 1  # Skip this VMID next time
                     continue
                 else:
                     # Different error, don't retry
