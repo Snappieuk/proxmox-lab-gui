@@ -99,133 +99,141 @@ def persist_vm_inventory(vms: List[Dict], cleanup_missing: bool = True) -> int:
         Number of VMs updated/created
     """
     from app.models import VMInventory, db
+    from sqlalchemy.exc import IntegrityError, OperationalError
+    import time
     
     updated_count = 0
     
-    try:
-        # Use a single timestamp for this sync
-        from datetime import datetime
-        sync_ts = datetime.utcnow()
-        seen_clusters = set()
-        for vm in vms:
-            cluster_id = vm.get('cluster_id', 'default')
-            seen_clusters.add(cluster_id)
-            vmid = vm.get('vmid')
-            
-            if not vmid:
-                continue
-            
-            # Use upsert pattern to handle concurrent inserts
-            from sqlalchemy.exc import IntegrityError
-            
-            # Try to fetch existing record first
-            inventory = VMInventory.query.filter_by(
-                cluster_id=cluster_id,
-                vmid=vmid
-            ).first()
-            
-            if not inventory:
-                # Record doesn't exist - try to create it
-                inventory = VMInventory(
-                    cluster_id=cluster_id,
-                    vmid=vmid,
-                    name=vm.get('name', 'Unknown'),
-                    node=vm.get('node', 'Unknown'),
-                    status=vm.get('status', 'unknown'),
-                    type=vm.get('type', 'qemu')
-                )
-                db.session.add(inventory)
+    # Retry logic for database locked errors
+    max_retries = 5
+    retry_delay = 0.1  # Start with 100ms
+    
+    for attempt in range(max_retries):
+        try:
+            # Use a single timestamp for this sync
+            from datetime import datetime
+            sync_ts = datetime.utcnow()
+            seen_clusters = set()
+            for vm in vms:
+                cluster_id = vm.get('cluster_id', 'default')
+                seen_clusters.add(cluster_id)
+                vmid = vm.get('vmid')
                 
-                try:
-                    # Commit immediately to avoid holding locks
-                    db.session.commit()
-                except IntegrityError:
-                    # Another thread created it between our query and commit
-                    db.session.rollback()
-                    
-                    # Fetch the record that was created by the other thread
-                    inventory = VMInventory.query.filter_by(
-                        cluster_id=cluster_id,
-                        vmid=vmid
-                    ).first()
-                    
-                    if not inventory:
-                        # Extremely rare - skip this VM
-                        #logger.warning(f"Could not create or fetch {cluster_id}/{vmid} after race condition")
-                        continue
-                except Exception as e:
-                    # Unexpected database error
-                    logger.error(f"Database error for {cluster_id}/{vmid}: {e}")
-                    db.session.rollback()
+                if not vmid:
                     continue
+                
+                # Try to fetch existing record first
+                inventory = VMInventory.query.filter_by(
+                    cluster_id=cluster_id,
+                    vmid=vmid
+                ).first()
+                
+                if not inventory:
+                    # Record doesn't exist - try to create it
+                    inventory = VMInventory(
+                        cluster_id=cluster_id,
+                        vmid=vmid,
+                        name=vm.get('name', 'Unknown'),
+                        node=vm.get('node', 'Unknown'),
+                        status=vm.get('status', 'unknown'),
+                        type=vm.get('type', 'qemu')
+                    )
+                    db.session.add(inventory)
+                    
+                    try:
+                        # Commit immediately to avoid holding locks
+                        db.session.flush()
+                    except IntegrityError:
+                        # Another thread created it between our query and commit
+                        db.session.rollback()
+                        
+                        # Fetch the record that was created by the other thread
+                        inventory = VMInventory.query.filter_by(
+                            cluster_id=cluster_id,
+                            vmid=vmid
+                        ).first()
+                        
+                        if not inventory:
+                            # Extremely rare - skip this VM
+                            continue
+                
+                # Update all fields
+                inventory.name = vm.get('name')
+                inventory.node = vm.get('node')
+                inventory.status = vm.get('status')
+                # Update IP from sync (always update to capture changes, but preserve if missing)
+                new_ip = vm.get('ip')
+                if new_ip and new_ip not in ('N/A', 'Fetching...', ''):
+                    inventory.ip = new_ip
+                elif not inventory.ip:
+                    # First time seeing this VM - set placeholder
+                    inventory.ip = vm.get('ip') or 'N/A'
+                # Update MAC address if provided
+                new_mac = vm.get('mac_address')
+                if new_mac:
+                    inventory.mac_address = new_mac
+                inventory.type = vm.get('type')
+                inventory.category = vm.get('category')
+                
+                # Hardware specs
+                inventory.memory = vm.get('memory')
+                inventory.cores = vm.get('cores')
+                inventory.disk_size = vm.get('disk_size')
+                
+                # Runtime info
+                inventory.uptime = vm.get('uptime')
+                inventory.cpu_usage = vm.get('cpu_usage')
+                inventory.memory_usage = vm.get('memory_usage')
+                
+                # Configuration
+                inventory.is_template = vm.get('is_template', False)
+                inventory.tags = vm.get('tags')
+                
+                # Availability flags
+                inventory.rdp_available = vm.get('rdp_available', False)
+                inventory.ssh_available = vm.get('ssh_available', False)
+                
+                # Update timestamp
+                inventory.last_updated = sync_ts
+                inventory.last_status_check = sync_ts
+                inventory.sync_error = None  # Clear any previous errors
+                
+                updated_count += 1
             
-            # Update all fields
-            inventory.name = vm.get('name')
-            inventory.node = vm.get('node')
-            inventory.status = vm.get('status')
-            # Update IP from sync (always update to capture changes, but preserve if missing)
-            new_ip = vm.get('ip')
-            #logger.info(f"persist_vm_inventory: VM {vmid} ({vm.get('name')}): new_ip={new_ip}, existing_ip={inventory.ip}")
-            if new_ip and new_ip not in ('N/A', 'Fetching...', ''):
-                inventory.ip = new_ip
-                #logger.info(f"Updated IP for VM {vmid} to: {new_ip}")
-            elif not inventory.ip:
-                # First time seeing this VM - set placeholder
-                inventory.ip = vm.get('ip') or 'N/A'
-                #logger.info(f"Set placeholder IP for VM {vmid}: {inventory.ip}")
-            # Update MAC address if provided
-            new_mac = vm.get('mac_address')
-            if new_mac:
-                inventory.mac_address = new_mac
-            inventory.type = vm.get('type')
-            inventory.category = vm.get('category')
+            # Remove VMs not touched in this sync for seen clusters (only after a successful pass)
+            if cleanup_missing and vms:
+                from app.models import VMInventory
+                for cluster_id in seen_clusters:
+                    missing = VMInventory.query.filter(
+                        VMInventory.cluster_id == cluster_id,
+                        VMInventory.last_updated < sync_ts
+                    ).all()
+                    if missing:
+                        for rec in missing:
+                            db.session.delete(rec)
             
-            # Hardware specs
-            inventory.memory = vm.get('memory')
-            inventory.cores = vm.get('cores')
-            inventory.disk_size = vm.get('disk_size')
+            # Commit all changes
+            db.session.commit()
+            return updated_count
             
-            # Runtime info
-            inventory.uptime = vm.get('uptime')
-            inventory.cpu_usage = vm.get('cpu_usage')
-            inventory.memory_usage = vm.get('memory_usage')
-            
-            # Configuration
-            inventory.is_template = vm.get('is_template', False)
-            inventory.tags = vm.get('tags')
-            
-            # Availability flags
-            inventory.rdp_available = vm.get('rdp_available', False)
-            inventory.ssh_available = vm.get('ssh_available', False)
-            
-            # Update timestamp
-            inventory.last_updated = sync_ts
-            inventory.last_status_check = sync_ts
-            inventory.sync_error = None  # Clear any previous errors
-            
-            updated_count += 1
-        
-        # Remove VMs not touched in this sync for seen clusters (only after a successful pass)
-        if cleanup_missing and vms:
-            from app.models import VMInventory
-            for cluster_id in seen_clusters:
-                missing = VMInventory.query.filter(
-                    VMInventory.cluster_id == cluster_id,
-                    VMInventory.last_updated < sync_ts
-                ).all()
-                if missing:
-                    # logger.info(f"Removing {len(missing)} deleted VMs from cluster {cluster_id}")
-                    for rec in missing:
-                        db.session.delete(rec)
-        
-        db.session.commit()
-        #logger.info(f"Persisted {updated_count} VMs to inventory")
-        return updated_count
-        
-    except Exception as e:
-        logger.exception(f"Failed to persist VM inventory: {e}")
-        db.session.rollback()
-        return 0
+        except OperationalError as e:
+            # Database locked - retry with exponential backoff
+            db.session.rollback()
+            if attempt < max_retries - 1:
+                wait_time = retry_delay * (2 ** attempt)
+                logger.warning(f"Database locked (attempt {attempt + 1}/{max_retries}), retrying in {wait_time:.2f}s...")
+                time.sleep(wait_time)
+                continue
+            else:
+                logger.error(f"Failed to persist VM inventory after {max_retries} attempts: database locked")
+                return 0
+        except Exception as e:
+            logger.exception(f"Failed to persist VM inventory: {e}")
+            db.session.rollback()
+            return 0
+    
+    # Should not reach here
+    return 0
 
 
 def fetch_vm_inventory(

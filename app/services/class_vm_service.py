@@ -763,23 +763,24 @@ def create_class_vms(
                 # Start search from last used VMID + 1
                 start_search = max(used_vmids_in_this_session) + 1 if used_vmids_in_this_session else teacher_vmid + 1
                 
-                # Keep incrementing until we find an unused VMID
-                vmid = start_search
+                # Keep searching until we find an unused VMID
+                vmid = None
                 max_attempts = 200
                 for attempt in range(max_attempts):
-                    if vmid not in used_vmids_in_this_session:
-                        # Double-check with cluster query
-                        check_vmid = get_next_available_vmid(ssh_executor, vmid)
-                        if check_vmid == vmid:
-                            # This VMID is available both locally and in cluster
-                            break
-                        else:
-                            # Cluster says this VMID is taken, use cluster's suggestion
-                            vmid = check_vmid
-                            if vmid not in used_vmids_in_this_session:
-                                break
-                    vmid += 1
-                else:
+                    # Get next available VMID from cluster starting at start_search
+                    candidate_vmid = get_next_available_vmid(ssh_executor, start_search)
+                    
+                    # Check if this VMID is already used in our session
+                    if candidate_vmid not in used_vmids_in_this_session:
+                        # Found an available VMID
+                        vmid = candidate_vmid
+                        break
+                    else:
+                        # This VMID was used in our session, try the next one
+                        start_search = candidate_vmid + 1
+                        logger.debug(f"VMID {candidate_vmid} already used in session, trying {start_search}")
+                
+                if vmid is None:
                     # Exhausted attempts
                     logger.error(f"Could not find available VMID after {max_attempts} attempts")
                     result.failed += 1

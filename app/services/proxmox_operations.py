@@ -1484,14 +1484,31 @@ def start_class_vm(vmid: int, node: str, cluster_ip: str = None) -> Tuple[bool, 
         
         proxmox = get_proxmox_admin_for_cluster(cluster_id)
         
+        # Query cluster-wide to find which node actually has this VM
+        actual_node = None
+        try:
+            resources = proxmox.cluster.resources.get(type="vm")
+            for r in resources:
+                if int(r.get('vmid', -1)) == int(vmid):
+                    actual_node = r.get('node')
+                    if actual_node != node:
+                        logger.info(f"VM {vmid} was migrated from {node} to {actual_node}, using actual node")
+                    break
+        except Exception as e:
+            logger.warning(f"Cluster resources query failed: {e}, using provided node {node}")
+            actual_node = node
+        
+        if not actual_node:
+            actual_node = node
+        
         # Check if this is a template before trying to start
-        vm_config = proxmox.nodes(node).qemu(vmid).config.get()
+        vm_config = proxmox.nodes(actual_node).qemu(vmid).config.get()
         if vm_config.get('template') == 1:
             return False, "Cannot start a template VM. This VM is configured as a template and must be cloned to a regular VM before it can be started."
         
-        proxmox.nodes(node).qemu(vmid).status.start.post()
+        proxmox.nodes(actual_node).qemu(vmid).status.start.post()
         
-        logger.info(f"Started VM {vmid} on {node}")
+        logger.info(f"Started VM {vmid} on {actual_node}")
         return True, "VM started successfully"
         
     except Exception as e:
@@ -1521,9 +1538,27 @@ def stop_class_vm(vmid: int, node: str, cluster_ip: str = None) -> Tuple[bool, s
             return False, f"Cluster not found"
         
         proxmox = get_proxmox_admin_for_cluster(cluster_id)
-        proxmox.nodes(node).qemu(vmid).status.shutdown.post()
         
-        logger.info(f"Stopped VM {vmid} on {node}")
+        # Query cluster-wide to find which node actually has this VM
+        actual_node = None
+        try:
+            resources = proxmox.cluster.resources.get(type="vm")
+            for r in resources:
+                if int(r.get('vmid', -1)) == int(vmid):
+                    actual_node = r.get('node')
+                    if actual_node != node:
+                        logger.info(f"VM {vmid} was migrated from {node} to {actual_node}, using actual node")
+                    break
+        except Exception as e:
+            logger.warning(f"Cluster resources query failed: {e}, using provided node {node}")
+            actual_node = node
+        
+        if not actual_node:
+            actual_node = node
+        
+        proxmox.nodes(actual_node).qemu(vmid).status.shutdown.post()
+        
+        logger.info(f"Stopped VM {vmid} on {actual_node}")
         return True, "VM stopped successfully"
         
     except Exception as e:
@@ -1558,7 +1593,7 @@ def get_vm_status(vmid: int, node: str = None, cluster_ip: str = None) -> Dict[s
         if not node or node == "qemu" or node == "None":
             resources = proxmox.cluster.resources.get(type="vm")
             for r in resources:
-                if r.get('vmid') == vmid:
+                if int(r.get('vmid', -1)) == int(vmid):
                     node = r.get('node')
                     break
         
