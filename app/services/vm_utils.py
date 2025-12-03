@@ -6,6 +6,7 @@ This module provides utility routines for:
 - VM naming sanitization (DNS-style naming)
 - Next available VMID lookup
 - MAC address extraction from VM config
+- Optimal node selection based on resource availability
 
 These functions are used by vm_core.py, vm_template.py, class_vm_service.py,
 and other modules that work with Proxmox VMs.
@@ -16,12 +17,74 @@ in inventory_service.py and background_sync.py.
 
 import logging
 import re
-from typing import Optional, Set
+from typing import Optional, Set, Dict, Any
 
 logger = logging.getLogger(__name__)
 
 # Import VMInventory model for VMID lookup
 from app.models import VMInventory
+
+
+def get_optimal_node(ssh_executor, proxmox=None) -> str:
+    """
+    Find the optimal Proxmox node for VM creation based on resource availability.
+    
+    Selects node with most available RAM and CPU capacity.
+    
+    Args:
+        ssh_executor: SSH executor for running commands
+        proxmox: Optional ProxmoxAPI connection (if None, uses SSH to query)
+        
+    Returns:
+        Node name with most available resources
+    """
+    try:
+        # Try to use Proxmox API if available
+        if proxmox:
+            nodes = proxmox.nodes.get()
+            best_node = None
+            best_score = -1
+            
+            for node in nodes:
+                if node.get('status') != 'online':
+                    continue
+                    
+                # Calculate availability score (higher is better)
+                # Weight RAM more heavily than CPU (RAM is usually the bottleneck)
+                mem_total = node.get('maxmem', 1)
+                mem_used = node.get('mem', 0)
+                mem_free_pct = (mem_total - mem_used) / mem_total if mem_total > 0 else 0
+                
+                cpu_total = node.get('maxcpu', 1)
+                cpu_used = node.get('cpu', 0)
+                cpu_free_pct = (1 - cpu_used) if cpu_used < 1 else 0
+                
+                # Score: 70% RAM + 30% CPU
+                score = (mem_free_pct * 0.7) + (cpu_free_pct * 0.3)
+                
+                logger.debug(f"Node {node['node']}: {mem_free_pct*100:.1f}% RAM free, {cpu_free_pct*100:.1f}% CPU free, score={score:.3f}")
+                
+                if score > best_score:
+                    best_score = score
+                    best_node = node['node']
+            
+            if best_node:
+                logger.info(f"Selected optimal node: {best_node} (score={best_score:.3f})")
+                return best_node
+        
+        # Fallback: use hostname command
+        exit_code, stdout, stderr = ssh_executor.execute("hostname", timeout=10)
+        if exit_code == 0 and stdout.strip():
+            node = stdout.strip()
+            logger.info(f"Using connected node: {node}")
+            return node
+            
+    except Exception as e:
+        logger.warning(f"Failed to determine optimal node: {e}")
+    
+    # Ultimate fallback
+    logger.warning("Could not determine optimal node, using 'pve' as default")
+    return "pve"
 
 
 def sanitize_vm_name(name: str, fallback: str = "vm") -> str:

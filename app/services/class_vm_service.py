@@ -431,11 +431,27 @@ def create_class_vms(
     logger.info(f"Template VMID: {template_vmid}, Pool size: {pool_size}")
     
     ssh_executor = None
+    optimal_node = None
+    proxmox = None
     try:
         # Connect to Proxmox via SSH
         ssh_executor = get_ssh_executor_from_config()
         ssh_executor.connect()
         logger.info(f"SSH connected to {ssh_executor.host}")
+        
+        # Get Proxmox API connection for resource queries
+        try:
+            from app.services.proxmox_service import get_proxmox_admin
+            proxmox = get_proxmox_admin()
+        except Exception as e:
+            logger.warning(f"Could not get Proxmox API connection: {e}")
+        
+        # Determine optimal node for VM creation based on resource availability
+        from app.services.vm_utils import get_optimal_node
+        optimal_node = get_optimal_node(ssh_executor, proxmox)
+        logger.info(f"Selected optimal node for VM creation: {optimal_node}")
+        logger.info(f"Using shared storage: {PROXMOX_STORAGE_NAME} (path: {DEFAULT_VM_IMAGES_PATH})")
+        logger.info(f"Note: All nodes must have access to shared storage for multi-node deployment")
         
         # Step 1: Handle template vs no-template workflow
         if template_vmid:
@@ -513,9 +529,10 @@ def create_class_vms(
                 teacher_vmid = get_next_available_vmid(ssh_executor, start_vmid)
                 teacher_name = f"{class_prefix}-teacher"
                 
-                # Create empty VM with custom specs and disk
+                # Create empty VM with custom specs and disk on optimal node
                 exit_code, stdout, stderr = ssh_executor.execute(
-                    f"qm create {teacher_vmid} --name {teacher_name} --memory {memory} --cores {cores} "
+                    f"qm create {teacher_vmid} --name {teacher_name} --node {optimal_node} "
+                    f"--memory {memory} --cores {cores} "
                     f"--net0 virtio,bridge=vmbr0 --scsihw virtio-scsi-pci "
                     f"--scsi0 {PROXMOX_STORAGE_NAME}:32 --boot order=scsi0",
                     timeout=120,
@@ -593,7 +610,7 @@ def create_class_vms(
             proxmox_vmid=teacher_vmid,
             vm_name=teacher_name,
             mac_address=teacher_mac,
-            node=template_node,
+            node=optimal_node,
             assigned_user_id=teacher_id,
             status='assigned',
             is_template_vm=False,
@@ -622,9 +639,10 @@ def create_class_vms(
                 student_name = f"{class_prefix}-student-{i + 1}"
                 
                 try:
-                    # Create VM shell
+                    # Create VM shell on optimal node
                     exit_code, stdout, stderr = ssh_executor.execute(
-                        f"qm create {vmid} --name {student_name} --memory {memory} --cores {cores} "
+                        f"qm create {vmid} --name {student_name} --node {optimal_node} "
+                        f"--memory {memory} --cores {cores} "
                         f"--scsihw virtio-scsi-pci --net0 virtio,bridge=vmbr0",
                         timeout=60
                     )
@@ -687,7 +705,7 @@ def create_class_vms(
                         proxmox_vmid=vmid,
                         vm_name=student_name,
                         mac_address=student_mac,
-                        node=template_node,
+                        node=optimal_node,
                         assigned_user_id=None,
                         status='available',
                         is_template_vm=False,
