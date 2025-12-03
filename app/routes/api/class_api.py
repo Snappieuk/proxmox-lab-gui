@@ -55,6 +55,7 @@ from app.services.proxmox_operations import (
     convert_vm_to_template,
     delete_vm,
     get_vm_status,
+    get_vm_status_from_inventory,
     CLASS_CLUSTER_IP
 )
 from app.config import CLUSTERS
@@ -685,8 +686,8 @@ def list_class_vms(class_id: int):
         if not assignment:
             return jsonify({"ok": False, "error": "Access denied"}), 403
         
-        # Get live status
-        status = get_vm_status(assignment.proxmox_vmid, assignment.node)
+        # Get status from VMInventory (database-first, no Proxmox API call)
+        status = get_vm_status_from_inventory(assignment.proxmox_vmid, class_.cluster_ip)
         vm_data = assignment.to_dict()
         vm_data.update(status)
         
@@ -703,9 +704,13 @@ def list_class_vms(class_id: int):
     vms = []
     
     for assignment in assignments:
+        # Skip teacher VMs (they shouldn't appear in the VM list for students)
+        if assignment.is_teacher_vm:
+            continue
+            
         vm_data = assignment.to_dict()
-        # Get live status from Proxmox
-        status = get_vm_status(assignment.proxmox_vmid, assignment.node)
+        # Get status from VMInventory (database-first, no Proxmox API call)
+        status = get_vm_status_from_inventory(assignment.proxmox_vmid, class_.cluster_ip)
         vm_data.update(status)
         vms.append(vm_data)
     
@@ -1389,8 +1394,14 @@ def get_my_vm(class_id: int):
     if not assignment:
         return jsonify({"ok": False, "error": "You don't have a VM in this class"}), 404
     
+    # Get class to extract cluster_ip
+    class_ = get_class_by_id(class_id)
+    if not class_:
+        return jsonify({"ok": False, "error": "Class not found"}), 404
+    
     vm_data = assignment.to_dict()
-    status = get_vm_status(assignment.proxmox_vmid, assignment.node)
+    # Get status from VMInventory (database-first, no Proxmox API call)
+    status = get_vm_status_from_inventory(assignment.proxmox_vmid, class_.cluster_ip)
     vm_data.update(status)
     
     return jsonify({"ok": True, "vm": vm_data})

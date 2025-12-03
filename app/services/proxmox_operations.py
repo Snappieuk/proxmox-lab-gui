@@ -29,6 +29,7 @@ from typing import List, Dict, Tuple, Any, Optional
 
 from app.services.proxmox_service import get_proxmox_admin_for_cluster
 from app.config import CLUSTERS
+from app.models import VMInventory
 
 logger = logging.getLogger(__name__)
 
@@ -1566,6 +1567,87 @@ def stop_class_vm(vmid: int, node: str, cluster_ip: str = None) -> Tuple[bool, s
         return False, f"Stop failed: {str(e)}"
 
 
+def get_vm_status_from_inventory(vmid: int, cluster_ip: str = None) -> Dict[str, Any]:
+    """Get VM status from VMInventory database (fast, no Proxmox API calls).
+    
+    This is the PREFERRED method for getting VM status in the GUI.
+    Uses database-first architecture - reads from VMInventory table
+    which is kept up-to-date by background sync daemon.
+    
+    Falls back to VMAssignment table if VM not yet synced to VMInventory
+    (happens immediately after VM creation before background sync runs).
+    
+    Args:
+        vmid: VM ID
+        cluster_ip: IP of the Proxmox cluster (optional)
+    
+    Returns:
+        Dict with status, uptime, mac, ip, etc. Compatible with get_vm_status() format.
+    """
+    from app.models import VMAssignment
+    
+    try:
+        # Find cluster_id from cluster_ip
+        cluster_id = None
+        for cluster in CLUSTERS:
+            if cluster["host"] == (cluster_ip or CLASS_CLUSTER_IP):
+                cluster_id = cluster["id"]
+                break
+        
+        if not cluster_id:
+            logger.warning(f"Cluster not found for IP {cluster_ip or CLASS_CLUSTER_IP}")
+            return {"status": "unknown", "mac": "N/A", "ip": "N/A"}
+        
+        # Query VMInventory table
+        vm_record = VMInventory.query.filter_by(
+            cluster_id=cluster_id,
+            vmid=vmid
+        ).first()
+        
+        if vm_record:
+            # Found in VMInventory - use synced data
+            return {
+                "status": vm_record.status or "unknown",
+                "uptime": vm_record.uptime or 0,
+                "cpu": vm_record.cpu_usage or 0,
+                "mem": vm_record.memory_usage or 0,
+                "maxmem": vm_record.memory or 0,
+                "disk": 0,  # Not tracked in VMInventory yet
+                "maxdisk": vm_record.disk_size or 0,
+                "mac": vm_record.mac_address or "N/A",
+                "ip": vm_record.ip or "N/A",
+                "node": vm_record.node or "unknown"
+            }
+        
+        # VM not in VMInventory yet - fallback to VMAssignment (newly created VMs)
+        # This happens right after VM creation, before background sync runs
+        logger.debug(f"VM {vmid} not in VMInventory yet, checking VMAssignment...")
+        assignment = VMAssignment.query.filter_by(proxmox_vmid=vmid).first()
+        
+        if assignment:
+            # Return data from VMAssignment (created during VM deployment)
+            return {
+                "status": "stopped",  # Newly created VMs are stopped
+                "uptime": 0,
+                "cpu": 0,
+                "mem": 0,
+                "maxmem": 0,
+                "disk": 0,
+                "maxdisk": 0,
+                "mac": assignment.mac_address or "N/A",
+                "ip": assignment.cached_ip or "N/A",
+                "node": assignment.node or "unknown"
+            }
+        
+        # VM not found anywhere
+        logger.debug(f"VM {vmid} not found in VMInventory or VMAssignment")
+        return {"status": "unknown", "mac": "N/A", "ip": "N/A"}
+        
+    except Exception as e:
+        logger.exception(f"Failed to get VM status from inventory: {e}")
+        return {"status": "unknown", "mac": "N/A", "ip": "N/A"}
+
+
 def get_vm_status(vmid: int, node: str = None, cluster_ip: str = None) -> Dict[str, Any]:
     """Get VM status with MAC address and IP address.
     
@@ -1803,15 +1885,18 @@ def delete_vm(vmid: int, node: str, cluster_ip: str = None) -> Tuple[bool, str]:
         except Exception as e:
             logger.warning(f"Failed to send stop command for VM {vmid}: {e}")
         
-        # Wait for VM to be fully stopped (timeout 60 seconds)
+        # Wait for VM to be fully stopped (timeout 120 seconds - increased for slow VMs)
         logger.info(f"Waiting for VM {vmid} to be fully stopped...")
-        stopped = wait_for_vm_stopped(ssh_executor, vmid, timeout=60)
+        stopped = wait_for_vm_stopped(ssh_executor, vmid, timeout=120)
         if not stopped:
-            logger.warning(f"VM {vmid} did not stop within timeout, attempting deletion anyway")
-        else:
-            logger.info(f"VM {vmid} confirmed stopped")
+            # CRITICAL: Proxmox won't delete running VMs - must fail here
+            error_msg = f"VM {vmid} did not stop within 120 seconds - cannot delete running VM"
+            logger.error(error_msg)
+            return False, error_msg
         
-        # Now delete the VM
+        logger.info(f"VM {vmid} confirmed stopped, proceeding with deletion")
+        
+        # Now delete the VM (only if stopped)
         proxmox.nodes(actual_node).qemu(vmid).delete()
         
         logger.info(f"Deleted VM {vmid} on {actual_node}")

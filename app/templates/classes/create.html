@@ -434,7 +434,28 @@ document.getElementById('create-class-form').addEventListener('submit', async fu
         const data = await resp.json();
         
         if (data.ok) {
-            window.location.href = '/classes/' + data.class.id;
+            // Show progress message
+            const progressDiv = document.createElement('div');
+            progressDiv.style.cssText = 'position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 30px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 1000; text-align: center; min-width: 400px;';
+            progressDiv.innerHTML = `
+                <div style="margin-bottom: 20px;">
+                    <i class="bi bi-arrow-repeat" style="font-size: 48px; animation: spin 2s linear infinite;"></i>
+                </div>
+                <h3 style="margin: 0 0 10px 0;">Creating Class VMs</h3>
+                <p id="progress-status" style="margin: 0; color: #666;">Deploying ${poolSize > 0 ? poolSize + ' student VMs + ' : ''}teacher VM + template...</p>
+                <p style="margin-top: 15px; font-size: 0.9em; color: #999;">This may take several minutes depending on VM count</p>
+            `;
+            document.body.appendChild(progressDiv);
+            
+            // Add spinner animation
+            const style = document.createElement('style');
+            style.textContent = '@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }';
+            document.head.appendChild(style);
+            
+            // Redirect after a brief delay to allow background process to start
+            setTimeout(() => {
+                window.location.href = '/classes/' + data.class.id + '?deployment=inprogress';
+            }, 2000);
         } else {
             alert('Failed to create class: ' + (data.error || 'Unknown error'));
             submitBtn.disabled = false;

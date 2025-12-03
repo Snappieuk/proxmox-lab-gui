@@ -852,6 +852,46 @@ def create_class_vms(
             assigned_at=datetime.utcnow(),
         )
         db.session.add(teacher_assignment)
+        db.session.commit()  # Commit immediately so VMAssignment is available
+        
+        # Update VMInventory immediately for teacher VM (makes it visible in UI right away)
+        try:
+            from app.services.inventory_service import persist_vm_inventory
+            from app.config import CLUSTERS
+            
+            # Get cluster_ip from class template, or fallback to default
+            cluster_ip = None
+            if class_.template and class_.template.cluster_ip:
+                cluster_ip = class_.template.cluster_ip
+            else:
+                # Fallback to default cluster
+                cluster_ip = "10.220.15.249"
+            
+            # Find cluster_id from cluster_ip
+            cluster_id = None
+            for cluster in CLUSTERS:
+                if cluster["host"] == cluster_ip:
+                    cluster_id = cluster["id"]
+                    break
+            
+            if not cluster_id:
+                logger.warning(f"Cannot add teacher VM to VMInventory - cluster not found for IP {cluster_ip}")
+            else:
+                # persist_vm_inventory expects a list of VM dicts
+                teacher_vm_dict = {
+                    'cluster_id': cluster_id,
+                    'vmid': teacher_vmid,
+                    'name': teacher_name,
+                    'node': teacher_optimal_node,
+                    'status': 'stopped',  # VM just created, not started yet
+                    'type': 'qemu',
+                    'mac_address': teacher_mac,
+                    'is_template': False,
+                }
+                persist_vm_inventory([teacher_vm_dict], cleanup_missing=False)
+                logger.info(f"Teacher VM {teacher_vmid} added to VMInventory - visible in UI immediately")
+        except Exception as e:
+            logger.warning(f"Failed to add teacher VM to VMInventory: {e}")
         
         # Track used VMIDs in memory to avoid collisions during creation
         if base_qcow2_path is None and 'class_base_vmid' in locals():
@@ -1003,44 +1043,56 @@ def create_class_vms(
         # Update VMInventory with MAC addresses for all created VMs
         try:
             from app.services.inventory_service import persist_vm_inventory
-            from app.services.proxmox_service import get_proxmox_admin
+            from app.config import CLUSTERS
             
-            proxmox = get_proxmox_admin()
+            # Get cluster_id
+            cluster_ip = None
+            if class_.template and class_.template.cluster_ip:
+                cluster_ip = class_.template.cluster_ip
+            else:
+                cluster_ip = "10.220.15.249"
             
-            # Get cluster resources to find all VMs
-            resources = proxmox.cluster.resources.get(type="vm")
+            cluster_id = None
+            for cluster in CLUSTERS:
+                if cluster["host"] == cluster_ip:
+                    cluster_id = cluster["id"]
+                    break
             
-            # Update teacher VM
-            if result.teacher_vmid:
-                for r in resources:
-                    if int(r.get('vmid', -1)) == int(result.teacher_vmid):
-                        persist_vm_inventory(
-                            proxmox_vmid=result.teacher_vmid,
-                            name=r.get('name', ''),
-                            node=r.get('node', ''),
-                            status=r.get('status', 'unknown'),
-                            vmtype=r.get('type', 'qemu'),
-                            mac_address=teacher_mac if 'teacher_mac' in locals() else None,
-                        )
-                        break
-            
-            # Update student VMs
-            for vmid in result.student_vmids:
-                for r in resources:
-                    if int(r.get('vmid', -1)) == int(vmid):
-                        # Find the assignment to get MAC
-                        assignment = VMAssignment.query.filter_by(proxmox_vmid=vmid).first()
-                        persist_vm_inventory(
-                            proxmox_vmid=vmid,
-                            name=r.get('name', ''),
-                            node=r.get('node', ''),
-                            status=r.get('status', 'unknown'),
-                            vmtype=r.get('type', 'qemu'),
-                            mac_address=assignment.mac_address if assignment else None,
-                        )
-                        break
-            
-            logger.info(f"Updated VMInventory for {len(result.student_vmids) + 1} VMs")
+            if cluster_id:
+                vms_to_sync = []
+                
+                # Add teacher VM
+                if result.teacher_vmid and 'teacher_mac' in locals():
+                    vms_to_sync.append({
+                        'cluster_id': cluster_id,
+                        'vmid': result.teacher_vmid,
+                        'name': f"{class_prefix}-teacher",
+                        'node': teacher_optimal_node if 'teacher_optimal_node' in locals() else template_node,
+                        'status': 'stopped',
+                        'type': 'qemu',
+                        'mac_address': teacher_mac,
+                        'is_template': False,
+                    })
+                
+                # Add student VMs
+                for i, vmid in enumerate(result.student_vmids):
+                    assignment = VMAssignment.query.filter_by(proxmox_vmid=vmid).first()
+                    if assignment:
+                        vms_to_sync.append({
+                            'cluster_id': cluster_id,
+                            'vmid': vmid,
+                            'name': assignment.vm_name,
+                            'node': assignment.node,
+                            'status': 'stopped',
+                            'type': 'qemu',
+                            'mac_address': assignment.mac_address,
+                            'is_template': False,
+                        })
+                
+                # Batch persist all VMs
+                if vms_to_sync:
+                    persist_vm_inventory(vms_to_sync, cleanup_missing=False)
+                    logger.info(f"Updated VMInventory for {len(vms_to_sync)} VMs - now visible in UI")
         except Exception as e:
             logger.warning(f"Failed to update VMInventory: {e}")
         
