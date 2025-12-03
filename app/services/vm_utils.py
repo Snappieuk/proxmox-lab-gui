@@ -47,14 +47,23 @@ def sanitize_vm_name(name: str, fallback: str = "vm") -> str:
     name = re.sub(r"[^a-z0-9-]", "-", name)
     name = re.sub(r"-+", "-", name)
     name = name.strip('-')
+    
+    # Ensure we have at least the fallback
     if not name:
         name = fallback
+    
+    # Safety check: ensure name is non-empty before character checks
+    if not name:
+        name = "vm"  # Ultimate fallback
+    
     # Ensure starts with alphanumeric
     if not name[0].isalnum():
         name = f"{fallback}-{name}" if name else fallback
-    # Ensure ends with alphanumeric
-    if not name[-1].isalnum():
+    
+    # Ensure ends with alphanumeric (re-check in case above changed things)
+    if name and not name[-1].isalnum():
         name = f"{name}0"
+    
     # Truncate to 63 characters
     if len(name) > 63:
         name = name[:63].rstrip('-') or fallback
