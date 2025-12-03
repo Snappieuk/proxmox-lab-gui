@@ -46,8 +46,103 @@ from app.services.vm_utils import (
 )
 from app.services.vm_template import export_template_to_qcow2
 from app.services.vm_core import wait_for_vm_stopped
+import threading
 
 logger = logging.getLogger(__name__)
+
+# Global lock for VMID allocation to prevent race conditions
+# when multiple users create classes simultaneously
+_vmid_allocation_lock = threading.Lock()
+
+# Cache for reusing SSH connections per thread
+_ssh_connection_cache = threading.local()
+
+
+def get_cached_ssh_executor():
+    """Get or create cached SSH executor for current thread."""
+    if not hasattr(_ssh_connection_cache, 'executor'):
+        _ssh_connection_cache.executor = get_ssh_executor_from_config()
+    return _ssh_connection_cache.executor
+
+
+def allocate_vmid_prefix_for_class(ssh_executor: SSHExecutor) -> Optional[int]:
+    """Allocate a unique 3-digit prefix for a class's VMIDs.
+    
+    Returns a prefix like 123, which means the class can use VMIDs 12300-12399.
+    Ensures the prefix doesn't conflict with existing VMs.
+    
+    Args:
+        ssh_executor: SSH executor for querying Proxmox
+        
+    Returns:
+        3-digit prefix (100-999) or None if allocation fails
+    """
+    import random
+    from app.services.proxmox_service import get_proxmox_admin
+    
+    with _vmid_allocation_lock:
+        try:
+            # Get all existing VMIDs from cluster
+            proxmox = get_proxmox_admin()
+            resources = proxmox.cluster.resources.get(type="vm")
+            existing_vmids = {int(r.get('vmid', -1)) for r in resources}
+            
+            # Also check database for allocated prefixes
+            from app.models import Class
+            used_prefixes = {c.vmid_prefix for c in Class.query.all() if c.vmid_prefix}
+            
+            # Try to find an available prefix (100-999)
+            # Avoid 100-199 (might be used for system/templates)
+            # Use 200-999 for classes
+            max_attempts = 100
+            for _ in range(max_attempts):
+                prefix = random.randint(200, 999)
+                
+                # Check if this prefix is already used by another class
+                if prefix in used_prefixes:
+                    continue
+                
+                # Check if any VMIDs in this range exist (prefix00 to prefix99)
+                range_start = prefix * 100
+                range_end = range_start + 100
+                range_vmids = set(range(range_start, range_end))
+                
+                # If no overlap with existing VMIDs, this prefix is available
+                if not range_vmids.intersection(existing_vmids):
+                    logger.info(f"Allocated VMID prefix {prefix} (range {range_start}-{range_end-1})")
+                    return prefix
+            
+            logger.error(f"Failed to allocate VMID prefix after {max_attempts} attempts")
+            return None
+            
+        except Exception as e:
+            logger.exception(f"Error allocating VMID prefix: {e}")
+            return None
+
+
+def get_vmid_for_class_vm(class_id: int, vm_index: int) -> Optional[int]:
+    """Get VMID for a specific VM in a class.
+    
+    Args:
+        class_id: Database ID of the class
+        vm_index: Index of VM (0=teacher, 1-99=students)
+        
+    Returns:
+        VMID like 12300 (teacher), 12301 (student 1), etc.
+    """
+    from app.models import Class
+    
+    class_ = Class.query.get(class_id)
+    if not class_ or not class_.vmid_prefix:
+        logger.error(f"Class {class_id} not found or has no VMID prefix")
+        return None
+    
+    if vm_index < 0 or vm_index >= 100:
+        logger.error(f"Invalid VM index {vm_index} (must be 0-99)")
+        return None
+    
+    vmid = (class_.vmid_prefix * 100) + vm_index
+    return vmid
 
 
 def get_vm_current_node(ssh_executor: SSHExecutor, vmid: int) -> Optional[str]:
@@ -368,10 +463,11 @@ def recreate_student_vms_from_template(
         if not success:
             return False, f"Failed to export template: {error}", []
         
-        # Create student VMs as overlays
+        # Create student VMs as overlays using prefix-based VMID allocation
         for i in range(count):
             try:
-                vmid = get_next_available_vmid(ssh_executor)
+                # Student VMs use indices 1-99 (index 0 is teacher VM)
+                vmid = get_vmid_for_class_vm(class_id, i + 1)
                 student_name = f"{class_prefix}-student-{i+1}"
                 
                 # Create VM shell with proper specs from class configuration
@@ -525,8 +621,8 @@ def create_class_vms(
     optimal_node = None
     proxmox = None
     try:
-        # Connect to Proxmox via SSH
-        ssh_executor = get_ssh_executor_from_config()
+        # Use cached SSH executor to reuse connection
+        ssh_executor = get_cached_ssh_executor()
         ssh_executor.connect()
         logger.info(f"SSH connected to {ssh_executor.host}")
         
@@ -536,6 +632,25 @@ def create_class_vms(
             proxmox = get_proxmox_admin()
         except Exception as e:
             logger.warning(f"Could not get Proxmox API connection: {e}")
+        
+        # Allocate VMID prefix for this class (e.g., 234 -> VMIDs 23400-23499)
+        from app.models import Class
+        class_ = Class.query.get(class_id)
+        if not class_:
+            result.error = f"Class {class_id} not found"
+            return result
+        
+        if not class_.vmid_prefix:
+            vmid_prefix = allocate_vmid_prefix_for_class(ssh_executor)
+            if not vmid_prefix:
+                result.error = "Failed to allocate VMID range for class"
+                return result
+            
+            class_.vmid_prefix = vmid_prefix
+            db.session.commit()
+            logger.info(f"Allocated VMID prefix {vmid_prefix} for class {class_id} (range: {vmid_prefix}00-{vmid_prefix}99)")
+        else:
+            logger.info(f"Class {class_id} already has VMID prefix {class_.vmid_prefix}")
         
         # Node selection will be done per-VM for better distribution
         from app.services.vm_utils import get_optimal_node
@@ -568,14 +683,19 @@ def create_class_vms(
             teacher_optimal_node = get_optimal_node(ssh_executor, proxmox)
             logger.info(f"Selected optimal node for teacher VM: {teacher_optimal_node}")
             
-            # Retry logic for VMID conflicts
-            max_retries = 30
-            teacher_vmid = None
-            teacher_mac = None
-            start_vmid = 300  # Track starting point for VMID search
+            # Use allocated VMID from class prefix (index 0 = teacher)
+            teacher_vmid = get_vmid_for_class_vm(class_id, 0)
+            if not teacher_vmid:
+                result.error = "Failed to allocate teacher VM ID"
+                return result
             
-            for retry in range(max_retries):
-                teacher_vmid = get_next_available_vmid(ssh_executor, start_vmid)
+            teacher_name = f"{class_prefix}-teacher"
+            teacher_mac = None
+            
+            logger.info(f"Creating teacher VM with VMID {teacher_vmid}")
+            
+            # Create teacher VM (no retry loop needed - VMID is pre-allocated)
+            for retry in range(1):  # Keep loop structure but only 1 attempt
                 teacher_name = f"{class_prefix}-teacher"
                 
                 # Import create_overlay_vm from vm_template module
@@ -623,7 +743,8 @@ def create_class_vms(
             start_vmid = 100  # Track starting point for VMID search
             
             for retry in range(max_retries):
-                teacher_vmid = get_next_available_vmid(ssh_executor, start_vmid)
+                # Use prefix-based VMID allocation (teacher VM is index 0)
+                teacher_vmid = get_vmid_for_class_vm(class_id, 0)
                 teacher_name = f"{class_prefix}-teacher"
                 
                 # Create empty VM shell without storage (will attach after migration)
@@ -635,22 +756,11 @@ def create_class_vms(
                     check=False
                 )
                 
-                if exit_code == 0:
-                    break
-                    
-                # Check if error is due to VMID conflict
-                if "already exists" in stderr.lower():
-                    logger.warning(f"VMID {teacher_vmid} already exists (attempt {retry + 1}/{max_retries}), retrying with next VMID...")
-                    start_vmid = teacher_vmid + 1  # Skip this VMID next time
-                    continue
-                else:
-                    # Different error, don't retry
+                if exit_code != 0:
                     result.error = f"Failed to create teacher VM shell: {stderr}"
                     return result
-            
-            if exit_code != 0:
-                result.error = f"Failed to create teacher VM shell after {max_retries} retries: {stderr}"
-                return result
+                
+                break
             
             result.details.append(f"Teacher VM shell created (VMID: {teacher_vmid})")
             
@@ -693,7 +803,9 @@ def create_class_vms(
             base_qcow2_path = None
             
             # Create class-base VM (empty shell for student overlays)
-            class_base_vmid = get_next_available_vmid(ssh_executor, teacher_vmid + 1)
+            # Note: In template-less workflow, we reserve index 100 for class-base VM
+            # to avoid conflicts with student VMs (indices 1-99)
+            class_base_vmid = vmid_prefix * 100 + 100  # e.g., 234 * 100 + 100 = 23500
             class_base_name = f"{class_prefix}-base"
             
             result.details.append(f"Creating class-base VM shell (no template)...")
@@ -761,34 +873,18 @@ def create_class_vms(
             result.details.append(f"Creating {pool_size} student VMs...")
             
             for i in range(pool_size):
-                # Find next available VMID that's not in our session's used set
-                # Start search from last used VMID + 1
-                start_search = max(used_vmids_in_this_session) + 1 if used_vmids_in_this_session else teacher_vmid + 1
-                
-                # Keep searching until we find an unused VMID
-                vmid = None
-                max_attempts = 200
-                for attempt in range(max_attempts):
-                    # Get next available VMID from cluster starting at start_search
-                    candidate_vmid = get_next_available_vmid(ssh_executor, start_search)
-                    
-                    # Check if this VMID is already used in our session
-                    if candidate_vmid not in used_vmids_in_this_session:
-                        # Found an available VMID
-                        vmid = candidate_vmid
-                        break
-                    else:
-                        # This VMID was used in our session, try the next one
-                        start_search = candidate_vmid + 1
-                        logger.debug(f"VMID {candidate_vmid} already used in session, trying {start_search}")
-                
-                if vmid is None:
-                    # Exhausted attempts
-                    logger.error(f"Could not find available VMID after {max_attempts} attempts")
+                # Use allocated VMID from class prefix (index 1-99 for students)
+                # Student 1 = index 1, Student 2 = index 2, etc.
+                vmid = get_vmid_for_class_vm(class_id, i + 1)
+                if not vmid:
+                    logger.error(f"Failed to allocate VMID for student {i + 1}")
                     result.failed += 1
                     continue
                 
-                used_vmids_in_this_session.add(vmid)
+                if i + 1 >= 100:
+                    logger.error(f"Class VM limit reached (99 students max per class)")
+                    result.failed += 1
+                    continue
                 student_name = f"{class_prefix}-student-{i + 1}"
                 
                 # Select optimal node for this student VM

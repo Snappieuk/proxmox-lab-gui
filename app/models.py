@@ -107,6 +107,7 @@ class Class(db.Model):
     cpu_cores = db.Column(db.Integer, default=2)  # CPU cores per VM
     memory_mb = db.Column(db.Integer, default=2048)  # RAM in MB per VM
     disk_size_gb = db.Column(db.Integer, default=32)  # Disk size in GB (for template-less classes)
+    vmid_prefix = db.Column(db.Integer, nullable=True)  # 3-digit prefix for VMIDs (e.g., 123 -> VMs 12300-12399)
     clone_task_id = db.Column(db.String(64), nullable=True)  # Track ongoing class creation
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -205,6 +206,10 @@ class Class(db.Model):
             'token_never_expires': self.token_never_expires,
             'token_expires_at': self.token_expires_at.isoformat() if self.token_expires_at else None,
             'pool_size': self.pool_size,
+            'cpu_cores': self.cpu_cores,
+            'memory_mb': self.memory_mb,
+            'disk_size_gb': self.disk_size_gb,
+            'vmid_prefix': self.vmid_prefix,
             'assigned_count': self.assigned_count,
             'unassigned_count': self.unassigned_count,
             'enrolled_count': self.enrolled_count,
