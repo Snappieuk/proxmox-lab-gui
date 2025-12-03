@@ -20,6 +20,9 @@ from typing import Optional, Set
 
 logger = logging.getLogger(__name__)
 
+# Import VMInventory model for VMID lookup
+from app.models import VMInventory
+
 
 def sanitize_vm_name(name: str, fallback: str = "vm") -> str:
     """Sanitize a proposed VM name to satisfy Proxmox (DNS-style) constraints.
@@ -74,12 +77,9 @@ def sanitize_vm_name(name: str, fallback: str = "vm") -> str:
 
 def get_next_available_vmid_ssh(ssh_executor, start: int = 200) -> int:
     """
-    Find the next available VMID on the Proxmox cluster via SSH.
+    Find the next available VMID on the Proxmox cluster.
     
-    Checks multiple sources to ensure VMID is truly available:
-    1. Config file existence on all nodes
-    2. qm status check
-    3. pvesh cluster query
+    Queries VMInventory database first (fastest), then falls back to cluster query.
     
     Args:
         ssh_executor: SSH executor for running commands (from ssh_executor.py)
@@ -91,30 +91,39 @@ def get_next_available_vmid_ssh(ssh_executor, start: int = 200) -> int:
     Raises:
         RuntimeError: If unable to find available VMID after max attempts
     """
+    # Query VMInventory database for all used VMIDs (fastest method)
+    try:
+        used_vmids = {vm.vmid for vm in VMInventory.query.with_entities(VMInventory.vmid).all()}
+        logger.debug(f"Found {len(used_vmids)} VMIDs in use from VMInventory database")
+    except Exception as e:
+        logger.warning(f"Failed to query VMInventory: {e}, falling back to cluster query")
+        
+        # Fallback: Query cluster directly via pvesh
+        exit_code, stdout, stderr = ssh_executor.execute(
+            "pvesh get /cluster/resources --type vm --output-format json",
+            check=False,
+            timeout=30
+        )
+        
+        used_vmids = set()
+        if exit_code == 0 and stdout.strip():
+            try:
+                import json
+                resources = json.loads(stdout)
+                used_vmids = {int(r['vmid']) for r in resources if 'vmid' in r}
+                logger.debug(f"Found {len(used_vmids)} VMIDs in use from cluster query")
+            except (json.JSONDecodeError, ValueError, KeyError) as e:
+                logger.warning(f"Failed to parse cluster resources: {e}")
+                used_vmids = set()
+    
+    # Find next available VMID starting from 'start'
     vmid = start
     max_attempts = 1000
     
     for _ in range(max_attempts):
-        # Check if config file exists on any node (most reliable check)
-        # This avoids stale cluster metadata issues
-        exit_code, stdout, stderr = ssh_executor.execute(
-            f"ls /etc/pve/nodes/*/qemu-server/{vmid}.conf 2>/dev/null",
-            check=False,
-            timeout=10
-        )
-        
-        if exit_code != 0 or not stdout.strip():
-            # No config file found - VMID is available
-            # Double-check with qm status to be safe
-            exit_code2, stdout2, stderr2 = ssh_executor.execute(
-                f"qm status {vmid}",
-                check=False,
-                timeout=10
-            )
-            if exit_code2 != 0:
-                # Both checks confirm VMID is available
-                return vmid
-        
+        if vmid not in used_vmids:
+            # Found available VMID
+            return vmid
         vmid += 1
     
     raise RuntimeError(f"Could not find available VMID after {max_attempts} attempts starting from {start}")
