@@ -259,35 +259,7 @@ def create_new_class():
     })
 
 
-# Skip old sequential cloning code that's been removed
-
-
 @api_classes_bp.route("/<int:class_id>", methods=["GET"])
-                template_shell = template_shells[0]
-                template_vm = VMAssignment(
-                    class_id=class_.id,
-                    proxmox_vmid=template_shell['vmid'],
-                    node=template_shell['node'],
-                    mac_address=template_shell.get('mac_address'),
-                    status='available',
-                    is_template_vm=True  # Mark as template VM
-                )
-                db.session.add(template_vm)
-                db.session.commit()
-                logger.info(f"Created template VM {template_shell['vmid']} for class {class_.id}")
-            
-            # Create 1 teacher VM
-            logger.info(f"Creating 1 teacher VM for class '{name}'...")
-            teacher_shells = create_vm_shells(
-                count=1,
-                name_prefix=f"{class_prefix}-teacher",
-                node=source_node,
-                cluster_ip="10.220.15.249",
-                cpu_cores=class_.cpu_cores,
-                memory_mb=class_.memory_mb
-            )
-            
-            # Register teacher VM with special column
             teacher_vm_assignment = None
             teacher_shell = None
             if teacher_shells and teacher_shells[0]['success']:
