@@ -243,21 +243,50 @@ def get_next_available_vmid_api(proxmox, start: int = 200, used_vmids: Set[int] 
     return vmid
 
 
-def get_vm_mac_address_ssh(ssh_executor, vmid: int) -> Optional[str]:
+def get_vm_mac_address_ssh(ssh_executor, vmid: int, node: Optional[str] = None) -> Optional[str]:
     """Get the MAC address of a VM's first network interface via SSH.
     
-    Parses the output of `qm config` to extract MAC address from net0 line.
+    Parses the output of VM config to extract MAC address from net0 line.
+    Uses cluster-aware pvesh command if node is not specified.
     
     Args:
         ssh_executor: SSH executor for running commands
         vmid: VM ID
+        node: Optional node name - if provided, uses node-specific qm config,
+              otherwise uses cluster-aware pvesh
         
     Returns:
         MAC address string (uppercase, colon-separated) or None if not found
     """
     try:
+        # First, find which node the VM is on if not specified
+        if not node:
+            # Use cluster-wide query to find the VM's node
+            exit_code, stdout, stderr = ssh_executor.execute(
+                f"pvesh get /cluster/resources --type vm --output-format json",
+                check=False,
+                timeout=10
+            )
+            if exit_code == 0 and stdout:
+                import json
+                try:
+                    resources = json.loads(stdout)
+                    for resource in resources:
+                        if resource.get('vmid') == vmid:
+                            node = resource.get('node')
+                            break
+                except:
+                    pass
+        
+        # Use cluster-aware pvesh command to get VM config
+        if node:
+            command = f"pvesh get /nodes/{node}/qemu/{vmid}/config"
+        else:
+            # Fallback to qm config (may fail if VM is on different node)
+            command = f"qm config {vmid}"
+        
         exit_code, stdout, stderr = ssh_executor.execute(
-            f"qm config {vmid}",
+            command,
             check=False,
             timeout=10
         )
@@ -267,9 +296,12 @@ def get_vm_mac_address_ssh(ssh_executor, vmid: int) -> Optional[str]:
             # Format can be: "net0: virtio=AA:BB:CC:DD:EE:FF,bridge=vmbr0"
             # Or with generated MAC: "net0: virtio=12:34:56:78:9A:BC,bridge=vmbr0,firewall=1"
             for line in stdout.split('\n'):
-                if line.startswith('net0:'):
+                if line.startswith('net0:') or line.strip().startswith('"net0"'):
                     # Extract everything after 'net0:'
-                    net_config = line.split(':', 1)[1].strip()
+                    if ':' in line:
+                        net_config = line.split(':', 1)[1].strip()
+                    else:
+                        net_config = line
                     # Look for MAC address pattern (XX:XX:XX:XX:XX:XX)
                     mac_match = re.search(
                         r'([0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2})',
