@@ -197,19 +197,18 @@ def create_new_class():
             logger.exception(f"Failed to get cluster nodes: {e}")
             return jsonify({"ok": False, "error": f"Failed to get cluster nodes: {str(e)}"}), 500
     
-    # Create VM shells in background thread
+    # Create VMs in background thread using SSH + QCOW2 overlay cloning
     import threading
     from flask import current_app
     app = current_app._get_current_object()
     
-    def _create_shells():
+    def _create_class_vms():
         try:
             app_ctx = app.app_context()
             app_ctx.push()
             
-            from app.services.proxmox_operations import create_vm_shells, populate_vm_shell_with_disk
-            from app.models import VMAssignment, db, Class
-            import re
+            from app.services.class_vm_service import deploy_class_vms
+            from app.models import Class
             
             # Re-fetch class to get template info
             class_obj = Class.query.get(class_.id)
@@ -217,26 +216,53 @@ def create_new_class():
                 logger.error(f"Class {class_.id} not found in background thread")
                 return
             
-            # Sanitize class name for VM naming
-            class_prefix = re.sub(r'[^a-z0-9-]', '', name.lower().replace(' ', '-').replace('_', '-'))
-            if not class_prefix:
-                class_prefix = f"class-{class_.id}"
+            # Deploy VMs using QCOW2 overlay cloning (fast)
+            logger.info(f"Deploying VMs for class '{class_obj.name}' (template={class_obj.template_id}, students={class_obj.pool_size})...")
             
-            # Create 1 template VM (master copy for students)
-            logger.info(f"Creating 1 template VM for class '{name}'...")
-            template_shells = create_vm_shells(
-                count=1,
-                name_prefix=f"{class_prefix}-template",
-                node=source_node,
-                cluster_ip="10.220.15.249",
-                cpu_cores=class_.cpu_cores,
-                memory_mb=class_.memory_mb
+            success, message, vm_info = deploy_class_vms(
+                class_id=class_obj.id,
+                num_students=class_obj.pool_size
             )
             
-            # Register template VM
-            template_vm = None
-            template_shell = None
-            if template_shells and template_shells[0]['success']:
+            if success:
+                logger.info(f"Class {class_obj.id} VM deployment succeeded: {message}")
+                logger.info(f"Created: {vm_info.get('teacher_vm_count', 0)} teacher VM, "
+                           f"{vm_info.get('template_vm_count', 0)} template VM, "
+                           f"{vm_info.get('student_vm_count', 0)} student VMs")
+            else:
+                logger.error(f"Class {class_obj.id} VM deployment failed: {message}")
+                
+        except Exception as e:
+            logger.exception(f"Failed to deploy VMs for class {class_.id}: {e}")
+        finally:
+            try:
+                app_ctx.pop()
+            except:
+                pass
+    
+    # Start the background thread to create VMs
+    threading.Thread(target=_create_class_vms, daemon=True).start()
+    
+    # Return immediately
+    message = f"Class created successfully"
+    if pool_size > 0:
+        total_vms = pool_size + 2  # pool_size students + 1 teacher + 1 template
+        message += f" - deploying {total_vms} VMs ({pool_size} student + 1 teacher + 1 template) in background using QCOW2 overlay cloning"
+    else:
+        message += " - deploying 2 VMs in background (1 template + 1 teacher, no students)"
+    
+    logger.info(f"Class {class_.id} '{class_.name}' created, VMs deploying in background")
+    return jsonify({
+        "ok": True,
+        "message": message,
+        "class": class_.to_dict()
+    })
+
+
+# Skip old sequential cloning code that's been removed
+
+
+@api_classes_bp.route("/<int:class_id>", methods=["GET"])
                 template_shell = template_shells[0]
                 template_vm = VMAssignment(
                     class_id=class_.id,

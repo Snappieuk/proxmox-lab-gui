@@ -16,6 +16,17 @@ CRITICAL_MIGRATIONS = [
     ('classes', 'memory_mb', 'INTEGER', '2048'),
     ('vm_assignments', 'manually_added', 'BOOLEAN', '0'),
     ('vm_assignments', 'is_teacher_vm', 'BOOLEAN', '0'),
+    # Template spec caching columns
+    ('templates', 'cpu_cores', 'INTEGER', 'NULL'),
+    ('templates', 'cpu_sockets', 'INTEGER', 'NULL'),
+    ('templates', 'memory_mb', 'INTEGER', 'NULL'),
+    ('templates', 'disk_size_gb', 'REAL', 'NULL'),
+    ('templates', 'disk_storage', 'TEXT', 'NULL'),
+    ('templates', 'disk_path', 'TEXT', 'NULL'),
+    ('templates', 'disk_format', 'TEXT', 'NULL'),
+    ('templates', 'network_bridge', 'TEXT', 'NULL'),
+    ('templates', 'os_type', 'TEXT', 'NULL'),
+    ('templates', 'specs_cached_at', 'TIMESTAMP', 'NULL'),
 ]
 
 def migrate():

@@ -13,6 +13,50 @@ from typing import List, Dict, Optional, Any
 logger = logging.getLogger(__name__)
 
 
+def update_vm_status_immediate(cluster_id: str, vmid: int, status: str, ip: Optional[str] = None) -> bool:
+    """Immediately update a single VM's status in the database.
+    
+    This is much faster than a full sync and should be called after VM operations
+    (start, stop, etc.) to keep the UI responsive.
+    
+    Args:
+        cluster_id: Cluster ID
+        vmid: VM ID
+        status: New status ('running', 'stopped', etc.)
+        ip: Optional IP address to update
+        
+    Returns:
+        True if updated successfully
+    """
+    from app.models import VMInventory, db
+    
+    try:
+        inventory = VMInventory.query.filter_by(
+            cluster_id=cluster_id,
+            vmid=vmid
+        ).first()
+        
+        if inventory:
+            inventory.status = status
+            inventory.last_status_check = datetime.utcnow()
+            
+            if ip and ip not in ('N/A', 'Fetching...', ''):
+                inventory.ip = ip
+                inventory.ip_updated_at = datetime.utcnow()
+            
+            db.session.commit()
+            logger.debug(f"Immediate status update: VM {cluster_id}/{vmid} -> {status}")
+            return True
+        else:
+            logger.debug(f"Cannot update status: VM {cluster_id}/{vmid} not in inventory")
+            return False
+            
+    except Exception as e:
+        logger.error(f"Failed to update VM {cluster_id}/{vmid} status: {e}")
+        db.session.rollback()
+        return False
+
+
 def persist_vm_inventory(vms: List[Dict], cleanup_missing: bool = True) -> int:
     """Persist VM list to database inventory.
     

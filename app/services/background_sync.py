@@ -59,21 +59,21 @@ def start_background_sync(app):
                 with app.app_context():
                     current_time = time.time()
                     
-                    # Full sync every 5 minutes
+                    # Full sync every 10 minutes (600 seconds) - reduced frequency to avoid slowdowns
                     if (_sync_stats['last_full_sync'] is None or 
-                        (datetime.utcnow() - _sync_stats['last_full_sync']).seconds >= 300):
+                        (datetime.utcnow() - _sync_stats['last_full_sync']).seconds >= 600):
                         logger.info("Starting full VM inventory sync...")
                         _perform_full_sync()
                         error_count = 0  # Reset on success
                     
-                    # Quick sync every 30 seconds
+                    # Quick sync every 2 minutes (120 seconds) - only check running VMs
                     elif (_sync_stats['last_quick_sync'] is None or
-                          (datetime.utcnow() - _sync_stats['last_quick_sync']).seconds >= 30):
+                          (datetime.utcnow() - _sync_stats['last_quick_sync']).seconds >= 120):
                         _perform_quick_sync()
                         error_count = 0  # Reset on success
                 
-                # Sleep between checks
-                time.sleep(10)
+                # Sleep 60 seconds between checks
+                time.sleep(60)
                 
             except Exception as e:
                 error_count += 1
@@ -106,10 +106,7 @@ def _perform_full_sync():
         from app.services.proxmox_client import get_all_vms
         from app.services.inventory_service import persist_vm_inventory
         
-        logger.debug("Fetching all VMs from Proxmox...")
         vms = get_all_vms(skip_ips=False, force_refresh=True)
-        
-        logger.debug(f"Persisting {len(vms)} VMs to database...")
         count = persist_vm_inventory(vms)
         
         # Update stats
@@ -172,7 +169,7 @@ def _perform_quick_sync():
         
         if updated > 0:
             db.session.commit()
-            logger.debug(f"Quick sync updated {updated} VMs")
+            logger.info(f"Quick sync: {updated}/{len(active_vms)} VMs updated")
         
         _sync_stats['last_quick_sync'] = datetime.utcnow()
         _sync_stats['quick_sync_count'] += 1

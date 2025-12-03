@@ -231,6 +231,18 @@ class Template(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     last_verified_at = db.Column(db.DateTime, nullable=True)  # Last time we confirmed this template exists in Proxmox
     
+    # Cached VM specs from Proxmox (avoid repeated API calls)
+    cpu_cores = db.Column(db.Integer, nullable=True)  # Number of CPU cores
+    cpu_sockets = db.Column(db.Integer, nullable=True)  # Number of CPU sockets
+    memory_mb = db.Column(db.Integer, nullable=True)  # RAM in MB
+    disk_size_gb = db.Column(db.Float, nullable=True)  # Primary disk size in GB
+    disk_storage = db.Column(db.String(80), nullable=True)  # Storage ID where disk resides
+    disk_path = db.Column(db.String(255), nullable=True)  # Full disk path (e.g., "local-lvm:vm-100-disk-0")
+    disk_format = db.Column(db.String(20), nullable=True)  # Disk format (qcow2, raw, etc.)
+    network_bridge = db.Column(db.String(80), nullable=True)  # Network bridge (e.g., "vmbr0")
+    os_type = db.Column(db.String(20), nullable=True)  # OS type (l26, win10, etc.)
+    specs_cached_at = db.Column(db.DateTime, nullable=True)  # When specs were last fetched from Proxmox
+    
     # Relationships
     created_by = db.relationship('User', back_populates='created_templates')
     # Relationship to the class that owns this template (for class-specific templates)
@@ -259,6 +271,17 @@ class Template(db.Model):
             'original_template_name': self.original_template.name if getattr(self, 'original_template', None) else None,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'last_verified_at': self.last_verified_at.isoformat() if self.last_verified_at else None,
+            # Include cached specs
+            'cpu_cores': self.cpu_cores,
+            'cpu_sockets': self.cpu_sockets,
+            'memory_mb': self.memory_mb,
+            'disk_size_gb': self.disk_size_gb,
+            'disk_storage': self.disk_storage,
+            'disk_path': self.disk_path,
+            'disk_format': self.disk_format,
+            'network_bridge': self.network_bridge,
+            'os_type': self.os_type,
+            'specs_cached_at': self.specs_cached_at.isoformat() if self.specs_cached_at else None,
         }
     
     def __repr__(self):

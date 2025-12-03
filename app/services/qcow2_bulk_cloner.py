@@ -817,67 +817,39 @@ def _delete_vm(vmid: int, dry_run: bool = False) -> Tuple[bool, str]:
         return False, f"Failed to delete VM: {str(e)}"
 
 
-def bulk_clone_from_template(
-    template_disk_path: str,
-    base_storage_id: str,
+def create_vm_shells_batch(
     vmid_start: int,
     count: int,
-    name_prefix: str = "clone",
-    concurrency: int = 5,
+    name_prefix: str = "vm",
     memory: int = 4096,
     cores: int = 2,
     sockets: int = 1,
     net_bridge: str = "vmbr0",
-    cloud_init_opts: Optional[CloudInitOptions] = None,
-    cloud_init_storage: str = "local-lvm",
-    start_batch_size: int = 5,
-    start_batch_delay: float = 10.0,
-    auto_start: bool = True,
-    storage_path: Optional[str] = None,
+    concurrency: int = 5,
     dry_run: bool = False,
     use_ssh: bool = True,
 ) -> BulkCloneResult:
     """
-    Bulk clone VMs from a template using QCOW2 overlay approach.
-    
-    This is the main entry point for the QCOW2 bulk cloning service.
-    
-    The workflow:
-    1. Validate template disk and storage
-    2. Create/verify QCOW2 base image
-    3. Create VM shells (parallel)
-    4. Create overlay QCOW2 for each VM (parallel)
-    5. Attach disks to VMs (parallel)
-    6. Configure cloud-init if requested (parallel)
-    7. Start VMs in batches
+    Create multiple VM shells (without disks) in parallel.
     
     Args:
-        template_disk_path: Path to template disk (QCOW2 or convertible format)
-        base_storage_id: Proxmox storage ID for storing VM disks
         vmid_start: Starting VM ID
-        count: Number of VMs to create
-        name_prefix: Prefix for VM names (e.g., "lab-vm")
-        concurrency: Max parallel operations
+        count: Number of VM shells to create
+        name_prefix: Prefix for VM names
         memory: Memory per VM in MB
         cores: CPU cores per VM
         sockets: CPU sockets per VM
         net_bridge: Network bridge name
-        cloud_init_opts: Optional cloud-init configuration
-        cloud_init_storage: Storage for cloud-init drives
-        start_batch_size: VMs to start per batch
-        start_batch_delay: Delay between start batches (seconds)
-        auto_start: Whether to start VMs after creation
-        storage_path: Explicit storage path (overrides storage_id detection)
+        concurrency: Max parallel operations
         dry_run: If True, log operations but don't execute
-        use_ssh: If True, execute commands via SSH using Proxmox credentials
+        use_ssh: If True, execute commands via SSH
         
     Returns:
-        BulkCloneResult with details of all operations
+        BulkCloneResult with created VM IDs
     """
     global _current_ssh_executor
     
-    logger.info(f"Starting bulk clone: {count} VMs from {template_disk_path}")
-    logger.info(f"Parameters: vmid_start={vmid_start}, memory={memory}MB, cores={cores}, use_ssh={use_ssh}")
+    logger.info(f"Creating {count} VM shells starting from VMID {vmid_start}")
     
     result = BulkCloneResult(
         total_requested=count,
@@ -899,81 +871,7 @@ def bulk_clone_from_template(
             return result
     
     try:
-        # Step 1: Validate inputs
-        logger.info("Step 1: Validating inputs...")
-        
-        valid, error = _validate_template_disk(template_disk_path, dry_run=dry_run)
-        if not valid:
-            result.error = error
-            logger.error(f"Template validation failed: {error}")
-            return result
-        
-        valid, error = _validate_storage(base_storage_id, storage_path, dry_run=dry_run)
-        if not valid:
-            result.error = error
-            logger.error(f"Storage validation failed: {error}")
-            return result
-        
-        # Step 2: Prepare base QCOW2 image
-        logger.info("Step 2: Preparing base QCOW2 image...")
-        
-        # Determine base qcow2 path
-        if storage_path:
-            base_dir = Path(storage_path)
-        else:
-            # Use default Proxmox storage path for templates
-            base_dir = Path(DEFAULT_TEMPLATE_STORAGE_PATH)
-        
-        if not dry_run and _current_ssh_executor:
-            # Create directory via SSH
-            _run_command(["mkdir", "-p", str(base_dir)], check=False)
-        elif not dry_run:
-            base_dir.mkdir(parents=True, exist_ok=True)
-        
-        template_name = Path(template_disk_path).stem
-        base_qcow2_path = base_dir / f"{template_name}-base.qcow2"
-        
-        # Check if base already exists (via SSH or locally)
-        base_exists = False
-        if not dry_run:
-            if _current_ssh_executor:
-                check_result = _run_command(["test", "-f", str(base_qcow2_path)], check=False)
-                base_exists = check_result.returncode == 0
-            else:
-                base_exists = base_qcow2_path.exists()
-        
-        # Convert or copy to base qcow2 if needed
-        if not base_exists or dry_run:
-            if template_disk_path.endswith('.qcow2'):
-                # Already qcow2, just copy if different location
-                if str(base_qcow2_path) != template_disk_path:
-                    success, error = _export_disk_to_qcow2(
-                        template_disk_path,
-                        str(base_qcow2_path),
-                        dry_run=dry_run,
-                    )
-                    if not success:
-                        result.error = f"Failed to prepare base image: {error}"
-                        return result
-                else:
-                    logger.info(f"Using existing base QCOW2: {base_qcow2_path}")
-            else:
-                # Convert to qcow2
-                success, error = _export_disk_to_qcow2(
-                    template_disk_path,
-                    str(base_qcow2_path),
-                    dry_run=dry_run,
-                )
-                if not success:
-                    result.error = f"Failed to convert template: {error}"
-                    return result
-        else:
-            logger.info(f"Using existing base QCOW2: {base_qcow2_path}")
-        
-        result.base_qcow2_path = str(base_qcow2_path)
-        
-        # Step 3: Get available VMIDs
-        logger.info("Step 3: Allocating VMIDs...")
+        # Get available VMIDs
         vmids = _get_next_available_vmid(vmid_start, count, dry_run=dry_run)
         
         if len(vmids) < count:
@@ -983,18 +881,12 @@ def bulk_clone_from_template(
         
         logger.info(f"Allocated VMIDs: {vmids[0]} - {vmids[-1]}")
         
-        # Step 4: Create VMs in parallel
-        logger.info(f"Step 4: Creating {count} VM shells (concurrency={concurrency})...")
-        
-        created_vmids = []
-        
-        def create_single_vm(vmid: int, index: int) -> CloneResult:
-            """Create a single VM with overlay disk."""
+        # Create VM shells in parallel
+        def create_single_shell(vmid: int, index: int) -> CloneResult:
             name = f"{name_prefix}-{index + 1}"
             clone_result = CloneResult(vmid=vmid, name=name, success=False)
             
             try:
-                # Create VM shell
                 success, error = _create_vm_shell(
                     vmid=vmid,
                     name=name,
@@ -1005,136 +897,191 @@ def bulk_clone_from_template(
                     dry_run=dry_run,
                 )
                 
-                if not success:
-                    clone_result.error = f"VM shell creation failed: {error}"
-                    return clone_result
-                
-                # Create overlay disk
-                if storage_path:
-                    overlay_dir = Path(storage_path) / str(vmid)
+                if success:
+                    clone_result.success = True
+                    logger.info(f"Created VM shell: {vmid} ({name})")
                 else:
-                    # Use default Proxmox VM images path
-                    overlay_dir = Path(DEFAULT_VM_IMAGES_PATH) / str(vmid)
-                
-                if not dry_run:
-                    if _current_ssh_executor:
-                        _run_command(["mkdir", "-p", str(overlay_dir)], check=False)
-                    else:
-                        overlay_dir.mkdir(parents=True, exist_ok=True)
-                
-                overlay_path = overlay_dir / f"vm-{vmid}-disk-0.qcow2"
-                
-                success, error = _create_overlay_disk(
-                    str(base_qcow2_path),
-                    str(overlay_path),
-                    dry_run=dry_run,
-                )
-                
-                if not success:
-                    clone_result.error = f"Overlay creation failed: {error}"
-                    # Cleanup: delete VM shell
-                    _delete_vm(vmid, dry_run=dry_run)
-                    return clone_result
-                
-                # Attach disk to VM
-                success, error = _attach_disk_to_vm(
-                    vmid=vmid,
-                    disk_path=str(overlay_path),
-                    disk_slot="scsi0",
-                    dry_run=dry_run,
-                )
-                
-                if not success:
-                    clone_result.error = f"Disk attach failed: {error}"
-                    _delete_vm(vmid, dry_run=dry_run)
-                    return clone_result
-                
-                # Configure cloud-init if requested
-                if cloud_init_opts:
-                    success, error = _configure_cloud_init(
-                        vmid=vmid,
-                        options=cloud_init_opts,
-                        storage_id=cloud_init_storage,
-                        dry_run=dry_run,
-                    )
-                    
-                    if not success:
-                        logger.warning(f"Cloud-init config failed for VM {vmid}: {error}")
-                        # Continue anyway - VM is usable without cloud-init
-                
-                clone_result.success = True
-                return clone_result
+                    clone_result.error = error
+                    logger.error(f"Failed to create VM shell {vmid}: {error}")
                 
             except Exception as e:
-                clone_result.error = f"Unexpected error: {str(e)}"
-                logger.exception(f"Error creating VM {vmid}: {e}")
-                # Attempt cleanup
-                _delete_vm(vmid, dry_run=dry_run)
-                return clone_result
+                clone_result.error = str(e)
+                logger.exception(f"Error creating VM shell {vmid}: {e}")
+            
+            return clone_result
         
-        # Execute VM creation in parallel
+        # Execute in parallel
         with ThreadPoolExecutor(max_workers=concurrency) as executor:
-            futures = {
-                executor.submit(create_single_vm, vmid, i): vmid
-                for i, vmid in enumerate(vmids)
-            }
+            futures = []
+            for i, vmid in enumerate(vmids):
+                future = executor.submit(create_single_shell, vmid, i)
+                futures.append(future)
             
             for future in as_completed(futures):
-                vmid = futures[future]
                 try:
                     clone_result = future.result()
                     result.results.append(clone_result)
                     
                     if clone_result.success:
                         result.successful += 1
-                        created_vmids.append(vmid)
-                        logger.info(f"Created VM {vmid} ({clone_result.name})")
                     else:
                         result.failed += 1
-                        logger.error(f"Failed VM {vmid}: {clone_result.error}")
                         
                 except Exception as e:
                     result.failed += 1
                     result.results.append(CloneResult(
-                        vmid=vmid,
+                        vmid=0,
                         name=f"{name_prefix}-?",
                         success=False,
                         error=str(e),
                     ))
-                    logger.exception(f"Future failed for VM {vmid}: {e}")
         
-        # Step 5: Start VMs in batches
-        if auto_start and created_vmids:
-            logger.info(f"Step 5: Starting {len(created_vmids)} VMs in batches of {start_batch_size}...")
-            
-            start_results = _start_vms_in_batches(
-                vmids=created_vmids,
-                batch_size=start_batch_size,
-                batch_delay=start_batch_delay,
-                dry_run=dry_run,
-            )
-            
-            # Update results with start status
-            for clone_result in result.results:
-                if clone_result.vmid in start_results:
-                    started, start_error = start_results[clone_result.vmid]
-                    clone_result.started = started
-                    if not started:
-                        logger.warning(f"VM {clone_result.vmid} created but failed to start: {start_error}")
-        else:
-            logger.info("Step 5: Skipping VM start (auto_start=False or no VMs created)")
-        
-        # Summary
-        logger.info(f"Bulk clone complete: {result.successful}/{result.total_requested} successful, {result.failed} failed")
-        
+        logger.info(f"VM shell creation complete: {result.successful}/{result.total_requested} successful")
         return result
-    
+        
     finally:
-        # Cleanup SSH connection
         if ssh_executor:
             try:
                 ssh_executor.disconnect()
                 logger.info("SSH connection closed")
+            except Exception as e:
+                logger.warning(f"Error closing SSH connection: {e}")
+        _current_ssh_executor = None
+
+
+def clone_disk_and_attach(
+    template_disk_path: str,
+    vmid: int,
+    storage_path: Optional[str] = None,
+    disk_slot: str = "scsi0",
+    dry_run: bool = False,
+    use_ssh: bool = True,
+) -> Tuple[bool, str]:
+    """
+    Clone a template disk using QCOW2 overlay and attach to an existing VM.
+    
+    Workflow:
+    1. Create/verify QCOW2 base image from template
+    2. Create overlay QCOW2 disk for the VM
+    3. Attach the overlay disk to the VM
+    
+    Args:
+        template_disk_path: Path to template disk (QCOW2 or convertible format)
+        vmid: VM ID to attach disk to (VM must already exist)
+        storage_path: Optional storage path (defaults to /var/lib/vz/images)
+        disk_slot: Disk slot to attach to (default: scsi0)
+        dry_run: If True, log operations but don't execute
+        use_ssh: If True, execute commands via SSH
+        
+    Returns:
+        Tuple of (success, error_message)
+    """
+    global _current_ssh_executor
+    
+    logger.info(f"Cloning disk from {template_disk_path} for VM {vmid}")
+    
+    # Set up SSH executor if requested
+    ssh_executor = None
+    if use_ssh and not dry_run:
+        try:
+            ssh_executor = get_ssh_executor_from_config()
+            ssh_executor.connect()
+            _current_ssh_executor = ssh_executor
+        except Exception as e:
+            error = f"Failed to connect via SSH: {e}"
+            logger.error(error)
+            return False, error
+    
+    try:
+        # Step 1: Validate template disk
+        valid, error = _validate_template_disk(template_disk_path, dry_run=dry_run)
+        if not valid:
+            return False, f"Template validation failed: {error}"
+        
+        # Step 2: Prepare base QCOW2 image
+        if storage_path:
+            base_dir = Path(storage_path)
+        else:
+            base_dir = Path(DEFAULT_TEMPLATE_STORAGE_PATH)
+        
+        if not dry_run and _current_ssh_executor:
+            _run_command(["mkdir", "-p", str(base_dir)], check=False)
+        elif not dry_run:
+            base_dir.mkdir(parents=True, exist_ok=True)
+        
+        template_name = Path(template_disk_path).stem
+        base_qcow2_path = base_dir / f"{template_name}-base.qcow2"
+        
+        # Check if base already exists
+        base_exists = False
+        if not dry_run:
+            if _current_ssh_executor:
+                check_result = _run_command(["test", "-f", str(base_qcow2_path)], check=False)
+                base_exists = check_result.returncode == 0
+            else:
+                base_exists = base_qcow2_path.exists()
+        
+        # Convert or copy to base qcow2 if needed
+        if not base_exists:
+            logger.info(f"Creating base QCOW2: {base_qcow2_path}")
+            success, error = _export_disk_to_qcow2(
+                template_disk_path,
+                str(base_qcow2_path),
+                dry_run=dry_run,
+            )
+            if not success:
+                return False, f"Failed to create base image: {error}"
+        else:
+            logger.info(f"Using existing base QCOW2: {base_qcow2_path}")
+        
+        # Step 3: Create overlay disk for this VM
+        if storage_path:
+            overlay_dir = Path(storage_path) / str(vmid)
+        else:
+            overlay_dir = Path(DEFAULT_VM_IMAGES_PATH) / str(vmid)
+        
+        if not dry_run:
+            if _current_ssh_executor:
+                _run_command(["mkdir", "-p", str(overlay_dir)], check=False)
+            else:
+                overlay_dir.mkdir(parents=True, exist_ok=True)
+        
+        overlay_path = overlay_dir / f"vm-{vmid}-disk-0.qcow2"
+        
+        logger.info(f"Creating overlay disk: {overlay_path}")
+        success, error = _create_overlay_disk(
+            str(base_qcow2_path),
+            str(overlay_path),
+            dry_run=dry_run,
+        )
+        
+        if not success:
+            return False, f"Failed to create overlay disk: {error}"
+        
+        # Step 4: Attach disk to VM
+        logger.info(f"Attaching disk to VM {vmid} at {disk_slot}")
+        success, error = _attach_disk_to_vm(
+            vmid=vmid,
+            disk_path=str(overlay_path),
+            disk_slot=disk_slot,
+            dry_run=dry_run,
+        )
+        
+        if not success:
+            return False, f"Failed to attach disk: {error}"
+        
+        logger.info(f"Successfully cloned and attached disk for VM {vmid}")
+        return True, ""
+        
+    except Exception as e:
+        error = f"Unexpected error: {str(e)}"
+        logger.exception(error)
+        return False, error
+        
+    finally:
+        if ssh_executor:
+            try:
+                ssh_executor.disconnect()
             except Exception as e:
                 logger.warning(f"Error closing SSH connection: {e}")
         _current_ssh_executor = None

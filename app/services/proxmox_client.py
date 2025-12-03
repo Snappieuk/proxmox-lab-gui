@@ -2200,6 +2200,13 @@ def start_vm(vm: Dict[str, Any]) -> None:
     _invalidate_vm_cache()
     _clear_vm_ip_cache(cluster_id, vmid)  # Clear IP cache - VM might get new IP on boot
     invalidate_arp_cache()  # Force fresh network scan to discover new IP
+    
+    # Immediately update database status for instant UI response
+    try:
+        from app.services.inventory_service import update_vm_status_immediate
+        update_vm_status_immediate(cluster_id, vmid, 'running')
+    except Exception as e:
+        logger.debug(f"Failed to update inventory status: {e}")
 
 
 def shutdown_vm(vm: Dict[str, Any]) -> None:
@@ -2221,3 +2228,10 @@ def shutdown_vm(vm: Dict[str, Any]) -> None:
     _invalidate_vm_cache()
     _clear_vm_ip_cache(cluster_id, vmid)  # Clear IP cache - VM no longer has IP when stopped
     invalidate_arp_cache()  # Force fresh network scan to update ARP table
+    
+    # Immediately update database status for instant UI response
+    try:
+        from app.services.inventory_service import update_vm_status_immediate
+        update_vm_status_immediate(cluster_id, vmid, 'stopped')
+    except Exception as e:
+        logger.debug(f"Failed to update inventory status: {e}")
