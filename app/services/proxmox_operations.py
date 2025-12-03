@@ -1734,6 +1734,8 @@ def revert_vm_to_snapshot(vmid: int, node: str, snapname: str,
 def delete_vm(vmid: int, node: str, cluster_ip: str = None) -> Tuple[bool, str]:
     """Delete a VM.
     
+    Ensures VM is stopped before deletion to prevent errors.
+    
     Args:
         vmid: VM ID
         node: Node name (will be auto-discovered if VM was migrated)
@@ -1742,6 +1744,9 @@ def delete_vm(vmid: int, node: str, cluster_ip: str = None) -> Tuple[bool, str]:
     Returns:
         Tuple of (success, message)
     """
+    from app.services.ssh_executor import get_ssh_executor_from_config
+    from app.services.vm_core import wait_for_vm_stopped
+    
     try:
         cluster_id = None
         for cluster in CLUSTERS:
@@ -1774,6 +1779,34 @@ def delete_vm(vmid: int, node: str, cluster_ip: str = None) -> Tuple[bool, str]:
             logger.warning(f"VM {vmid} not found in cluster resources, attempting delete on provided node {node}")
             actual_node = node
         
+        # Get SSH executor to stop VM and wait for it to be fully stopped
+        ssh_executor = get_ssh_executor_from_config()
+        
+        # Stop the VM first (if it's running)
+        logger.info(f"Stopping VM {vmid} before deletion...")
+        try:
+            exit_code, stdout, stderr = ssh_executor.execute(
+                f"qm stop {vmid}",
+                check=False,
+                timeout=10
+            )
+            if exit_code == 0:
+                logger.info(f"Stop command sent for VM {vmid}")
+            else:
+                # VM might already be stopped or doesn't exist, continue anyway
+                logger.info(f"Stop command for VM {vmid} returned exit code {exit_code}: {stderr.strip()}")
+        except Exception as e:
+            logger.warning(f"Failed to send stop command for VM {vmid}: {e}")
+        
+        # Wait for VM to be fully stopped (timeout 60 seconds)
+        logger.info(f"Waiting for VM {vmid} to be fully stopped...")
+        stopped = wait_for_vm_stopped(ssh_executor, vmid, timeout=60)
+        if not stopped:
+            logger.warning(f"VM {vmid} did not stop within timeout, attempting deletion anyway")
+        else:
+            logger.info(f"VM {vmid} confirmed stopped")
+        
+        # Now delete the VM
         proxmox.nodes(actual_node).qemu(vmid).delete()
         
         logger.info(f"Deleted VM {vmid} on {actual_node}")

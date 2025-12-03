@@ -32,8 +32,8 @@
 <!-- Summary Tiles -->
 <div class="summary-tiles">
     <div class="summary-tile">
-        <div class="summary-tile-title">Total VMs</div>
-        <div class="summary-tile-value" id="total-vms">{{ vm_assignments|length }}</div>
+        <div class="summary-tile-title">Total Student VMs</div>
+        <div class="summary-tile-value" id="total-vms">{{ vm_assignments|rejectattr('is_teacher_vm')|rejectattr('is_template_vm')|list|length }}</div>
     </div>
     <div class="summary-tile">
         <div class="summary-tile-title">Assigned</div>
