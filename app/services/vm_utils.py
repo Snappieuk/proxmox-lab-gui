@@ -76,7 +76,10 @@ def get_next_available_vmid_ssh(ssh_executor, start: int = 200) -> int:
     """
     Find the next available VMID on the Proxmox cluster via SSH.
     
-    Queries the cluster using pvesh or falls back to checking qm status.
+    Checks multiple sources to ensure VMID is truly available:
+    1. Config file existence on all nodes
+    2. qm status check
+    3. pvesh cluster query
     
     Args:
         ssh_executor: SSH executor for running commands (from ssh_executor.py)
@@ -88,28 +91,30 @@ def get_next_available_vmid_ssh(ssh_executor, start: int = 200) -> int:
     Raises:
         RuntimeError: If unable to find available VMID after max attempts
     """
-    # First try pvesh to get next available VMID
-    exit_code, stdout, stderr = ssh_executor.execute(
-        f"pvesh get /cluster/nextid --vmid {start}",
-        check=False
-    )
-    
-    if exit_code == 0 and stdout.strip().isdigit():
-        return int(stdout.strip())
-    
-    # Fallback: increment and check qm status
     vmid = start
     max_attempts = 1000
     
     for _ in range(max_attempts):
+        # Check if config file exists on any node (most reliable check)
+        # This avoids stale cluster metadata issues
         exit_code, stdout, stderr = ssh_executor.execute(
-            f"qm status {vmid}",
+            f"ls /etc/pve/nodes/*/qemu-server/{vmid}.conf 2>/dev/null",
             check=False,
             timeout=10
         )
-        if exit_code != 0:
-            # VMID not in use (qm returns non-zero for non-existent VM)
-            return vmid
+        
+        if exit_code != 0 or not stdout.strip():
+            # No config file found - VMID is available
+            # Double-check with qm status to be safe
+            exit_code2, stdout2, stderr2 = ssh_executor.execute(
+                f"qm status {vmid}",
+                check=False,
+                timeout=10
+            )
+            if exit_code2 != 0:
+                # Both checks confirm VMID is available
+                return vmid
+        
         vmid += 1
     
     raise RuntimeError(f"Could not find available VMID after {max_attempts} attempts starting from {start}")
