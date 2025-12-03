@@ -50,6 +50,51 @@ from app.services.vm_core import wait_for_vm_stopped
 logger = logging.getLogger(__name__)
 
 
+def get_vm_current_node(ssh_executor: SSHExecutor, vmid: int) -> Optional[str]:
+    """
+    Get the current node where a VM is located.
+    
+    Queries cluster-wide resources to find which node hosts the VM.
+    This is critical after migration to ensure commands target the correct node.
+    
+    Args:
+        ssh_executor: SSH connection to Proxmox cluster
+        vmid: VM ID to query
+    
+    Returns:
+        Node name (e.g., 'netlab1') or None if not found
+    """
+    try:
+        # Use pvesh to query cluster-wide resources
+        exit_code, stdout, stderr = ssh_executor.execute(
+            f"pvesh get /cluster/resources --type vm --output-format json",
+            timeout=30,
+            check=False
+        )
+        
+        if exit_code == 0 and stdout.strip():
+            import json
+            try:
+                vms = json.loads(stdout)
+                for vm in vms:
+                    # pvesh returns vmid as integer, ensure type match
+                    vm_vmid = vm.get('vmid')
+                    if vm_vmid is not None and int(vm_vmid) == int(vmid):
+                        node = vm.get('node')
+                        if node:
+                            logger.debug(f"Found VM {vmid} on node {node}")
+                            return node
+            except (json.JSONDecodeError, ValueError, KeyError) as e:
+                logger.warning(f"Failed to parse cluster resources: {e}")
+        
+        logger.warning(f"Could not find node for VM {vmid} via cluster query")
+        return None
+        
+    except Exception as e:
+        logger.error(f"Error getting VM node for VMID {vmid}: {e}")
+        return None
+
+
 def migrate_vm_to_node(ssh_executor: SSHExecutor, vmid: int, target_node: str, timeout: int = 300) -> Tuple[bool, str]:
     """
     Migrate a VM to the target node using qm migrate.
@@ -621,8 +666,15 @@ def create_class_vms(
             
             # Now attach storage after migration (was included in qm create, need to add separately)
             result.details.append(f"Attaching storage to teacher VM ({disk_size_gb}GB)...")
+            
+            # Get VM's current node after migration
+            current_node = get_vm_current_node(ssh_executor, teacher_vmid)
+            if not current_node:
+                current_node = optimal_node  # Fallback to expected node
+            
+            # Use pvesh to set storage (works cluster-wide regardless of which node VM is on)
             exit_code, stdout, stderr = ssh_executor.execute(
-                f"qm set {teacher_vmid} --scsi0 {PROXMOX_STORAGE_NAME}:{disk_size_gb} --boot order=scsi0",
+                f"pvesh set /nodes/{current_node}/qemu/{teacher_vmid}/config -scsi0 {PROXMOX_STORAGE_NAME}:{disk_size_gb} -boot order=scsi0",
                 timeout=120,
                 check=False
             )
@@ -757,15 +809,24 @@ def create_class_vms(
                         ssh_executor.execute(f"chmod 600 {overlay_path}", check=False)
                         ssh_executor.execute(f"chown root:root {overlay_path}", check=False)
                         
-                        # Attach disk to VM
+                        # Attach disk to VM (get current node after migration)
+                        current_node = get_vm_current_node(ssh_executor, vmid)
+                        if not current_node:
+                            current_node = optimal_node  # Fallback
+                        
                         exit_code, stdout, stderr = ssh_executor.execute(
-                            f"qm set {vmid} --scsi0 {PROXMOX_STORAGE_NAME}:{vmid}/vm-{vmid}-disk-0.qcow2 --boot c --bootdisk scsi0",
+                            f"pvesh set /nodes/{current_node}/qemu/{vmid}/config -scsi0 {PROXMOX_STORAGE_NAME}:{vmid}/vm-{vmid}-disk-0.qcow2 -boot c -bootdisk scsi0",
                             timeout=60
                         )
                     else:
                         # No template - create VM with empty disk
+                        # Get VM's current node after migration
+                        current_node = get_vm_current_node(ssh_executor, vmid)
+                        if not current_node:
+                            current_node = optimal_node  # Fallback
+                        
                         exit_code, stdout, stderr = ssh_executor.execute(
-                            f"qm set {vmid} --scsi0 {PROXMOX_STORAGE_NAME}:{disk_size_gb} --boot order=scsi0",
+                            f"pvesh set /nodes/{current_node}/qemu/{vmid}/config -scsi0 {PROXMOX_STORAGE_NAME}:{disk_size_gb} -boot order=scsi0",
                             timeout=60
                         )
                     
