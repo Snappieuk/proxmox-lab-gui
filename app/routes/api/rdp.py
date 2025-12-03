@@ -25,42 +25,77 @@ api_rdp_bp = Blueprint('api_rdp', __name__)
 def rdp_file(vmid: int):
     """Generate and download RDP file for a VM."""
     from app.services.user_manager import require_user
+    from app.services.inventory_service import fetch_vm_by_vmid
+    from app.services.user_manager import is_admin_user
     
     user = require_user()
     logger.info("rdp_file: user=%s requesting vmid=%s", user, vmid)
     
-    # Use skip_ip=True for initial lookup to avoid triggering ARP scan
-    # We'll verify the IP separately if needed
-    vm = find_vm_for_user(user, vmid, skip_ip=True)
-    if not vm:
-        logger.warning("rdp_file: VM %s not found for user %s", vmid, user)
+    # OPTIMIZATION: Direct database lookup instead of loading all VMs
+    vm_data = fetch_vm_by_vmid(vmid)
+    if not vm_data:
+        logger.warning("rdp_file: VM %s not found in database", vmid)
         abort(404)
+    
+    # Check permission (admin or assigned user)
+    admin = is_admin_user(user)
+    if not admin:
+        # Check if user has access to this VM
+        from flask import has_app_context
+        from app.models import VMAssignment, User
+        
+        accessible = False
+        
+        if has_app_context():
+            try:
+                # Normalize username variants
+                user_variants = {user}
+                if '@' in user:
+                    base = user.split('@', 1)[0]
+                    user_variants.add(base)
+                    user_variants.add(f"{base}@pve")
+                    user_variants.add(f"{base}@pam")
+                else:
+                    user_variants.add(f"{user}@pve")
+                    user_variants.add(f"{user}@pam")
+                
+                # Find user record
+                local_user = User.query.filter(User.username.in_(user_variants)).first()
+                if local_user:
+                    # Check VMAssignment
+                    assignment = VMAssignment.query.filter_by(
+                        proxmox_vmid=vmid,
+                        assigned_user_id=local_user.id
+                    ).first()
+                    accessible = assignment is not None
+            except Exception as e:
+                logger.warning("rdp_file: failed to check VM assignment for user %s: %s", user, e)
+        
+        if not accessible:
+            logger.warning("rdp_file: user %s does not have access to VM %s", user, vmid)
+            abort(403)
+    
+    # Convert database record to VM dict
+    vm = {
+        'vmid': vm_data.vmid,
+        'name': vm_data.name,
+        'node': vm_data.node,
+        'type': vm_data.vmtype,
+        'status': vm_data.status,
+        'ip': vm_data.ip,
+        'cluster_id': vm_data.cluster_id,
+    }
 
-    logger.info("rdp_file: Found VM: vmid=%s, name=%s, type=%s, category=%s, ip=%s, rdp_available=%s", 
-                vm.get('vmid'), vm.get('name'), vm.get('type'), vm.get('category'), 
-                vm.get('ip'), vm.get('rdp_available'))
+    logger.info("rdp_file: Found VM: vmid=%s, name=%s, type=%s, ip=%s", 
+                vm.get('vmid'), vm.get('name'), vm.get('type'), vm.get('ip'))
 
-    # Fast IP verification: ping cached IP and check ARP table MAC
-    # Only does full network scan if verification fails
+    # Fast IP verification ONLY if we have a cached IP
+    # Skip verification if IP is already valid - just use it immediately
     cached_ip = vm.get('ip')
-    if cached_ip and cached_ip not in ("Checking...", "N/A", "Fetching...", ""):
-        logger.info("rdp_file: Verifying cached IP %s for VM %s", cached_ip, vmid)
-        try:
-            cluster_id = vm.get('cluster_id', 'cluster1')
-            verified_ip = fast_verify_vm_ip(
-                cluster_id, 
-                vm['node'], 
-                vmid, 
-                vm.get('type', 'qemu'), 
-                cached_ip
-            )
-            if verified_ip and verified_ip != cached_ip:
-                vm['ip'] = verified_ip
-                logger.info("rdp_file: Updated IP for VM %s: %s -> %s", vmid, cached_ip, verified_ip)
-            elif verified_ip:
-                logger.info("rdp_file: IP %s verified for VM %s", verified_ip, vmid)
-        except Exception as e:
-            logger.warning("rdp_file: Fast IP verification failed for VM %s: %s", vmid, e)
+    if cached_ip and cached_ip not in ("Checking...", "N/A", "Fetching...", "", None):
+        # IP exists - use it directly without verification for maximum speed
+        # Background sync will update if it changes
+        logger.info("rdp_file: Using cached IP %s for VM %s (no verification)", cached_ip, vmid)
     else:
         logger.info("rdp_file: No cached IP for VM %s, will use VM name as fallback", vmid)
 

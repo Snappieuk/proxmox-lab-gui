@@ -55,7 +55,7 @@
                href="{{ url_for('classes.classes_list') }}">
                 <i class="bi bi-mortarboard"></i> Classes
             </a>
-            {% if is_admin or local_user_role == 'teacher' or local_user_role == 'adminer' %}
+            {% if is_admin %}
                 <div class="sidebar-section-title" style="margin-top: 1rem;">Management</div>
             {% endif %}
             {% if is_admin %}

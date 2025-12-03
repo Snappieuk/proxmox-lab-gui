@@ -13,6 +13,34 @@ from typing import List, Dict, Optional, Any
 logger = logging.getLogger(__name__)
 
 
+def fetch_vm_by_vmid(vmid: int, cluster_id: Optional[str] = None):
+    """Fetch a single VM from VMInventory database by VMID.
+    
+    Fast direct database query - much faster than loading all VMs.
+    
+    Args:
+        vmid: VM ID to look up
+        cluster_id: Optional cluster ID to narrow search
+        
+    Returns:
+        VMInventory record or None
+    """
+    from app.models import VMInventory
+    
+    try:
+        if cluster_id:
+            return VMInventory.query.filter_by(
+                cluster_id=cluster_id,
+                vmid=vmid
+            ).first()
+        else:
+            # Search all clusters
+            return VMInventory.query.filter_by(vmid=vmid).first()
+    except Exception as e:
+        logger.error(f"Failed to fetch VM {vmid} from database: {e}")
+        return None
+
+
 def update_vm_status_immediate(cluster_id: str, vmid: int, status: str, ip: Optional[str] = None) -> bool:
     """Immediately update a single VM's status in the database.
     
@@ -45,10 +73,10 @@ def update_vm_status_immediate(cluster_id: str, vmid: int, status: str, ip: Opti
                 inventory.ip_updated_at = datetime.utcnow()
             
             db.session.commit()
-            logger.debug(f"Immediate status update: VM {cluster_id}/{vmid} -> {status}")
+            # logger.debug(f"Immediate status update: VM {cluster_id}/{vmid} -> {status}")
             return True
         else:
-            logger.debug(f"Cannot update status: VM {cluster_id}/{vmid} not in inventory")
+            # logger.debug(f"Cannot update status: VM {cluster_id}/{vmid} not in inventory")
             return False
             
     except Exception as e:
@@ -186,7 +214,7 @@ def persist_vm_inventory(vms: List[Dict], cleanup_missing: bool = True) -> int:
                     VMInventory.last_updated < sync_ts
                 ).all()
                 if missing:
-                    logger.info(f"Removing {len(missing)} deleted VMs from cluster {cluster_id}")
+                    # logger.info(f"Removing {len(missing)} deleted VMs from cluster {cluster_id}")
                     for rec in missing:
                         db.session.delete(rec)
         
