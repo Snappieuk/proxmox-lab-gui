@@ -38,7 +38,6 @@ except ImportError:
 # Import mappings service (DEPRECATED - migrate to database VMAssignment)
 from app.services.mappings_service import (
     get_user_vm_map,
-    get_user_vm_mapping,
 )
 
 # Import user manager for admin functions
