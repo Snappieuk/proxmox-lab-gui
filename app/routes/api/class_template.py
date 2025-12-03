@@ -89,10 +89,16 @@ def get_template_info(class_id: int):
     try:
         logger.info(f"Fetching VM config for teacher usable VM: class_id={class_id}, vmid={vmid}, node={node}")
         
-        # Get cluster_ip from the class's template (or assignment if stored there)
+        # Get cluster_ip from the class's template, or use default cluster
         cluster_ip = class_.template.cluster_ip if class_.template else None
         if not cluster_ip:
-            return jsonify({'ok': False, 'error': 'Cannot determine cluster for class'}), 500
+            # For template-less classes, use the first available cluster
+            from app.config import CLUSTERS
+            if CLUSTERS:
+                cluster_ip = CLUSTERS[0]["host"]
+                logger.info(f"Template-less class, using default cluster: {cluster_ip}")
+            else:
+                return jsonify({'ok': False, 'error': 'No clusters configured'}), 500
         
         proxmox = get_proxmox_admin_for_cluster(cluster_ip)
         
@@ -223,7 +229,13 @@ def start_template(class_id: int):
         cluster_ip = class_.template.cluster_ip if class_.template else None
         
         if not cluster_ip:
-            return jsonify({'ok': False, 'error': 'Cannot determine cluster for class'}), 500
+            # For template-less classes, use the first available cluster
+            from app.config import CLUSTERS
+            if CLUSTERS:
+                cluster_ip = CLUSTERS[0]["host"]
+                logger.info(f"Template-less class, using default cluster: {cluster_ip}")
+            else:
+                return jsonify({'ok': False, 'error': 'No clusters configured'}), 500
         
         if not node:
             # Try to find the VM's node via cluster resources
@@ -284,7 +296,13 @@ def stop_template(class_id: int):
         cluster_ip = class_.template.cluster_ip if class_.template else None
         
         if not cluster_ip:
-            return jsonify({'ok': False, 'error': 'Cannot determine cluster for class'}), 500
+            # For template-less classes, use the first available cluster
+            from app.config import CLUSTERS
+            if CLUSTERS:
+                cluster_ip = CLUSTERS[0]["host"]
+                logger.info(f"Template-less class, using default cluster: {cluster_ip}")
+            else:
+                return jsonify({'ok': False, 'error': 'No clusters configured'}), 500
         
         if not node:
             # Try to find the VM's node via cluster resources
