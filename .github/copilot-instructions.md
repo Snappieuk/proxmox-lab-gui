@@ -15,17 +15,18 @@ A Flask webapp providing a lab VM portal similar to Azure Labs for self-service 
 - **VMInventory + background_sync system**: **Core architecture** - database-first design where all VM reads come from `VMInventory` table (see `DATABASE_FIRST_ARCHITECTURE.md`). Background sync daemon updates DB every 5min (full) and 30sec (quick). Provides 100x faster page loads vs direct Proxmox API calls. Code in `app/__init__.py` (lines 137-139), `app/routes/api/vms.py`, `app/services/inventory_service.py`, `app/services/background_sync.py`.
 - **Progressive UI loading**: Frontend shows "Starting..." badge for VMs that are running but have no IP yet. Only transitions to "Running" after IP is discovered. Polls at 2s and 10s intervals after VM start, background sync triggers IP discovery 15s after start operation.
 - **IP discovery workflow**: Multi-tier hierarchy - VMInventory DB cache → Proxmox guest agent `network-get-interfaces` API → LXC `.interfaces.get()` → ARP scanner with nmap → RDP port 3389 validation. Background thread triggers immediate IP sync 15 seconds after VM start (allows boot time before network check).
-- **VM Deployment strategy** (VM shell + disk copy/overlay):
+- **VM Deployment strategy** (VM shell + disk export/overlay - NEVER use qm clone):
   - **Location**: All disk operations in `app/services/class_vm_service.py` using direct SSH `qm` and `qemu-img` commands
+  - **Critical rule**: NEVER use `qm clone` for any VM creation - always use disk export + overlay approach
   - **Workflow with template**:
-    1. Export template disk: `qemu-img convert -O qcow2` creates base QCOW2 file
-    2. Teacher VM: `qm clone --full` creates full clone from template
-    3. Class-base VM: Created as reference for student overlays
+    1. Export template disk: `qemu-img convert -O qcow2` creates base QCOW2 file from template
+    2. Teacher VM: Empty shell (`qm create`) + copy-on-write overlay pointing to base QCOW2
+    3. Class-base VM: Reference QCOW2 file used as backing file for student overlays
     4. Student VMs: `qemu-img create -f qcow2 -F qcow2 -b <base>` creates copy-on-write overlays
   - **Workflow without template**:
     1. Teacher/class-base/student VMs: `qm create --scsi0 STORAGE:SIZE` creates empty shells with disks
-  - **Disk cloning**: Uses `qemu-img` with backing files (QCOW2 overlays) for efficient copy-on-write
-  - **Template push**: Should use same disk copy approach - clone template disk to class-base, recreate student overlays
+  - **Why no cloning**: `qm clone` is slow, doesn't support overlays, and creates full disk copies. Disk export + overlays are 10x faster and space-efficient.
+  - **Template push**: Export updated template disk to new class-base QCOW2, recreate student overlays
   - **Key functions**: `create_class_vms()`, `export_template_to_qcow2()`, `save_and_deploy_class_vms()`, `get_vm_mac_address()`
   - **SSH helper**: `SSHExecutor` from `ssh_executor.py` provides SSH connection wrapper
 - **Class co-owners feature** (see `CLASS_CO_OWNERS.md`): Teachers can grant other teachers/admins full class management permissions. Uses many-to-many relationship via `class_co_owners` association table. Check permissions with `Class.is_owner(user)` method.
@@ -124,13 +125,13 @@ api/
 - `User`: Local accounts with roles (`adminer`/`teacher`/`user`), password hashing via Werkzeug
 - `Class`: Lab classes created by teachers, linked to `Template`, has `join_token` with expiry
 - `Template`: References Proxmox template VMIDs, can be cluster-wide or class-specific
-- `VMAssignment`: Tracks cloned VMs assigned to classes/users, status field (`available`/`assigned`/`deleting`)
+- `VMAssignment`: Tracks deployed VMs (created via disk export + overlay) assigned to classes/users, status field (`available`/`assigned`/`deleting`)
 - `VMInventory`: **Database-first cache** - stores all VM metadata (identity, status, network, resources). Updated by background sync daemon. Single source of truth for GUI.
 - `init_db(app)`: Sets up SQLite at `app/lab_portal.db`, creates tables on first run
 
 **`app/services/proxmox_operations.py`** (VM operations & template management, ~2500 lines):
 - Template management: `list_proxmox_templates()` (scans clusters for template VMs)
-- **DEPRECATED**: `clone_vms_for_class()` (~800 lines) - old sequential cloning approach, replaced by disk copy approach in `class_vm_service.py`. Should be removed in future cleanup.
+- **DEPRECATED**: `clone_vms_for_class()` (~800 lines) - old approach using `qm clone` (slow, inefficient), replaced by disk export + overlay approach in `class_vm_service.py`. Should be removed in future cleanup. DO NOT USE.
 - VM lifecycle: `start_class_vm()`, `stop_class_vm()`, `delete_vm()`, `get_vm_status()`
 - Snapshot operations: `create_vm_snapshot()`, `revert_vm_to_snapshot()` – still used
 - Template conversion: `convert_vm_to_template()` (converts VM → template)
@@ -144,11 +145,11 @@ api/
 
 **`app/services/class_vm_service.py`** (Class VM service with disk operations, ~800 lines):
 - **Primary VM creation service**: All disk cloning/overlay operations happen here using direct `qm` and `qemu-img` commands
-- **Disk operations**:
-  - `export_template_to_qcow2()`: Exports template disk using `qemu-img convert -O qcow2`
-  - Student overlays: `qemu-img create -f qcow2 -F qcow2 -b <base>` creates copy-on-write overlay disks
-  - Teacher VM: `qm clone --full` for full clone from template
-  - Empty shells: `qm create --scsi0 STORAGE:SIZE` for template-less classes
+  - **Disk operations** (NO CLONING - always use disk export + overlays):
+    - `export_template_to_qcow2()`: Exports template disk using `qemu-img convert -O qcow2`
+    - Teacher VM: Empty shell (`qm create`) + overlay disk pointing to exported base QCOW2
+    - Student overlays: `qemu-img create -f qcow2 -F qcow2 -b <base>` creates copy-on-write overlay disks
+    - Empty shells: `qm create --scsi0 STORAGE:SIZE` for template-less classes (no template to export)
   - **Key functions**: 
     - `deploy_class_vms()`: Entry point - orchestrates VM creation and VMInventory update
     - `create_class_vms()`: Core logic - handles template/no-template workflows, creates all VMs
@@ -161,7 +162,7 @@ api/
 **`app/services/class_service.py`** (Class management logic, ~560 lines):
 - User CRUD: `create_local_user()`, `authenticate_local_user()`, `update_user_role()`
 - Class CRUD: `create_class()`, `update_class()`, `delete_class()`, `get_classes_for_teacher()`
-- VM pool management: `add_vms_to_class_pool()` (clones template), `remove_vm_from_class()` (deletes VM)
+- VM pool management: `add_vms_to_class_pool()` (exports template + creates overlays), `remove_vm_from_class()` (deletes VM)
 - Student enrollment: `join_class_via_token()` (auto-assigns unassigned VM), `generate_class_invite()`
 - Template registration: `register_template()` (scans Proxmox for templates, saves to DB)
 
@@ -275,7 +276,7 @@ git add . && git commit -m "Changes" && git push
 2. **Register templates**: Teacher visits `/admin/probe` to see available templates, registers them via API or DB
 3. **Create class**: Teacher creates class at `/classes/create`, selects template, sets pool size
 4. **Generate invite**: Teacher generates never-expiring or time-limited invite link (7-day default)
-5. **Clone VMs**: Teacher adds VMs to pool via VM shell + disk copy workflow (deploys teacher + class-base + student VMs in background)
+5. **Deploy VMs**: Teacher adds VMs to pool via disk export + overlay workflow (creates teacher + class-base QCOW2 + student overlay VMs in background)
 6. **Student enrollment**: Students visit invite link, auto-assigned first available VM in class pool (creates VMAssignment record)
 7. **Student access**: Student sees assigned VM in `/portal`, can start/stop/revert to baseline snapshot
 8. **Template publishing**: Teacher can publish changes from their VM → class template → all student VMs via `/api/classes/<id>/publish-template`
