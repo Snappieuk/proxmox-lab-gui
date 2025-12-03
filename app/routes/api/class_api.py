@@ -818,20 +818,11 @@ def create_class_vms(class_id: int):
             # Generate student usernames
             students = [f"student{i}" for i in range(1, pool_size_val + 1)]
             
-            from app.services.terraform_service import deploy_class_with_terraform
-            
-            update_clone_progress(task_id, message="Deploying VMs with Terraform...")
-            
-            result = deploy_class_with_terraform(
-                class_id=str(class_id_val),
-                class_prefix=class_name.lower().replace(' ', '-'),
-                students=students,
-                template_name=template_name_captured,
-                use_full_clone=False,  # Linked clones for speed
-                create_teacher_vm=True,
-                target_node=target_node,  # None = auto-distribute
-                auto_select_best_node=True,  # Query Proxmox for best nodes
-            )
+            # DEPRECATED: Terraform deployment removed
+            # This code path is no longer functional - use standard class creation instead
+            update_clone_progress(task_id, status="failed", 
+                                error="Terraform deployment has been removed. Please use standard class creation.")
+            return
             
             # Register VMs in database
             student_vms = result.get('student_vms', {})

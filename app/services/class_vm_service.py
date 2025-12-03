@@ -224,6 +224,160 @@ def deploy_class_vms(
         return False, str(e), {}
 
 
+def recreate_student_vms_from_template(
+    class_id: int,
+    template_vmid: int,
+    template_node: str,
+    count: int,
+    class_name: str,
+    memory: int = None,
+    cores: int = None,
+) -> Tuple[bool, str, List[int]]:
+    """
+    Recreate student VMs from template using disk copy approach.
+    
+    This is used when pushing template changes to students - we delete
+    old student VMs and create fresh ones from the updated template.
+    Uses the same VM specs (memory, cores) as defined in the class.
+    
+    Args:
+        class_id: Database ID of the class
+        template_vmid: Source template VMID
+        template_node: Proxmox node where template resides
+        count: Number of student VMs to create
+        class_name: Name of the class (for VM naming)
+        memory: Memory per VM in MB (if None, fetches from Class model)
+        cores: CPU cores per VM (if None, fetches from Class model)
+        
+    Returns:
+        Tuple of (success, message, list_of_vmids)
+    """
+    logger.info(f"Recreating {count} student VMs for class {class_id} from template {template_vmid}")
+    
+    # Fetch class specs if not provided
+    if memory is None or cores is None:
+        class_obj = Class.query.get(class_id)
+        if class_obj:
+            memory = class_obj.memory_mb or 4096
+            cores = class_obj.cpu_cores or 2
+        else:
+            memory = 4096
+            cores = 2
+    
+    logger.info(f"Using VM specs: {memory}MB RAM, {cores} cores")
+    
+    class_prefix = sanitize_vm_name(class_name)
+    if not class_prefix:
+        class_prefix = f"class-{class_id}"
+    
+    ssh_executor = None
+    created_vmids = []
+    
+    try:
+        ssh_executor = get_ssh_executor_from_config()
+        ssh_executor.connect()
+        
+        # Export template to temporary base QCOW2
+        base_qcow2_path = f"{DEFAULT_TEMPLATE_STORAGE_PATH}/{class_prefix}-base.qcow2"
+        
+        logger.info(f"Exporting template {template_vmid} to {base_qcow2_path}")
+        success, error = export_template_to_qcow2(
+            ssh_executor=ssh_executor,
+            template_vmid=template_vmid,
+            node=template_node,
+            output_path=base_qcow2_path,
+        )
+        
+        if not success:
+            return False, f"Failed to export template: {error}", []
+        
+        # Create student VMs as overlays
+        for i in range(count):
+            try:
+                vmid = get_next_available_vmid(ssh_executor)
+                student_name = f"{class_prefix}-student-{i+1}"
+                
+                # Create VM shell with proper specs from class configuration
+                exit_code, stdout, stderr = ssh_executor.execute(
+                    f"qm create {vmid} --name {student_name} --memory {memory} --cores {cores} "
+                    f"--net0 virtio,bridge=vmbr0 --scsihw virtio-scsi-pci",
+                    timeout=60
+                )
+                
+                if exit_code != 0:
+                    logger.error(f"Failed to create VM shell {vmid}: {stderr}")
+                    continue
+                
+                # Create overlay disk
+                overlay_path = f"{DEFAULT_VM_IMAGES_PATH}/{vmid}/vm-{vmid}-disk-0.qcow2"
+                ssh_executor.execute(f"mkdir -p {DEFAULT_VM_IMAGES_PATH}/{vmid}", check=False)
+                
+                exit_code, stdout, stderr = ssh_executor.execute(
+                    f"qemu-img create -f qcow2 -F qcow2 -b {base_qcow2_path} {overlay_path}",
+                    timeout=120
+                )
+                
+                if exit_code != 0:
+                    logger.error(f"Failed to create overlay for {vmid}: {stderr}")
+                    ssh_executor.execute(f"qm destroy {vmid}", check=False)
+                    continue
+                
+                # Set permissions
+                ssh_executor.execute(f"chmod 600 {overlay_path}", check=False)
+                ssh_executor.execute(f"chown root:root {overlay_path}", check=False)
+                
+                # Attach disk
+                exit_code, stdout, stderr = ssh_executor.execute(
+                    f"qm set {vmid} --scsi0 {PROXMOX_STORAGE_NAME}:{vmid}/vm-{vmid}-disk-0.qcow2 --boot c --bootdisk scsi0",
+                    timeout=60
+                )
+                
+                if exit_code != 0:
+                    logger.error(f"Failed to attach disk to {vmid}: {stderr}")
+                    ssh_executor.execute(f"qm destroy {vmid}", check=False)
+                    continue
+                
+                # Get MAC address
+                student_mac = get_vm_mac_address(ssh_executor, vmid)
+                
+                # Create VMAssignment
+                assignment = VMAssignment(
+                    class_id=class_id,
+                    proxmox_vmid=vmid,
+                    vm_name=student_name,
+                    mac_address=student_mac,
+                    node=template_node,
+                    assigned_user_id=None,
+                    status='available',
+                    is_template_vm=False,
+                    is_teacher_vm=False,
+                )
+                db.session.add(assignment)
+                
+                created_vmids.append(vmid)
+                logger.info(f"Created student VM {vmid} ({student_name})")
+                
+            except Exception as e:
+                logger.exception(f"Error creating student VM: {e}")
+        
+        db.session.commit()
+        
+        message = f"Successfully created {len(created_vmids)} student VMs"
+        logger.info(message)
+        return True, message, created_vmids
+        
+    except Exception as e:
+        logger.exception(f"Error recreating student VMs: {e}")
+        db.session.rollback()
+        return False, str(e), created_vmids
+    finally:
+        if ssh_executor:
+            try:
+                ssh_executor.disconnect()
+            except Exception:
+                pass
+
+
 def wait_for_vm_stopped(ssh_executor: SSHExecutor, vmid: int, timeout: int = None) -> bool:
     """
     Wait for a VM to fully stop.

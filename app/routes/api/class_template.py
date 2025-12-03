@@ -506,30 +506,24 @@ def push_template(class_id: int):
         
         db.session.commit()
         
-        # Clone replacements from the updated base template
-        from app.services.proxmox_operations import clone_vms_for_class
+        # Recreate student VMs using disk copy approach (same as initial class creation)
+        from app.services.class_vm_service import recreate_student_vms_from_template
         clone_count = len(deletable)
         logger.info(f"Creating {clone_count} new student VM(s) from template {template.proxmox_vmid}")
-        created_vms = clone_vms_for_class(
+        
+        success, message, new_vmids = recreate_student_vms_from_template(
+            class_id=class_.id,
             template_vmid=template.proxmox_vmid,
-            node=template.node,
+            template_node=template.node,
             count=clone_count,
-            name_prefix=sanitize_vm_name(class_.name, fallback="classvm"),
-            cluster_ip=template.cluster_ip
+            class_name=class_.name
         )
         
-        # Register new assignments
-        for vm_info in created_vms:
-            assignment = VMAssignment(
-                class_id=class_.id,
-                proxmox_vmid=vm_info['vmid'],
-                node=vm_info['node'],
-                status='available',
-                is_template_vm=False
-            )
-            db.session.add(assignment)
-            created_count += 1
-            results.append(f"Created new VM {vm_info['vmid']} on {vm_info['node']}")
+        if not success:
+            errors.append(f"Failed to recreate VMs: {message}")
+        else:
+            created_count = len(new_vmids)
+            results.extend([f"Created new VM {vmid}" for vmid in new_vmids])
         
         db.session.commit()
         

@@ -29,7 +29,7 @@ A Flask webapp providing a lab VM portal similar to Azure Labs for self-service 
   - **Key functions**: `create_class_vms()`, `export_template_to_qcow2()`, `save_and_deploy_class_vms()`, `get_vm_mac_address()`
   - **SSH helper**: `SSHExecutor` from `ssh_executor.py` provides SSH connection wrapper
 - **Class co-owners feature** (see `CLASS_CO_OWNERS.md`): Teachers can grant other teachers/admins full class management permissions. Uses many-to-many relationship via `class_co_owners` association table. Check permissions with `Class.is_owner(user)` method.
-- **Template publishing workflow**: Teachers can publish VM changes to class template, then propagate to all student VMs. Located at `app/routes/api/publish_template.py`. Long-running background operation that copies disk changes via QCOW2 rebasing.
+- **Template publishing workflow**: Teachers can publish VM changes to class template, then propagate to all student VMs. Located at `app/routes/api/publish_template.py` and `app/routes/api/class_template.py`. Deletes old student VMs and recreates fresh ones from updated template using disk copy approach (same as initial class creation).
 - **User VM assignments**: All VM→user mappings stored in database via VMAssignment table. Direct assignments (no class) use `class_id=NULL`. Located at `app/routes/api/user_vm_assignments.py`. NO JSON files used.
 - **Authentication model**: **Proxmox users = Admins only**. Going forward, no application users (students/teachers) should have Proxmox accounts. All non-admin users managed via SQLite database.
 
@@ -130,7 +130,7 @@ api/
 
 **`app/services/proxmox_operations.py`** (VM operations & template management, ~2500 lines):
 - Template management: `list_proxmox_templates()` (scans clusters for template VMs)
-- **Legacy cloning**: `clone_vms_for_class()` (~800 lines) - old sequential cloning approach, should be refactored to use disk copy approach from `class_vm_service.py`
+- **DEPRECATED**: `clone_vms_for_class()` (~800 lines) - old sequential cloning approach, replaced by disk copy approach in `class_vm_service.py`. Should be removed in future cleanup.
 - VM lifecycle: `start_class_vm()`, `stop_class_vm()`, `delete_vm()`, `get_vm_status()`
 - Snapshot operations: `create_vm_snapshot()`, `revert_vm_to_snapshot()` – still used
 - Template conversion: `convert_vm_to_template()` (converts VM → template)
@@ -149,11 +149,12 @@ api/
   - Student overlays: `qemu-img create -f qcow2 -F qcow2 -b <base>` creates copy-on-write overlay disks
   - Teacher VM: `qm clone --full` for full clone from template
   - Empty shells: `qm create --scsi0 STORAGE:SIZE` for template-less classes
-- **Key functions**: 
-  - `deploy_class_vms()`: Entry point - orchestrates VM creation and VMInventory update
-  - `create_class_vms()`: Core logic - handles template/no-template workflows, creates all VMs
-  - `get_vm_mac_address()`: Parses `qm config` output to extract MAC from net0 line
-  - `save_and_deploy_class_vms()`: Updates student VMs - should use same disk copy approach
+  - **Key functions**: 
+    - `deploy_class_vms()`: Entry point - orchestrates VM creation and VMInventory update
+    - `create_class_vms()`: Core logic - handles template/no-template workflows, creates all VMs
+    - `recreate_student_vms_from_template()`: Recreate student VMs from template (used in template push)
+    - `get_vm_mac_address()`: Parses `qm config` output to extract MAC from net0 line
+    - `save_and_deploy_class_vms()`: Updates student VMs by rebasing overlays on new base
 - **VMAssignment management**: Creates database records for all VMs with vm_name and mac_address
 - **SSH execution**: Uses `SSHExecutor` from `ssh_executor.py` for remote command execution
 
@@ -214,6 +215,12 @@ api/
 **Utility scripts**:
 - `debug_vminventory.py` – Query VMInventory table directly (for debugging sync issues)
 - `fix_vminventory.py` – Repair VMInventory table (remove stale records, fix sync errors)
+
+**Removed/deprecated**:
+- `terraform/` directory – Removed, Terraform deployment strategy no longer used
+- `app/services/terraform_service.py` – Deleted, functionality replaced by disk copy approach
+- `app/services/qcow2_bulk_cloner.py` – Deleted, refactored into `ssh_executor.py` (SSH wrapper only)
+- `tests/test_qcow2_bulk_cloner.py` – Deleted, tested non-existent module
 
 
 ## Developer workflows
