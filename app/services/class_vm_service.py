@@ -58,6 +58,62 @@ class ClassVMDeployResult:
     details: List[str] = field(default_factory=list)
 
 
+def get_next_available_vmid(ssh_executor: SSHExecutor, start_vmid: int = 100) -> int:
+    """Get the next available VMID in Proxmox."""
+    exit_code, stdout, stderr = ssh_executor.execute(
+        f"pvesh get /cluster/nextid --vmid {start_vmid}",
+        check=False
+    )
+    
+    if exit_code == 0 and stdout.strip().isdigit():
+        return int(stdout.strip())
+    
+    # Fallback: increment and check
+    vmid = start_vmid
+    while True:
+        exit_code, stdout, stderr = ssh_executor.execute(
+            f"qm status {vmid}",
+            check=False
+        )
+        if exit_code != 0:  # VMID doesn't exist
+            return vmid
+        vmid += 1
+
+
+def get_vm_mac_address(ssh_executor: SSHExecutor, vmid: int) -> Optional[str]:
+    """Get the MAC address of a VM's first network interface.
+    
+    Args:
+        ssh_executor: SSH executor
+        vmid: VM ID
+        
+    Returns:
+        MAC address string or None
+    """
+    try:
+        exit_code, stdout, stderr = ssh_executor.execute(
+            f"qm config {vmid} | grep 'net0'",
+            check=False,
+            timeout=10
+        )
+        
+        if exit_code == 0 and stdout:
+            # Parse net0 config: "virtio=AA:BB:CC:DD:EE:FF,bridge=vmbr0"
+            for part in stdout.split(','):
+                if '=' in part:
+                    key, value = part.split('=', 1)
+                    if key.strip() == 'virtio' or key.strip() == 'e1000' or key.strip() == 'rtl8139':
+                        # The value is the MAC address
+                        mac = value.strip().upper()
+                        if ':' in mac:
+                            return mac
+        
+        return None
+    except Exception as e:
+        logger.warning(f"Failed to get MAC address for VM {vmid}: {e}")
+        return None
+
+
 def sanitize_vm_name(name: str) -> str:
     """Sanitize a string for use as a Proxmox VM name."""
     # Convert to lowercase, replace spaces and underscores with hyphens
@@ -69,6 +125,104 @@ def sanitize_vm_name(name: str) -> str:
     # Remove leading/trailing hyphens
     name = name.strip('-')
     return name or 'vm'
+
+
+def deploy_class_vms(
+    class_id: int,
+    num_students: int = 0
+) -> Tuple[bool, str, Dict[str, Any]]:
+    """
+    High-level function to deploy all VMs for a class.
+    
+    Creates:
+    - 1 Teacher VM (full clone or empty shell)
+    - 1 Class base template (for student overlays)
+    - N Student VMs (QCOW2 overlays)
+    
+    Handles both template-based and template-less (none) classes.
+    Updates VMInventory after creation for admin view.
+    
+    Args:
+        class_id: Database ID of class
+        num_students: Number of student VMs to create
+        
+    Returns:
+        (success, message, vm_info_dict)
+    """
+    from app.services.inventory_service import persist_vm_inventory
+    from app.services.proxmox_client import get_all_vms
+    
+    try:
+        # Load class from database
+        class_obj = Class.query.get(class_id)
+        if not class_obj:
+            return False, f"Class {class_id} not found", {}
+        
+        # Get template info (if any)
+        template = class_obj.template
+        template_vmid = template.proxmox_vmid if template else None
+        template_node = template.node if template else None
+        
+        # If no template, get first available node
+        if not template_node:
+            from app.services.proxmox_service import get_proxmox_admin_for_cluster
+            from app.config import CLUSTERS
+            
+            cluster_id = None
+            for cluster in CLUSTERS:
+                if cluster["host"] == "10.220.15.249":
+                    cluster_id = cluster["id"]
+                    break
+            
+            if cluster_id:
+                proxmox = get_proxmox_admin_for_cluster(cluster_id)
+                nodes = proxmox.nodes.get()
+                template_node = nodes[0]['node'] if nodes else None
+        
+        if not template_node:
+            return False, "No Proxmox nodes available", {}
+        
+        # Call create_class_vms with proper parameters
+        result = create_class_vms(
+            class_id=class_id,
+            template_vmid=template_vmid,  # Can be None for template-less classes
+            template_node=template_node,
+            pool_size=num_students,
+            class_name=class_obj.name,
+            teacher_id=class_obj.teacher_id,
+            memory=class_obj.memory_mb or 2048,
+            cores=class_obj.cpu_cores or 2,
+            auto_start=False,
+        )
+        
+        if result.error:
+            return False, result.error, {}
+        
+        # After successful creation, trigger VMInventory update
+        try:
+            # Fetch latest VM data and persist to VMInventory
+            logger.info("Updating VMInventory after class VM creation...")
+            vms = get_all_vms(skip_ips=True, force_refresh=True)
+            persist_vm_inventory(vms, cleanup_missing=False)
+            logger.info("VMInventory updated successfully")
+        except Exception as e:
+            logger.warning(f"Failed to update VMInventory after class creation: {e}")
+            # Don't fail the whole operation if inventory update fails
+        
+        vm_info = {
+            'teacher_vm_count': 1 if result.teacher_vmid else 0,
+            'template_vm_count': 1 if result.class_base_vmid else 0,
+            'student_vm_count': len(result.student_vmids),
+            'teacher_vmid': result.teacher_vmid,
+            'template_vmid': result.class_base_vmid,
+            'student_vmids': result.student_vmids,
+        }
+        
+        return True, f"Created {result.successful} VMs successfully", vm_info
+        
+    except Exception as e:
+        logger.exception(f"Failed to deploy class VMs: {e}")
+        return False, str(e), {}
 
 
 def wait_for_vm_stopped(ssh_executor: SSHExecutor, vmid: int, timeout: int = None) -> bool:
@@ -237,7 +391,7 @@ def export_template_to_qcow2(
 
 def create_class_vms(
     class_id: int,
-    template_vmid: int,
+    template_vmid: Optional[int],  # Can be None for template-less classes
     template_node: str,
     pool_size: int,
     class_name: str,
@@ -249,15 +403,22 @@ def create_class_vms(
     """
     Create all VMs for a class using QCOW2 overlay approach.
     
-    Workflow:
+    Workflow (with template):
     1. Export source template to a class-specific base QCOW2
     2. Create teacher VM as a full clone (can be modified)
-    3. Create student VMs as QCOW2 overlays from the class base
+    3. Create class base template VM (for overlay reference)
+    4. Create student VMs as QCOW2 overlays from the class base
+    5. Create VMAssignment records for all VMs with MAC addresses
+    
+    Workflow (without template - template_vmid=None):
+    1. Create empty teacher VM shell with custom specs
+    2. Create empty class base template shell
+    3. Create student VM shells as QCOW2 overlays
     4. Create VMAssignment records for all VMs
     
     Args:
         class_id: Database ID of the class
-        template_vmid: Source template VMID
+        template_vmid: Source template VMID (None for template-less classes)
         template_node: Proxmox node where template resides
         pool_size: Number of student VMs to create
         class_name: Name of the class (for VM naming)
@@ -286,49 +447,85 @@ def create_class_vms(
         ssh_executor.connect()
         logger.info(f"SSH connected to {ssh_executor.host}")
         
-        # Step 1: Create class-specific base QCOW2 from template
-        base_qcow2_path = f"{DEFAULT_TEMPLATE_STORAGE_PATH}/{class_prefix}-base.qcow2"
-        
-        result.details.append(f"Exporting template {template_vmid} to class base...")
-        success, error = export_template_to_qcow2(
-            ssh_executor=ssh_executor,
-            template_vmid=template_vmid,
-            node=template_node,
-            output_path=base_qcow2_path,
-        )
-        
-        if not success:
-            result.error = f"Failed to export template: {error}"
-            return result
-        
-        result.details.append(f"Class base created: {base_qcow2_path}")
-        
-        # Step 2: Create teacher VM (full clone, not overlay)
-        result.details.append("Creating teacher VM...")
-        teacher_vmid = get_next_available_vmid(ssh_executor)
-        teacher_name = f"{class_prefix}-teacher"
-        
-        # Create teacher VM by cloning the template
-        exit_code, stdout, stderr = ssh_executor.execute(
-            f"qm clone {template_vmid} {teacher_vmid} --name {teacher_name} --full",
-            timeout=300
-        )
-        
-        if exit_code != 0:
-            result.error = f"Failed to create teacher VM: {stderr}"
-            return result
+        # Step 1: Handle template vs no-template workflow
+        if template_vmid:
+            # WITH TEMPLATE: Export template to class base QCOW2
+            base_qcow2_path = f"{DEFAULT_TEMPLATE_STORAGE_PATH}/{class_prefix}-base.qcow2"
+            
+            result.details.append(f"Exporting template {template_vmid} to class base...")
+            success, error = export_template_to_qcow2(
+                ssh_executor=ssh_executor,
+                template_vmid=template_vmid,
+                node=template_node,
+                output_path=base_qcow2_path,
+            )
+            
+            if not success:
+                result.error = f"Failed to export template: {error}"
+                return result
+            
+            result.details.append(f"Class base created: {base_qcow2_path}")
+            
+            # Step 2: Create teacher VM (full clone)
+            result.details.append("Creating teacher VM...")
+            teacher_vmid = get_next_available_vmid(ssh_executor)
+            teacher_name = f"{class_prefix}-teacher"
+            
+            exit_code, stdout, stderr = ssh_executor.execute(
+                f"qm clone {template_vmid} {teacher_vmid} --name {teacher_name} --full",
+                timeout=300
+            )
+            
+            if exit_code != 0:
+                result.error = f"Failed to create teacher VM: {stderr}"
+                return result
+            
+        else:
+            # WITHOUT TEMPLATE: Create empty VM shells
+            result.details.append("Creating teacher VM shell (no template)...")
+            teacher_vmid = get_next_available_vmid(ssh_executor)
+            teacher_name = f"{class_prefix}-teacher"
+            
+            # Create empty VM with custom specs
+            exit_code, stdout, stderr = ssh_executor.execute(
+                f"qm create {teacher_vmid} --name {teacher_name} --memory {memory} --cores {cores} "
+                f"--net0 virtio,bridge=vmbr0 --scsihw virtio-scsi-pci --bootdisk scsi0",
+                timeout=60
+            )
+            
+            if exit_code != 0:
+                result.error = f"Failed to create teacher VM shell: {stderr}"
+                return result
+            
+            # Create a small disk for the teacher VM
+            exit_code, stdout, stderr = ssh_executor.execute(
+                f"qm disk resize {teacher_vmid} scsi0 32G",
+                check=False,
+                timeout=60
+            )
+            # Add disk first
+            exit_code, stdout, stderr = ssh_executor.execute(
+                f"qm set {teacher_vmid} --scsi0 {PROXMOX_STORAGE_NAME}:32",
+                timeout=120
+            )
         
         result.teacher_vmid = teacher_vmid
-        result.details.append(f"Teacher VM created: {teacher_vmid}")
+        result.details.append(f"Teacher VM created: {teacher_vmid} ({teacher_name})")
+        
+        # Get MAC address for teacher VM
+        teacher_mac = get_vm_mac_address(ssh_executor, teacher_vmid)
         
         # Create VMAssignment for teacher
         teacher_assignment = VMAssignment(
             class_id=class_id,
             proxmox_vmid=teacher_vmid,
+            vm_name=teacher_name,
+            mac_address=teacher_mac,
             node=template_node,
             assigned_user_id=teacher_id,
             status='assigned',
             is_template_vm=False,
+            is_teacher_vm=True,
             assigned_at=datetime.utcnow(),
         )
         db.session.add(teacher_assignment)

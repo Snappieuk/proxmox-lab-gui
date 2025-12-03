@@ -646,6 +646,10 @@ def create_template(name: str, proxmox_vmid: int, cluster_ip: str = '10.220.15.2
         db.session.commit()  # Commit the nested transaction (savepoint)
         
         logger.info(f"Registered template: {name} (VMID: {proxmox_vmid}) on node {node}")
+        
+        # Fetch and cache template specs immediately after registration
+        _fetch_and_cache_template_specs(template, cluster_ip)
+        
         return template, "Template registered successfully"
         
     except IntegrityError as e:
@@ -662,6 +666,11 @@ def create_template(name: str, proxmox_vmid: int, cluster_ip: str = '10.220.15.2
         
         if existing:
             logger.info(f"Template already exists (race condition handled): {existing.name} (VMID: {proxmox_vmid}) on {node}")
+            
+            # Fetch and cache specs for existing template if not already cached
+            if not existing.specs_cached_at:
+                _fetch_and_cache_template_specs(existing, cluster_ip)
+            
             return existing, "Template already registered"
         else:
             # Shouldn't happen, but log it
@@ -875,3 +884,107 @@ def get_unassigned_vms_in_class(class_id: int) -> List[VMAssignment]:
 def get_vm_assignment_by_vmid(proxmox_vmid: int) -> Optional[VMAssignment]:
     """Get VM assignment by Proxmox VMID."""
     return VMAssignment.query.filter_by(proxmox_vmid=proxmox_vmid).first()
+
+
+def _fetch_and_cache_template_specs(template: Template, cluster_ip: str) -> None:
+    """Fetch template specs from Proxmox and cache in database.
+    
+    Args:
+        template: Template object to update
+        cluster_ip: Proxmox cluster IP
+    """
+    from datetime import datetime
+    
+    try:
+        from app.services.proxmox_service import get_proxmox_admin_for_cluster
+        from app.config import CLUSTERS
+        
+        # Find cluster by IP
+        cluster_id = None
+        for cluster in CLUSTERS:
+            if cluster["host"] == cluster_ip:
+                cluster_id = cluster["id"]
+                break
+        
+        if not cluster_id:
+            logger.warning(f"Cannot fetch template specs: cluster {cluster_ip} not found")
+            return
+        
+        proxmox = get_proxmox_admin_for_cluster(cluster_id)
+        
+        # Get VM config
+        vm_config = proxmox.nodes(template.node).qemu(template.proxmox_vmid).config.get()
+        
+        # Extract CPU info
+        template.cpu_cores = vm_config.get('cores', 1)
+        template.cpu_sockets = vm_config.get('sockets', 1)
+        
+        # Extract memory
+        template.memory_mb = vm_config.get('memory', 2048)
+        
+        # Extract disk info (check scsi0, virtio0, sata0, ide0)
+        for disk_key in ['scsi0', 'virtio0', 'sata0', 'ide0']:
+            disk_conf = vm_config.get(disk_key)
+            if disk_conf:
+                # Parse disk config: "local-lvm:vm-100-disk-0,size=32G"
+                parts = disk_conf.split(',')
+                template.disk_path = parts[0] if parts else disk_conf
+                
+                # Extract storage ID
+                if ':' in template.disk_path:
+                    template.disk_storage = template.disk_path.split(':')[0]
+                
+                # Extract size
+                for part in parts:
+                    if 'size=' in part:
+                        size_str = part.split('=')[1].upper()
+                        # Convert to GB
+                        if 'G' in size_str:
+                            template.disk_size_gb = float(size_str.replace('G', ''))
+                        elif 'M' in size_str:
+                            template.disk_size_gb = float(size_str.replace('M', '')) / 1024
+                        elif 'T' in size_str:
+                            template.disk_size_gb = float(size_str.replace('T', '')) * 1024
+                
+                break
+        
+        # Detect disk format from storage type
+        if template.disk_storage:
+            try:
+                storage_config = proxmox.storage(template.disk_storage).get()
+                storage_type = storage_config.get('type', '')
+                if storage_type in ['dir', 'nfs']:
+                    template.disk_format = 'qcow2'
+                elif storage_type == 'lvm':
+                    template.disk_format = 'raw'
+                elif storage_type == 'lvmthin':
+                    template.disk_format = 'raw'
+                else:
+                    template.disk_format = storage_type
+            except Exception as e:
+                logger.debug(f"Could not detect storage type for {template.disk_storage}: {e}")
+        
+        # Extract network bridge (check net0, net1, net2)
+        for net_key in ['net0', 'net1', 'net2']:
+            net_conf = vm_config.get(net_key)
+            if net_conf and 'bridge=' in net_conf:
+                # Parse: "virtio=XX:XX:XX:XX:XX:XX,bridge=vmbr0"
+                for part in net_conf.split(','):
+                    if 'bridge=' in part:
+                        template.network_bridge = part.split('=')[1]
+                        break
+                break
+        
+        # Extract OS type
+        template.os_type = vm_config.get('ostype', 'other')
+        
+        # Update timestamp
+        template.specs_cached_at = datetime.utcnow()
+        
+        db.session.commit()
+        logger.info(f"Cached specs for template {template.name}: {template.cpu_cores} cores, {template.memory_mb} MB RAM, {template.disk_size_gb} GB disk")
+        
+    except Exception as e:
+        logger.warning(f"Failed to fetch template specs for {template.name}: {e}")
+        db.session.rollback()
+

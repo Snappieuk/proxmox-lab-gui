@@ -306,6 +306,7 @@
                     <thead>
                         <tr>
                             <th>VMID</th>
+                            <th>VM Name</th>
                             <th>Node</th>
                             <th>MAC</th>
                             <th>IP</th>
@@ -319,6 +320,7 @@
                         {% if not vm.is_template_vm %}
                         <tr data-vmid="{{ vm.proxmox_vmid }}" data-node="{{ vm.node }}">
                             <td><strong>{{ vm.proxmox_vmid }}</strong></td>
+                            <td><span id="name-{{ vm.proxmox_vmid }}">{{ vm.vm_name or 'N/A' }}</span></td>
                             <td>{{ vm.node or 'N/A' }}</td>
                             <td><span id="mac-{{ vm.proxmox_vmid }}">{{ vm.mac or 'N/A' }}</span></td>
                             <td><span id="ip-{{ vm.proxmox_vmid }}">{{ vm.ip or 'N/A' }}</span></td>

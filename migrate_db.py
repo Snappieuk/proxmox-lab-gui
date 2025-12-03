@@ -16,6 +16,7 @@ CRITICAL_MIGRATIONS = [
     ('classes', 'memory_mb', 'INTEGER', '2048'),
     ('vm_assignments', 'manually_added', 'BOOLEAN', '0'),
     ('vm_assignments', 'is_teacher_vm', 'BOOLEAN', '0'),
+    ('vm_assignments', 'vm_name', 'TEXT', 'NULL'),
     # Template spec caching columns
     ('templates', 'cpu_cores', 'INTEGER', 'NULL'),
     ('templates', 'cpu_sockets', 'INTEGER', 'NULL'),

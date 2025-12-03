@@ -296,6 +296,7 @@ class VMAssignment(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     class_id = db.Column(db.Integer, db.ForeignKey('classes.id'), nullable=False, index=True)
     proxmox_vmid = db.Column(db.Integer, nullable=False, index=True)  # Cloned VM's VMID in Proxmox
+    vm_name = db.Column(db.String(120), nullable=True, index=True)  # VM name in Proxmox
     mac_address = db.Column(db.String(17), nullable=True, index=True)  # VM's MAC address (e.g., "AA:BB:CC:DD:EE:FF")
     cached_ip = db.Column(db.String(45), nullable=True)  # Cached IP address (IPv4 or IPv6)
     ip_updated_at = db.Column(db.DateTime, nullable=True)  # When IP was last updated
@@ -330,7 +331,10 @@ class VMAssignment(db.Model):
             'class_id': self.class_id,
             'class_name': self.class_.name if self.class_ else None,
             'proxmox_vmid': self.proxmox_vmid,
+            'vm_name': self.vm_name,
             'mac_address': self.mac_address,
+            'mac': self.mac_address,  # Alias for template compatibility
+            'ip': self.cached_ip,  # Alias for template compatibility
             'cached_ip': self.cached_ip,
             'ip_updated_at': self.ip_updated_at.isoformat() if self.ip_updated_at else None,
             'node': self.node,
@@ -338,6 +342,7 @@ class VMAssignment(db.Model):
             'assigned_user_name': self.assigned_user.username if self.assigned_user else None,
             'status': self.status,
             'is_template_vm': self.is_template_vm,
+            'is_teacher_vm': self.is_teacher_vm,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'assigned_at': self.assigned_at.isoformat() if self.assigned_at else None,
         }
