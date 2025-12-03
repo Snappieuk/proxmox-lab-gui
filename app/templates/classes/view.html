@@ -33,7 +33,15 @@
 <div class="summary-tiles">
     <div class="summary-tile">
         <div class="summary-tile-title">Total Student VMs</div>
-        <div class="summary-tile-value" id="total-vms">{{ vm_assignments|rejectattr('is_teacher_vm')|list|length }}</div>
+        <div class="summary-tile-value" id="total-vms">
+            {% set count = namespace(value=0) %}
+            {% for vm in vm_assignments %}
+                {% if not vm.is_teacher_vm and not ('-teacher' in (vm.vm_name or '').lower()) %}
+                    {% set count.value = count.value + 1 %}
+                {% endif %}
+            {% endfor %}
+            {{ count.value }}
+        </div>
     </div>
     <div class="summary-tile">
         <div class="summary-tile-title">Assigned</div>
@@ -88,7 +96,7 @@
         </thead>
         <tbody id="vm-tbody">
             {% for vm in vm_assignments %}
-            {% if not vm.is_teacher_vm %}
+            {% if not vm.is_teacher_vm and not ('-teacher' in (vm.vm_name or '').lower()) %}
             <tr data-vmid="{{ vm.proxmox_vmid }}" data-assignment-id="{{ vm.id }}">
                 <td><strong>{{ vm.proxmox_vmid }}</strong></td>
                 <td>{{ vm.node or 'N/A' }}</td>

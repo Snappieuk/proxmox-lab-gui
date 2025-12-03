@@ -1819,14 +1819,14 @@ def revert_vm_to_snapshot(vmid: int, node: str, snapname: str,
 
 
 def delete_vm(vmid: int, node: str, cluster_ip: str = None) -> Tuple[bool, str]:
-    """Delete a VM.
+    """Delete a VM using SSH commands (no Proxmox API connection required).
     
     Ensures VM is stopped before deletion to prevent errors.
     
     Args:
         vmid: VM ID
-        node: Node name (will be auto-discovered if VM was migrated)
-        cluster_ip: IP of the Proxmox cluster
+        node: Node name (optional - SSH executor will use configured node)
+        cluster_ip: IP of the Proxmox cluster (not used with SSH)
     
     Returns:
         Tuple of (success, message)
@@ -1835,38 +1835,7 @@ def delete_vm(vmid: int, node: str, cluster_ip: str = None) -> Tuple[bool, str]:
     from app.services.vm_core import wait_for_vm_stopped
     
     try:
-        cluster_id = None
-        for cluster in CLUSTERS:
-            if cluster["host"] == (cluster_ip or CLASS_CLUSTER_IP):
-                cluster_id = cluster["id"]
-                break
-        
-        if not cluster_id:
-            return False, "Cluster not found"
-        
-        proxmox = get_proxmox_admin_for_cluster(cluster_id)
-        
-        # Query cluster-wide to find which node actually has this VM
-        # (VM may have been migrated since database record was created)
-        actual_node = None
-        try:
-            resources = proxmox.cluster.resources.get(type="vm")
-            for r in resources:
-                if int(r.get('vmid', -1)) == int(vmid):
-                    actual_node = r.get('node')
-                    if actual_node != node:
-                        logger.info(f"VM {vmid} was migrated from {node} to {actual_node}, using actual node")
-                    break
-        except Exception as e:
-            logger.warning(f"Cluster resources query failed: {e}, using provided node {node}")
-            actual_node = node
-        
-        # Fallback to provided node if not found in cluster resources
-        if not actual_node:
-            logger.warning(f"VM {vmid} not found in cluster resources, attempting delete on provided node {node}")
-            actual_node = node
-        
-        # Get SSH executor to stop VM and wait for it to be fully stopped
+        # Get SSH executor - uses config from environment
         ssh_executor = get_ssh_executor_from_config()
         
         # Stop the VM first (if it's running)
@@ -1896,10 +1865,19 @@ def delete_vm(vmid: int, node: str, cluster_ip: str = None) -> Tuple[bool, str]:
         
         logger.info(f"VM {vmid} confirmed stopped, proceeding with deletion")
         
-        # Now delete the VM (only if stopped)
-        proxmox.nodes(actual_node).qemu(vmid).delete()
+        # Delete the VM using SSH command (only if stopped)
+        exit_code, stdout, stderr = ssh_executor.execute(
+            f"qm destroy {vmid}",
+            check=False,
+            timeout=30
+        )
         
-        logger.info(f"Deleted VM {vmid} on {actual_node}")
+        if exit_code != 0:
+            error_msg = f"Failed to delete VM {vmid}: {stderr.strip()}"
+            logger.error(error_msg)
+            return False, error_msg
+        
+        logger.info(f"Deleted VM {vmid} successfully")
         return True, "VM deleted successfully"
         
     except Exception as e:

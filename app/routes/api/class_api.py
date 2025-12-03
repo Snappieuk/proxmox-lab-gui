@@ -705,7 +705,8 @@ def list_class_vms(class_id: int):
     
     for assignment in assignments:
         # Skip teacher VMs (they shouldn't appear in the VM list for students)
-        if assignment.is_teacher_vm:
+        # Check both is_teacher_vm flag AND vm_name pattern for backwards compatibility
+        if assignment.is_teacher_vm or (assignment.vm_name and '-teacher' in assignment.vm_name.lower()):
             continue
             
         vm_data = assignment.to_dict()
