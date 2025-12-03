@@ -146,17 +146,19 @@ class Class(db.Model):
     
     @property
     def assigned_count(self) -> int:
-        """Number of student VMs assigned to users (excludes teacher VM)."""
+        """Number of student VMs assigned to users (excludes teacher and template VMs)."""
         return sum(1 for vm in self.vm_assignments 
                    if vm.assigned_user_id is not None 
-                   and not vm.is_teacher_vm)
+                   and not vm.is_teacher_vm
+                   and not vm.is_template_vm)
     
     @property
     def unassigned_count(self) -> int:
-        """Number of student VMs not assigned to any user (excludes teacher VM)."""
+        """Number of student VMs not assigned to any user (excludes teacher and template VMs)."""
         return sum(1 for vm in self.vm_assignments 
                    if vm.assigned_user_id is None 
-                   and not vm.is_teacher_vm)
+                   and not vm.is_teacher_vm
+                   and not vm.is_template_vm)
     
     @property
     def enrolled_count(self) -> int:

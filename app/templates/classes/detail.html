@@ -360,12 +360,34 @@
                             <td><span id="ip-{{ vm.proxmox_vmid }}">{{ vm.ip or 'N/A' }}</span></td>
                             <td><span class="status-badge" id="status-{{ vm.proxmox_vmid }}">{{ vm.status or 'unknown' }}</span></td>
                             <td>{{ vm.assigned_user_name or '<span style="color: #999;">Unassigned</span>' | safe }}</td>
-                            <td style="display:flex; gap:0.5rem; flex-wrap:wrap;">
-                                <button class="btn-minimal" title="Start" onclick="startVm({{ vm.proxmox_vmid }}, '{{ vm.node }}')"><i class="bi bi-play-fill"></i></button>
-                                <button class="btn-minimal" title="Stop" onclick="stopVm({{ vm.proxmox_vmid }}, '{{ vm.node }}')"><i class="bi bi-stop-fill"></i></button>
-                                <button class="btn-minimal" title="Revert baseline" onclick="revertVm({{ vm.proxmox_vmid }}, '{{ vm.node }}')"><i class="bi bi-arrow-counterclockwise"></i></button>
-                                <button class="btn-minimal" title="SSH" onclick="sshVm({{ vm.proxmox_vmid }})"><i class="bi bi-terminal-fill"></i></button>
-                                <button class="btn-minimal" title="Download RDP" onclick="rdpVm({{ vm.proxmox_vmid }})"><i class="bi bi-file-earmark-arrow-down"></i></button>
+                            <td>
+                                <div class="action-buttons">
+                                    <button class="btn-icon btn-icon-success" 
+                                            onclick="startVm({{ vm.proxmox_vmid }}, '{{ vm.node }}')"
+                                            data-tooltip="Start VM">
+                                        <i class="bi bi-play-fill"></i>
+                                    </button>
+                                    <button class="btn-icon btn-icon-danger" 
+                                            onclick="stopVm({{ vm.proxmox_vmid }}, '{{ vm.node }}')"
+                                            data-tooltip="Stop VM">
+                                        <i class="bi bi-stop-fill"></i>
+                                    </button>
+                                    <button class="btn-icon btn-icon-dark" 
+                                            onclick="revertVm({{ vm.proxmox_vmid }}, '{{ vm.node }}')"
+                                            data-tooltip="Revert to Baseline">
+                                        <i class="bi bi-arrow-counterclockwise"></i>
+                                    </button>
+                                    <button class="btn-icon btn-icon-dark" 
+                                            onclick="sshVm({{ vm.proxmox_vmid }})"
+                                            data-tooltip="Open SSH Terminal">
+                                        <i class="bi bi-terminal"></i>
+                                    </button>
+                                    <a class="btn-icon btn-icon-primary" 
+                                       href="/rdp/{{ vm.proxmox_vmid }}.rdp"
+                                       data-tooltip="Download RDP File">
+                                        <i class="bi bi-download"></i>
+                                    </a>
+                                </div>
                             </td>
                         </tr>
                         {% endif %}

@@ -752,194 +752,29 @@ def create_class_vms(class_id: int):
     
     data = request.get_json()
     count = data.get('count', 1)
-    template_name = data.get('template_name')
-    target_node = data.get('target_node')  # Optional: force specific node
     
-    if not template_name:
-        # Use class template if no specific one provided
-        if not class_.template:
-            return jsonify({"ok": False, "error": "No template specified and class has no default template"}), 400
-        template_name = class_.template.name
-        logger.info(f"Using class template '{template_name}' (from class {class_.name})")
-    else:
-        logger.info(f"Using override template '{template_name}' (from API request)")
+    # Use the modern disk export + overlay deployment method
+    # This creates VM shells via SSH and uses QCOW2 overlays for efficient disk cloning
+    from app.services.class_vm_service import deploy_class_vms
     
-    # Generate student usernames
-    students = [f"student{i}" for i in range(1, count + 1)]
+    logger.info(f"Deploying {count} student VMs for class {class_.name} using disk export + overlay method")
     
-    # Capture variables for thread context
-    class_id_val = class_.id
-    class_name = class_.name
-    teacher_id = user.id
-    pool_size_val = count
-    template_name_captured = template_name
+    # Deploy VMs (creates teacher VM, class-base template, and student overlays)
+    success, message, vm_info = deploy_class_vms(
+        class_id=class_.id,
+        num_students=count
+    )
     
-    # Generate task ID for progress tracking
-    import uuid
-    task_id = str(uuid.uuid4())
-    start_clone_progress(task_id, count + 1)  # Students + teacher
+    if not success:
+        logger.error(f"Failed to deploy VMs for class {class_.id}: {message}")
+        return jsonify({"ok": False, "error": message}), 500
     
-    # Capture Flask app context BEFORE starting thread
-    from flask import current_app
-    app = current_app._get_current_object()
-    
-    # Deploy VMs using Terraform in background thread
-    import threading
-    def _background_terraform_deploy():
-        try:
-            # Push application context in background thread
-            app_ctx = app.app_context()
-            app_ctx.push()
-            from app.services.proxmox_service import get_proxmox_admin
-            from app.models import db, Class
-            
-            # Re-fetch class in thread context
-            class_obj = Class.query.get(class_id_val)
-            if not class_obj:
-                update_clone_progress(task_id, status="failed", error="Class not found")
-                return
-            
-            # Get template info
-            if not class_obj.template:
-                update_clone_progress(task_id, status="failed", error="No template assigned to class")
-                return
-            
-            template_obj = class_obj.template
-            
-            # Step 1: Clone the source template exclusively for this class
-            update_clone_progress(task_id, completed=0, message=f"Cloning template '{template_obj.name}' (VMID {template_obj.proxmox_vmid}) for exclusive class use...")
-            
-            # Find next available VMID
-            proxmox = get_proxmox_admin()
-            used_vmids = set(r.get('vmid') for r in proxmox.cluster.resources.get(type="vm"))
-            class_template_vmid = max(used_vmids) + 1 if used_vmids else 200
-            
-            # Sanitize class name for Proxmox (alphanumeric and hyphens only)
-            import re
-            class_prefix = re.sub(r'[^a-z0-9-]', '', class_name.lower().replace(' ', '-').replace('_', '-'))
-            if not class_prefix:
-                class_prefix = f"class-{class_id_val}"
-            
-            class_template_name = f"{class_prefix}-template"
-            
-            # Clone the source template to create class-specific template
-            clone_success, clone_msg = clone_vm_from_template(
-                template_vmid=template_obj.proxmox_vmid,
-                new_vmid=class_template_vmid,
-                name=class_template_name,
-                node=template_obj.node,
-                cluster_ip=CLASS_CLUSTER_IP,
-                full_clone=True,  # Full clone to isolate from source
-                create_baseline=False,  # No baseline snapshot needed for template
-                wait_until_complete=True
-            )
-            
-            if not clone_success:
-                update_clone_progress(task_id, status="failed", error=f"Failed to clone template: {clone_msg}")
-                return
-            
-            update_clone_progress(task_id, completed=1, message=f"Class template created: VMID {class_template_vmid}")
-            
-            # Convert the cloned VM to a template
-            convert_success, convert_msg = convert_vm_to_template(
-                vmid=class_template_vmid,
-                node=template_obj.node,
-                cluster_ip=CLASS_CLUSTER_IP
-            )
-            
-            if not convert_success:
-                update_clone_progress(task_id, status="failed", error=f"Failed to convert to template: {convert_msg}")
-                # Clean up the clone
-                delete_vm(class_template_vmid, template_obj.node, CLASS_CLUSTER_IP)
-                return
-            
-            # Register the new class-specific template in database
-            # create_template now handles race conditions internally
-            class_specific_template, tpl_msg = create_template(
-                name=class_template_name,
-                proxmox_vmid=class_template_vmid,
-                cluster_ip=CLASS_CLUSTER_IP,
-                node=template_obj.node,
-                created_by_id=teacher_id,
-                is_class_template=True,
-                class_id=class_id_val,
-                original_template_id=template_obj.id
-            )
-            
-            if not class_specific_template:
-                logger.error(f"Failed to register class template in DB: {tpl_msg}")
-                # Continue anyway - template is created in Proxmox
-            
-            # Update class to use the new class-specific template
-            class_obj.template_id = class_specific_template.id if class_specific_template else None
-            db.session.commit()
-            
-            logger.info(f"Class {class_id_val} now has dedicated template VMID {class_template_vmid}")
-            
-            # Step 2: Deploy student and teacher VMs from the class-specific template
-            update_clone_progress(task_id, completed=1, message=f"Deploying {pool_size_val} student VMs + 2 teacher VMs from class template...")
-            
-            # Generate student usernames
-            students = [f"student{i}" for i in range(1, pool_size_val + 1)]
-            
-            # DEPRECATED: Terraform deployment removed
-            # This code path is no longer functional - use standard class creation instead
-            update_clone_progress(task_id, status="failed", 
-                                error="Terraform deployment has been removed. Please use standard class creation.")
-            return
-            
-            # Register VMs in database
-            student_vms = result.get('student_vms', {})
-            teacher_vm = result.get('teacher_vm')
-            
-            # Register teacher VM
-            if teacher_vm:
-                assignment, _ = create_vm_assignment(
-                    class_id=class_id_val,
-                    proxmox_vmid=teacher_vm['id'],
-                    node=teacher_vm['node'],
-                    is_template_vm=True
-                )
-                update_clone_progress(task_id, completed=1, message=f"Teacher VM created: {teacher_vm['name']}")
-            
-            # Register student VMs (unassigned, ready for students to claim)
-            registered_count = 0
-            for student_name, vm_info in student_vms.items():
-                assignment, _ = create_vm_assignment(
-                    class_id=class_id_val,
-                    proxmox_vmid=vm_info['id'],
-                    node=vm_info['node'],
-                    is_template_vm=False
-                )
-                registered_count += 1
-                update_clone_progress(
-                    task_id,
-                    completed=registered_count + 1,
-                    message=f"Registered {registered_count}/{len(student_vms)} student VMs"
-                )
-            
-            update_clone_progress(
-                task_id,
-                status="completed",
-                message=f"Successfully deployed {len(student_vms)} student VMs + 1 teacher VM"
-            )
-            
-        except Exception as e:
-            logger.exception(f"Terraform deployment failed for class {class_id}: {e}")
-            update_clone_progress(task_id, status="failed", error=str(e))
-        finally:
-            try:
-                app_ctx.pop()
-            except Exception:
-                pass
-    
-    threading.Thread(target=_background_terraform_deploy, daemon=True).start()
+    logger.info(f"Successfully deployed VMs for class {class_.id}: {message}")
     
     return jsonify({
         "ok": True,
-        "message": f"Terraform is deploying {count} student VMs + 1 teacher VM in parallel (much faster than sequential Python cloning).",
-        "task_id": task_id,
-        "info": "Terraform handles node selection, storage compatibility, VMID allocation, and error handling automatically."
+        "message": message,
+        "vm_info": vm_info
     })
 
 

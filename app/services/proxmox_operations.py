@@ -1851,6 +1851,7 @@ def delete_vm(vmid: int, node: str, cluster_ip: str = None) -> Tuple[bool, str]:
         
         # Get SSH executor for status checking and deletion
         ssh_executor = get_ssh_executor_from_config()
+        ssh_executor.connect()
         
         # Check current VM status using SSH
         try:
@@ -1890,6 +1891,12 @@ def delete_vm(vmid: int, node: str, cluster_ip: str = None) -> Tuple[bool, str]:
         except Exception as e:
             logger.warning(f"Error checking VM {vmid} status: {e}, attempting deletion anyway")
         
+        # Ensure SSH connection is still active before deletion
+        # If connection was lost, reconnect
+        if ssh_executor._client is None:
+            logger.info("SSH connection was lost, reconnecting...")
+            ssh_executor.connect()
+        
         # Delete the VM using SSH command (only if stopped)
         exit_code, stdout, stderr = ssh_executor.execute(
             f"qm destroy {vmid}",
@@ -1900,13 +1907,20 @@ def delete_vm(vmid: int, node: str, cluster_ip: str = None) -> Tuple[bool, str]:
         if exit_code != 0:
             error_msg = f"Failed to delete VM {vmid}: {stderr.strip()}"
             logger.error(error_msg)
+            ssh_executor.disconnect()
             return False, error_msg
         
         logger.info(f"Deleted VM {vmid} successfully")
+        ssh_executor.disconnect()
         return True, "VM deleted successfully"
         
     except Exception as e:
         logger.exception(f"Failed to delete VM {vmid}: {e}")
+        # Ensure cleanup on error
+        try:
+            ssh_executor.disconnect()
+        except:
+            pass
         return False, f"Delete failed: {str(e)}"
 
 
