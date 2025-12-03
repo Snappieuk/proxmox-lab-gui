@@ -13,10 +13,6 @@ import urllib3
 urllib3.disable_warnings()
 
 from app.config import (
-    PVE_HOST,
-    PVE_ADMIN_USER,
-    PVE_ADMIN_PASS,
-    PVE_VERIFY,
     VALID_NODES,
     ADMIN_USERS,
     ADMIN_GROUP,
@@ -42,10 +38,7 @@ except ImportError:
 # Import mappings service (DEPRECATED - migrate to database VMAssignment)
 from app.services.mappings_service import (
     get_user_vm_map,
-    save_user_vm_map,
-    get_all_vm_ids_and_names,
-    set_user_vm_mapping,
-    invalidate_mappings_cache,
+    get_user_vm_mapping,
 )
 
 # Import user manager for admin functions

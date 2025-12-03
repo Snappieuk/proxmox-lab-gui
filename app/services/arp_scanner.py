@@ -36,8 +36,7 @@ import os
 import threading
 import time
 import ipaddress
-from typing import Dict, Optional, List, Union
-from collections import defaultdict
+from typing import Dict, Optional, List
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Module-level cache for ARP results

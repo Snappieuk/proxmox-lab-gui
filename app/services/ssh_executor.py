@@ -140,7 +140,7 @@ class SSHExecutor:
         self.connect()
         return self
     
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type, exc_val, exc_tb):  # noqa: U100 - required by context manager protocol
         """Context manager exit."""
         self.disconnect()
         return False

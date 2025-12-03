@@ -18,7 +18,6 @@ from datetime import datetime, timedelta
 from typing import Optional, List
 
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import event
 from werkzeug.security import generate_password_hash, check_password_hash
 
 # Initialize SQLAlchemy (will be bound to Flask app in create_app)

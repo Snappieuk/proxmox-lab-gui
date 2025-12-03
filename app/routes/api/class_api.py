@@ -32,20 +32,16 @@ from app.services.class_service import (
     auto_assign_vms_to_waiting_students,
     # Template management
     create_template,
-    get_template_by_id,
     get_available_templates,
     get_global_templates,
-    delete_template,
     # VM assignment
     create_vm_assignment,
     assign_vm_to_user,
     unassign_vm,
     delete_vm_assignment,
     get_vm_assignments_for_class,
-    get_vm_assignments_for_user,
     get_user_vm_in_class,
     get_unassigned_vms_in_class,
-    get_vm_assignment_by_vmid,
     # User management
     get_user_by_username,
     get_user_by_id,
@@ -57,11 +53,7 @@ from app.services.proxmox_operations import (
     list_proxmox_templates,
     clone_vm_from_template,
     convert_vm_to_template,
-    create_vm_snapshot,
-    revert_vm_to_snapshot,
     delete_vm,
-    start_class_vm,
-    stop_class_vm,
     get_vm_status,
     CLASS_CLUSTER_IP
 )
