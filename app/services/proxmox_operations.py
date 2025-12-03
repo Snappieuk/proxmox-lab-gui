@@ -1600,7 +1600,12 @@ def get_vm_status(vmid: int, node: str = None, cluster_ip: str = None) -> Dict[s
         if not node:
             return {"status": "unknown", "mac": "N/A", "ip": "N/A"}
         
-        status_data = proxmox.nodes(node).qemu(vmid).status.current.get()
+        # Get status with error handling
+        try:
+            status_data = proxmox.nodes(node).qemu(vmid).status.current.get()
+        except Exception as e:
+            logger.warning(f"Failed to get VM {vmid} status: {e}")
+            return {"status": "unknown", "mac": "N/A", "ip": "N/A", "error": str(e)}
         
         # Get MAC address from VM config
         mac_address = None

@@ -537,10 +537,8 @@ def create_class_vms(
         except Exception as e:
             logger.warning(f"Could not get Proxmox API connection: {e}")
         
-        # Determine optimal node for VM creation based on resource availability
+        # Node selection will be done per-VM for better distribution
         from app.services.vm_utils import get_optimal_node
-        optimal_node = get_optimal_node(ssh_executor, proxmox)
-        logger.info(f"Selected optimal node for VM creation: {optimal_node}")
         logger.info(f"Using shared storage: {PROXMOX_STORAGE_NAME} (path: {DEFAULT_VM_IMAGES_PATH})")
         logger.info(f"Note: All nodes must have access to shared storage for multi-node deployment")
         
@@ -565,6 +563,10 @@ def create_class_vms(
             
             # Step 2: Create teacher VM as overlay (NOT full clone)
             result.details.append("Creating teacher VM as overlay...")
+            
+            # Select optimal node for teacher VM
+            teacher_optimal_node = get_optimal_node(ssh_executor, proxmox)
+            logger.info(f"Selected optimal node for teacher VM: {teacher_optimal_node}")
             
             # Retry logic for VMID conflicts
             max_retries = 30
@@ -736,7 +738,7 @@ def create_class_vms(
             proxmox_vmid=teacher_vmid,
             vm_name=teacher_name,
             mac_address=teacher_mac,
-            node=optimal_node,
+            node=teacher_optimal_node,
             assigned_user_id=teacher_id,
             status='assigned',
             is_template_vm=False,
@@ -789,6 +791,10 @@ def create_class_vms(
                 used_vmids_in_this_session.add(vmid)
                 student_name = f"{class_prefix}-student-{i + 1}"
                 
+                # Select optimal node for this student VM
+                student_optimal_node = get_optimal_node(ssh_executor, proxmox)
+                logger.info(f"Selected optimal node for {student_name}: {student_optimal_node}")
+                
                 try:
                     # Create VM shell (will be on the connected node)
                     exit_code, stdout, stderr = ssh_executor.execute(
@@ -804,12 +810,12 @@ def create_class_vms(
                         continue
                     
                     # Migrate to optimal node BEFORE attaching storage
-                    logger.info(f"Migrating student VM {vmid} to {optimal_node}...")
-                    success, error_msg = migrate_vm_to_node(ssh_executor, vmid, optimal_node, timeout=120)
+                    logger.info(f"Migrating student VM {vmid} to {student_optimal_node}...")
+                    success, error_msg = migrate_vm_to_node(ssh_executor, vmid, student_optimal_node, timeout=120)
                     if not success:
-                        logger.warning(f"Failed to migrate VM {vmid} to {optimal_node}: {error_msg}. Continuing on current node.")
+                        logger.warning(f"Failed to migrate VM {vmid} to {student_optimal_node}: {error_msg}. Continuing on current node.")
                     else:
-                        logger.info(f"VM {vmid} migrated to {optimal_node}")
+                        logger.info(f"VM {vmid} migrated to {student_optimal_node}")
                     
                     # Create disk - overlay if template exists, empty disk if not
                     if base_qcow2_path:
@@ -837,7 +843,7 @@ def create_class_vms(
                         # Attach disk to VM (get current node after migration)
                         current_node = get_vm_current_node(ssh_executor, vmid)
                         if not current_node:
-                            current_node = optimal_node  # Fallback
+                            current_node = student_optimal_node  # Fallback
                         
                         exit_code, stdout, stderr = ssh_executor.execute(
                             f"pvesh set /nodes/{current_node}/qemu/{vmid}/config -scsi0 {PROXMOX_STORAGE_NAME}:{vmid}/vm-{vmid}-disk-0.qcow2 -boot c -bootdisk scsi0",
@@ -867,13 +873,18 @@ def create_class_vms(
                     # Get MAC address for student VM
                     student_mac = get_vm_mac_address(ssh_executor, vmid)
                     
+                    # Get actual current node for assignment
+                    actual_node = get_vm_current_node(ssh_executor, vmid)
+                    if not actual_node:
+                        actual_node = student_optimal_node
+                    
                     # Create VMAssignment for student VM (unassigned)
                     assignment = VMAssignment(
                         class_id=class_id,
                         proxmox_vmid=vmid,
                         vm_name=student_name,
                         mac_address=student_mac,
-                        node=optimal_node,
+                        node=actual_node,
                         assigned_user_id=None,
                         status='available',
                         is_template_vm=False,
@@ -896,6 +907,50 @@ def create_class_vms(
         
         # Commit all VMAssignment records
         db.session.commit()
+        
+        # Update VMInventory with MAC addresses for all created VMs
+        try:
+            from app.services.inventory_service import persist_vm_inventory
+            from app.services.proxmox_service import get_proxmox_admin
+            
+            proxmox = get_proxmox_admin()
+            
+            # Get cluster resources to find all VMs
+            resources = proxmox.cluster.resources.get(type="vm")
+            
+            # Update teacher VM
+            if result.teacher_vmid:
+                for r in resources:
+                    if int(r.get('vmid', -1)) == int(result.teacher_vmid):
+                        persist_vm_inventory(
+                            proxmox_vmid=result.teacher_vmid,
+                            name=r.get('name', ''),
+                            node=r.get('node', ''),
+                            status=r.get('status', 'unknown'),
+                            vmtype=r.get('type', 'qemu'),
+                            mac_address=teacher_mac if 'teacher_mac' in locals() else None,
+                        )
+                        break
+            
+            # Update student VMs
+            for vmid in result.student_vmids:
+                for r in resources:
+                    if int(r.get('vmid', -1)) == int(vmid):
+                        # Find the assignment to get MAC
+                        assignment = VMAssignment.query.filter_by(proxmox_vmid=vmid).first()
+                        persist_vm_inventory(
+                            proxmox_vmid=vmid,
+                            name=r.get('name', ''),
+                            node=r.get('node', ''),
+                            status=r.get('status', 'unknown'),
+                            vmtype=r.get('type', 'qemu'),
+                            mac_address=assignment.mac_address if assignment else None,
+                        )
+                        break
+            
+            logger.info(f"Updated VMInventory for {len(result.student_vmids) + 1} VMs")
+        except Exception as e:
+            logger.warning(f"Failed to update VMInventory: {e}")
         
         result.details.append(f"Completed: {result.successful} student VMs created, {result.failed} failed")
         logger.info(f"Class {class_id} VM deployment complete: {result.successful} successful, {result.failed} failed")

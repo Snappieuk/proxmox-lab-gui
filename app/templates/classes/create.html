@@ -171,10 +171,24 @@
 <script>
 // Load templates when page loads
 document.addEventListener('DOMContentLoaded', async function() {
+    await loadTemplates();
+    
+    // Handle template selection and checkbox changes
+    document.getElementById('template-select').addEventListener('change', function() {
+        updateSpecsVisibility();
+    });
+
+    document.getElementById('alter-specs-checkbox').addEventListener('change', function() {
+        updateSpecsVisibility();
+    });
+});
+
+async function loadTemplates(usePoll = false) {
     const selectElement = document.getElementById('template-select');
     
     try {
-        const resp = await fetch('/api/classes/templates');
+        const url = usePoll ? '/api/classes/templates?poll=true' : '/api/classes/templates';
+        const resp = await fetch(url);
         const data = await resp.json();
         
         if (!data.ok) {
@@ -198,13 +212,20 @@ document.addEventListener('DOMContentLoaded', async function() {
         };
         
         if (proxmoxTemplates.length === 0) {
-            selectElement.innerHTML = '<option value="">None</option>';
+            selectElement.innerHTML = '<option value="">None (No templates found)</option>';
+            // Show message to user
+            if (!usePoll) {
+                showTemplateMessage('No templates found. Templates may be replicating to nodes...', 'info');
+                // Trigger replication and start polling
+                await triggerReplicationAndPoll();
+            }
         } else {
             selectElement.innerHTML = '<option value="">None</option>' +
                 proxmoxTemplates.map(t => {
                     const registered = registeredMap[t.vmid] ? ' ✓' : '';
                     return `<option value="${t.vmid}" data-name="${t.name}" data-node="${t.node}">${t.name} (VMID: ${t.vmid})${registered}</option>`;
                 }).join('');
+            hideTemplateMessage();
         }
         
         // Update specs visibility after templates are loaded
@@ -216,18 +237,106 @@ document.addEventListener('DOMContentLoaded', async function() {
         // Update specs visibility even on error
         updateSpecsVisibility();
     }
-    
-    // Handle template selection and checkbox changes
-    document.getElementById('template-select').addEventListener('change', function() {
-        updateSpecsVisibility();
-    });
+}
 
-    document.getElementById('alter-specs-checkbox').addEventListener('change', function() {
-        updateSpecsVisibility();
-    });
+async function triggerReplicationAndPoll() {
+    showTemplateMessage('Replicating templates to all nodes... This may take a few minutes.', 'loading');
     
-    // Note: updateSpecsVisibility() is now called after templates load (inside try/catch blocks above)
-});
+    try {
+        // Trigger replication in background
+        const resp = await fetch('/api/classes/templates/replicate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        const data = await resp.json();
+        
+        if (!data.ok) {
+            showTemplateMessage('Failed to start template replication: ' + (data.error || 'Unknown error'), 'error');
+            return;
+        }
+        
+        // Start polling for templates (every 5 seconds, max 2 minutes)
+        let attempts = 0;
+        const maxAttempts = 24; // 24 * 5s = 2 minutes
+        const pollInterval = 5000; // 5 seconds
+        
+        const pollTimer = setInterval(async () => {
+            attempts++;
+            
+            showTemplateMessage(`Checking for templates... (${attempts}/${maxAttempts})`, 'loading');
+            
+            // Fetch templates with poll mode
+            const pollResp = await fetch('/api/classes/templates?poll=false');
+            const pollData = await pollResp.json();
+            
+            if (pollData.ok && pollData.template_count > 0) {
+                // Templates found!
+                clearInterval(pollTimer);
+                showTemplateMessage(`Found ${pollData.template_count} template(s)! Reloading...`, 'success');
+                
+                setTimeout(async () => {
+                    await loadTemplates(false);
+                    hideTemplateMessage();
+                }, 1000);
+            } else if (attempts >= maxAttempts) {
+                // Timeout
+                clearInterval(pollTimer);
+                showTemplateMessage('Template replication is taking longer than expected. Please refresh the page in a few minutes.', 'error');
+            }
+        }, pollInterval);
+        
+    } catch (e) {
+        console.error('Failed to trigger replication:', e);
+        showTemplateMessage('Failed to trigger template replication: ' + e.message, 'error');
+    }
+}
+
+function showTemplateMessage(message, type = 'info') {
+    let messageDiv = document.getElementById('template-message');
+    if (!messageDiv) {
+        messageDiv = document.createElement('div');
+        messageDiv.id = 'template-message';
+        messageDiv.style.padding = '12px';
+        messageDiv.style.marginBottom = '16px';
+        messageDiv.style.borderRadius = '4px';
+        messageDiv.style.border = '1px solid';
+        
+        const selectElement = document.getElementById('template-select');
+        selectElement.parentNode.insertBefore(messageDiv, selectElement);
+    }
+    
+    // Set colors based on type
+    if (type === 'loading') {
+        messageDiv.style.backgroundColor = '#e6f3ff';
+        messageDiv.style.borderColor = '#0078d4';
+        messageDiv.style.color = '#0078d4';
+        messageDiv.innerHTML = '<i class="bi bi-hourglass-split"></i> ' + message;
+    } else if (type === 'success') {
+        messageDiv.style.backgroundColor = '#e6f5e6';
+        messageDiv.style.borderColor = '#28a745';
+        messageDiv.style.color = '#28a745';
+        messageDiv.innerHTML = '<i class="bi bi-check-circle"></i> ' + message;
+    } else if (type === 'error') {
+        messageDiv.style.backgroundColor = '#ffe6e6';
+        messageDiv.style.borderColor = '#dc3545';
+        messageDiv.style.color = '#dc3545';
+        messageDiv.innerHTML = '<i class="bi bi-exclamation-triangle"></i> ' + message;
+    } else {
+        messageDiv.style.backgroundColor = '#fff8e6';
+        messageDiv.style.borderColor = '#ffc107';
+        messageDiv.style.color = '#856404';
+        messageDiv.innerHTML = '<i class="bi bi-info-circle"></i> ' + message;
+    }
+    
+    messageDiv.style.display = 'block';
+}
+
+function hideTemplateMessage() {
+    const messageDiv = document.getElementById('template-message');
+    if (messageDiv) {
+        messageDiv.style.display = 'none';
+    }
+}
 
 function updateSpecsVisibility() {
     const templateSelect = document.getElementById('template-select');

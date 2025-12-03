@@ -260,10 +260,31 @@ def api_vm_start(vmid: int):
         node = vm['node']
         vm_type = vm['type']
         
-        if vm_type == 'qemu':
-            proxmox.nodes(node).qemu(vmid).status.start.post()
-        else:  # lxc
-            proxmox.nodes(node).lxc(vmid).status.start.post()
+        # Query cluster to find actual node (VM may have been migrated)
+        actual_node = node
+        try:
+            resources = proxmox.cluster.resources.get(type="vm")
+            for r in resources:
+                if int(r.get('vmid', -1)) == int(vmid):
+                    actual_node = r.get('node')
+                    if actual_node != node:
+                        logger.info(f"VM {vmid} was migrated from {node} to {actual_node}, using actual node")
+                    break
+        except Exception as e:
+            logger.warning(f"Cluster resources query failed: {e}, using database node {node}")
+        
+        # Start the VM
+        try:
+            if vm_type == 'qemu':
+                proxmox.nodes(actual_node).qemu(vmid).status.start.post()
+            else:  # lxc
+                proxmox.nodes(actual_node).lxc(vmid).status.start.post()
+        except Exception as start_error:
+            # If VM is already running, that's okay
+            if "already running" in str(start_error).lower():
+                logger.info(f"VM {vmid} already running")
+            else:
+                raise
         
         # Immediately update database status
         update_vm_status(cluster_id, vmid, 'running')
@@ -328,15 +349,36 @@ def api_vm_stop(vmid: int):
         node = vm['node']
         vm_type = vm['type']
         
-        if vm_type == 'qemu':
-            proxmox.nodes(node).qemu(vmid).status.shutdown.post()
-        else:  # lxc
-            proxmox.nodes(node).lxc(vmid).status.shutdown.post()
+        # Query cluster to find actual node (VM may have been migrated)
+        actual_node = node
+        try:
+            resources = proxmox.cluster.resources.get(type="vm")
+            for r in resources:
+                if int(r.get('vmid', -1)) == int(vmid):
+                    actual_node = r.get('node')
+                    if actual_node != node:
+                        logger.info(f"VM {vmid} was migrated from {node} to {actual_node}, using actual node")
+                    break
+        except Exception as e:
+            logger.warning(f"Cluster resources query failed: {e}, using database node {node}")
+        
+        # Stop the VM
+        try:
+            if vm_type == 'qemu':
+                proxmox.nodes(actual_node).qemu(vmid).status.shutdown.post()
+            else:  # lxc
+                proxmox.nodes(actual_node).lxc(vmid).status.shutdown.post()
+        except Exception as stop_error:
+            # If VM is already stopped or doesn't exist, that's okay
+            if "not running" in str(stop_error).lower() or "does not exist" in str(stop_error).lower():
+                logger.info(f"VM {vmid} already stopped or doesn't exist")
+            else:
+                raise
         
         # Immediately update database
         update_vm_status(cluster_id, vmid, 'stopped')
         
-        logger.info(f"Stopped VM {vmid} on node {node}")
+        logger.info(f"Stopped VM {vmid} on node {actual_node}")
         return jsonify({"ok": True})
         
     except Exception as e:

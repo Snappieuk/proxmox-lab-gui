@@ -560,13 +560,31 @@ def list_templates():
     """List available templates for class creation.
     
     Only shows templates from cluster 10.220.15.249.
+    Query params:
+    - poll: If 'true', continuously poll until templates are available (max 60s)
     """
     user, error = require_teacher_or_adminer()
     if error:
         return jsonify(error[0]), error[1]
     
+    poll_mode = request.args.get('poll', 'false').lower() == 'true'
+    
     # Get templates from Proxmox
     proxmox_templates = list_proxmox_templates(CLASS_CLUSTER_IP)
+    
+    # If in poll mode and no templates, wait and retry
+    if poll_mode and len(proxmox_templates) == 0:
+        import time
+        max_wait = 60  # seconds
+        poll_interval = 2  # seconds
+        start_time = time.time()
+        
+        while time.time() - start_time < max_wait:
+            time.sleep(poll_interval)
+            proxmox_templates = list_proxmox_templates(CLASS_CLUSTER_IP)
+            if len(proxmox_templates) > 0:
+                logger.info(f"Templates found after {time.time() - start_time:.1f}s of polling")
+                break
     
     # Also get registered templates from database
     class_id = request.args.get('class_id', type=int)
@@ -575,7 +593,8 @@ def list_templates():
     return jsonify({
         "ok": True,
         "proxmox_templates": proxmox_templates,
-        "registered_templates": [t.to_dict() for t in db_templates]
+        "registered_templates": [t.to_dict() for t in db_templates],
+        "template_count": len(proxmox_templates)
     })
 
 
@@ -614,6 +633,40 @@ def register_template():
         "ok": True,
         "message": msg,
         "template": template.to_dict()
+    })
+
+
+@api_classes_bp.route("/templates/replicate", methods=["POST"])
+@login_required
+def trigger_template_replication():
+    """Trigger template replication to all nodes in background.
+    
+    Returns immediately with a task ID that can be used to check status.
+    """
+    user, error = require_teacher_or_adminer()
+    if error:
+        return jsonify(error[0]), error[1]
+    
+    # Start replication in background thread
+    from app.services.proxmox_operations import replicate_templates_to_all_nodes
+    
+    task_id = str(uuid.uuid4())
+    
+    def run_replication():
+        try:
+            logger.info(f"[Task {task_id}] Starting template replication")
+            replicate_templates_to_all_nodes(CLASS_CLUSTER_IP)
+            logger.info(f"[Task {task_id}] Template replication completed")
+        except Exception as e:
+            logger.exception(f"[Task {task_id}] Template replication failed: {e}")
+    
+    thread = threading.Thread(target=run_replication, daemon=True)
+    thread.start()
+    
+    return jsonify({
+        "ok": True,
+        "message": "Template replication started in background",
+        "task_id": task_id
     })
 
 
