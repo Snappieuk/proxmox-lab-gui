@@ -200,9 +200,14 @@ document.addEventListener('DOMContentLoaded', async function() {
                 }).join('');
         }
         
+        // Update specs visibility after templates are loaded
+        updateSpecsVisibility();
+        
     } catch (e) {
         console.error('Failed to load templates:', e);
         selectElement.innerHTML = '<option value="">None</option>';
+        // Update specs visibility even on error
+        updateSpecsVisibility();
     }
     
     // Handle template selection and checkbox changes
@@ -214,8 +219,7 @@ document.addEventListener('DOMContentLoaded', async function() {
         updateSpecsVisibility();
     });
     
-    // Call on initial load to show specs if "None" is selected
-    updateSpecsVisibility();
+    // Note: updateSpecsVisibility() is now called after templates load (inside try/catch blocks above)
 });
 
 function updateSpecsVisibility() {
