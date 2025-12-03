@@ -44,6 +44,8 @@ from app.services.vm_utils import (
     get_next_available_vmid_ssh as _get_next_available_vmid_canonical,
     get_vm_mac_address_ssh as _get_vm_mac_address_canonical,
 )
+from app.services.vm_template import export_template_to_qcow2
+from app.services.vm_core import wait_for_vm_stopped
 
 logger = logging.getLogger(__name__)
 
@@ -364,53 +366,8 @@ def recreate_student_vms_from_template(
                 pass
 
 
-def wait_for_vm_stopped(ssh_executor: SSHExecutor, vmid: int, timeout: int = None) -> bool:
-    """
-    Wait for a VM to fully stop.
-    
-    Polls the VM status until it's stopped or timeout is reached.
-    
-    NOTE: A similar function exists in vm_core.wait_for_vm_stopped().
-    This implementation is kept here for workflow-specific error handling.
-    
-    Args:
-        ssh_executor: SSH executor for running commands
-        vmid: VMID to check
-        timeout: Max time to wait in seconds (default: VM_STOP_TIMEOUT)
-        
-    Returns:
-        True if VM is stopped, False if timeout reached
-    """
-    if timeout is None:
-        timeout = VM_STOP_TIMEOUT
-    
-    start_time = time.time()
-    while time.time() - start_time < timeout:
-        try:
-            exit_code, stdout, stderr = ssh_executor.execute(
-                f"qm status {vmid}",
-                check=False,
-                timeout=10
-            )
-            
-            if exit_code != 0:
-                # VM doesn't exist or error - consider stopped
-                return True
-            
-            # Check if status is 'stopped'
-            if 'stopped' in stdout.lower():
-                logger.debug(f"VM {vmid} confirmed stopped")
-                return True
-            
-            logger.debug(f"VM {vmid} status: {stdout.strip()}, waiting...")
-            
-        except Exception as e:
-            logger.warning(f"Error checking VM {vmid} status: {e}")
-        
-        time.sleep(VM_STOP_POLL_INTERVAL)
-    
-    logger.warning(f"Timeout waiting for VM {vmid} to stop")
-    return False
+# wait_for_vm_stopped is now imported from vm_core at the top of this file
+# Removed duplicate implementation - use canonical version from vm_core
 
 
 # NOTE: The second get_next_available_vmid definition below was a duplicate.
@@ -418,94 +375,8 @@ def wait_for_vm_stopped(ssh_executor: SSHExecutor, vmid: int, timeout: int = Non
 # which delegates to vm_utils.get_next_available_vmid_ssh().
 
 
-def export_template_to_qcow2(
-    ssh_executor: SSHExecutor,
-    template_vmid: int,
-    node: str,
-    output_path: str,
-    disk: str = "scsi0",
-) -> Tuple[bool, str]:
-    """
-    Export a Proxmox template's disk to a QCOW2 file.
-    
-    This creates a base QCOW2 file that can be used as a backing file
-    for overlay disks.
-    
-    NOTE: A canonical implementation exists in vm_template.export_template_to_qcow2().
-    This version is kept for workflow-specific usage in class VM deployment.
-    For new features, prefer using the vm_template version.
-    
-    Args:
-        ssh_executor: SSH executor for running commands
-        template_vmid: VMID of the source template
-        node: Proxmox node name where template resides
-        output_path: Full path for the output QCOW2 file
-        disk: Disk to export (default: scsi0)
-        
-    Returns:
-        Tuple of (success, error_message)
-    """
-    logger.info(f"Exporting template {template_vmid} disk {disk} to {output_path}")
-    
-    try:
-        # First, get the disk path from the template config
-        exit_code, stdout, stderr = ssh_executor.execute(
-            f"qm config {template_vmid}",
-            timeout=30
-        )
-        
-        if exit_code != 0:
-            return False, f"Failed to get template config: {stderr}"
-        
-        # Parse the config to find the disk
-        disk_line = None
-        for line in stdout.split('\n'):
-            if line.startswith(f"{disk}:"):
-                disk_line = line
-                break
-        
-        if not disk_line:
-            return False, f"Disk {disk} not found in template {template_vmid}"
-        
-        # Extract storage and volume info
-        # Format: scsi0: TRUENAS-NFS:100/vm-100-disk-0.qcow2,size=32G
-        match = re.search(r'([^:]+):([^,]+)', disk_line.split(':', 1)[1])
-        if not match:
-            return False, f"Could not parse disk line: {disk_line}"
-        
-        storage = match.group(1).strip()
-        volume = match.group(2).strip()
-        
-        logger.info(f"Found disk on storage {storage}, volume {volume}")
-        
-        # Create output directory if needed
-        output_dir = '/'.join(output_path.rsplit('/', 1)[:-1]) if '/' in output_path else '.'
-        ssh_executor.execute(f"mkdir -p {output_dir}", check=False)
-        
-        # Use qemu-img to convert/copy the disk to a standalone QCOW2
-        # We need to find the actual disk path
-        # For NFS storage, it's typically /mnt/pve/<storage>/images/<vmid>/<volume>
-        source_path = f"/mnt/pve/{storage}/images/{template_vmid}/{volume.split('/')[-1] if '/' in volume else f'vm-{template_vmid}-disk-0.qcow2'}"
-        
-        logger.info(f"Converting {source_path} to {output_path}")
-        
-        exit_code, stdout, stderr = ssh_executor.execute(
-            f"qemu-img convert -O qcow2 {source_path} {output_path}",
-            timeout=600  # 10 minutes for large disks
-        )
-        
-        if exit_code != 0:
-            return False, f"qemu-img convert failed: {stderr}"
-        
-        # Set proper permissions
-        ssh_executor.execute(f"chmod 644 {output_path}", check=False)
-        
-        logger.info(f"Successfully exported template to {output_path}")
-        return True, ""
-        
-    except Exception as e:
-        logger.exception(f"Error exporting template: {e}")
-        return False, str(e)
+# export_template_to_qcow2 is now imported from vm_template at the top of this file
+# Removed 100-line duplicate implementation - use canonical version from vm_template
 
 
 def create_class_vms(

@@ -143,11 +143,14 @@ api/
 - **Purpose**: Provides low-level SSH command execution for VM operations
 - **Used by**: `class_vm_service.py` for all `qm` and `qemu-img` commands
 
-**`app/services/class_vm_service.py`** (Class VM service with disk operations, ~800 lines):
-- **Primary VM creation service**: All disk cloning/overlay operations happen here using direct `qm` and `qemu-img` commands
+**`app/services/class_vm_service.py`** (Class VM service workflows, ~843 lines):
+- **Primary VM creation service**: Orchestrates class VM deployment workflows using canonical implementations from vm_utils, vm_core, and vm_template modules
+  - **Modular design** (imports from canonical modules):
+    - `export_template_to_qcow2`: Imported from `vm_template` - exports template disk using `qemu-img convert`
+    - `wait_for_vm_stopped`: Imported from `vm_core` - polls VM status until stopped
+    - Wrapper functions: `get_next_available_vmid()`, `get_vm_mac_address()`, `sanitize_vm_name()` delegate to canonical `vm_utils` implementations
   - **Disk operations** (NO CLONING - always use disk export + overlays):
-    - `export_template_to_qcow2()`: Exports template disk using `qemu-img convert -O qcow2`
-    - Teacher VM: Empty shell (`qm create`) + overlay disk pointing to exported base QCOW2
+    - Teacher VM: Empty shell (`qm create`) + overlay disk pointing to exported base QCOW2 (uses `vm_template.create_overlay_vm()`)
     - Student overlays: `qemu-img create -f qcow2 -F qcow2 -b <base>` creates copy-on-write overlay disks
     - Empty shells: `qm create --scsi0 STORAGE:SIZE` for template-less classes (no template to export)
   - **Key functions**: 
@@ -223,6 +226,12 @@ api/
 - `app/services/qcow2_bulk_cloner.py` – Deleted, refactored into `ssh_executor.py` (SSH wrapper only)
 - `tests/test_qcow2_bulk_cloner.py` – Deleted, tested non-existent module
 
+**Code deduplication completed (2024)**:
+- Removed 100-line duplicate `export_template_to_qcow2()` from `class_vm_service.py` → now imports from `vm_template`
+- Removed 50-line duplicate `wait_for_vm_stopped()` from `class_vm_service.py` → now imports from `vm_core`
+- Removed 80-line duplicate `_get_vm_mac()` from `proxmox_client.py` → now calls `vm_utils.get_vm_mac_address_api()`
+- Wrapper functions in `class_vm_service.py` properly delegate to canonical implementations in `vm_utils`
+- Total reduction: ~230 lines of duplicate code eliminated
 
 ## Developer workflows
 
