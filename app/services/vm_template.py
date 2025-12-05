@@ -89,13 +89,13 @@ def export_template_to_qcow2(
             if slot in config:
                 disk_config = config[slot]
                 disk_slot = slot
-                logger.info(f"Found disk on slot {slot}")
+                logger.info(f"Found disk on slot {slot}: {disk_config}")
                 break
         
         if not disk_config:
             # Log all available config keys to help debug
-            available_keys = ', '.join(config.keys())
-            error_msg = f"No disk found in template {template_vmid}. Available config keys: {available_keys}"
+            config_dump = '\n'.join([f"  {k}: {v}" for k, v in config.items()])
+            error_msg = f"No disk found in template {template_vmid}. Config dump:\n{config_dump}"
             logger.error(error_msg)
             return False, error_msg
         
@@ -104,8 +104,12 @@ def export_template_to_qcow2(
         storage = disk_info.get('storage')
         volume = disk_info.get('volume')
         
+        logger.info(f"Parsed disk config - storage: {storage}, volume: {volume}, disk_info: {disk_info}")
+        
         if not storage or not volume:
-            return False, f"Could not parse disk config for {disk_slot}: {disk_config}"
+            error_msg = f"Could not parse disk config for {disk_slot}: '{disk_config}'. Parsed as: storage={storage}, volume={volume}"
+            logger.error(error_msg)
+            return False, error_msg
         
         logger.info(f"Found disk on {disk_slot}, storage {storage}, volume {volume}")
         

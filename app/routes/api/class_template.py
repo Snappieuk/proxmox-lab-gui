@@ -22,7 +22,7 @@ from app.models import db, Template
 
 logger = logging.getLogger(__name__)
 
-api_class_template_bp = Blueprint('api_class_template', __name__, url_prefix='/api/class')
+api_class_template_bp = Blueprint('api_class_template', __name__, url_prefix='/api/classes')
 
 
 def require_teacher_or_admin(class_id: int):
