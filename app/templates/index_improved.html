@@ -510,8 +510,262 @@ window.addEventListener('load', function() {
 
 // Load VMs (progressive)
 async function loadVMs() {
-    // Implementation continues from existing code...
-    console.log('VM loading initialized');
+    const loadingIndicator = document.getElementById('loading-indicator');
+    try {
+        const urlParams = new URLSearchParams(window.location.search);
+        const forceRefresh = urlParams.get('force_refresh') === 'true';
+        const fetchUrl = forceRefresh ? '/api/vms?force_refresh=true' : '/api/vms';
+        
+        let resp = await fetch(fetchUrl);
+        if (!resp.ok) {
+            throw new Error(`Failed to fetch VMs: ${resp.status}`);
+        }
+        
+        let payload = await resp.json();
+        let data = Array.isArray(payload) ? payload : (payload.vms || []);
+        window.isAdminView = payload.is_admin || false;
+        
+        console.log('Loaded VMs:', data.length, 'records');
+        
+        // Categorize VMs
+        const categories = {
+            windows: [],
+            linux: [],
+            lxc: []
+        };
+        
+        data.forEach(vm => {
+            if (vm.type === 'lxc') {
+                categories.lxc.push(vm);
+            } else if (vm.category === 'windows') {
+                categories.windows.push(vm);
+            } else if (vm.category === 'linux') {
+                categories.linux.push(vm);
+            }
+        });
+        
+        // Build VM sections
+        const container = document.getElementById('vm-tables-container');
+        container.innerHTML = '';
+        
+        // Create sections for each category
+        if (categories.windows.length > 0) {
+            container.appendChild(createVMSection('windows', 'Windows VMs', categories.windows, 'bi-windows'));
+        }
+        if (categories.linux.length > 0) {
+            container.appendChild(createVMSection('linux', 'Linux VMs', categories.linux, 'bi-ubuntu'));
+        }
+        if (categories.lxc.length > 0) {
+            container.appendChild(createVMSection('lxc', 'LXC Containers', categories.lxc, 'bi-box'));
+        }
+        
+        // Update summary cards
+        updateSummaryCards(categories);
+        
+        // Populate node filter
+        populateNodeFilter(data);
+        
+        // Reattach event handlers
+        attachVMEventHandlers();
+        
+        if (loadingIndicator) loadingIndicator.remove();
+        
+    } catch (e) {
+        console.error('Failed to load VMs:', e);
+        if (loadingIndicator) {
+            loadingIndicator.innerHTML = '<p style="color: #dc3545;">Failed to load VMs. Please refresh the page.</p>';
+        }
+    }
+}
+
+function createVMSection(category, title, vms, iconClass) {
+    const section = document.createElement('div');
+    section.className = 'vm-section';
+    section.innerHTML = `
+        <div class="vm-section-header" data-section="${category}">
+            <div class="vm-section-title">
+                <i class="bi bi-chevron-down section-toggle"></i>
+                <i class="${iconClass}" style="margin-left: 8px;"></i>
+                ${title}
+                <span class="vm-count-badge">${vms.length}</span>
+            </div>
+        </div>
+        <div class="vm-section-content" id="${category}-section" style="display: block;">
+            <table class="vm-table-improved" id="${category}-table">
+                <thead>
+                    <tr>
+                        <th style="width: 300px;">Name</th>
+                        <th style="width: 80px;">VMID</th>
+                        <th style="width: 120px;">Cluster</th>
+                        <th style="width: 100px;">Node</th>
+                        <th class="sortable-header" data-sort-state="none" style="width: 110px;">
+                            Status <i class="bi bi-funnel"></i>
+                        </th>
+                        <th style="width: 140px;">IP Address</th>
+                        <th style="width: 200px; text-align: right;">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${vms.map(vm => createVMRow(vm, category)).join('')}
+                </tbody>
+            </table>
+        </div>
+    `;
+    return section;
+}
+
+function createVMRow(vm, category) {
+    const statusClass = vm.status === 'running' ? 'pill-running' : vm.status === 'stopped' ? 'pill-stopped' : 'pill-unknown';
+    const iconClass = category === 'windows' ? 'bi-windows' : category === 'linux' ? 'bi-ubuntu' : 'bi-box';
+    const isRunning = vm.status === 'running';
+    const isStopped = vm.status === 'stopped';
+    const hasIp = vm.ip && vm.ip !== 'N/A';
+    
+    // Build action buttons based on category
+    let actionButtons = '';
+    if (category === 'windows') {
+        actionButtons = `
+            <button class="dropdown-item btn-rdp" 
+                    data-vmid="${vm.vmid}"
+                    data-ip="${vm.ip || ''}"
+                    ${!hasIp ? 'disabled' : ''}>
+                <i class="bi bi-pc-display"></i> Download RDP
+            </button>
+            <button class="dropdown-item btn-copy-rdp" 
+                    data-vmid="${vm.vmid}"
+                    data-ip="${vm.ip || ''}"
+                    ${!hasIp ? 'disabled' : ''}>
+                <i class="bi bi-clipboard"></i> Copy RDP Command
+            </button>
+        `;
+    } else {
+        actionButtons = `
+            <button class="dropdown-item btn-ssh-web" 
+                    data-vmid="${vm.vmid}"
+                    data-ip="${vm.ip || ''}"
+                    data-name="${vm.name}"
+                    ${!hasIp ? 'disabled' : ''}>
+                <i class="bi bi-terminal"></i> Web SSH
+            </button>
+            <button class="dropdown-item btn-ssh-copy" 
+                    data-vmid="${vm.vmid}"
+                    data-ip="${vm.ip || ''}"
+                    ${!hasIp ? 'disabled' : ''}>
+                <i class="bi bi-clipboard"></i> Copy SSH Command
+            </button>
+        `;
+    }
+    
+    return `
+        <tr data-vmid="${vm.vmid}" data-category="${category}" data-node="${vm.node}" data-status="${vm.status}">
+            <td>
+                <div class="vm-name-cell">
+                    <i class="bi ${iconClass} os-icon"></i>
+                    <strong>${vm.name}</strong>
+                </div>
+            </td>
+            <td>${vm.vmid}</td>
+            <td><span class="pill-badge pill-cluster">${vm.cluster_id || 'default'}</span></td>
+            <td><span class="pill-badge pill-node">${vm.node}</span></td>
+            <td>
+                <span class="pill-status ${statusClass}">${vm.status.charAt(0).toUpperCase() + vm.status.slice(1)}</span>
+            </td>
+            <td class="vm-ip">${vm.ip || 'N/A'}</td>
+            <td>
+                <div class="action-group">
+                    <button class="btn-action btn-start btn-power" 
+                            data-vmid="${vm.vmid}" 
+                            data-action="start"
+                            title="Start VM"
+                            ${isRunning ? 'disabled' : ''}>
+                        <i class="bi bi-play-fill"></i>
+                    </button>
+                    <button class="btn-action btn-stop btn-power" 
+                            data-vmid="${vm.vmid}" 
+                            data-action="stop"
+                            title="Stop VM"
+                            ${isStopped ? 'disabled' : ''}>
+                        <i class="bi bi-stop-fill"></i>
+                    </button>
+                    <div class="dropdown-action">
+                        <button class="btn-action btn-more" title="More actions">
+                            <i class="bi bi-three-dots-vertical"></i>
+                        </button>
+                        <div class="dropdown-menu">
+                            ${actionButtons}
+                        </div>
+                    </div>
+                </div>
+            </td>
+        </tr>
+    `;
+}
+
+function updateSummaryCards(categories) {
+    document.getElementById('windows-count').textContent = categories.windows.length;
+    document.getElementById('windows-running').textContent = categories.windows.filter(vm => vm.status === 'running').length + ' running';
+    
+    document.getElementById('linux-count').textContent = categories.linux.length;
+    document.getElementById('linux-running').textContent = categories.linux.filter(vm => vm.status === 'running').length + ' running';
+    
+    document.getElementById('lxc-count').textContent = categories.lxc.length;
+    document.getElementById('lxc-running').textContent = categories.lxc.filter(vm => vm.status === 'running').length + ' running';
+}
+
+function populateNodeFilter(vms) {
+    const nodeFilter = document.getElementById('node-filter');
+    const nodes = new Set();
+    vms.forEach(vm => {
+        if (vm.node) nodes.add(vm.node);
+    });
+    
+    // Keep "All Nodes" option and add discovered nodes
+    Array.from(nodes).sort().forEach(node => {
+        const option = document.createElement('option');
+        option.value = node;
+        option.textContent = node;
+        nodeFilter.appendChild(option);
+    });
+}
+
+function attachVMEventHandlers() {
+    // Power buttons
+    document.querySelectorAll('.btn-power').forEach(btn => {
+        btn.addEventListener('click', async function() {
+            const vmid = this.dataset.vmid;
+            const action = this.dataset.action;
+            
+            this.disabled = true;
+            const originalText = this.innerHTML;
+            this.innerHTML = '<i class="bi bi-hourglass-split"></i>';
+            
+            try {
+                const resp = await fetch(`/api/vm/${vmid}/${action}`, { method: 'POST' });
+                const result = await resp.json();
+                
+                if (result.ok) {
+                    setTimeout(() => loadVMs(), 2000);
+                } else {
+                    alert(`Failed to ${action} VM: ${result.error || 'Unknown error'}`);
+                    this.disabled = false;
+                    this.innerHTML = originalText;
+                }
+            } catch (e) {
+                console.error(`Failed to ${action} VM:`, e);
+                alert(`Failed to ${action} VM: ${e.message}`);
+                this.disabled = false;
+                this.innerHTML = originalText;
+            }
+        });
+    });
+    
+    // RDP download buttons
+    document.querySelectorAll('.btn-rdp').forEach(btn => {
+        btn.addEventListener('click', function() {
+            const vmid = this.dataset.vmid;
+            window.location.href = `/rdp/${vmid}.rdp`;
+        });
+    });
 }
 
 if (document.getElementById('loading-indicator')) {
