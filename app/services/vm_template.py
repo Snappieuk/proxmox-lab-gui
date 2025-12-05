@@ -71,17 +71,33 @@ def export_template_to_qcow2(
     Returns:
         Tuple of (success, error_message)
     """
-    logger.info(f"Exporting template {template_vmid} disk {disk} to {output_path}")
+    logger.info(f"Exporting template {template_vmid} to {output_path}")
     
     try:
         # Get the disk path from the template config (pass node for faster lookup)
         config = get_vm_config_ssh(ssh_executor, template_vmid, node=node)
         if not config:
-            return False, f"Failed to get template {template_vmid} config"
+            error_msg = f"Failed to get template {template_vmid} config from node {node}"
+            logger.error(error_msg)
+            return False, error_msg
         
-        disk_config = config.get(disk)
+        # Auto-detect which disk slot has the actual disk
+        # Check common disk slots in order of preference
+        disk_config = None
+        disk_slot = None
+        for slot in ['scsi0', 'virtio0', 'sata0', 'ide0', 'scsi1', 'virtio1']:
+            if slot in config:
+                disk_config = config[slot]
+                disk_slot = slot
+                logger.info(f"Found disk on slot {slot}")
+                break
+        
         if not disk_config:
-            return False, f"Disk {disk} not found in template {template_vmid}"
+            # Log all available config keys to help debug
+            available_keys = ', '.join(config.keys())
+            error_msg = f"No disk found in template {template_vmid}. Available config keys: {available_keys}"
+            logger.error(error_msg)
+            return False, error_msg
         
         # Parse disk configuration
         disk_info = parse_disk_config(disk_config)
@@ -89,9 +105,9 @@ def export_template_to_qcow2(
         volume = disk_info.get('volume')
         
         if not storage or not volume:
-            return False, f"Could not parse disk config: {disk_config}"
+            return False, f"Could not parse disk config for {disk_slot}: {disk_config}"
         
-        logger.info(f"Found disk on storage {storage}, volume {volume}")
+        logger.info(f"Found disk on {disk_slot}, storage {storage}, volume {volume}")
         
         # Resolve source path
         # For NFS storage: /mnt/pve/{storage}/images/{vmid}/{volume}

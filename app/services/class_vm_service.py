@@ -669,6 +669,7 @@ def create_class_vms(
             base_qcow2_path = f"{DEFAULT_TEMPLATE_STORAGE_PATH}/{class_prefix}-base.qcow2"
             
             result.details.append(f"Exporting template {template_vmid} to class base...")
+            logger.info(f"Starting template export: VMID {template_vmid}, node {template_node}, output {base_qcow2_path}")
             success, error = export_template_to_qcow2(
                 ssh_executor=ssh_executor,
                 template_vmid=template_vmid,
@@ -677,7 +678,9 @@ def create_class_vms(
             )
             
             if not success:
-                result.error = f"Failed to export template: {error}"
+                error_msg = f"Failed to export template {template_vmid}: {error}"
+                result.error = error_msg
+                logger.error(error_msg)
                 return result
             
             result.details.append(f"Class base created: {base_qcow2_path}")
