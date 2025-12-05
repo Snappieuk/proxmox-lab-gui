@@ -1032,7 +1032,7 @@ async function pollTemplateInfo() {
         retryText.style.display = templateLoadAttempts > 1 ? 'block' : 'none';
     }
     try {
-        const resp = await fetch(`/api/class/${classId}/template/info?v=${Date.now()}`);
+        const resp = await fetch(`/api/classes/${classId}/template/info?v=${Date.now()}`);
         const data = await resp.json();
         
         // Check if class is still being created (202 status with progress)

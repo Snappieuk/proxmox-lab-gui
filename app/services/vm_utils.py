@@ -435,9 +435,11 @@ def parse_disk_config(disk_line: str) -> dict:
     parts = disk_line.split(',')
     volume_part = parts[0].strip()
     
-    # Parse storage:volume
+    # Parse storage:volume (handle both "storage:volume" and "storage: volume")
     if ':' in volume_part:
-        result['storage'], result['volume'] = volume_part.split(':', 1)
+        storage, volume = volume_part.split(':', 1)
+        result['storage'] = storage.strip()
+        result['volume'] = volume.strip()
     else:
         result['volume'] = volume_part
     
