@@ -8,18 +8,16 @@ Handles SSH terminal page and WebSocket connections.
 import json
 import logging
 
-from flask import Blueprint, render_template, request, url_for, abort
-
-from app.utils.decorators import login_required
-
+from flask import Blueprint, abort, render_template, request, url_for
 
 from app.services.proxmox_client import find_vm_for_user, verify_vm_ip
+from app.utils.decorators import login_required
 
 logger = logging.getLogger(__name__)
 
 # Check for WebSocket support
 try:
-    from flask_sock import Sock
+    from flask_sock import Sock  # noqa: F401 - imported for feature detection
     WEBSOCKET_AVAILABLE = True
 except ImportError:
     WEBSOCKET_AVAILABLE = False

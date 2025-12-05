@@ -9,9 +9,10 @@ Provides endpoints to:
 """
 
 import logging
+
 from flask import Blueprint, jsonify
 
-from app.utils.decorators import login_required, admin_required
+from app.utils.decorators import admin_required, login_required
 
 logger = logging.getLogger(__name__)
 
@@ -74,8 +75,9 @@ def inventory_summary():
     Returns:
         JSON with inventory counts by cluster, status, etc.
     """
-    from app.models import VMInventory, db
     from sqlalchemy import func
+
+    from app.models import VMInventory, db
     
     try:
         # Count by cluster

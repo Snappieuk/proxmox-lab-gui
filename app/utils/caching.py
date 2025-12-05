@@ -5,12 +5,12 @@ Caching utilities for the application.
 This module provides thread-safe caching infrastructure used across the application.
 """
 
+import json
+import logging
+import os
 import threading
 import time
-import json
-import os
-import logging
-from typing import Dict, List, Any, Optional
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 

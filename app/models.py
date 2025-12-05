@@ -17,7 +17,7 @@ import secrets
 from datetime import datetime, timedelta
 
 from flask_sqlalchemy import SQLAlchemy
-from werkzeug.security import generate_password_hash, check_password_hash
+from werkzeug.security import check_password_hash, generate_password_hash
 
 # Initialize SQLAlchemy (will be bound to Flask app in create_app)
 db = SQLAlchemy()

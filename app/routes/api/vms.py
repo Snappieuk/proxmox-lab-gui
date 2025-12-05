@@ -11,9 +11,9 @@ import logging
 
 from flask import Blueprint, jsonify, request, session
 
-from app.utils.decorators import login_required
-from app.models import User, VMAssignment
 from app.config import CLUSTERS
+from app.models import User, VMAssignment
+from app.utils.decorators import login_required
 
 logger = logging.getLogger(__name__)
 
@@ -33,8 +33,8 @@ def api_vms():
     This endpoint ONLY queries the database - never makes direct Proxmox API calls.
     Background sync keeps VMInventory current.
     """
-    from app.services.user_manager import require_user, is_admin_user
     from app.services.inventory_service import fetch_vm_inventory
+    from app.services.user_manager import is_admin_user, require_user
 
     username = require_user()
     force_refresh = request.args.get('force_refresh', 'false').lower() == 'true'
@@ -83,10 +83,11 @@ def api_vms():
 @login_required
 def api_vm_ip(vmid: int):
     """Get IP address for a specific VM from database (lazy loading)."""
-    from app.services.user_manager import require_user, is_admin_user
-    from app.services.inventory_service import get_vm_from_inventory
     from flask import session
+
     from app.config import CLUSTERS
+    from app.services.inventory_service import get_vm_from_inventory
+    from app.services.user_manager import is_admin_user, require_user
     
     user = require_user()
     cluster_id = request.args.get('cluster', session.get("cluster_id", CLUSTERS[0]["id"]))
@@ -194,10 +195,11 @@ def api_vm_status(vmid: int):
     Query parameters:
     - cluster: Cluster ID (optional, will try to find VM in any cluster if omitted)
     """
-    from app.services.user_manager import require_user, is_admin_user
-    from app.services.inventory_service import get_vm_from_inventory
     from flask import session
+
     from app.config import CLUSTERS
+    from app.services.inventory_service import get_vm_from_inventory
+    from app.services.user_manager import is_admin_user, require_user
     
     user = require_user()
     cluster_id = request.args.get('cluster', session.get("cluster_id", CLUSTERS[0]["id"]))
@@ -233,9 +235,9 @@ def api_vm_start(vmid: int):
     Control operations (start/stop) MUST go through Proxmox API.
     Database is updated immediately after for fast UI refresh.
     """
-    from app.services.user_manager import require_user, is_admin_user
     from app.services.inventory_service import get_vm_from_inventory, update_vm_status
     from app.services.proxmox_service import get_proxmox_admin
+    from app.services.user_manager import is_admin_user, require_user
     
     user = require_user()
     # Handle both JSON and non-JSON requests
@@ -322,9 +324,9 @@ def api_vm_stop(vmid: int):
     Control operations (start/stop) MUST go through Proxmox API.
     Database is updated immediately after for fast UI refresh.
     """
-    from app.services.user_manager import require_user, is_admin_user
     from app.services.inventory_service import get_vm_from_inventory, update_vm_status
     from app.services.proxmox_service import get_proxmox_admin
+    from app.services.user_manager import is_admin_user, require_user
     
     user = require_user()
     # Handle both JSON and non-JSON requests

@@ -6,12 +6,13 @@ Allows admins/teachers to add existing VMs to classes without auto-assignment.
 """
 
 import logging
+
 from flask import Blueprint, jsonify, request, session
 
-from app.utils.decorators import login_required
-from app.services.user_manager import is_admin_user
-from app.models import db, VMAssignment
+from app.models import VMAssignment, db
 from app.services.class_service import get_class_by_id, get_user_by_username
+from app.services.user_manager import is_admin_user
+from app.utils.decorators import login_required
 
 logger = logging.getLogger(__name__)
 

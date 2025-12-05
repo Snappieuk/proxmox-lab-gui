@@ -4,11 +4,16 @@ API endpoints for managing class co-owners.
 """
 
 import logging
+
 from flask import Blueprint, jsonify, request, session
 
+from app.models import User, db
+from app.services.class_service import (
+    get_class_by_id,
+    get_user_by_id,
+    get_user_by_username,
+)
 from app.utils.decorators import login_required
-from app.services.class_service import get_class_by_id, get_user_by_username, get_user_by_id
-from app.models import db, User
 
 logger = logging.getLogger(__name__)
 

@@ -24,17 +24,17 @@ with SSHExecutor for direct qm/qemu-img operations.
 """
 
 import logging
-from typing import List, Dict, Tuple, Any, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
-from app.services.proxmox_service import get_proxmox_admin_for_cluster
 from app.config import CLUSTERS
 from app.models import VMInventory
+from app.services.proxmox_service import get_proxmox_admin_for_cluster
 
 logger = logging.getLogger(__name__)
 
 # Re-export sanitize_vm_name from vm_utils for backward compatibility
 # New code should import from vm_utils directly
-from app.services.vm_utils import sanitize_vm_name  # noqa: F401
+from app.services.vm_utils import sanitize_vm_name  # noqa: F401, E402
 
 # Default cluster IP for class operations (restricted to single cluster)
 CLASS_CLUSTER_IP = "10.220.15.249"
@@ -279,8 +279,9 @@ def replicate_templates_to_all_nodes(cluster_ip: str = None) -> None:
     Stores all template information in the database.
     """
     try:
-        from app.models import Template, db
         from datetime import datetime
+
+        from app.models import Template, db
         
         target_ip = cluster_ip or CLASS_CLUSTER_IP
         cluster_id = None
@@ -361,6 +362,7 @@ def replicate_templates_to_all_nodes(cluster_ip: str = None) -> None:
         next_vmid = max(used_vmids) + 1 if used_vmids else 200
 
         import time
+
         # For each template, ensure a replica exists on each node
         for tpl_name, instances in tpl_by_name.items():
             present_nodes = {i['node'] for i in instances}
@@ -400,8 +402,10 @@ def replicate_templates_to_all_nodes(cluster_ip: str = None) -> None:
                         logger.info(f"Replica template ready on {target}: {replica_vmid}")
                         # Register replica in database
                         try:
-                            from app.models import Template, db
                             from datetime import datetime
+
+                            from app.models import Template, db
+
                             # Use safe create_template to avoid race conditions
                             from app.services.class_service import create_template
                             replica_tpl, tpl_msg = create_template(
@@ -538,7 +542,7 @@ def _clone_vm_via_disk_api(proxmox, node: str, template_vmid: int, new_vmid: int
             'storage': target_storage
         }
         
-        result = proxmox.nodes(node).qemu(template_vmid).clone.post(**clone_params)
+        proxmox.nodes(node).qemu(template_vmid).clone.post(**clone_params)
         logger.info(f"Initiated full clone to {new_vmid} on storage {target_storage}")
         
         return True, f"Cloned via standard method to storage {target_storage}"
@@ -547,7 +551,7 @@ def _clone_vm_via_disk_api(proxmox, node: str, template_vmid: int, new_vmid: int
         logger.exception(f"Disk clone method failed: {e}")
         try:
             proxmox.nodes(node).qemu(new_vmid).delete()
-        except:
+        except Exception:
             pass
         return False, f"Clone failed: {e}"
 
@@ -707,7 +711,9 @@ def clone_vm_from_template(template_vmid: int, new_vmid: int, name: str, node: s
                         
                         # Update progress if task tracking enabled
                         if task_id:
-                            from app.services.clone_progress import update_clone_progress
+                            from app.services.clone_progress import (
+                                update_clone_progress,
+                            )
                             update_clone_progress(task_id, 
                                 message=f"Clone {safe_name} completed",
                                 progress_percent=100 * progress_weight
@@ -789,9 +795,10 @@ def clone_vms_for_class(template_vmid: int, node: str, count: int, name_prefix: 
     Returns:
         List of dicts with keys: vmid, name, node, is_template_vm (bool)
     """
-    from app.services.clone_progress import update_clone_progress
-    from concurrent.futures import ThreadPoolExecutor, as_completed
     import time
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    from app.services.clone_progress import update_clone_progress
     
     created_vms = []
     
@@ -1179,8 +1186,10 @@ def clone_vms_for_class(template_vmid: int, node: str, count: int, name_prefix: 
                             
                             # Register base template in database (optional, for tracking)
                             try:
-                                from app.models import db
                                 from datetime import datetime
+
+                                from app.models import db
+
                                 # Use safe create_template to avoid race conditions
                                 from app.services.class_service import create_template
                                 base_tpl, tpl_msg = create_template(
@@ -1296,7 +1305,7 @@ def clone_vms_for_class(template_vmid: int, node: str, count: int, name_prefix: 
             proxmox = get_proxmox_admin_for_cluster(cluster_id)
             nodes_list = proxmox.nodes.get()
             # Collect templates that match base template name or its replica naming
-            candidate_names = set([
+            set([
                 sanitize_vm_name(f"{name_prefix}-BaseTemplate", fallback="classvm-base")
             ])
             for node_info in nodes_list:
@@ -1711,7 +1720,8 @@ def get_vm_status(vmid: int, node: str = None, cluster_ip: str = None) -> Dict[s
         # Primary: resolve IP via ARP scanner (guest agent/LXC may not be available)
         try:
             if mac_address:
-                from app.services.arp_scanner import get_arp_table, discover_ips_via_arp
+                from app.services.arp_scanner import discover_ips_via_arp, get_arp_table
+
                 # Try current ARP table first
                 arp = get_arp_table()
                 mac_norm = mac_address.lower()
@@ -1721,6 +1731,7 @@ def get_vm_status(vmid: int, node: str = None, cluster_ip: str = None) -> Dict[s
                 if not ip_address:
                     try:
                         from app.config import ARP_SUBNETS
+
                         # Trigger background scan; returns cached results if available
                         discover_ips_via_arp({}, ARP_SUBNETS, background=True)
                     except Exception as se:
@@ -1834,10 +1845,10 @@ def delete_vm(vmid: int, node: str, cluster_ip: str = None) -> Tuple[bool, str]:
     Returns:
         Tuple of (success, message)
     """
+    from app.models import Template
     from app.services.ssh_executor import get_ssh_executor_from_config
     from app.services.vm_core import wait_for_vm_stopped
-    from app.models import Template
-    
+
     # CRITICAL SAFETY CHECK: Never delete template VMs
     template = Template.query.filter_by(proxmox_vmid=vmid).first()
     if template:
@@ -1928,7 +1939,7 @@ def delete_vm(vmid: int, node: str, cluster_ip: str = None) -> Tuple[bool, str]:
         # Ensure cleanup on error
         try:
             ssh_executor.disconnect()
-        except:
+        except Exception:
             pass
         return False, f"Delete failed: {str(e)}"
 
@@ -2167,9 +2178,10 @@ def push_template_to_students(base_template_vmid: int, base_template_node: str,
     Returns:
         Tuple of (success, new_vm_list, message)
     """
-    from app.services.clone_progress import update_clone_progress
-    from concurrent.futures import ThreadPoolExecutor, as_completed
     import time
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    from app.services.clone_progress import update_clone_progress
     
     try:
         cluster_id = None

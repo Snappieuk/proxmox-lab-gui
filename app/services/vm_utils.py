@@ -22,7 +22,7 @@ from typing import Optional, Set
 logger = logging.getLogger(__name__)
 
 # Import VMInventory model for VMID lookup
-from app.models import VMInventory
+from app.models import VMInventory  # noqa: E402 - import after logger setup
 
 
 def get_optimal_node(ssh_executor, proxmox=None) -> str:
@@ -55,7 +55,7 @@ def get_optimal_node(ssh_executor, proxmox=None) -> str:
                 mem_used = node.get('mem', 0)
                 mem_free_pct = (mem_total - mem_used) / mem_total if mem_total > 0 else 0
                 
-                cpu_total = node.get('maxcpu', 1)
+                node.get('maxcpu', 1)
                 cpu_used = node.get('cpu', 0)
                 cpu_free_pct = (1 - cpu_used) if cpu_used < 1 else 0
                 
@@ -275,7 +275,7 @@ def get_vm_mac_address_ssh(ssh_executor, vmid: int, node: Optional[str] = None) 
                         if resource.get('vmid') == vmid:
                             node = resource.get('node')
                             break
-                except:
+                except Exception:
                     pass
         
         # Use cluster-aware pvesh command to get VM config

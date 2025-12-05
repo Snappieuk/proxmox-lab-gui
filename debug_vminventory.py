@@ -3,9 +3,11 @@
 Debug script to check VMInventory table status and test insertion.
 """
 
+from sqlalchemy import inspect, text
+
 from app import create_app
-from app.models import db, VMInventory
-from sqlalchemy import text, inspect
+from app.models import VMInventory, db
+
 
 def main():
     app = create_app()

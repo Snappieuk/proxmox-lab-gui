@@ -21,7 +21,7 @@ if _current_dir not in sys.path:
     sys.path.insert(0, _current_dir)
 
 # Import the create_app factory from our app package
-from app import create_app
+from app import create_app  # noqa: E402 - import after path setup
 
 # Create the Flask application
 app = create_app()

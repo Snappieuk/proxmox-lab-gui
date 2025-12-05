@@ -7,12 +7,10 @@ Handles RDP file generation and download.
 
 import logging
 
-from flask import Blueprint, Response, render_template, url_for, abort
+from flask import Blueprint, Response, abort, render_template, url_for
 
-from app.utils.decorators import login_required
 from app.services.rdp_service import build_rdp
-
-
+from app.utils.decorators import login_required
 
 logger = logging.getLogger(__name__)
 
@@ -23,9 +21,8 @@ api_rdp_bp = Blueprint('api_rdp', __name__)
 @login_required
 def rdp_file(vmid: int):
     """Generate and download RDP file for a VM."""
-    from app.services.user_manager import require_user
     from app.services.inventory_service import fetch_vm_by_vmid
-    from app.services.user_manager import is_admin_user
+    from app.services.user_manager import is_admin_user, require_user
     
     user = require_user()
     logger.info("rdp_file: user=%s requesting vmid=%s", user, vmid)
@@ -41,7 +38,8 @@ def rdp_file(vmid: int):
     if not admin:
         # Check if user has access to this VM
         from flask import has_app_context
-        from app.models import VMAssignment, User
+
+        from app.models import User, VMAssignment
         
         accessible = False
         

@@ -30,14 +30,14 @@ Cache:
     - Avoids excessive scans by checking cache age before new scans
 """
 
-import subprocess
-import re
+import ipaddress
 import os
+import re
+import subprocess
 import threading
 import time
-import ipaddress
-from typing import Dict, Optional, List
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Dict, List, Optional
 
 # Module-level cache for ARP results
 _arp_cache: Dict[str, str] = {}  # mac -> ip
@@ -182,7 +182,7 @@ def broadcast_ping(subnet: str = "192.168.1.255", count: int = 1) -> bool:
             # -b: allow pinging broadcast address
             # -c: count of pings
             # -W: timeout in seconds
-            result = subprocess.run(
+            subprocess.run(
                 [ping_cmd, '-b', '-c', str(count), '-W', '1', subnet],
                 capture_output=True,
                 text=True,
@@ -228,7 +228,7 @@ def parallel_ping_sweep(subnet_cidr: str, timeout_ms: int = 300, max_workers: in
     
     try:
         network = ipaddress.ip_network(subnet_cidr, strict=False)
-        total_hosts = network.num_addresses - 2  # Exclude network and broadcast
+        network.num_addresses - 2  # Exclude network and broadcast
         
         start_time = time.time()
         
@@ -243,7 +243,7 @@ def parallel_ping_sweep(subnet_cidr: str, timeout_ms: int = 300, max_workers: in
                     timeout=timeout_sec + 1
                 )
                 return result.returncode == 0
-            except:
+            except Exception:
                 return False
         
         def check_rdp_port(ip: str) -> bool:
@@ -254,7 +254,7 @@ def parallel_ping_sweep(subnet_cidr: str, timeout_ms: int = 300, max_workers: in
                 rdp_result = sock.connect_ex((ip, 3389))
                 sock.close()
                 return rdp_result == 0
-            except:
+            except Exception:
                 return False
         
         # Ping all IPs in parallel
@@ -308,9 +308,9 @@ def parallel_ping_sweep(subnet_cidr: str, timeout_ms: int = 300, max_workers: in
                     if has_rdp:
                         rdp_hosts.add(ip)
             
-            rdp_duration = time.time() - rdp_start
+            time.time() - rdp_start
         
-        elapsed = time.time() - start_time
+        time.time() - start_time
         
         return (alive_count, rdp_hosts)
         
@@ -350,13 +350,11 @@ def scan_network_range(subnet_cidr: str = "10.220.8.0/21", timeout: int = 3) -> 
         # Use --min-rate 50 to ensure scan doesn't complete instantly
         nmap_args = ['-sn', '-PR', '-T4', '--min-rate', '50', '--max-rate', '300', 
                     '--max-retries', '2', '--host-timeout', '3s', subnet_cidr]
-        scan_type = "ARP ping (root)"
     else:
         # Unprivileged: use standard ping scan without -PR
         # -sn does ICMP echo, TCP SYN to 443, TCP ACK to 80, ICMP timestamp
         nmap_args = ['-sn', '-T4', '--min-rate', '50', '--max-rate', '300',
                     '--max-retries', '2', '--host-timeout', '3s', subnet_cidr]
-        scan_type = "ICMP/TCP ping (unprivileged)"
     
     # Try nmap with different paths
     for nmap_cmd in ['/usr/bin/nmap', '/usr/local/bin/nmap', 'nmap']:
@@ -372,7 +370,7 @@ def scan_network_range(subnet_cidr: str = "10.220.8.0/21", timeout: int = 3) -> 
                 timeout=scan_timeout
             )
             
-            elapsed = time.time() - start_time
+            time.time() - start_time
             
             if result.returncode != 0:
                 # Check if it's a privilege error for -PR (nmap exits with code 1)
@@ -497,7 +495,7 @@ def _background_scan_worker(vm_mac_map: Dict[str, str], subnets: Optional[List[s
         
         if alive_count == 0:
             # Fallback to nmap if parallel ping found nothing
-            scan_success = scan_network_range("10.220.8.0/21", timeout=1)
+            scan_network_range("10.220.8.0/21", timeout=1)
         
         # Get updated ARP table
         arp_table = get_arp_table()
@@ -607,7 +605,7 @@ def discover_ips_via_arp(vm_mac_map: Dict[str, str], subnets: Optional[List[str]
     
     if alive_count == 0:
         # Fallback to nmap if parallel ping found nothing
-        scan_success = scan_network_range("10.220.8.0/21", timeout=5)
+        scan_network_range("10.220.8.0/21", timeout=5)
     
     # Get updated ARP table
     arp_table = get_arp_table()

@@ -8,19 +8,17 @@ and relies on cached VM id/name lists where possible.
 """
 
 import logging
-from typing import List, Dict, Any
+from typing import Any, Dict, List
 
 from flask import Blueprint, jsonify, request
 
-from app.utils.decorators import admin_required
-
-
 from app.services.mappings_service import (
+    get_all_vm_ids_and_names,
     get_user_vm_map,
     save_user_vm_map,
-    get_all_vm_ids_and_names,
 )
 from app.services.user_manager import get_pve_users, require_user
+from app.utils.decorators import admin_required
 
 logger = logging.getLogger(__name__)
 

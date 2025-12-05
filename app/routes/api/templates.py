@@ -2,10 +2,12 @@
 
 import logging
 from datetime import datetime
+
 from flask import Blueprint, jsonify, request
+
+from app.config import CLUSTERS
 from app.models import Template, db
 from app.utils.decorators import login_required
-from app.config import CLUSTERS
 
 logger = logging.getLogger(__name__)
 
@@ -206,7 +208,7 @@ def sync_templates_from_proxmox():
     from app.services.proxmox_service import get_proxmox_admin_for_cluster
     
     cluster_filter = request.args.get("cluster_ip")
-    force = request.args.get("force", "false").lower() == "true"
+    request.args.get("force", "false").lower() == "true"
     
     synced_count = 0
     updated_count = 0
