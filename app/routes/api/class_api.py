@@ -382,6 +382,12 @@ def delete_class_route(class_id: int):
             logger.error(f"SAFETY VIOLATION: Assignment {assignment.id} (VMID {assignment.proxmox_vmid}) has class_id={assignment.class_id} but we're deleting class {class_id}!")
             continue
         
+        # CRITICAL SAFETY CHECK: NEVER delete the original source template
+        # Check if this VMID matches the class's source template
+        if class_.template and assignment.proxmox_vmid == class_.template.proxmox_vmid:
+            logger.error(f"SAFETY VIOLATION: Refusing to delete original template VM {assignment.proxmox_vmid}! This should NEVER be in VMAssignment for a class!")
+            continue
+        
         vm_assignments_to_delete.append({
             'vmid': assignment.proxmox_vmid,
             'node': assignment.node,

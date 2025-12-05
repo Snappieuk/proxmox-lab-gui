@@ -1825,6 +1825,9 @@ def delete_vm(vmid: int, node: str, cluster_ip: str = None) -> Tuple[bool, str]:
     Ensures VM is stopped before deletion to prevent errors.
     Uses Proxmox API for VM control (better than SSH) and SSH for actual deletion.
     
+    CRITICAL SAFETY: This function checks if the VM is a template before deletion.
+    Templates should NEVER be deleted via this function.
+    
     Args:
         vmid: VM ID
         node: Node name
@@ -1835,6 +1838,14 @@ def delete_vm(vmid: int, node: str, cluster_ip: str = None) -> Tuple[bool, str]:
     """
     from app.services.ssh_executor import get_ssh_executor_from_config
     from app.services.vm_core import wait_for_vm_stopped
+    from app.models import Template
+    
+    # CRITICAL SAFETY CHECK: Never delete template VMs
+    template = Template.query.filter_by(proxmox_vmid=vmid).first()
+    if template:
+        error_msg = f"REFUSED: VM {vmid} is a registered template (id={template.id}, name={template.name}) and cannot be deleted!"
+        logger.error(error_msg)
+        return False, error_msg
     
     try:
         # Get Proxmox API connection for VM control
