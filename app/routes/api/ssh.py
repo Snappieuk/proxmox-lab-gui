@@ -138,13 +138,22 @@ def ssh_terminal(vmid: int):
     from app.services.user_manager import require_user
     
     user = require_user()
+    logger.info("SSH terminal request for VM %d by user %s", vmid, user)
+    
     vm = find_vm_for_user(user, vmid)
     
     if not vm:
+        logger.error("VM %d not found or not accessible by user %s", vmid, user)
         abort(404)
+    
+    logger.info("VM %d info: type=%s, node=%s, status=%s", 
+                vmid, vm.get('type'), vm.get('node'), vm.get('status'))
     
     ip = request.args.get('ip') or vm.get('ip')
     name = request.args.get('name') or vm.get('name', f'VM {vmid}')
+    
+    logger.info("VM %d initial IP: %s (from query: %s, from vm: %s)", 
+                vmid, ip, request.args.get('ip'), vm.get('ip'))
     
     # Verify cached IP is still correct
     if ip:
@@ -152,16 +161,18 @@ def ssh_terminal(vmid: int):
         verified_ip = verify_vm_ip(cluster_id, vm['node'], vmid, vm['type'], ip)
         if verified_ip and verified_ip != ip:
             ip = verified_ip
-            logger.info("Updated IP for VM %d: %s", vmid, ip)
+            logger.info("Updated IP for VM %d: %s -> %s", vmid, request.args.get('ip'), ip)
     
-    if not ip:
+    if not ip or ip in ('N/A', 'Checking...', 'Fetching...'):
+        logger.error("VM %d has no valid IP address (ip=%s)", vmid, ip)
         return render_template(
             "error.html",
             error_title="SSH Terminal Not Available",
-            error_message="VM does not have an IP address. Please start the VM and wait for network configuration.",
+            error_message=f"VM does not have an IP address (current: {ip or 'None'}). Please start the VM and wait for network configuration.",
             back_url=url_for("portal.portal")
         ), 503
     
+    logger.info("Rendering SSH terminal for VM %d (%s) at IP %s", vmid, name, ip)
     return render_template(
         "ssh_terminal.html",
         vmid=vmid,
