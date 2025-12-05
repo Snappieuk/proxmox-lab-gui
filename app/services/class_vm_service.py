@@ -763,7 +763,6 @@ def create_class_vms(
             
             # Query Proxmox to find actual node where VM was created
             # (SSH commands run on connected node, not necessarily template_node)
-            from app.services.vm_core import get_vm_current_node
             teacher_actual_node = get_vm_current_node(ssh_executor, teacher_vmid)
             if not teacher_actual_node:
                 logger.warning(f"Could not determine node for teacher VM {teacher_vmid}, using template_node as fallback")
