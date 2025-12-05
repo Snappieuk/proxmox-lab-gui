@@ -796,7 +796,13 @@ function attachVMEventHandlers() {
         btn.addEventListener('click', function() {
             const vmid = this.dataset.vmid;
             const vmName = this.dataset.name || `VM ${vmid}`;
-            const sshUrl = `/ssh/${vmid}`;
+            const vmIp = this.dataset.ip || '';
+            
+            // Build SSH URL with query parameters
+            const params = new URLSearchParams();
+            if (vmIp) params.append('ip', vmIp);
+            if (vmName) params.append('name', vmName);
+            const sshUrl = `/ssh/${vmid}?${params.toString()}`;
             
             // Open SSH in a small popup window
             const width = 1000;
