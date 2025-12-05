@@ -78,8 +78,8 @@ def export_template_to_qcow2(
     logger.info(f"Exporting template {template_vmid} disk {disk} to {output_path}")
     
     try:
-        # Get the disk path from the template config
-        config = get_vm_config_ssh(ssh_executor, template_vmid)
+        # Get the disk path from the template config (pass node for faster lookup)
+        config = get_vm_config_ssh(ssh_executor, template_vmid, node=node)
         if not config:
             return False, f"Failed to get template {template_vmid} config"
         

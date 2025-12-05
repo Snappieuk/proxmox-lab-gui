@@ -726,6 +726,47 @@ def create_class_vms(
             # Migration could be added here if needed, but shared storage allows cross-node access
             result.details.append(f"Teacher VM {teacher_vmid} created on {template_node}")
             
+            # Step 3: Create class-base VM (for consistency and to allow template updates)
+            # Use index 99 (last student slot) to keep it within allocated range
+            class_base_vmid = class_.vmid_prefix * 100 + 99  # e.g., 234 * 100 + 99 = 23499
+            class_base_name = f"{class_prefix}-base"
+            
+            result.details.append(f"Creating class-base VM as overlay...")
+            logger.info(f"Creating class-base VM with VMID {class_base_vmid}")
+            
+            success, error, base_mac = create_overlay_vm(
+                ssh_executor=ssh_executor,
+                vmid=class_base_vmid,
+                name=class_base_name,
+                base_qcow2_path=base_qcow2_path,
+                node=template_node,
+                memory=memory,
+                cores=cores,
+            )
+            
+            if not success:
+                result.error = f"Failed to create class-base VM: {error}"
+                logger.error(f"Class-base VM creation failed: {error}")
+                return result
+            
+            result.class_base_vmid = class_base_vmid
+            result.details.append(f"Class-base VM created: {class_base_vmid} ({class_base_name})")
+            
+            # Create VMAssignment for class-base (marked as template VM so it's hidden from students)
+            class_base_assignment = VMAssignment(
+                class_id=class_id,
+                proxmox_vmid=class_base_vmid,
+                vm_name=class_base_name,
+                mac_address=base_mac,
+                node=template_node,
+                assigned_user_id=None,
+                status='available',
+                is_template_vm=True,  # Mark as template so it's hidden from student view
+                is_teacher_vm=False,
+            )
+            db.session.add(class_base_assignment)
+            logger.info(f"Class-base VM {class_base_vmid} created successfully")
+            
         else:
             # WITHOUT TEMPLATE: Create empty VM shells
             result.details.append("Creating teacher VM shell (no template)...")
@@ -807,7 +848,7 @@ def create_class_vms(
             
             # Create class-base VM (acts as placeholder/reference, not used for overlays in template-less workflow)
             # Use index 99 (last student slot) to keep it within allocated range
-            class_base_vmid = vmid_prefix * 100 + 99  # e.g., 234 * 100 + 99 = 23499
+            class_base_vmid = class_.vmid_prefix * 100 + 99  # e.g., 234 * 100 + 99 = 23499
             class_base_name = f"{class_prefix}-base"
             
             result.details.append(f"Creating class-base VM shell (no template)...")

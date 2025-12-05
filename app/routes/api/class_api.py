@@ -345,20 +345,11 @@ def delete_class_route(class_id: int):
         logger.error(f"User {user.username} not authorized to delete class {class_id}")
         return jsonify({"ok": False, "error": "Access denied"}), 403
     
-    # Capture template info BEFORE deletion so we can delete the class's base template VM
-    template_info = None
-    if class_.template:
-        tpl = class_.template
-        # Always attempt to delete the class's base template VM to avoid orphaned resources
-        template_info = {
-            'vmid': tpl.proxmox_vmid,
-            'node': tpl.node,
-            'cluster_ip': tpl.cluster_ip,
-            'db_id': tpl.id,
-        }
-        logger.info(f"Class {class_id}: will delete base template VM {tpl.proxmox_vmid} (template_id={tpl.id})")
-
-    # Check if force delete (skip VM deletion from Proxmox including template)
+    # CRITICAL: Do NOT delete the original template VM (class_.template)
+    # The template is shared across classes and should never be touched during class deletion
+    # Only delete VMs that are explicitly in VMAssignment for THIS class
+    
+    # Check if force delete (skip VM deletion from Proxmox)
     force_delete = request.args.get('force', 'false').lower() == 'true'
     
     if force_delete:
@@ -428,40 +419,19 @@ def delete_class_route(class_id: int):
             failed_vms.append({'vmid': vm_info['vmid'], 'error': vm_msg})
             logger.warning(f"Failed to delete VM {vm_info['vmid']} from class {class_id}: {vm_msg}")
     
-    # Delete template VM after class deletion (foreign key broken) if we captured info and not force deleted
-    template_deleted = False
-    template_delete_error = None
-    if template_info and not force_delete:
-        from app.models import Template, db
-        try:
-            logger.info(f"Deleting class template VM {template_info['vmid']} (template_id={template_info['db_id']})")
-            t_success, t_msg = delete_vm(template_info['vmid'], template_info['node'], template_info['cluster_ip'])
-            if t_success:
-                template_deleted = True
-                logger.info(f"Deleted class template VM {template_info['vmid']}")
-            else:
-                template_delete_error = t_msg
-                logger.warning(f"Failed to delete class template VM {template_info['vmid']}: {t_msg}")
-            # Remove template DB record if still present
-            tpl_row = Template.query.get(template_info['db_id'])
-            if tpl_row:
-                db.session.delete(tpl_row)
-                db.session.commit()
-                logger.info(f"Deleted template DB record id={template_info['db_id']}")
-        except Exception as e:
-            template_delete_error = str(e)
-            logger.exception(f"Error deleting class template VM {template_info['vmid']}: {e}")
+    # CRITICAL: We ONLY delete VMs that are in VMAssignment for this class
+    # - Teacher VM (is_teacher_vm=True)
+    # - Class-base VM (is_template_vm=True) - the class-specific overlay base
+    # - Student VMs (regular assignments)
+    # We NEVER delete the original source template (class_.template) which is shared across classes
 
-    logger.info(f"Class deletion complete: {len(deleted_vms)} VMs deleted, {len(failed_vms)} failed; template_deleted={template_deleted}")
+    logger.info(f"Class deletion complete: {len(deleted_vms)} VMs deleted, {len(failed_vms)} failed")
 
     return jsonify({
         "ok": True,
         "message": msg,
         "deleted_vms": deleted_vms,
         "failed_vms": failed_vms,
-        "template_deleted": template_deleted,
-        "template_vmid": template_info['vmid'] if template_info else None,
-        "template_delete_error": template_delete_error
     })
 
 

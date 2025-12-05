@@ -627,22 +627,48 @@ def delete_snapshot_ssh(
 # VM Configuration
 # ---------------------------------------------------------------------------
 
-def get_vm_config_ssh(ssh_executor: SSHExecutor, vmid: int) -> Optional[Dict[str, str]]:
+def get_vm_config_ssh(ssh_executor: SSHExecutor, vmid: int, node: str = None) -> Optional[Dict[str, str]]:
     """
     Get VM configuration via SSH.
     
-    Parses qm config output into a dictionary.
+    Parses qm config output into a dictionary. Uses cluster-wide query
+    if node is not specified.
     
     Args:
         ssh_executor: SSH executor for running commands
         vmid: VM ID
+        node: Specific node name (optional, will auto-detect if not provided)
         
     Returns:
         Dict of config key-value pairs, or None if VM doesn't exist
     """
     try:
+        # If node not specified, find it via cluster resources
+        if not node:
+            exit_code, stdout, stderr = ssh_executor.execute(
+                f"pvesh get /cluster/resources --type vm --output-format json",
+                check=False,
+                timeout=30
+            )
+            
+            if exit_code == 0 and stdout.strip():
+                import json
+                try:
+                    vms = json.loads(stdout)
+                    for vm in vms:
+                        if vm.get('vmid') == vmid:
+                            node = vm.get('node')
+                            break
+                except (json.JSONDecodeError, ValueError):
+                    pass
+            
+            if not node:
+                logger.warning(f"Could not find node for VM {vmid}")
+                return None
+        
+        # Use pvesh to get config (works cluster-wide with node parameter)
         exit_code, stdout, stderr = ssh_executor.execute(
-            f"qm config {vmid}",
+            f"pvesh get /nodes/{node}/qemu/{vmid}/config",
             check=False,
             timeout=30
         )
