@@ -43,8 +43,12 @@ A Flask webapp providing a lab VM portal similar to Azure Labs for self-service 
 - Function `_resolve_user_owned_vmids()` in `app/routes/api/vms.py` handles all permission logic.
 - All systems query Proxmox clusters via `app/services/proxmox_client.py` and render same templates.
 
-**Multi-cluster support** (`app/config.py` + `app/services/cluster_manager.py`):
-- `CLUSTERS` list defines multiple Proxmox clusters (can load from `clusters.json` for persistence)
+**Database-first cluster management** (`app/models.py` Cluster model + `app/config.py`):
+- **Cluster table**: Stores all Proxmox cluster connection configurations (host, port, user, password, verify_ssl, is_active, is_default)
+- **Migration**: `migrate_db.py` automatically migrates existing `clusters.json` to database on first run
+- **Runtime loading**: `load_clusters_from_db()` loads active clusters from database, falls back to clusters.json if DB unavailable
+- **Legacy support**: clusters.json still supported for backwards compatibility, but database is preferred
+- **Admin UI**: Clusters managed via `/admin/clusters` route (add/edit/delete/activate/deactivate)
 - Session stores `cluster_id` – user switches clusters via dropdown in UI
 - Each cluster gets separate `ProxmoxAPI` connection (cached in `_proxmox_connections` dict)
 - `get_proxmox_admin()` returns connection for current session cluster
@@ -121,7 +125,8 @@ api/
 - Context processor: injects `is_admin`, `clusters`, `current_cluster`, `local_user` into all templates
 - Templates/static served from `app/templates/` and `app/static/` directories
 
-**`app/models.py`** (SQLAlchemy ORM, ~300 lines):
+**`app/models.py`** (SQLAlchemy ORM, ~550 lines):
+- `Cluster`: **Database-first cluster config** - stores Proxmox cluster connection info (host, port, user, password, verify_ssl, is_active, is_default). Replaces clusters.json for persistent cluster management.
 - `User`: Local accounts with roles (`adminer`/`teacher`/`user`), password hashing via Werkzeug
 - `Class`: Lab classes created by teachers, linked to `Template`, has `join_token` with expiry
 - `Template`: References Proxmox template VMIDs, can be cluster-wide or class-specific
@@ -217,6 +222,7 @@ api/
 - `proxmox-gui.service` – Systemd unit (edit User/Group/paths, then `systemctl enable/start`)
   
 **Utility scripts**:
+- `migrate_db.py` – Database migration script (creates tables, adds columns, migrates clusters.json to database)
 - `debug_vminventory.py` – Query VMInventory table directly (for debugging sync issues)
 - `fix_vminventory.py` – Repair VMInventory table (remove stale records, fix sync errors)
 
@@ -292,8 +298,16 @@ git add . && git commit -m "Changes" && git push
 9. **Co-owner management**: Teacher can add co-owners (other teachers) via `/api/classes/<id>/co-owners` for shared class management
 **Note**: All users (teachers and students) are local database accounts. No Proxmox accounts needed except for admins.
 
-**Database migrations** (no formal tool, manual process):
-- Schema changes: edit `app/models.py`, then in Python shell:
+**Database migrations** (`migrate_db.py`):
+- **Usage**: Run `python3 migrate_db.py` to apply schema migrations and migrate data
+- **Features**:
+  - Creates missing tables (e.g., clusters table for database-first architecture)
+  - Adds missing columns to existing tables (ALTERs non-destructively)
+  - Migrates clusters.json → database (one-time migration, preserves JSON as backup)
+  - Safe to run multiple times (checks existing schema before applying changes)
+- **For development**: Edit `app/models.py` and add new columns to `CRITICAL_MIGRATIONS` list in `migrate_db.py`
+- **For production**: Run `migrate_db.py` after deploying code changes (non-destructive)
+- **Nuclear option** (dev only): Drop and recreate all tables:
   ```python
   from app import create_app
   from app.models import db
@@ -302,7 +316,6 @@ git add . && git commit -m "Changes" && git push
       db.drop_all()  # WARNING: destroys data!
       db.create_all()
   ```
-- For production: manually ALTER TABLE or export/import data
 
 **Debugging tips**:
 - Check `/health` endpoint – returns `{"status": "ok"}` if app is running

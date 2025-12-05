@@ -22,7 +22,44 @@ CLUSTERS = [
     },
 ]
 
+# Load cluster config from database (preferred) or JSON file (legacy)
+def load_clusters_from_db():
+    """Load cluster configuration from database.
+    
+    Returns list of cluster dicts compatible with CLUSTERS format.
+    Falls back to clusters.json if database is unavailable.
+    """
+    try:
+        # Import here to avoid circular dependency
+        from app.models import Cluster, db
+        from flask import current_app
+        
+        # Check if we're in app context and database is initialized
+        if current_app and db:
+            clusters = Cluster.query.filter_by(is_active=True).all()
+            if clusters:
+                return [c.to_dict() for c in clusters]
+    except Exception as e:
+        # Database not available or app context not ready
+        # This is expected during initial startup - fall back to JSON
+        pass
+    
+    # Fallback: Load from clusters.json (legacy)
+    CLUSTER_CONFIG_FILE = os.getenv("CLUSTER_CONFIG_FILE") or os.path.join(os.path.dirname(__file__), "clusters.json")
+    if os.path.exists(CLUSTER_CONFIG_FILE):
+        try:
+            import json
+            with open(CLUSTER_CONFIG_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"Warning: Failed to load cluster config from {CLUSTER_CONFIG_FILE}: {e}")
+    
+    # Ultimate fallback: return defaults
+    return CLUSTERS
+
+
 # Load cluster config from JSON file if it exists (overrides defaults above)
+# DEPRECATED: Use database for cluster management (see load_clusters_from_db)
 CLUSTER_CONFIG_FILE = os.getenv("CLUSTER_CONFIG_FILE") or os.path.join(os.path.dirname(__file__), "clusters.json")
 if os.path.exists(CLUSTER_CONFIG_FILE):
     try:

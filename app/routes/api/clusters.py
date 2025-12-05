@@ -172,15 +172,23 @@ def get_cluster_resources(cluster_id: str):
             try:
                 node_info = proxmox.nodes(node_name).status.get()
                 
-                # CPU: maxcpu is the number of physical cores
-                cpu_cores = node_info.get('maxcpu', 0)
-                memory_bytes = node_info.get('maxmem', 0)
-                memory_mb = memory_bytes // BYTES_TO_MB
+                # CPU: maxcpu is physical cores, cpuinfo shows current usage (0.0-1.0 per core)
+                max_cpu_cores = node_info.get('maxcpu', 0)
+                cpu_usage = node_info.get('cpu', 0)  # Usage ratio (e.g., 0.5 = 50%)
+                used_cpu_cores = max_cpu_cores * cpu_usage
+                available_cpu_cores = max_cpu_cores - used_cpu_cores
                 
-                logger.info(f"Node {node_name}: {cpu_cores} cores, {memory_mb} MB RAM")
+                # Memory: maxmem is total bytes, mem is used bytes
+                max_memory_bytes = node_info.get('maxmem', 0)
+                used_memory_bytes = node_info.get('mem', 0)
+                available_memory_bytes = max_memory_bytes - used_memory_bytes
+                available_memory_mb = available_memory_bytes // BYTES_TO_MB
                 
-                total_cpu_cores += cpu_cores
-                total_memory_mb += memory_mb
+                logger.info(f"Node {node_name}: {max_cpu_cores} cores ({available_cpu_cores:.1f} available), "
+                           f"{max_memory_bytes // BYTES_TO_MB} MB RAM ({available_memory_mb} MB available)")
+                
+                total_cpu_cores += available_cpu_cores
+                total_memory_mb += available_memory_mb
                 successful_nodes.append(node_name)
                 
             except Exception as e:
@@ -188,22 +196,22 @@ def get_cluster_resources(cluster_id: str):
                 failed_nodes.append(node_name)
                 continue
         
-        logger.info(f"Cluster {cluster_id} totals: {total_cpu_cores} physical cores, {total_memory_mb} MB RAM from {len(successful_nodes)} nodes")
+        logger.info(f"Cluster {cluster_id} totals: {total_cpu_cores:.1f} available cores, {total_memory_mb} MB available RAM from {len(successful_nodes)} nodes")
         
         # Apply overallocation factor for virtual CPUs
-        vcpu_available = total_cpu_cores * CPU_OVERALLOCATION_FACTOR
+        # Round down to whole vCPUs
+        vcpu_available = int(total_cpu_cores * CPU_OVERALLOCATION_FACTOR)
         
         response = {
             "ok": True,
             "cluster_id": cluster_id,
             "resources": {
                 "cpu": {
-                    "physical_cores": total_cpu_cores,
+                    "physical_cores_available": round(total_cpu_cores, 1),
                     "vcpu_available": vcpu_available,
                     "overallocation_factor": CPU_OVERALLOCATION_FACTOR
                 },
                 "memory": {
-                    "total_mb": total_memory_mb,
                     "available_mb": total_memory_mb
                 }
             },
@@ -246,15 +254,23 @@ def get_node_resources(cluster_id: str, node_name: str):
         try:
             node_info = proxmox.nodes(node_name).status.get()
             
-            # CPU: maxcpu is the number of physical cores
-            cpu_cores = node_info.get('maxcpu', 0)
-            memory_bytes = node_info.get('maxmem', 0)
-            memory_mb = memory_bytes // BYTES_TO_MB
+            # CPU: maxcpu is physical cores, cpu shows current usage ratio
+            max_cpu_cores = node_info.get('maxcpu', 0)
+            cpu_usage = node_info.get('cpu', 0)
+            used_cpu_cores = max_cpu_cores * cpu_usage
+            available_cpu_cores = max_cpu_cores - used_cpu_cores
             
-            logger.info(f"Node {node_name} resources: {cpu_cores} cores, {memory_mb} MB RAM")
+            # Memory: maxmem is total bytes, mem is used bytes
+            max_memory_bytes = node_info.get('maxmem', 0)
+            used_memory_bytes = node_info.get('mem', 0)
+            available_memory_bytes = max_memory_bytes - used_memory_bytes
+            available_memory_mb = available_memory_bytes // BYTES_TO_MB
+            
+            logger.info(f"Node {node_name} resources: {max_cpu_cores} cores ({available_cpu_cores:.1f} available), "
+                       f"{max_memory_bytes // BYTES_TO_MB} MB RAM ({available_memory_mb} MB available)")
             
             # Apply overallocation factor for virtual CPUs
-            vcpu_available = cpu_cores * CPU_OVERALLOCATION_FACTOR
+            vcpu_available = int(available_cpu_cores * CPU_OVERALLOCATION_FACTOR)
             
             response = {
                 "ok": True,
@@ -262,13 +278,12 @@ def get_node_resources(cluster_id: str, node_name: str):
                 "node_name": node_name,
                 "resources": {
                     "cpu": {
-                        "physical_cores": cpu_cores,
+                        "physical_cores_available": round(available_cpu_cores, 1),
                         "vcpu_available": vcpu_available,
                         "overallocation_factor": CPU_OVERALLOCATION_FACTOR
                     },
                     "memory": {
-                        "total_mb": memory_mb,
-                        "available_mb": memory_mb
+                        "available_mb": available_memory_mb
                     }
                 }
             }

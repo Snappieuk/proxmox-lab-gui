@@ -38,6 +38,58 @@ class_co_owners = db.Table('class_co_owners',
 )
 
 
+class Cluster(db.Model):
+    """Proxmox cluster connection configuration."""
+    __tablename__ = 'clusters'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    cluster_id = db.Column(db.String(50), unique=True, nullable=False, index=True)  # Internal identifier
+    name = db.Column(db.String(120), nullable=False)  # Display name
+    host = db.Column(db.String(255), nullable=False)  # IP address or hostname
+    port = db.Column(db.Integer, default=8006)  # Proxmox API port
+    user = db.Column(db.String(80), nullable=False)  # Proxmox user (e.g., root@pam)
+    password = db.Column(db.String(256), nullable=False)  # Proxmox password (encrypted in production)
+    verify_ssl = db.Column(db.Boolean, default=False)  # SSL certificate verification
+    is_default = db.Column(db.Boolean, default=False)  # Default cluster for new users
+    is_active = db.Column(db.Boolean, default=True)  # Enable/disable cluster
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    def to_dict(self) -> dict:
+        """Convert to dictionary format (compatible with config.py CLUSTERS format)."""
+        return {
+            'id': self.cluster_id,
+            'name': self.name,
+            'host': self.host,
+            'port': self.port,
+            'user': self.user,
+            'password': self.password,  # ⚠️ Sensitive - don't expose in API responses
+            'verify_ssl': self.verify_ssl,
+            'is_default': self.is_default,
+            'is_active': self.is_active,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+        }
+    
+    def to_safe_dict(self) -> dict:
+        """Convert to dictionary without sensitive data."""
+        return {
+            'id': self.cluster_id,
+            'name': self.name,
+            'host': self.host,
+            'port': self.port,
+            'user': self.user,
+            'verify_ssl': self.verify_ssl,
+            'is_default': self.is_default,
+            'is_active': self.is_active,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+        }
+    
+    def __repr__(self):
+        return f'<Cluster {self.name} ({self.host})>'
+
+
 class User(db.Model):
     """Local user account with role-based access."""
     __tablename__ = 'users'
