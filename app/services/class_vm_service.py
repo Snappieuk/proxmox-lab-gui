@@ -1085,16 +1085,16 @@ def create_class_vms(
                     'ide': 'ide',
                 }
                 scsihw = scsihw_map.get(disk_controller_type if base_qcow2_path else 'scsi', 'virtio-scsi-pci')
-                disk_slot = f\"{disk_controller_type if base_qcow2_path else 'scsi'}0\"
+                disk_slot = f"{disk_controller_type if base_qcow2_path else 'scsi'}0"
                 
                 try:
                     # Create VM shell (will be on the connected node) with proper ostype
                     vm_ostype = ostype if base_qcow2_path else 'l26'  # Use template ostype or default to Linux
                     exit_code, stdout, stderr = ssh_executor.execute(
-                        f\"qm create {vmid} --name {student_name} \"
-                        f\"--memory {memory} --cores {cores} \"
-                        f\"--scsihw {scsihw} --net0 virtio,bridge=vmbr0 \"
-                        f\"--ostype {vm_ostype}\",
+                        f"qm create {vmid} --name {student_name} "
+                        f"--memory {memory} --cores {cores} "
+                        f"--scsihw {scsihw} --net0 virtio,bridge=vmbr0 "
+                        f"--ostype {vm_ostype}",
                         timeout=60
                     )
                     

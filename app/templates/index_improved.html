@@ -75,16 +75,15 @@
 <div class="page-banner">{{ message }}</div>
 {% endif %}
 
-<!-- Loading indicator -->
-{% if progressive_load %}
-<div id="loading-indicator" class="loading-indicator">
-    <div class="loading-spinner"></div>
-    <p>Loading virtual machines...</p>
-</div>
-{% endif %}
-
 <!-- VM Tables Container -->
 <div id="vm-tables-container">
+    <div id="loading-indicator" style="text-align: center; padding: 60px 20px; color: #6c757d;">
+        <div style="font-size: 48px; margin-bottom: 16px;">
+            <i class="bi bi-hourglass-split"></i>
+        </div>
+        <p style="font-size: 16px; margin: 0;">Loading virtual machines...</p>
+    </div>
+</div>
 
 <!-- Windows VMs Section -->
 {% if windows_vms %}
