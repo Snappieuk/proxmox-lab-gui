@@ -25,26 +25,28 @@ prefer importing from vm_core.py and vm_template.py.
 
 import logging
 import os
+import threading
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
-from app.models import db, Class, VMAssignment
+from app.models import Class, VMAssignment, db
 from app.services.ssh_executor import (
     SSHExecutor,
     get_ssh_executor_from_config,
 )
+from app.services.vm_core import wait_for_vm_stopped
+from app.services.vm_template import export_template_to_qcow2
 
 # Import utility functions from new modular structure
 # These provide the canonical implementations
 from app.services.vm_utils import (
-    sanitize_vm_name as _sanitize_vm_name_canonical,
     get_next_available_vmid_ssh as _get_next_available_vmid_canonical,
+)
+from app.services.vm_utils import (
     get_vm_mac_address_ssh as _get_vm_mac_address_canonical,
 )
-from app.services.vm_template import export_template_to_qcow2
-from app.services.vm_core import wait_for_vm_stopped
-import threading
+from app.services.vm_utils import sanitize_vm_name as _sanitize_vm_name_canonical
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +78,7 @@ def allocate_vmid_prefix_for_class(ssh_executor: SSHExecutor) -> Optional[int]:
         3-digit prefix (100-999) or None if allocation fails
     """
     import random
+
     from app.services.proxmox_service import get_proxmox_admin
     
     with _vmid_allocation_lock:
@@ -333,8 +336,8 @@ def deploy_class_vms(
         
         # If no template, get first available node
         if not template_node:
-            from app.services.proxmox_service import get_proxmox_admin_for_cluster
             from app.config import CLUSTERS
+            from app.services.proxmox_service import get_proxmox_admin_for_cluster
             
             cluster_id = None
             for cluster in CLUSTERS:
@@ -906,9 +909,9 @@ def create_class_vms(
         
         # Update VMInventory immediately for teacher VM (makes it visible in UI right away)
         try:
-            from app.services.inventory_service import persist_vm_inventory
             from app.config import CLUSTERS
-            
+            from app.services.inventory_service import persist_vm_inventory
+
             # Get cluster_ip from class template, or fallback to default
             cluster_ip = None
             if class_.template and class_.template.cluster_ip:
@@ -1092,9 +1095,9 @@ def create_class_vms(
         
         # Update VMInventory with MAC addresses for all created VMs
         try:
-            from app.services.inventory_service import persist_vm_inventory
             from app.config import CLUSTERS
-            
+            from app.services.inventory_service import persist_vm_inventory
+
             # Get cluster_id
             cluster_ip = None
             if class_.template and class_.template.cluster_ip:

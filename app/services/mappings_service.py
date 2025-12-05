@@ -9,7 +9,7 @@ This module provides database-backed VM assignment functions.
 """
 
 import logging
-from typing import Dict, List, Any
+from typing import Any, Dict, List
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +45,7 @@ def save_user_vm_map(mapping: Dict[str, List[int]]) -> None:
         
     Creates/updates VMAssignment records in database.
     """
-    from app.models import db, User, VMAssignment
+    from app.models import User, VMAssignment, db
     
     try:
         for username, vmids in mapping.items():
@@ -181,7 +181,7 @@ def set_user_vm_mapping(user: str, vmids: List[int]) -> None:
     Replaces existing mappings for this user.
     Creates VMAssignment records in database.
     """
-    from app.models import db, User, VMAssignment
+    from app.models import User, VMAssignment, db
     
     try:
         user_row = User.query.filter_by(username=user).first()

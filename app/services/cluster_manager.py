@@ -8,10 +8,9 @@ This module handles cluster configuration persistence and cache invalidation.
 import json
 import logging
 import threading
-from typing import Dict, List, Any
+from typing import Any, Dict, List
 
-
-from app.config import CLUSTERS, CLUSTER_CONFIG_FILE
+from app.config import CLUSTER_CONFIG_FILE, CLUSTERS
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +31,7 @@ def save_cluster_config(clusters: List[Dict[str, Any]]) -> None:
     Persists changes across restarts by writing to clusters.json.
     """
     import app.config as config
-    
+
     # Update runtime config
     CLUSTERS.clear()
     CLUSTERS.extend(clusters)

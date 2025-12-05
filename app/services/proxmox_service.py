@@ -7,21 +7,21 @@ with support for multiple clusters.
 """
 
 import logging
-import threading
 import ssl
-from typing import Dict, Any
-
-from proxmoxer import ProxmoxAPI
+import threading
+from typing import Any, Dict
 
 # Suppress SSL warnings for self-signed certificates
 import urllib3
+from proxmoxer import ProxmoxAPI
+
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Create unverified SSL context for self-signed certificates
 ssl._create_default_https_context = ssl._create_unverified_context
 
 
-from app.config import CLUSTERS
+from app.config import CLUSTERS  # noqa: E402 - import after SSL config
 
 logger = logging.getLogger(__name__)
 
@@ -151,7 +151,7 @@ def create_proxmox_client() -> ProxmoxAPI:
 
 def probe_proxmox() -> Dict[str, Any]:
     """Return diagnostics information helpful for admin troubleshooting."""
-    from app.config import VALID_NODES, ADMIN_USERS, ADMIN_GROUP
+    from app.config import ADMIN_GROUP, ADMIN_USERS, VALID_NODES
     
     info: Dict[str, Any] = {
         "ok": True,

@@ -7,26 +7,23 @@ Handles user management for admins.
 
 import logging
 
-from flask import Blueprint, render_template, jsonify, request
+from flask import Blueprint, jsonify, render_template, request
 
-from app.utils.decorators import admin_required
-
-
-from app.services.user_manager import (
-    get_pve_users,
-    create_pve_user,
-    is_admin_user,
-    get_admin_group_members,
-    add_user_to_admin_group,
-    remove_user_from_admin_group
-)
 from app.services.class_service import (
-    list_all_users,
     create_local_user,
+    delete_user,
     get_user_by_username,
+    list_all_users,
     update_user_role,
-    delete_user
 )
+from app.services.user_manager import (
+    add_user_to_admin_group,
+    create_pve_user,
+    get_pve_users,
+    is_admin_user,
+    remove_user_from_admin_group,
+)
+from app.utils.decorators import admin_required
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +48,6 @@ def api_get_users():
     try:
         # Get Proxmox users
         proxmox_users = get_pve_users()
-        admin_members = get_admin_group_members()
         
         # Get local users
         local_users = list_all_users()

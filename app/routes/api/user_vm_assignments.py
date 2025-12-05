@@ -7,10 +7,11 @@ Replaces the legacy mappings.json system.
 """
 
 import logging
+
 from flask import Blueprint, jsonify, request
 
-from app.utils.decorators import admin_required
 from app.models import User, VMAssignment, db
+from app.utils.decorators import admin_required
 
 logger = logging.getLogger(__name__)
 

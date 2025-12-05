@@ -7,8 +7,7 @@ Handles login, logout, and user registration.
 
 import logging
 
-from flask import Blueprint, render_template, request, redirect, url_for, session
-
+from flask import Blueprint, redirect, render_template, request, session, url_for
 
 from app.config import CLUSTERS
 

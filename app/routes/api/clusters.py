@@ -9,17 +9,15 @@ import logging
 
 from flask import Blueprint, jsonify, request, session
 
-from app.utils.decorators import login_required, admin_required
-
-
 from app.config import CLUSTERS
 from app.services.proxmox_client import (
-    switch_cluster,
-    invalidate_cluster_cache,
     _invalidate_vm_cache,
     get_cluster_config,
+    invalidate_cluster_cache,
     save_cluster_config,
+    switch_cluster,
 )
+from app.utils.decorators import admin_required, login_required
 
 logger = logging.getLogger(__name__)
 

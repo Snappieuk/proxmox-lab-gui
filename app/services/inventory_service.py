@@ -8,7 +8,7 @@ All GUI queries read from this table for instant (<100ms) responses.
 
 import logging
 from datetime import datetime
-from typing import List, Dict, Optional, Any
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -98,9 +98,11 @@ def persist_vm_inventory(vms: List[Dict], cleanup_missing: bool = True) -> int:
     Returns:
         Number of VMs updated/created
     """
-    from app.models import VMInventory, db
-    from sqlalchemy.exc import IntegrityError, OperationalError
     import time
+
+    from sqlalchemy.exc import IntegrityError, OperationalError
+
+    from app.models import VMInventory, db
     
     updated_count = 0
     

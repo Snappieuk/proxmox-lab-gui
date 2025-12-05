@@ -6,10 +6,11 @@ Allows admins/teachers to manually add existing VMs to classes without auto-assi
 """
 
 import logging
+
 from flask import Blueprint, render_template, session
 
-from app.utils.decorators import login_required
 from app.services.user_manager import is_admin_user
+from app.utils.decorators import login_required
 
 logger = logging.getLogger(__name__)
 

@@ -5,16 +5,15 @@ User Manager Service - User authentication and authorization.
 This module handles user authentication, admin checking, and user management.
 """
 
-import re
 import logging
+import re
 import threading
-from typing import Dict, List, Any, Optional
+from typing import Any, Dict, List, Optional
 
-from flask import session, abort
-
-
-from app.config import ADMIN_USERS, ADMIN_GROUP, CLUSTERS
+from flask import abort, session
 from proxmoxer import ProxmoxAPI
+
+from app.config import ADMIN_GROUP, ADMIN_USERS, CLUSTERS
 
 logger = logging.getLogger(__name__)
 
@@ -217,7 +216,7 @@ def add_user_to_admin_group(user: str) -> bool:
     
     try:
         from app.services.proxmox_service import get_proxmox_admin
-        
+
         # Get current group info
         current_members = get_admin_group_members()
         if user in current_members:
@@ -230,7 +229,7 @@ def add_user_to_admin_group(user: str) -> bool:
         try:
             group_info = get_proxmox_admin().access.groups(ADMIN_GROUP).get()
             comment = group_info.get('comment', '') if group_info else ''
-        except:
+        except Exception:
             comment = ''
         
         get_proxmox_admin().access.groups(ADMIN_GROUP).put(
@@ -265,7 +264,7 @@ def remove_user_from_admin_group(user: str) -> bool:
         try:
             group_info = get_proxmox_admin().access.groups(ADMIN_GROUP).get()
             comment = group_info.get('comment', '') if group_info else ''
-        except:
+        except Exception:
             comment = ''
         
         get_proxmox_admin().access.groups(ADMIN_GROUP).put(

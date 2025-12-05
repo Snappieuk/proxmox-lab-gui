@@ -5,8 +5,8 @@ Uses in-memory dict to track clone progress for different tasks.
 """
 
 import threading
-from typing import Dict, Any
 from datetime import datetime, timedelta
+from typing import Any, Dict
 
 # Global progress tracker: task_id -> progress_data
 _clone_progress: Dict[str, Dict[str, Any]] = {}

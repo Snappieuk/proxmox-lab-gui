@@ -11,7 +11,7 @@ import os
 
 from flask import Flask, session
 
-from app.config import SECRET_KEY, CLUSTERS
+from app.config import CLUSTERS, SECRET_KEY
 
 # Initialize logging
 from app.utils.logging import configure_logging, get_logger
@@ -74,9 +74,8 @@ def create_app(config=None):
     @app.errorhandler(Exception)
     def handle_api_error(error):
         """Return JSON for API errors instead of HTML."""
-        from flask import request, jsonify
-        import traceback
-        
+        from flask import jsonify, request
+
         # Log all errors with the URL that caused them
         logger.error(f"Error on {request.method} {request.path}: {error}", exc_info=True)
         
@@ -158,7 +157,9 @@ def create_app(config=None):
             time.sleep(2)
             try:
                 with app.app_context():
-                    from app.services.proxmox_operations import replicate_templates_to_all_nodes
+                    from app.services.proxmox_operations import (
+                        replicate_templates_to_all_nodes,
+                    )
                     logger.info("Starting template replication check across nodes...")
                     replicate_templates_to_all_nodes()
                     logger.info("Template replication check completed")

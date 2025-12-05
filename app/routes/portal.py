@@ -7,9 +7,9 @@ Main dashboard and portal views.
 
 import logging
 
-from flask import Blueprint, render_template, redirect, url_for, jsonify
+from flask import Blueprint, jsonify, redirect, render_template, url_for
 
-from app.utils.decorators import login_required, current_user
+from app.utils.decorators import current_user, login_required
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,7 @@ def root():
 def portal():
     """Main portal view."""
     from app.services.user_manager import require_user
-    user = require_user()
+    require_user()
     
     # Fast path: render empty page immediately for progressive loading
     # VMs will be loaded via /api/vms after page renders

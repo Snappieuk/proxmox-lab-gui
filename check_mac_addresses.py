@@ -4,12 +4,14 @@ Diagnostic script to check MAC addresses in VMAssignment and VMInventory tables.
 Run this after creating VMs to verify MAC addresses are being stored correctly.
 """
 
-import sys
 import os
+import sys
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from app import create_app
-from app.models import VMAssignment, VMInventory, Class
+from app.models import Class, VMAssignment, VMInventory
+
 
 def main():
     app = create_app()
@@ -59,7 +61,7 @@ def main():
         print("=" * 80)
         
         missing_mac = VMAssignment.query.filter(
-            (VMAssignment.mac_address == None) | (VMAssignment.mac_address == '')
+            (VMAssignment.mac_address is None) | (VMAssignment.mac_address == '')
         ).all()
         
         if missing_mac:

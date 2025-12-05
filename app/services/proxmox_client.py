@@ -2,48 +2,51 @@ import json
 import logging
 import os
 import re
-import time
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Dict, List, Any, Optional
+from typing import Any, Dict, List, Optional
 
-from proxmoxer import ProxmoxAPI
 import urllib3
+from proxmoxer import ProxmoxAPI
+
 # Completely disable SSL warnings and verification
 urllib3.disable_warnings()
 
-from app.config import (
-    VALID_NODES,
-    ADMIN_USERS,
+# Initialize logger at module level (before any conditional imports)
+logger = logging.getLogger(__name__)
+
+from app.config import (  # noqa: E402 - import after SSL config
     ADMIN_GROUP,
-    VM_CACHE_FILE,
-    VM_CACHE_TTL,
-    PROXMOX_CACHE_TTL,
-    ENABLE_IP_LOOKUP,
-    ENABLE_IP_PERSISTENCE,
-    DB_IP_CACHE_TTL,
+    ADMIN_USERS,
     ARP_SUBNETS,
     CLUSTERS,
+    DB_IP_CACHE_TTL,
+    ENABLE_IP_LOOKUP,
+    ENABLE_IP_PERSISTENCE,
+    PROXMOX_CACHE_TTL,
+    VALID_NODES,
+    VM_CACHE_FILE,
+    VM_CACHE_TTL,
 )
 
 # Import ARP scanner for fast IP discovery
 try:
-    from app.services.arp_scanner import discover_ips_via_arp, normalize_mac, has_rdp_port_open, invalidate_arp_cache
+    from app.services.arp_scanner import (
+        discover_ips_via_arp,
+        has_rdp_port_open,
+        invalidate_arp_cache,
+    )
     ARP_SCANNER_AVAILABLE = True
 except ImportError:
     ARP_SCANNER_AVAILABLE = False
-    logger = logging.getLogger(__name__)
     logger.warning("ARP scanner not available, falling back to guest agent only")
 
 # Import mappings service (DEPRECATED - migrate to database VMAssignment)
-from app.services.mappings_service import (
-    get_user_vm_map,
-)
+from app.services.mappings_service import get_user_vm_map  # noqa: E402
 
 # Import user manager for admin functions
-from app.services.user_manager import (
-    is_admin_user,
-)
+from app.services.user_manager import is_admin_user  # noqa: E402
 
 # No additional SSL warning suppression needed - already done above
 
@@ -177,7 +180,7 @@ def save_cluster_config(clusters: List[Dict[str, Any]]) -> None:
     global CLUSTERS
     import app.config as config
     from app.config import CLUSTER_CONFIG_FILE
-    
+
     # Update runtime config
     CLUSTERS.clear()
     CLUSTERS.extend(clusters)
@@ -214,8 +217,6 @@ def _create_proxmox_client():
         verify_ssl=cluster.get("verify_ssl", False),
     )
 
-
-logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # VM cache: single cluster snapshot, reused everywhere
@@ -471,7 +472,9 @@ def invalidate_cluster_cache() -> None:
 def _get_cached_ip_from_db(cluster_id: str, vmid: int) -> Optional[str]:
     """Get IP from database cache if not expired (1 hour TTL)."""
     from datetime import datetime
+
     from flask import has_app_context
+
     from app.models import VMAssignment, VMIPCache
     
     if not has_app_context():
@@ -513,7 +516,9 @@ def _get_cached_ips_batch(cluster_id: str, vmids: List[int]) -> Dict[int, str]:
         Dict mapping vmid to cached IP (only includes VMs with valid cached IPs)
     """
     from datetime import datetime, timedelta
+
     from flask import has_app_context
+
     from app.models import VMAssignment, VMIPCache
     
     if not has_app_context():
@@ -573,8 +578,10 @@ def _get_cached_ips_batch(cluster_id: str, vmids: List[int]) -> Dict[int, str]:
 def _cache_ip_to_db(cluster_id: str, vmid: int, ip: Optional[str], mac: Optional[str] = None) -> None:
     """Store IP in database cache."""
     from datetime import datetime
+
     from flask import has_app_context
-    from app.models import db, VMAssignment, VMIPCache
+
+    from app.models import VMAssignment, VMIPCache, db
     
     if not has_app_context():
         logger.debug("_cache_ip_to_db: skipping (no app context)")
@@ -622,7 +629,8 @@ def _cache_ip_to_db(cluster_id: str, vmid: int, ip: Optional[str], mac: Optional
 def _clear_vm_ip_cache(cluster_id: str, vmid: int) -> None:
     """Clear IP cache for specific VM in database."""
     from flask import has_app_context
-    from app.models import db, VMAssignment, VMIPCache
+
+    from app.models import VMAssignment, VMIPCache, db
     
     if not has_app_context():
         logger.debug("_clear_vm_ip_cache: skipping (no app context)")
@@ -733,7 +741,7 @@ def _fallback_arp_scan(cluster_id: str, node: str, vmid: int, vmtype: str, subne
         return None
     
     from app.services.arp_scanner import discover_ips_via_arp
-    
+
     # Get VM MAC
     vm_mac = _get_vm_mac(node, vmid, vmtype, cluster_id)
     if not vm_mac:
@@ -1232,14 +1240,15 @@ def _enrich_from_db_cache(vms: List[Dict[str, Any]]) -> None:
         vms: List of VM dictionaries to enrich with cached IPs
     """
     from datetime import datetime, timedelta
+
     from flask import has_app_context
+
     from app.models import VMAssignment, VMIPCache
     
     if not has_app_context():
         logger.debug("_enrich_from_db_cache: skipping (no app context)")
         return
     
-    logger = logging.getLogger(__name__)
     cache_ttl = timedelta(hours=1)
     now = datetime.utcnow()
     hits = 0
@@ -1471,14 +1480,15 @@ def _save_ips_to_db(vms: List[Dict[str, Any]], vm_mac_map: Dict[int, str]) -> No
         vm_mac_map: Map of vmid -> MAC address for IP validation
     """
     from datetime import datetime
+
     from flask import has_app_context
-    from app.models import db, VMAssignment, VMIPCache
+
+    from app.models import VMAssignment, VMIPCache, db
     
     if not has_app_context():
         logger.warning("_save_ips_to_db: skipping (no app context)")
         return
     
-    logger = logging.getLogger(__name__)
     now = datetime.utcnow()
     class_updates = 0
     legacy_updates = 0
@@ -2043,7 +2053,8 @@ def get_vms_for_user(user: str, search: Optional[str] = None, skip_ips: bool = F
         try:
             from flask import has_app_context
             if has_app_context():
-                from app.models import VMAssignment, User
+                from app.models import User, VMAssignment
+
                 # Normalize username variants (with/without realm)
                 user_variants = {user}
                 if '@' in user:

@@ -17,7 +17,7 @@ import logging
 import threading
 import time
 from datetime import datetime, timedelta
-from typing import Dict, Any
+from typing import Any, Dict
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +57,7 @@ def start_background_sync(app):
         while _sync_running:
             try:
                 with app.app_context():
-                    current_time = time.time()
+                    time.time()
                     
                     # Full sync every 10 minutes (600 seconds) - reduced frequency to avoid slowdowns
                     if (_sync_stats['last_full_sync'] is None or 
@@ -103,8 +103,8 @@ def _perform_full_sync():
     start_time = time.time()
     
     try:
-        from app.services.proxmox_client import get_all_vms
         from app.services.inventory_service import persist_vm_inventory
+        from app.services.proxmox_client import get_all_vms
         
         vms = get_all_vms(skip_ips=False, force_refresh=True)
         count = persist_vm_inventory(vms)
@@ -131,7 +131,7 @@ def _perform_quick_sync():
     try:
         from app.models import VMInventory, db
         from app.services.proxmox_service import get_proxmox_admin
-        
+
         # Get recently active VMs (updated in last hour)
         cutoff = datetime.utcnow() - timedelta(hours=1)
         active_vms = VMInventory.query.filter(
@@ -200,7 +200,7 @@ def get_sync_stats() -> Dict[str, Any]:
         Dict with sync stats
     """
     from app.models import VMInventory
-    
+
     # Get database stats
     total_vms = VMInventory.query.count()
     

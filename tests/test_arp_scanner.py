@@ -11,13 +11,13 @@ import sys
 import time
 
 # Add parent directory to path for imports
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'rdp-gen'))
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 
 def test_normalize_mac_valid_formats():
     """Test normalize_mac with various valid MAC formats."""
-    from arp_scanner import normalize_mac
-    
+    from app.services.arp_scanner import normalize_mac
+
     # With colons
     assert normalize_mac('AA:BB:CC:DD:EE:FF') == 'aabbccddeeff'
     assert normalize_mac('aa:bb:cc:dd:ee:ff') == 'aabbccddeeff'
@@ -38,8 +38,8 @@ def test_normalize_mac_valid_formats():
 
 def test_normalize_mac_invalid_formats():
     """Test normalize_mac with invalid inputs."""
-    from arp_scanner import normalize_mac
-    
+    from app.services.arp_scanner import normalize_mac
+
     # None/empty
     assert normalize_mac(None) is None
     assert normalize_mac('') is None
@@ -57,8 +57,8 @@ def test_normalize_mac_invalid_formats():
 
 def test_get_scan_status_returns_none_for_unknown():
     """Test get_scan_status returns None for unknown VMIDs."""
-    from arp_scanner import get_scan_status
-    
+    from app.services.arp_scanner import get_scan_status
+
     # Unknown VMID should return None
     assert get_scan_status(99999) is None
     assert get_scan_status(-1) is None
@@ -69,8 +69,8 @@ def test_get_scan_status_returns_none_for_unknown():
 
 def test_discover_ips_via_arp_empty_map():
     """Test discover_ips_via_arp with empty vm_mac_map."""
-    from arp_scanner import discover_ips_via_arp
-    
+    from app.services.arp_scanner import discover_ips_via_arp
+
     # Empty map should return empty dict
     result = discover_ips_via_arp({}, background=False)
     assert result == {}
@@ -83,7 +83,7 @@ def test_discover_ips_via_arp_empty_map():
 
 def test_is_root_returns_bool():
     """Test _is_root returns a boolean."""
-    from arp_scanner import _is_root
+    from app.services.arp_scanner import _is_root
     
     result = _is_root()
     assert isinstance(result, bool)
@@ -95,7 +95,7 @@ def test_is_root_returns_bool():
 
 def test_get_arp_table_returns_dict():
     """Test get_arp_table returns a dict."""
-    from arp_scanner import get_arp_table
+    from app.services.arp_scanner import get_arp_table
     
     result = get_arp_table()
     assert isinstance(result, dict)
@@ -118,7 +118,7 @@ def test_get_arp_table_returns_dict():
 
 def test_module_level_cache_exists():
     """Test that module-level cache variables exist."""
-    import arp_scanner
+    from app.services import arp_scanner
     
     assert hasattr(arp_scanner, '_arp_cache')
     assert hasattr(arp_scanner, '_arp_cache_time')
@@ -127,16 +127,16 @@ def test_module_level_cache_exists():
     assert hasattr(arp_scanner, '_scan_in_progress')
     assert hasattr(arp_scanner, '_scan_lock')
     
-    # Check default TTL is 3600 seconds (1 hour)
-    assert arp_scanner._arp_cache_ttl == 3600
+    # Check default TTL is 300 seconds (5 minutes)
+    assert arp_scanner._arp_cache_ttl == 300
     
     print("✓ Module-level cache variables exist with correct defaults")
 
 
 def test_scan_lock_is_threading_lock():
     """Test that _scan_lock is a threading.Lock."""
-    import arp_scanner
-    
+    from app.services import arp_scanner
+
     # Should be a lock that can be acquired and released
     acquired = arp_scanner._scan_lock.acquire(blocking=False)
     if acquired:
@@ -147,8 +147,8 @@ def test_scan_lock_is_threading_lock():
 
 def test_background_scan_does_not_block():
     """Test that background=True returns immediately."""
-    from arp_scanner import discover_ips_via_arp
-    
+    from app.services.arp_scanner import discover_ips_via_arp
+
     # Create a fake vm_mac_map
     vm_mac_map = {9999: 'aabbccddeeff'}
     
@@ -168,12 +168,12 @@ def test_background_scan_does_not_block():
 
 def test_exports_match_requirements():
     """Test that all required functions are exported."""
-    from arp_scanner import (
-        normalize_mac,
+    from app.services.arp_scanner import (
         discover_ips_via_arp,
         get_scan_status,
+        normalize_mac,
     )
-    
+
     # All required functions should be callable
     assert callable(normalize_mac)
     assert callable(discover_ips_via_arp)
@@ -184,7 +184,7 @@ def test_exports_match_requirements():
 
 def test_proxmox_client_can_import():
     """Test that proxmox_client can import arp_scanner functions."""
-    import proxmox_client
+    from app.services import proxmox_client
     
     assert proxmox_client.ARP_SCANNER_AVAILABLE is True
     

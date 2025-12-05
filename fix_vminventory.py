@@ -12,9 +12,12 @@ Run this on the remote server where the database exists:
 """
 
 import sys
+
+from sqlalchemy import inspect, text
+
 from app import create_app
-from app.models import db, VMInventory
-from sqlalchemy import text, inspect
+from app.models import VMInventory, db
+
 
 def main():
     app = create_app()
@@ -157,7 +160,7 @@ def main():
         # Verify schema
         inspector = inspect(db.engine)
         unique_constraints = inspector.get_unique_constraints('vm_inventory')
-        indexes = inspector.get_indexes('vm_inventory')
+        inspector.get_indexes('vm_inventory')
         
         has_unique = any(
             c.get('name') in ('uix_cluster_vmid', 'uq_cluster_vmid') 

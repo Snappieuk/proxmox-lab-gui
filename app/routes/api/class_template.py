@@ -9,16 +9,16 @@ import logging
 
 from flask import Blueprint, jsonify, session
 
-from app.utils.decorators import login_required
+from app.models import Template, db
 from app.services.class_service import get_class_by_id, get_user_by_username
 from app.services.proxmox_operations import (
     delete_vm,
     get_vm_status,
     start_class_vm,
-    stop_class_vm
+    stop_class_vm,
 )
 from app.services.proxmox_service import get_proxmox_admin_for_cluster
-from app.models import db, Template
+from app.utils.decorators import login_required
 
 logger = logging.getLogger(__name__)
 
@@ -153,13 +153,14 @@ def get_template_info(class_id: int):
         rdp_available = False
         try:
             from app.services import proxmox_client as pc
+
             # Use existing internal lookup (guest agent if running)
             if vm_status == 'running':
                 ip_address = pc._lookup_vm_ip(node, vmid, 'qemu')  # private helper
                 if not ip_address and mac_address:
                     # Fallback: synchronous ARP scan for this single MAC
-                    from app.services.arp_scanner import discover_ips_via_arp
                     from app.config import ARP_SUBNETS, CLUSTERS
+                    from app.services.arp_scanner import discover_ips_via_arp
                     cluster_id = None
                     for c in CLUSTERS:
                         if c['host'] == cluster_ip:
@@ -341,8 +342,8 @@ def reimage_template(class_id: int):
         return jsonify({'ok': False, 'error': 'No template assigned'}), 404
     
     try:
-        from app.services.proxmox_operations import delete_vm, clone_template_for_class
         from app.models import db
+        from app.services.proxmox_operations import clone_template_for_class, delete_vm
         
         template = class_.template
         old_vmid = template.proxmox_vmid
@@ -402,7 +403,10 @@ def save_template(class_id: int):
         return jsonify({'ok': False, 'error': 'No template assigned'}), 404
     
     try:
-        from app.services.proxmox_operations import stop_class_vm, convert_vm_to_template
+        from app.services.proxmox_operations import (
+            convert_vm_to_template,
+            stop_class_vm,
+        )
         
         template = class_.template
         

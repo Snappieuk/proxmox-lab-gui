@@ -88,7 +88,7 @@ class SSHWebSocketHandler:
                     self.send_to_client(data)
                 if self.channel.closed:
                     break
-            except:
+            except Exception:
                 break
         self.running = False
     
@@ -96,7 +96,7 @@ class SSHWebSocketHandler:
         """Send data to WebSocket."""
         try:
             self.ws.send(data)
-        except:
+        except Exception:
             self.running = False
     
     def handle_client_input(self, data: str):
@@ -104,7 +104,7 @@ class SSHWebSocketHandler:
         try:
             if self.channel and not self.channel.closed:
                 self.channel.send(data.encode('utf-8'))
-        except:
+        except Exception:
             self.running = False
     
     def resize_terminal(self, width: int, height: int):
@@ -112,7 +112,7 @@ class SSHWebSocketHandler:
         try:
             if self.channel:
                 self.channel.resize_pty(width=width, height=height)
-        except:
+        except Exception:
             pass
     
     def close(self):
@@ -121,10 +121,10 @@ class SSHWebSocketHandler:
         if self.channel:
             try:
                 self.channel.close()
-            except:
+            except Exception:
                 pass
         if self.client:
             try:
                 self.client.close()
-            except:
+            except Exception:
                 pass

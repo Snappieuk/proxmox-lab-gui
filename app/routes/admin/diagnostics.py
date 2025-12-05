@@ -7,17 +7,15 @@ Handles admin view and diagnostics/probe endpoints.
 
 import logging
 
-from flask import Blueprint, render_template, jsonify
+from flask import Blueprint, jsonify, render_template
 
-from app.utils.decorators import admin_required
-
-
+from app.services.arp_scanner import get_arp_table
 from app.services.proxmox_client import (
-    get_all_vms,
     _get_vm_mac,
+    get_all_vms,
 )
 from app.services.user_manager import probe_proxmox
-from app.services.arp_scanner import get_arp_table
+from app.utils.decorators import admin_required
 
 logger = logging.getLogger(__name__)
 

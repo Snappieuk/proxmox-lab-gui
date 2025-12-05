@@ -7,9 +7,9 @@ Handles class CRUD, template management, VM pool operations, and invite links.
 
 import logging
 from datetime import datetime
-from typing import Optional, List, Tuple
+from typing import List, Optional, Tuple
 
-from app.models import db, User, Class, Template, VMAssignment
+from app.models import Class, Template, User, VMAssignment, db
 
 logger = logging.getLogger(__name__)
 
@@ -501,9 +501,9 @@ def create_template(name: str, proxmox_vmid: int, cluster_ip: str = '10.220.15.2
     # If node not provided, try to fetch it from Proxmox
     if not node:
         try:
-            from app.services.proxmox_service import get_proxmox_admin_for_cluster
             from app.config import CLUSTERS
-            
+            from app.services.proxmox_service import get_proxmox_admin_for_cluster
+
             # Find cluster by IP
             cluster_id = None
             for cluster in CLUSTERS:
@@ -559,7 +559,7 @@ def create_template(name: str, proxmox_vmid: int, cluster_ip: str = '10.220.15.2
     # WITH node: use savepoint to handle constraint violations without poisoning outer transaction
     # Use nested transaction (savepoint) to safely handle IntegrityError
     from sqlalchemy.exc import IntegrityError
-    
+
     # Try using a savepoint (nested transaction) for atomic get-or-create
     try:
         # Create savepoint for nested transaction
@@ -828,9 +828,9 @@ def _fetch_and_cache_template_specs(template: Template, cluster_ip: str) -> None
     """
     
     try:
-        from app.services.proxmox_service import get_proxmox_admin_for_cluster
         from app.config import CLUSTERS
-        
+        from app.services.proxmox_service import get_proxmox_admin_for_cluster
+
         # Find cluster by IP
         cluster_id = None
         for cluster in CLUSTERS:

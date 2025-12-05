@@ -6,6 +6,7 @@ Shared authentication functions used across routes.
 """
 
 from typing import Optional
+
 from flask import session
 
 from app.models import User
@@ -37,8 +38,8 @@ def get_current_user(auto_create_admin: bool = False) -> Optional[User]:
     
     # If no local user exists but they're a Proxmox admin, auto-create admin account
     if not user and auto_create_admin:
-        from app.services.user_manager import is_admin_user
         from app.services.class_service import create_local_user
+        from app.services.user_manager import is_admin_user
         
         if is_admin_user(session.get('user')):
             success, message = create_local_user(username_clean, '', role='adminer')

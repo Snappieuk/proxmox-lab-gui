@@ -11,7 +11,6 @@ from flask import Blueprint, render_template
 
 from app.utils.decorators import admin_required
 
-
 logger = logging.getLogger(__name__)
 
 admin_mappings_bp = Blueprint('admin_mappings', __name__, url_prefix='/admin')

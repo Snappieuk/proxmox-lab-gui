@@ -4,9 +4,9 @@ Comprehensive database migration script.
 Ensures all tables and columns exist as defined in models.py.
 """
 
+import os
 import sqlite3
 import sys
-import os
 
 DB_PATH = 'app/lab_portal.db'
 

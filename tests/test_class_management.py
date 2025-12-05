@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 def test_database_models_exist():
     """Test that database models can be imported."""
-    from app.models import User, Class, Template, VMAssignment
+    from app.models import Class, Template, User, VMAssignment
     
     assert User is not None
     assert Class is not None
@@ -47,17 +47,17 @@ def test_user_roles():
     teacher = User(username='teacher', role='teacher')
     student = User(username='student', role='user')
     
-    assert admin.is_adminer == True
-    assert admin.is_teacher == False
-    assert admin.is_user == False
+    assert admin.is_adminer
+    assert not admin.is_teacher
+    assert not admin.is_user
     
-    assert teacher.is_adminer == False
-    assert teacher.is_teacher == True
-    assert teacher.is_user == False
+    assert not teacher.is_adminer
+    assert teacher.is_teacher
+    assert not teacher.is_user
     
-    assert student.is_adminer == False
-    assert student.is_teacher == False
-    assert student.is_user == True
+    assert not student.is_adminer
+    assert not student.is_teacher
+    assert student.is_user
     
     print("✓ User role properties work")
 
@@ -74,26 +74,26 @@ def test_class_token_generation():
     assert len(token) > 20  # Token should be long enough
     assert class_.join_token == token
     assert class_.token_expires_at is not None
-    assert class_.token_never_expires == False
-    assert class_.is_token_valid() == True
+    assert not class_.token_never_expires
+    assert class_.is_token_valid()
     
     # Generate token that never expires
-    token2 = class_.generate_join_token(expires_in_days=0)
-    assert class_.token_never_expires == True
+    class_.generate_join_token(expires_in_days=0)
+    assert class_.token_never_expires
     assert class_.token_expires_at is None
-    assert class_.is_token_valid() == True
+    assert class_.is_token_valid()
     
     # Invalidate token
     class_.invalidate_token()
     assert class_.join_token is None
-    assert class_.is_token_valid() == False
+    assert not class_.is_token_valid()
     
     print("✓ Class invite token generation works")
 
 
 def test_vm_assignment_states():
     """Test VM assignment state transitions."""
-    from app.models import VMAssignment, User
+    from app.models import User, VMAssignment
     
     user = User(username='student', role='user')
     user.id = 1  # Simulate database ID
@@ -119,7 +119,7 @@ def test_vm_assignment_states():
 
 def test_model_to_dict():
     """Test that model to_dict methods work correctly."""
-    from app.models import User, Template, VMAssignment
+    from app.models import Template, User, VMAssignment
     
     user = User(username='testuser', role='teacher')
     user.id = 1
@@ -148,19 +148,19 @@ def test_model_to_dict():
 def test_class_service_functions_exist():
     """Test that class service functions exist."""
     from app.services.class_service import (
-        create_class,
-        get_class_by_id,
-        get_classes_for_teacher,
-        get_classes_for_student,
-        generate_class_invite,
-        join_class_via_token,
-        create_template,
-        get_available_templates,
-        create_vm_assignment,
         assign_vm_to_user,
-        unassign_vm,
-        get_vm_assignments_for_class,
+        create_class,
+        create_template,
+        create_vm_assignment,
+        generate_class_invite,
+        get_available_templates,
+        get_class_by_id,
+        get_classes_for_student,
+        get_classes_for_teacher,
         get_user_vm_in_class,
+        get_vm_assignments_for_class,
+        join_class_via_token,
+        unassign_vm,
     )
     
     assert callable(create_class)
@@ -183,17 +183,17 @@ def test_class_service_functions_exist():
 def test_proxmox_operations_functions_exist():
     """Test that Proxmox operations functions exist."""
     from app.services.proxmox_operations import (
-        list_proxmox_templates,
+        CLASS_CLUSTER_IP,
         clone_vm_from_template,
+        clone_vms_for_class,
         convert_vm_to_template,
         create_vm_snapshot,
-        revert_vm_to_snapshot,
         delete_vm,
+        get_vm_status,
+        list_proxmox_templates,
+        revert_vm_to_snapshot,
         start_class_vm,
         stop_class_vm,
-        get_vm_status,
-        clone_vms_for_class,
-        CLASS_CLUSTER_IP,
     )
     
     assert callable(list_proxmox_templates)
@@ -213,8 +213,9 @@ def test_proxmox_operations_functions_exist():
 
 def test_api_routes_registered():
     """Test that API routes are registered with the Flask app."""
-    import sys
     import os
+    import sys
+
     # Ensure the app package is imported from the correct location
     app_dir = os.path.join(os.path.dirname(__file__), '..')
     if app_dir not in sys.path:
@@ -240,8 +241,9 @@ def test_api_routes_registered():
 
 def test_flask_app_with_database():
     """Test that Flask app initializes with database."""
-    import sys
     import os
+    import sys
+
     # Ensure the app package is imported from the correct location
     app_dir = os.path.join(os.path.dirname(__file__), '..')
     if app_dir not in sys.path:
@@ -249,7 +251,7 @@ def test_flask_app_with_database():
     
     from app import create_app
     from app.models import db
-    
+
     # Create app with temp database
     app = create_app({
         'SQLALCHEMY_DATABASE_URI': 'sqlite:///:memory:',
@@ -259,7 +261,7 @@ def test_flask_app_with_database():
     with app.app_context():
         # Database should be initialized
         from app.models import User
-        
+
         # Create tables
         db.create_all()
         
@@ -272,7 +274,7 @@ def test_flask_app_with_database():
         # Verify user was created
         fetched = User.query.filter_by(username='testadmin').first()
         assert fetched is not None
-        assert fetched.is_adminer == True
+        assert fetched.is_adminer
     
     print("✓ Flask app works with database")
 
@@ -280,15 +282,15 @@ def test_flask_app_with_database():
 def test_vm_utils_functions_exist():
     """Test that VM utility functions can be imported."""
     from app.services.vm_utils import (
-        sanitize_vm_name,
-        get_next_available_vmid_ssh,
-        get_next_available_vmid_api,
-        get_vm_mac_address_ssh,
-        get_vm_mac_address_api,
-        normalize_mac_address,
-        format_mac_address,
-        parse_disk_config,
         build_vm_name,
+        format_mac_address,
+        get_next_available_vmid_api,
+        get_next_available_vmid_ssh,
+        get_vm_mac_address_api,
+        get_vm_mac_address_ssh,
+        normalize_mac_address,
+        parse_disk_config,
+        sanitize_vm_name,
     )
     
     assert callable(sanitize_vm_name)
@@ -327,23 +329,23 @@ def test_vm_utils_functions_exist():
 def test_vm_core_functions_exist():
     """Test that VM core functions can be imported."""
     from app.services.vm_core import (
+        attach_disk_to_vm,
+        convert_disk_to_qcow2,
+        create_overlay_disk,
+        create_snapshot_ssh,
         create_vm_shell,
         create_vm_with_disk,
+        delete_snapshot_ssh,
         destroy_vm,
+        get_vm_config_ssh,
+        get_vm_disk_path,
+        get_vm_status_ssh,
+        rollback_snapshot_ssh,
+        set_vm_options,
         start_vm,
         stop_vm,
-        wait_for_vm_stopped,
-        get_vm_status_ssh,
-        attach_disk_to_vm,
-        create_overlay_disk,
-        convert_disk_to_qcow2,
-        create_snapshot_ssh,
-        rollback_snapshot_ssh,
-        delete_snapshot_ssh,
-        get_vm_config_ssh,
-        set_vm_options,
         vm_exists,
-        get_vm_disk_path,
+        wait_for_vm_stopped,
     )
     
     assert callable(create_vm_shell)
@@ -370,17 +372,17 @@ def test_vm_core_functions_exist():
 def test_vm_template_functions_exist():
     """Test that VM template functions can be imported."""
     from app.services.vm_template import (
-        export_template_to_qcow2,
+        cleanup_base_image,
+        convert_to_template,
         create_overlay_vm,
         create_student_overlays,
+        export_template_to_qcow2,
         full_clone_vm,
-        linked_clone_vm,
-        convert_to_template,
-        update_overlay_backing_file,
-        push_base_to_students,
         get_template_disk_info,
+        linked_clone_vm,
+        push_base_to_students,
+        update_overlay_backing_file,
         verify_base_image_exists,
-        cleanup_base_image,
     )
     
     assert callable(export_template_to_qcow2)
