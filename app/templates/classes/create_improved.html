@@ -222,9 +222,24 @@ document.addEventListener('DOMContentLoaded', async function() {
     });
     
     // Update summary when form fields change
-    ['pool-size', 'cpu-cores', 'memory-mb', 'disk-size-gb', 'deployment-node'].forEach(id => {
+    ['pool-size', 'cpu-cores', 'memory-mb', 'disk-size-gb'].forEach(id => {
         document.getElementById(id).addEventListener('input', updateSummary);
         document.getElementById(id).addEventListener('change', updateSummary);
+    });
+    
+    // Node selection should update available resources
+    document.getElementById('deployment-node').addEventListener('change', async function() {
+        const clusterId = document.getElementById('deployment-cluster').value;
+        const nodeName = this.value;
+        
+        if (nodeName && nodeName !== '') {
+            // Specific node selected - get its resources
+            await loadNodeResources(clusterId, nodeName);
+        } else {
+            // Auto-distribute - get cluster-wide resources
+            await loadClusterResources(clusterId);
+        }
+        updateSummary();
     });
 });
 
@@ -338,12 +353,17 @@ async function loadNodesForCluster(clusterId) {
 async function loadClusterResources(clusterId) {
     if (!clusterId) {
         clusterResources = null;
+        document.getElementById('summary-vcpus-available').textContent = '-- vCPUs';
+        document.getElementById('summary-ram-available').textContent = '-- GB';
         return;
     }
     
     try {
+        console.log('Loading cluster resources for:', clusterId);
         const resp = await fetch(`/api/clusters/${clusterId}/resources`);
         const data = await resp.json();
+        
+        console.log('Cluster resources response:', data);
         
         if (data.ok && data.resources) {
             clusterResources = data.resources;
@@ -353,12 +373,56 @@ async function loadClusterResources(clusterId) {
             const ramAvailableMb = clusterResources.memory.available_mb;
             const ramAvailableGb = Math.round(ramAvailableMb / 1024);
             
+            console.log('Setting vCPUs:', vcpuAvailable, 'RAM GB:', ramAvailableGb);
+            
             document.getElementById('summary-vcpus-available').textContent = `${vcpuAvailable} vCPUs`;
             document.getElementById('summary-ram-available').textContent = `${ramAvailableGb} GB`;
+        } else {
+            console.error('Invalid cluster resources response:', data);
+            document.getElementById('summary-vcpus-available').textContent = 'Error';
+            document.getElementById('summary-ram-available').textContent = 'Error';
         }
     } catch (e) {
         console.error('Failed to load cluster resources:', e);
         clusterResources = null;
+        document.getElementById('summary-vcpus-available').textContent = 'Error';
+        document.getElementById('summary-ram-available').textContent = 'Error';
+    }
+}
+
+async function loadNodeResources(clusterId, nodeName) {
+    if (!clusterId || !nodeName) {
+        return loadClusterResources(clusterId);
+    }
+    
+    try {
+        console.log('Loading node resources for:', clusterId, nodeName);
+        const resp = await fetch(`/api/clusters/${clusterId}/nodes/${nodeName}/resources`);
+        const data = await resp.json();
+        
+        console.log('Node resources response:', data);
+        
+        if (data.ok && data.resources) {
+            clusterResources = data.resources;
+            
+            // Update available resources display for single node
+            const vcpuAvailable = clusterResources.cpu.vcpu_available;
+            const ramAvailableMb = clusterResources.memory.available_mb;
+            const ramAvailableGb = Math.round(ramAvailableMb / 1024);
+            
+            console.log('Setting node vCPUs:', vcpuAvailable, 'RAM GB:', ramAvailableGb);
+            
+            document.getElementById('summary-vcpus-available').textContent = `${vcpuAvailable} vCPUs`;
+            document.getElementById('summary-ram-available').textContent = `${ramAvailableGb} GB`;
+        } else {
+            console.error('Invalid node resources response:', data);
+            document.getElementById('summary-vcpus-available').textContent = 'Error';
+            document.getElementById('summary-ram-available').textContent = 'Error';
+        }
+    } catch (e) {
+        console.error('Failed to load node resources:', e);
+        // Fall back to cluster-wide resources
+        await loadClusterResources(clusterId);
     }
 }
 
