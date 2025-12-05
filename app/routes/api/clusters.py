@@ -28,6 +28,7 @@ api_clusters_bp = Blueprint('api_clusters', __name__, url_prefix='/api')
 @login_required
 def api_list_clusters():
     """List all configured Proxmox clusters."""
+    logger.info(f"API /clusters called - CLUSTERS has {len(CLUSTERS)} entries")
     clusters_list = [
         {
             "id": c["id"],
@@ -36,6 +37,7 @@ def api_list_clusters():
         }
         for c in CLUSTERS
     ]
+    logger.info(f"Returning {len(clusters_list)} clusters: {[c['id'] for c in clusters_list]}")
     return jsonify({"ok": True, "clusters": clusters_list})
 
 
@@ -143,18 +145,25 @@ def get_cluster_resources(cluster_id: str):
     """Get resource availability for a specific cluster."""
     from app.services.proxmox_service import get_proxmox_admin_for_cluster
     
+    logger.info(f"[RESOURCES API] GET /clusters/{cluster_id}/resources called")
+    logger.info(f"[RESOURCES API] Available cluster IDs: {[c['id'] for c in CLUSTERS]}")
+    
     try:
         # Validate cluster ID
         if cluster_id not in [c["id"] for c in CLUSTERS]:
+            logger.error(f"[RESOURCES API] Cluster {cluster_id} not found in CLUSTERS")
             return jsonify({"ok": False, "error": "Cluster not found"}), 404
         
+        logger.info(f"[RESOURCES API] Getting Proxmox connection for cluster {cluster_id}")
         proxmox = get_proxmox_admin_for_cluster(cluster_id)
         if not proxmox:
+            logger.error(f"[RESOURCES API] Failed to get Proxmox connection for cluster {cluster_id}")
             return jsonify({"ok": False, "error": "Cluster not found"}), 404
         
         # Get all nodes
+        logger.info(f"[RESOURCES API] Querying nodes for cluster {cluster_id}")
         nodes = proxmox.nodes.get()
-        logger.info(f"Found {len(nodes)} nodes in cluster {cluster_id}")
+        logger.info(f"[RESOURCES API] Found {len(nodes)} nodes in cluster {cluster_id}")
         
         total_cpu_cores = 0
         total_memory_mb = 0
