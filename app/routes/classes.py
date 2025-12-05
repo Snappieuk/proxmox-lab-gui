@@ -68,7 +68,7 @@ def create_class():
         return redirect(url_for('classes.classes_list'))
     
     return render_template(
-        "classes/create.html",
+        "classes/create_improved.html",
         user_role=user.role,
         user=user
     )

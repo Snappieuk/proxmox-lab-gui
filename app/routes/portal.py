@@ -34,7 +34,7 @@ def portal():
     # Fast path: render empty page immediately for progressive loading
     # VMs will be loaded via /api/vms after page renders
     return render_template(
-        "index.html",
+        "index_improved.html",
         progressive_load=True,
         windows_vms=[],
         linux_vms=[],
