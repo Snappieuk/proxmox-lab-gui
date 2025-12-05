@@ -1305,9 +1305,6 @@ def clone_vms_for_class(template_vmid: int, node: str, count: int, name_prefix: 
             proxmox = get_proxmox_admin_for_cluster(cluster_id)
             nodes_list = proxmox.nodes.get()
             # Collect templates that match base template name or its replica naming
-            set([
-                sanitize_vm_name(f"{name_prefix}-BaseTemplate", fallback="classvm-base")
-            ])
             for node_info in nodes_list:
                 n = node_info.get('node')
                 try:
