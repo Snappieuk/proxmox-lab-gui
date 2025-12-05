@@ -16,6 +16,8 @@ CRITICAL_MIGRATIONS = [
     ('classes', 'memory_mb', 'INTEGER', '2048'),
     ('classes', 'disk_size_gb', 'INTEGER', '32'),
     ('classes', 'vmid_prefix', 'INTEGER', 'NULL'),  # 3-digit prefix for VMID allocation (200-999)
+    ('classes', 'deployment_node', 'TEXT', 'NULL'),  # Optional: deploy all VMs to specific node
+    ('classes', 'deployment_cluster', 'TEXT', 'NULL'),  # Optional: target cluster for deployment
     ('vm_assignments', 'manually_added', 'BOOLEAN', '0'),
     ('vm_assignments', 'is_teacher_vm', 'BOOLEAN', '0'),
     ('vm_assignments', 'vm_name', 'TEXT', 'NULL'),
