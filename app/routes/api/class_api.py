@@ -197,42 +197,52 @@ def create_new_class():
     def _create_class_vms():
         # Capture class_id for error handling (class_ from outer scope)
         class_id_for_error = class_.id
+        app_ctx = None
         try:
+            # Create and push application context for background thread
             app_ctx = app.app_context()
             app_ctx.push()
             
-            from app.models import Class
+            from app.models import Class, db
             from app.services.class_vm_service import deploy_class_vms
 
-            # Re-fetch class to get template info
-            class_obj = Class.query.get(class_id_for_error)
-            if not class_obj:
-                logger.error(f"Class {class_id_for_error} not found in background thread")
-                return
+            # Re-fetch class within the app context to get fresh database session
+            with app.app_context():
+                class_obj = Class.query.get(class_id_for_error)
+                if not class_obj:
+                    logger.error(f"Class {class_id_for_error} not found in background thread")
+                    return
+                
+                # Store values we need before session closes
+                class_name = class_obj.name
+                template_id = class_obj.template_id
+                pool_size = class_obj.pool_size
             
             # Deploy VMs using QCOW2 overlay cloning (fast)
-            logger.info(f"Deploying VMs for class '{class_obj.name}' (template={class_obj.template_id}, students={class_obj.pool_size})...")
+            logger.info(f"Deploying VMs for class '{class_name}' (template={template_id}, students={pool_size})...")
             
             success, message, vm_info = deploy_class_vms(
-                class_id=class_obj.id,
-                num_students=class_obj.pool_size
+                class_id=class_id_for_error,
+                num_students=pool_size
             )
             
             if success:
-                logger.info(f"Class {class_obj.id} VM deployment succeeded: {message}")
+                logger.info(f"Class {class_id_for_error} VM deployment succeeded: {message}")
                 logger.info(f"Created: {vm_info.get('teacher_vm_count', 0)} teacher VM, "
                            f"{vm_info.get('template_vm_count', 0)} template VM, "
                            f"{vm_info.get('student_vm_count', 0)} student VMs")
             else:
-                logger.error(f"Class {class_obj.id} VM deployment failed: {message}")
+                logger.error(f"Class {class_id_for_error} VM deployment failed: {message}")
                 
         except Exception as e:
             logger.exception(f"Failed to deploy VMs for class {class_id_for_error}: {e}")
         finally:
-            try:
-                app_ctx.pop()
-            except Exception:
-                pass
+            # Clean up app context
+            if app_ctx:
+                try:
+                    app_ctx.pop()
+                except Exception as ctx_error:
+                    logger.error(f"Error popping app context: {ctx_error}")
     
     # Start the background thread to create VMs
     threading.Thread(target=_create_class_vms, daemon=True).start()
