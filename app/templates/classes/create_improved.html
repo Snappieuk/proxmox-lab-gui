@@ -1,23 +1,23 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div class="page-header">
+<div class="page-header" style="margin-bottom: 16px;">
     <div>
         <h1><i class="bi bi-plus-circle"></i> Create New Class</h1>
-        <p class="page-subtitle">Set up a new lab class with a VM template</p>
+        <p class="page-subtitle">Set up a new lab class with customized VMs</p>
     </div>
 </div>
 
-<div class="create-class-layout">
-    <!-- Left Column: Form Sections -->
+<div style="display: grid; grid-template-columns: 1fr 340px; gap: 20px; max-width: 1400px; margin: 0 auto;">
+    <!-- Left Column: Form -->
     <div>
-        <form id="create-class-form">
+        <form id="create-class-form" style="margin-bottom: 0;">
             <!-- Section 1: Class Details -->
             <div class="form-card-section">
                 <div class="form-card-header">
                     <h3 class="form-card-title"><i class="bi bi-info-circle"></i> Class Details</h3>
                 </div>
-                <div class="form-card-body">
+                <div class="form-card-body" style="padding: 12px 20px;">
                     <div class="form-group-compact">
                         <label for="class-name">Class Name *</label>
                         <input type="text" id="class-name" name="name" required 
@@ -39,7 +39,7 @@
                 <div class="form-card-header">
                     <h3 class="form-card-title"><i class="bi bi-cloud-upload"></i> Deployment Settings</h3>
                 </div>
-                <div class="form-card-body">
+                <div class="form-card-body" style="padding: 12px 20px;">
                     <div class="form-group-compact">
                         <label for="deployment-cluster">Cluster *</label>
                         <select id="deployment-cluster" name="deployment_cluster">
@@ -71,7 +71,7 @@
                 <div class="form-card-header">
                     <h3 class="form-card-title"><i class="bi bi-cpu"></i> VM Configuration</h3>
                 </div>
-                <div class="form-card-body">
+                <div class="form-card-body" style="padding: 12px 20px;">
                     <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px;">
                         <div class="form-group-compact">
                             <label for="cpu-cores">CPU Cores</label>
@@ -110,7 +110,7 @@
                 <div class="form-card-header">
                     <h3 class="form-card-title"><i class="bi bi-people"></i> Class Size</h3>
                 </div>
-                <div class="form-card-body">
+                <div class="form-card-body" style="padding: 12px 20px;">
                     <div class="form-group-compact">
                         <label for="pool-size">VM Pool Size</label>
                         <input type="number" id="pool-size" name="pool_size" min="0" value="0">
@@ -292,7 +292,12 @@ async function loadTemplatesForCluster(clusterId) {
             selectElement.innerHTML = '<option value="">None</option>' +
                 proxmoxTemplates.map(t => {
                     const registered = registeredMap[t.vmid] ? ' ✓' : '';
-                    return `<option value="${t.vmid}" data-name="${t.name}" data-node="${t.node}">${t.name} (VMID: ${t.vmid})${registered}</option>`;
+                    return `<option value="${t.vmid}" 
+                                    data-name="${t.name}" 
+                                    data-node="${t.node}"
+                                    data-cpu="${t.cpu_cores || 2}"
+                                    data-ram="${t.memory_mb || 2048}"
+                                    data-disk="${t.disk_size_gb || 32}">${t.name} (VMID: ${t.vmid})${registered}</option>`;
                 }).join('');
         }
         
@@ -381,9 +386,23 @@ function updateSummary() {
     const templateSelect = document.getElementById('template-select');
     const nodeSelect = document.getElementById('deployment-node');
     const poolSize = parseInt(document.getElementById('pool-size').value) || 0;
-    const cpuCores = parseInt(document.getElementById('cpu-cores').value) || 2;
-    const memoryMb = parseInt(document.getElementById('memory-mb').value) || 2048;
-    const diskSizeGb = parseInt(document.getElementById('disk-size-gb').value) || 32;
+    
+    // Get specs from form or template
+    let cpuCores = parseInt(document.getElementById('cpu-cores').value) || 2;
+    let memoryMb = parseInt(document.getElementById('memory-mb').value) || 2048;
+    let diskSizeGb = parseInt(document.getElementById('disk-size-gb').value) || 32;
+    
+    // If template is selected and customize is NOT checked, use template specs
+    const selectedOption = templateSelect.options[templateSelect.selectedIndex];
+    const customizeCheckbox = document.getElementById('customize-specs-checkbox');
+    const hasTemplate = templateSelect.value !== '';
+    
+    if (hasTemplate && selectedOption && !customizeCheckbox.checked) {
+        // Use template specs
+        cpuCores = parseInt(selectedOption.dataset.cpu) || 2;
+        memoryMb = parseInt(selectedOption.dataset.ram) || 2048;
+        diskSizeGb = parseInt(selectedOption.dataset.disk) || 32;
+    }
     
     // Total VMs = pool size + 1 (teacher VM)
     const totalVMs = poolSize + 1;

@@ -27,6 +27,8 @@ def sync_templates_from_proxmox(full_sync=True):
     Returns:
         dict: Sync statistics (templates_found, templates_added, templates_updated, templates_removed)
     """
+    logger.info(f"Starting template sync (full_sync={full_sync})")
+    
     stats = {
         'templates_found': 0,
         'templates_added': 0,
@@ -48,6 +50,14 @@ def sync_templates_from_proxmox(full_sync=True):
             if not proxmox:
                 logger.warning(f"Could not connect to cluster {cluster_id} ({cluster_ip})")
                 stats['errors'].append(f"Connection failed: {cluster_id}")
+                continue
+            
+            # Test connection with a simple API call
+            try:
+                proxmox.version.get()
+            except Exception as e:
+                logger.warning(f"Cluster {cluster_id} ({cluster_ip}) connection test failed: {e}")
+                stats['errors'].append(f"Connection test failed: {cluster_id} - {str(e)}")
                 continue
             
             # Get all nodes in this cluster

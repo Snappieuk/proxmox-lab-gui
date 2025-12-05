@@ -157,21 +157,34 @@ def get_cluster_resources(cluster_id: str):
         
         total_cpu_cores = 0
         total_memory_mb = 0
+        failed_nodes = []
         
         for node_data in nodes:
             node_name = node_data['node']
-            node_info = proxmox.nodes(node_name).status.get()
             
-            # CPU: maxcpu is the number of physical cores
-            total_cpu_cores += node_info.get('maxcpu', 0)
+            # Skip offline nodes
+            if node_data.get('status') != 'online':
+                logger.warning(f"Skipping offline node: {node_name}")
+                failed_nodes.append(node_name)
+                continue
             
-            # Memory: maxmem is total memory in bytes, convert to MB
-            total_memory_mb += node_info.get('maxmem', 0) // BYTES_TO_MB
+            try:
+                node_info = proxmox.nodes(node_name).status.get()
+                
+                # CPU: maxcpu is the number of physical cores
+                total_cpu_cores += node_info.get('maxcpu', 0)
+                
+                # Memory: maxmem is total memory in bytes, convert to MB
+                total_memory_mb += node_info.get('maxmem', 0) // BYTES_TO_MB
+            except Exception as e:
+                logger.warning(f"Failed to get status for node {node_name}: {e}")
+                failed_nodes.append(node_name)
+                continue
         
         # Apply overallocation factor for virtual CPUs
         vcpu_available = total_cpu_cores * CPU_OVERALLOCATION_FACTOR
         
-        return jsonify({
+        response = {
             "ok": True,
             "cluster_id": cluster_id,
             "resources": {
@@ -185,7 +198,14 @@ def get_cluster_resources(cluster_id: str):
                     "available_mb": total_memory_mb
                 }
             }
-        })
+        }
+        
+        # Add warning if some nodes failed
+        if failed_nodes:
+            response["warning"] = f"Could not query {len(failed_nodes)} node(s): {', '.join(failed_nodes)}"
+            logger.warning(f"Cluster {cluster_id} resource query incomplete: {failed_nodes}")
+        
+        return jsonify(response)
     except Exception as e:
         logger.exception("Failed to get cluster resources")
         return jsonify({"ok": False, "error": str(e)}), 500
