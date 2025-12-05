@@ -1196,7 +1196,7 @@ def save_and_deploy_teacher_vm(
     student_assignments = VMAssignment.query.filter(
         VMAssignment.class_id == class_id,
         VMAssignment.proxmox_vmid != teacher_vmid,
-        VMAssignment.is_template_vm == False,
+        ~VMAssignment.is_template_vm,
     ).all()
     
     if not student_assignments:

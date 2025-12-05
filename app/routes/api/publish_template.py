@@ -158,7 +158,7 @@ def publish_template(class_id: int):
             finally:
                 try:
                     app_ctx.pop()
-                except:
+                except Exception:
                     pass
         
         # Start background thread

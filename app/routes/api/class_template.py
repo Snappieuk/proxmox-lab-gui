@@ -408,7 +408,7 @@ def save_template(class_id: int):
         
         # Stop the VM first (required for template conversion)
         logger.info(f"Stopping VM {template.proxmox_vmid} before template conversion")
-        stop_success = stop_class_vm(template.proxmox_vmid, template.cluster_ip)
+        stop_class_vm(template.proxmox_vmid, template.cluster_ip)
         
         # Wait a moment for shutdown
         import time
