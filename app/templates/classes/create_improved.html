@@ -353,37 +353,53 @@ async function loadNodesForCluster(clusterId) {
 async function loadClusterResources(clusterId) {
     if (!clusterId) {
         clusterResources = null;
-        document.getElementById('summary-vcpus-available').textContent = '-- vCPUs';
-        document.getElementById('summary-ram-available').textContent = '-- GB';
+        document.getElementById('summary-vcpus-available').textContent = '0 vCPUs';
+        document.getElementById('summary-ram-available').textContent = '0 GB';
         return;
     }
     
     try {
-        console.log('Loading cluster resources for:', clusterId);
-        const resp = await fetch(`/api/clusters/${clusterId}/resources`);
-        const data = await resp.json();
+        console.log('[RESOURCES] Loading cluster resources for:', clusterId);
+        console.log('[RESOURCES] Fetching URL:', `/api/clusters/${clusterId}/resources`);
         
-        console.log('Cluster resources response:', data);
+        const resp = await fetch(`/api/clusters/${clusterId}/resources`);
+        console.log('[RESOURCES] Response status:', resp.status, resp.statusText);
+        
+        const data = await resp.json();
+        console.log('[RESOURCES] Full response data:', JSON.stringify(data, null, 2));
         
         if (data.ok && data.resources) {
             clusterResources = data.resources;
+            console.log('[RESOURCES] Resources object:', clusterResources);
+            console.log('[RESOURCES] CPU object:', clusterResources.cpu);
+            console.log('[RESOURCES] Memory object:', clusterResources.memory);
             
             // Update available resources display
-            const vcpuAvailable = clusterResources.cpu.vcpu_available;
-            const ramAvailableMb = clusterResources.memory.available_mb;
+            const vcpuAvailable = clusterResources.cpu?.vcpu_available || 0;
+            const ramAvailableMb = clusterResources.memory?.available_mb || 0;
             const ramAvailableGb = Math.round(ramAvailableMb / 1024);
             
-            console.log('Setting vCPUs:', vcpuAvailable, 'RAM GB:', ramAvailableGb);
+            console.log('[RESOURCES] Calculated values - vCPUs:', vcpuAvailable, 'RAM GB:', ramAvailableGb);
             
-            document.getElementById('summary-vcpus-available').textContent = `${vcpuAvailable} vCPUs`;
-            document.getElementById('summary-ram-available').textContent = `${ramAvailableGb} GB`;
+            const vcpuElement = document.getElementById('summary-vcpus-available');
+            const ramElement = document.getElementById('summary-ram-available');
+            
+            console.log('[RESOURCES] vCPU element:', vcpuElement);
+            console.log('[RESOURCES] RAM element:', ramElement);
+            
+            vcpuElement.textContent = `${vcpuAvailable} vCPUs`;
+            ramElement.textContent = `${ramAvailableGb} GB`;
+            
+            console.log('[RESOURCES] Successfully updated display');
         } else {
-            console.error('Invalid cluster resources response:', data);
+            console.error('[RESOURCES] Invalid response - ok:', data.ok, 'resources:', data.resources);
+            console.error('[RESOURCES] Full error response:', data);
             document.getElementById('summary-vcpus-available').textContent = 'Error';
             document.getElementById('summary-ram-available').textContent = 'Error';
         }
     } catch (e) {
-        console.error('Failed to load cluster resources:', e);
+        console.error('[RESOURCES] Exception caught:', e);
+        console.error('[RESOURCES] Exception stack:', e.stack);
         clusterResources = null;
         document.getElementById('summary-vcpus-available').textContent = 'Error';
         document.getElementById('summary-ram-available').textContent = 'Error';
@@ -577,19 +593,73 @@ document.getElementById('create-class-form').addEventListener('submit', async fu
         const data = await resp.json();
         
         if (data.ok) {
-            // Show progress message
-            const progressDiv = document.createElement('div');
-            progressDiv.className = 'progress-modal';
-            progressDiv.innerHTML = `
-                <div style="margin-bottom: 20px;">
-                    <div class="loading-spinner"></div>
-                </div>
-                <h3>Creating Class VMs</h3>
-                <p>Deploying ${poolSize > 0 ? poolSize + ' student VMs + ' : ''}teacher VM + template...</p>
-                <p class="progress-note">This may take several minutes</p>
+            // Show progress modal
+            const progressModal = document.createElement('div');
+            progressModal.style.cssText = `
+                position: fixed;
+                top: 0;
+                left: 0;
+                right: 0;
+                bottom: 0;
+                background: rgba(0, 0, 0, 0.7);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                z-index: 10000;
             `;
-            document.body.appendChild(progressDiv);
             
+            const totalVMs = (poolSize || 0) + 2; // student VMs + teacher + template
+            
+            progressModal.innerHTML = `
+                <div style="background: white; border-radius: 8px; padding: 40px; max-width: 500px; text-align: center; box-shadow: 0 8px 32px rgba(0,0,0,0.3);">
+                    <div style="margin-bottom: 24px;">
+                        <div style="width: 64px; height: 64px; border: 4px solid #e1dfdd; border-top-color: #0078d4; border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto;"></div>
+                    </div>
+                    <h2 style="margin: 0 0 16px 0; font-size: 24px; color: #323130;">Creating Class VMs</h2>
+                    <p style="color: #605e5c; margin: 0 0 8px 0; font-size: 16px;">
+                        <strong>${name}</strong>
+                    </p>
+                    <p style="color: #8a8886; margin: 0 0 24px 0; font-size: 14px;">
+                        Deploying ${totalVMs} VM${totalVMs !== 1 ? 's' : ''}...
+                    </p>
+                    <div style="background: #f3f2f1; border-radius: 4px; padding: 16px; margin-bottom: 16px;">
+                        <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px;">
+                            <i class="bi bi-hdd-stack" style="font-size: 20px; color: #0078d4;"></i>
+                            <div style="text-align: left; flex: 1;">
+                                <div style="font-weight: 600; color: #323130; font-size: 13px;">Exporting template disk</div>
+                                <div style="color: #8a8886; font-size: 12px;">Converting to QCOW2 format...</div>
+                            </div>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px;">
+                            <i class="bi bi-cpu" style="font-size: 20px; color: #0078d4;"></i>
+                            <div style="text-align: left; flex: 1;">
+                                <div style="font-weight: 600; color: #323130; font-size: 13px;">Creating VM shells</div>
+                                <div style="color: #8a8886; font-size: 12px;">Allocating VMIDs and resources...</div>
+                            </div>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 12px;">
+                            <i class="bi bi-arrow-repeat" style="font-size: 20px; color: #0078d4;"></i>
+                            <div style="text-align: left; flex: 1;">
+                                <div style="font-weight: 600; color: #323130; font-size: 13px;">Creating overlay disks</div>
+                                <div style="color: #8a8886; font-size: 12px;">Setting up copy-on-write layers...</div>
+                            </div>
+                        </div>
+                    </div>
+                    <p style="color: #a19f9d; font-size: 13px; margin: 0;">
+                        ⏱ This process may take 2-5 minutes<br>
+                        You'll be redirected when complete
+                    </p>
+                </div>
+                <style>
+                    @keyframes spin {
+                        to { transform: rotate(360deg); }
+                    }
+                </style>
+            `;
+            
+            document.body.appendChild(progressModal);
+            
+            // Redirect after a short delay
             setTimeout(() => {
                 window.location.href = '/classes/' + data.class.id + '?deployment=inprogress';
             }, 2000);

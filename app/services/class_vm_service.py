@@ -475,7 +475,7 @@ def recreate_student_vms_from_template(
                 # Create VM shell with proper specs from class configuration
                 exit_code, stdout, stderr = ssh_executor.execute(
                     f"qm create {vmid} --name {student_name} --memory {memory} --cores {cores} "
-                    f"--net0 virtio,bridge=vmbr0 --scsihw virtio-scsi-pci",
+                    f"--net0 virtio,bridge=vmbr0",
                     timeout=60
                 )
                 
@@ -861,7 +861,7 @@ def create_class_vms(
                 exit_code, stdout, stderr = ssh_executor.execute(
                     f"qm create {teacher_vmid} --name {teacher_name} "
                     f"--memory {memory} --cores {cores} "
-                    f"--net0 virtio,bridge=vmbr0 --scsihw virtio-scsi-pci",
+                    f"--net0 virtio,bridge=vmbr0",
                     timeout=120,
                     check=False
                 )
@@ -928,7 +928,7 @@ def create_class_vms(
             result.details.append("Creating class-base VM shell (no template)...")
             exit_code, stdout, stderr = ssh_executor.execute(
                 f"qm create {class_base_vmid} --name {class_base_name} --memory {memory} --cores {cores} "
-                f"--net0 virtio,bridge=vmbr0 --scsihw virtio-scsi-pci "
+                f"--net0 virtio,bridge=vmbr0 "
                 f"--scsi0 {PROXMOX_STORAGE_NAME}:{disk_size_gb} --boot order=scsi0",
                 timeout=120
             )
@@ -1077,25 +1077,17 @@ def create_class_vms(
                     student_optimal_node = get_optimal_node(ssh_executor, proxmox, vm_memory_mb=memory, simulated_vms_per_node=simulated_vms_per_node)
                     logger.info(f"Selected optimal node for {student_name}: {student_optimal_node} (current allocation: {simulated_vms_per_node})")
                 
-                # Map controller type to SCSI hardware (for VM creation)
-                # Note: SATA uses virtio-scsi-pci, not ahci (ahci is not valid for --scsihw)
-                # For SATA disks, we use virtio-scsi-pci as scsihw and specify sata in disk attachment
-                scsihw_map = {
-                    'scsi': 'virtio-scsi-pci',
-                    'virtio': 'virtio-scsi-pci',
-                    'sata': 'virtio-scsi-pci',  # Fixed: Use virtio-scsi-pci, attach disk as sata later
-                    'ide': 'virtio-scsi-pci',   # Fixed: IDE not valid for scsihw either
-                }
-                scsihw = scsihw_map.get(disk_controller_type if base_qcow2_path else 'scsi', 'virtio-scsi-pci')
+                # Determine disk slot based on controller type
                 disk_slot = f"{disk_controller_type if base_qcow2_path else 'scsi'}0"
                 
                 try:
                     # Create VM shell (will be on the connected node) with proper ostype
+                    # Let Proxmox use default scsihw (omit --scsihw to avoid parameter validation errors)
                     vm_ostype = ostype if base_qcow2_path else 'l26'  # Use template ostype or default to Linux
                     exit_code, stdout, stderr = ssh_executor.execute(
                         f"qm create {vmid} --name {student_name} "
                         f"--memory {memory} --cores {cores} "
-                        f"--scsihw {scsihw} --net0 virtio,bridge=vmbr0 "
+                        f"--net0 virtio,bridge=vmbr0 "
                         f"--ostype {vm_ostype}",
                         timeout=60
                     )
