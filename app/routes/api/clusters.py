@@ -24,6 +24,51 @@ logger = logging.getLogger(__name__)
 api_clusters_bp = Blueprint('api_clusters', __name__, url_prefix='/api')
 
 
+@api_clusters_bp.route("/clusters", methods=["GET"])
+@login_required
+def api_list_clusters():
+    """List all configured Proxmox clusters."""
+    clusters_list = [
+        {
+            "id": c["id"],
+            "name": c["name"],
+            "host": c["host"]
+        }
+        for c in CLUSTERS
+    ]
+    return jsonify({"ok": True, "clusters": clusters_list})
+
+
+@api_clusters_bp.route("/clusters/<cluster_id>/nodes", methods=["GET"])
+@login_required
+def api_get_cluster_nodes(cluster_id: str):
+    """Get list of nodes in a specific cluster."""
+    try:
+        from app.services.proxmox_service import get_proxmox_admin_for_cluster
+        
+        # Validate cluster ID
+        if cluster_id not in [c["id"] for c in CLUSTERS]:
+            return jsonify({"ok": False, "error": "Invalid cluster ID"}), 400
+        
+        proxmox = get_proxmox_admin_for_cluster(cluster_id)
+        nodes = proxmox.nodes.get()
+        
+        nodes_list = [
+            {
+                "node": n["node"],
+                "status": n.get("status", "unknown"),
+                "online": n.get("status") == "online"
+            }
+            for n in nodes
+        ]
+        
+        return jsonify({"ok": True, "nodes": nodes_list})
+        
+    except Exception as e:
+        logger.exception(f"Failed to get nodes for cluster {cluster_id}: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 @api_clusters_bp.route("/switch-cluster", methods=["POST"])
 @login_required
 def api_switch_cluster():

@@ -126,6 +126,8 @@ def create_new_class():
     cpu_cores = data.get('cpu_cores', 2)
     memory_mb = data.get('memory_mb', 2048)
     disk_size_gb = data.get('disk_size_gb', 32)
+    deployment_node = data.get('deployment_node', '').strip() or None  # Optional: single-node deployment
+    deployment_cluster = data.get('deployment_cluster', '').strip() or None  # Optional: target cluster
     
     if not name:
         return jsonify({"ok": False, "error": "Class name is required"}), 400
@@ -142,7 +144,9 @@ def create_new_class():
         pool_size=pool_size,
         cpu_cores=cpu_cores,
         memory_mb=memory_mb,
-        disk_size_gb=disk_size_gb
+        disk_size_gb=disk_size_gb,
+        deployment_node=deployment_node,
+        deployment_cluster=deployment_cluster
     )
     
     if not class_:

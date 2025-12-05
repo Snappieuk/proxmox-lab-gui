@@ -107,6 +107,8 @@ class Class(db.Model):
     disk_size_gb = db.Column(db.Integer, default=32)  # Disk size in GB (for template-less classes)
     vmid_prefix = db.Column(db.Integer, nullable=True)  # 3-digit prefix for VMIDs (e.g., 123 -> VMs 12300-12399)
     clone_task_id = db.Column(db.String(64), nullable=True)  # Track ongoing class creation
+    deployment_node = db.Column(db.String(80), nullable=True)  # Override: deploy all VMs to this specific node
+    deployment_cluster = db.Column(db.String(50), nullable=True)  # Cluster ID where VMs are deployed
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     

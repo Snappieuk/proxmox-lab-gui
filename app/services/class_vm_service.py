@@ -667,6 +667,12 @@ def create_class_vms(
         logger.info(f"Using shared storage: {PROXMOX_STORAGE_NAME} (path: {DEFAULT_VM_IMAGES_PATH})")
         logger.info("Note: All nodes must have access to shared storage for multi-node deployment")
         
+        # Check for deployment overrides
+        if class_.deployment_node:
+            logger.info(f"DEPLOYMENT OVERRIDE: All VMs will be created on node '{class_.deployment_node}' (single-node deployment)")
+        if class_.deployment_cluster:
+            logger.info(f"DEPLOYMENT CLUSTER: VMs will be created on cluster '{class_.deployment_cluster}'")
+        
         # Track simulated VM allocations across nodes for load balancing
         simulated_vms_per_node = {}
         
@@ -714,9 +720,13 @@ def create_class_vms(
             # Step 2: Create teacher VM as overlay (NOT full clone)
             result.details.append("Creating teacher VM as overlay...")
             
-            # Select optimal node for teacher VM (with simulated load balancing)
-            teacher_optimal_node = get_optimal_node(ssh_executor, proxmox, vm_memory_mb=memory, simulated_vms_per_node=simulated_vms_per_node)
-            logger.info(f"Selected optimal node for teacher VM: {teacher_optimal_node}")
+            # Select optimal node for teacher VM (with simulated load balancing or override)
+            if class_.deployment_node:
+                teacher_optimal_node = class_.deployment_node
+                logger.info(f"Using deployment override node for teacher VM: {teacher_optimal_node}")
+            else:
+                teacher_optimal_node = get_optimal_node(ssh_executor, proxmox, vm_memory_mb=memory, simulated_vms_per_node=simulated_vms_per_node)
+                logger.info(f"Selected optimal node for teacher VM: {teacher_optimal_node}")
             
             # Use allocated VMID from class prefix (index 0 = teacher)
             teacher_vmid = get_vmid_for_class_vm(class_id, 0)
@@ -826,10 +836,15 @@ def create_class_vms(
             
             # Default to scsi for template-less classes
             disk_controller_type = 'scsi'
+            ostype = 'l26'  # Default to Linux
             
-            # Select optimal node for teacher VM (with simulated load balancing)
-            teacher_optimal_node = get_optimal_node(ssh_executor, proxmox, vm_memory_mb=memory, simulated_vms_per_node=simulated_vms_per_node)
-            logger.info(f"Selected optimal node for teacher VM: {teacher_optimal_node}")
+            # Select optimal node for teacher VM (with simulated load balancing or override)
+            if class_.deployment_node:
+                teacher_optimal_node = class_.deployment_node
+                logger.info(f"Using deployment override node for teacher VM: {teacher_optimal_node}")
+            else:
+                teacher_optimal_node = get_optimal_node(ssh_executor, proxmox, vm_memory_mb=memory, simulated_vms_per_node=simulated_vms_per_node)
+                logger.info(f"Selected optimal node for teacher VM: {teacher_optimal_node}")
             
             # Retry logic for VMID conflicts
             max_retries = 30
@@ -1055,9 +1070,12 @@ def create_class_vms(
                     continue
                 student_name = f"{class_prefix}-student-{i + 1}"
                 
-                # Select optimal node for this student VM (with simulated load balancing)
-                student_optimal_node = get_optimal_node(ssh_executor, proxmox, vm_memory_mb=memory, simulated_vms_per_node=simulated_vms_per_node)
-                logger.info(f"Selected optimal node for {student_name}: {student_optimal_node} (current allocation: {simulated_vms_per_node})")
+                # Select optimal node for this student VM (with simulated load balancing or override)
+                if class_.deployment_node:
+                    student_optimal_node = class_.deployment_node
+                else:
+                    student_optimal_node = get_optimal_node(ssh_executor, proxmox, vm_memory_mb=memory, simulated_vms_per_node=simulated_vms_per_node)
+                    logger.info(f"Selected optimal node for {student_name}: {student_optimal_node} (current allocation: {simulated_vms_per_node})")
                 
                 # Map controller type to SCSI hardware (for VM creation)
                 scsihw_map = {
