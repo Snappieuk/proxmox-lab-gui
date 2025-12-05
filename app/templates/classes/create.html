@@ -307,10 +307,7 @@ async function loadTemplatesForCluster(clusterId) {
         const proxmoxTemplates = data.proxmox_templates || [];
         const registeredTemplates = data.registered_templates || [];
         
-        // Filter templates by cluster
-        const clusterTemplates = proxmoxTemplates.filter(t => 
-            t.cluster_id === clusterId || !t.cluster_id
-        );
+        // Backend already filters by cluster, no need for client-side filtering
         
         // Create map of registered templates by VMID for quick lookup
         const registeredMap = {};
@@ -320,15 +317,15 @@ async function loadTemplatesForCluster(clusterId) {
         
         // Store template data for later use
         window.templateData = {
-            proxmox: clusterTemplates,
+            proxmox: proxmoxTemplates,
             registered: registeredMap
         };
         
-        if (clusterTemplates.length === 0) {
+        if (proxmoxTemplates.length === 0) {
             selectElement.innerHTML = '<option value="">None (No templates found for this cluster)</option>';
         } else {
             selectElement.innerHTML = '<option value="">None</option>' +
-                clusterTemplates.map(t => {
+                proxmoxTemplates.map(t => {
                     const registered = registeredMap[t.vmid] ? ' ✓' : '';
                     return `<option value="${t.vmid}" data-name="${t.name}" data-node="${t.node}" data-cluster="${t.cluster_id || ''}">${t.name} (VMID: ${t.vmid})${registered}</option>`;
                 }).join('');

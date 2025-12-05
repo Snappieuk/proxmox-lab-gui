@@ -1,0 +1,523 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1>{% if is_admin and request.endpoint == 'admin_view' %}Admin View - All Virtual Machines{% else %}My Lab Machines{% endif %}</h1>
+        <p class="page-subtitle">
+            Quick access to your Windows and Linux virtual machines
+        </p>
+    </div>
+</div>
+
+<!-- Compact Summary Cards -->
+<div class="summary-cards-compact">
+    <div class="summary-card-compact">
+        <div class="summary-card-icon windows-icon">
+            <i class="bi bi-windows"></i>
+        </div>
+        <div class="summary-card-content">
+            <div class="summary-card-value" id="windows-count">{{ windows_vms|length if windows_vms else 0 }}</div>
+            <div class="summary-card-label">Windows VMs</div>
+            <div class="summary-card-running" id="windows-running">{{ windows_vms|selectattr('status', 'equalto', 'running')|list|length if windows_vms else 0 }} running</div>
+        </div>
+    </div>
+    <div class="summary-card-compact">
+        <div class="summary-card-icon linux-icon">
+            <i class="bi bi-ubuntu"></i>
+        </div>
+        <div class="summary-card-content">
+            <div class="summary-card-value" id="linux-count">{{ linux_vms|length if linux_vms else 0 }}</div>
+            <div class="summary-card-label">Linux VMs</div>
+            <div class="summary-card-running" id="linux-running">{{ linux_vms|selectattr('status', 'equalto', 'running')|list|length if linux_vms else 0 }} running</div>
+        </div>
+    </div>
+    <div class="summary-card-compact">
+        <div class="summary-card-icon lxc-icon">
+            <i class="bi bi-box"></i>
+        </div>
+        <div class="summary-card-content">
+            <div class="summary-card-value" id="lxc-count">{{ lxc_containers|length if lxc_containers else 0 }}</div>
+            <div class="summary-card-label">LXC Containers</div>
+            <div class="summary-card-running" id="lxc-running">{{ lxc_containers|selectattr('status', 'equalto', 'running')|list|length if lxc_containers else 0 }} running</div>
+        </div>
+    </div>
+</div>
+
+<!-- Unified Filter Bar -->
+<div class="filter-bar-unified">
+    <div class="filter-group">
+        <i class="bi bi-search filter-icon"></i>
+        <input type="text" 
+               id="search-input"
+               class="filter-input"
+               placeholder="Search by name, VMID, or IP..." 
+               value="{{ request.args.get('search', '') }}">
+    </div>
+    <div class="filter-group">
+        <i class="bi bi-funnel filter-icon"></i>
+        <select id="category-filter" class="filter-select">
+            <option value="all">All OS Types</option>
+            <option value="windows">Windows Only</option>
+            <option value="linux">Linux Only</option>
+            <option value="lxc">LXC Only</option>
+        </select>
+    </div>
+    <div class="filter-group">
+        <i class="bi bi-server filter-icon"></i>
+        <select id="node-filter" class="filter-select">
+            <option value="all">All Nodes</option>
+        </select>
+    </div>
+</div>
+
+{% if message %}
+<div class="page-banner">{{ message }}</div>
+{% endif %}
+
+<!-- Loading indicator -->
+{% if progressive_load %}
+<div id="loading-indicator" class="loading-indicator">
+    <div class="loading-spinner"></div>
+    <p>Loading virtual machines...</p>
+</div>
+{% endif %}
+
+<!-- VM Tables Container -->
+<div id="vm-tables-container">
+
+<!-- Windows VMs Section -->
+{% if windows_vms %}
+<div class="vm-section">
+    <div class="vm-section-header" data-section="windows">
+        <div class="vm-section-title">
+            <i class="bi bi-chevron-down section-toggle"></i>
+            <i class="bi bi-windows" style="margin-left: 8px;"></i>
+            Windows VMs
+            <span class="vm-count-badge">{{ windows_vms|length }}</span>
+        </div>
+    </div>
+    <div class="vm-section-content" id="windows-section" style="display: block;">
+        <table class="vm-table-improved" id="windows-table">
+            <thead>
+                <tr>
+                    <th style="width: 300px;">Name</th>
+                    <th style="width: 80px;">VMID</th>
+                    <th style="width: 120px;">Cluster</th>
+                    <th style="width: 100px;">Node</th>
+                    <th class="sortable-header" data-sort-state="none" style="width: 110px;">
+                        Status <i class="bi bi-funnel"></i>
+                    </th>
+                    <th style="width: 140px;">IP Address</th>
+                    <th style="width: 200px; text-align: right;">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for vm in windows_vms %}
+                <tr data-vmid="{{ vm.vmid }}" data-category="windows" data-node="{{ vm.node }}" data-status="{{ vm.status }}">
+                    <td>
+                        <div class="vm-name-cell">
+                            <i class="bi bi-windows os-icon"></i>
+                            <strong>{{ vm.name }}</strong>
+                        </div>
+                    </td>
+                    <td>{{ vm.vmid }}</td>
+                    <td><span class="pill-badge pill-cluster">{{ vm.cluster_id or 'default' }}</span></td>
+                    <td><span class="pill-badge pill-node">{{ vm.node }}</span></td>
+                    <td>
+                        {% if vm.status == 'running' %}
+                        <span class="pill-status pill-running">Running</span>
+                        {% elif vm.status == 'stopped' %}
+                        <span class="pill-status pill-stopped">Stopped</span>
+                        {% else %}
+                        <span class="pill-status pill-unknown">Unknown</span>
+                        {% endif %}
+                    </td>
+                    <td class="vm-ip">{{ vm.ip or 'N/A' }}</td>
+                    <td>
+                        <div class="action-group">
+                            <button class="btn-action btn-start btn-power" 
+                                    data-vmid="{{ vm.vmid }}" 
+                                    data-action="start"
+                                    title="Start VM"
+                                    {% if vm.status == 'running' %}disabled{% endif %}>
+                                <i class="bi bi-play-fill"></i>
+                            </button>
+                            <button class="btn-action btn-stop btn-power" 
+                                    data-vmid="{{ vm.vmid }}" 
+                                    data-action="stop"
+                                    title="Stop VM"
+                                    {% if vm.status == 'stopped' %}disabled{% endif %}>
+                                <i class="bi bi-stop-fill"></i>
+                            </button>
+                            <div class="dropdown-action">
+                                <button class="btn-action btn-more" title="More actions">
+                                    <i class="bi bi-three-dots-vertical"></i>
+                                </button>
+                                <div class="dropdown-menu">
+                                    <a class="dropdown-item" href="/rdp/{{ vm.vmid }}.rdp">
+                                        <i class="bi bi-download"></i> Download RDP
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+<!-- Linux VMs Section -->
+{% if linux_vms %}
+<div class="vm-section">
+    <div class="vm-section-header" data-section="linux">
+        <div class="vm-section-title">
+            <i class="bi bi-chevron-down section-toggle"></i>
+            <i class="bi bi-ubuntu" style="margin-left: 8px;"></i>
+            Linux VMs
+            <span class="vm-count-badge">{{ linux_vms|length }}</span>
+        </div>
+    </div>
+    <div class="vm-section-content" id="linux-section" style="display: block;">
+        <table class="vm-table-improved" id="linux-table">
+            <thead>
+                <tr>
+                    <th style="width: 300px;">Name</th>
+                    <th style="width: 80px;">VMID</th>
+                    <th style="width: 120px;">Cluster</th>
+                    <th style="width: 100px;">Node</th>
+                    <th class="sortable-header" data-sort-state="none" style="width: 110px;">
+                        Status <i class="bi bi-funnel"></i>
+                    </th>
+                    <th style="width: 140px;">IP Address</th>
+                    <th style="width: 200px; text-align: right;">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for vm in linux_vms %}
+                <tr data-vmid="{{ vm.vmid }}" data-category="linux" data-node="{{ vm.node }}" data-status="{{ vm.status }}">
+                    <td>
+                        <div class="vm-name-cell">
+                            <i class="bi bi-ubuntu os-icon"></i>
+                            <strong>{{ vm.name }}</strong>
+                        </div>
+                    </td>
+                    <td>{{ vm.vmid }}</td>
+                    <td><span class="pill-badge pill-cluster">{{ vm.cluster_id or 'default' }}</span></td>
+                    <td><span class="pill-badge pill-node">{{ vm.node }}</span></td>
+                    <td>
+                        {% if vm.status == 'running' %}
+                        <span class="pill-status pill-running">Running</span>
+                        {% elif vm.status == 'stopped' %}
+                        <span class="pill-status pill-stopped">Stopped</span>
+                        {% else %}
+                        <span class="pill-status pill-unknown">Unknown</span>
+                        {% endif %}
+                    </td>
+                    <td class="vm-ip">{{ vm.ip or 'N/A' }}</td>
+                    <td>
+                        <div class="action-group">
+                            <button class="btn-action btn-start btn-power" 
+                                    data-vmid="{{ vm.vmid }}" 
+                                    data-action="start"
+                                    title="Start VM"
+                                    {% if vm.status == 'running' %}disabled{% endif %}>
+                                <i class="bi bi-play-fill"></i>
+                            </button>
+                            <button class="btn-action btn-stop btn-power" 
+                                    data-vmid="{{ vm.vmid }}" 
+                                    data-action="stop"
+                                    title="Stop VM"
+                                    {% if vm.status == 'stopped' %}disabled{% endif %}>
+                                <i class="bi bi-stop-fill"></i>
+                            </button>
+                            <div class="dropdown-action">
+                                <button class="btn-action btn-more" title="More actions">
+                                    <i class="bi bi-three-dots-vertical"></i>
+                                </button>
+                                <div class="dropdown-menu">
+                                    <button class="dropdown-item btn-ssh-web" 
+                                            data-vmid="{{ vm.vmid }}"
+                                            data-ip="{{ vm.ip or '' }}"
+                                            data-name="{{ vm.name }}"
+                                            {% if not vm.ip %}disabled{% endif %}>
+                                        <i class="bi bi-terminal"></i> Web SSH
+                                    </button>
+                                    <button class="dropdown-item btn-ssh-copy" 
+                                            data-vmid="{{ vm.vmid }}"
+                                            data-ip="{{ vm.ip or '' }}"
+                                            {% if not vm.ip %}disabled{% endif %}>
+                                        <i class="bi bi-clipboard"></i> Copy SSH Command
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+<!-- LXC Containers Section -->
+{% if lxc_containers %}
+<div class="vm-section">
+    <div class="vm-section-header" data-section="lxc">
+        <div class="vm-section-title">
+            <i class="bi bi-chevron-down section-toggle"></i>
+            <i class="bi bi-box" style="margin-left: 8px;"></i>
+            LXC Containers
+            <span class="vm-count-badge">{{ lxc_containers|length }}</span>
+        </div>
+    </div>
+    <div class="vm-section-content" id="lxc-section" style="display: block;">
+        <table class="vm-table-improved" id="lxc-table">
+            <thead>
+                <tr>
+                    <th style="width: 300px;">Name</th>
+                    <th style="width: 80px;">VMID</th>
+                    <th style="width: 120px;">Cluster</th>
+                    <th style="width: 100px;">Node</th>
+                    <th class="sortable-header" data-sort-state="none" style="width: 110px;">
+                        Status <i class="bi bi-funnel"></i>
+                    </th>
+                    <th style="width: 140px;">IP Address</th>
+                    <th style="width: 200px; text-align: right;">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for vm in lxc_containers %}
+                <tr data-vmid="{{ vm.vmid }}" data-category="lxc" data-node="{{ vm.node }}" data-status="{{ vm.status }}">
+                    <td>
+                        <div class="vm-name-cell">
+                            <i class="bi bi-box os-icon"></i>
+                            <strong>{{ vm.name }}</strong>
+                        </div>
+                    </td>
+                    <td>{{ vm.vmid }}</td>
+                    <td><span class="pill-badge pill-cluster">{{ vm.cluster_id or 'default' }}</span></td>
+                    <td><span class="pill-badge pill-node">{{ vm.node }}</span></td>
+                    <td>
+                        {% if vm.status == 'running' %}
+                        <span class="pill-status pill-running">Running</span>
+                        {% elif vm.status == 'stopped' %}
+                        <span class="pill-status pill-stopped">Stopped</span>
+                        {% else %}
+                        <span class="pill-status pill-unknown">Unknown</span>
+                        {% endif %}
+                    </td>
+                    <td class="vm-ip">{{ vm.ip or 'N/A' }}</td>
+                    <td>
+                        <div class="action-group">
+                            <button class="btn-action btn-start btn-power" 
+                                    data-vmid="{{ vm.vmid }}" 
+                                    data-action="start"
+                                    title="Start Container"
+                                    {% if vm.status == 'running' %}disabled{% endif %}>
+                                <i class="bi bi-play-fill"></i>
+                            </button>
+                            <button class="btn-action btn-stop btn-power" 
+                                    data-vmid="{{ vm.vmid }}" 
+                                    data-action="stop"
+                                    title="Stop Container"
+                                    {% if vm.status == 'stopped' %}disabled{% endif %}>
+                                <i class="bi bi-stop-fill"></i>
+                            </button>
+                            <div class="dropdown-action">
+                                <button class="btn-action btn-more" title="More actions">
+                                    <i class="bi bi-three-dots-vertical"></i>
+                                </button>
+                                <div class="dropdown-menu">
+                                    <button class="dropdown-item btn-ssh-web" 
+                                            data-vmid="{{ vm.vmid }}"
+                                            data-ip="{{ vm.ip or '' }}"
+                                            data-name="{{ vm.name }}"
+                                            {% if not vm.ip %}disabled{% endif %}>
+                                        <i class="bi bi-terminal"></i> Web SSH
+                                    </button>
+                                    <button class="dropdown-item btn-ssh-copy" 
+                                            data-vmid="{{ vm.vmid }}"
+                                            data-ip="{{ vm.ip or '' }}"
+                                            {% if not vm.ip %}disabled{% endif %}>
+                                        <i class="bi bi-clipboard"></i> Copy SSH Command
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+</div>
+
+{% if is_admin %}
+<div class="admin-actions">
+    <button type="button" id="refresh-btn" class="btn-secondary" onclick="refreshVMs()">
+        <i class="bi bi-arrow-clockwise"></i> Refresh Cache
+    </button>
+    <small>Admin only: Force reload VM data from Proxmox server</small>
+</div>
+{% endif %}
+
+<script>
+// Collapsible sections
+document.querySelectorAll('.vm-section-header').forEach(header => {
+    header.addEventListener('click', function() {
+        const section = this.dataset.section;
+        const content = document.getElementById(`${section}-section`);
+        const toggle = this.querySelector('.section-toggle');
+        
+        if (content.style.display === 'none') {
+            content.style.display = 'block';
+            toggle.classList.remove('bi-chevron-right');
+            toggle.classList.add('bi-chevron-down');
+        } else {
+            content.style.display = 'none';
+            toggle.classList.remove('bi-chevron-down');
+            toggle.classList.add('bi-chevron-right');
+        }
+    });
+});
+
+// Status column sorting (3-state cycle)
+document.querySelectorAll('.sortable-header').forEach(header => {
+    header.addEventListener('click', function() {
+        const table = this.closest('table');
+        const tbody = table.querySelector('tbody');
+        const rows = Array.from(tbody.querySelectorAll('tr'));
+        const currentState = this.dataset.sortState;
+        
+        // Cycle through states: none -> running-first -> stopped-first -> none
+        let newState = 'running-first';
+        if (currentState === 'running-first') newState = 'stopped-first';
+        else if (currentState === 'stopped-first') newState = 'none';
+        
+        this.dataset.sortState = newState;
+        
+        if (newState === 'none') {
+            // Reset to original order (by VMID)
+            rows.sort((a, b) => {
+                const vmidA = parseInt(a.dataset.vmid);
+                const vmidB = parseInt(b.dataset.vmid);
+                return vmidA - vmidB;
+            });
+        } else {
+            // Sort by status
+            rows.sort((a, b) => {
+                const statusA = a.dataset.status;
+                const statusB = b.dataset.status;
+                
+                const order = newState === 'running-first'
+                    ? { running: 1, stopped: 2, unknown: 3 }
+                    : { stopped: 1, running: 2, unknown: 3 };
+                
+                return order[statusA] - order[statusB];
+            });
+        }
+        
+        // Reattach rows
+        rows.forEach(row => tbody.appendChild(row));
+        
+        // Update icon
+        const icon = this.querySelector('i');
+        if (newState === 'none') {
+            icon.className = 'bi bi-funnel';
+        } else if (newState === 'running-first') {
+            icon.className = 'bi bi-funnel-fill';
+        } else {
+            icon.className = 'bi bi-funnel-fill';
+        }
+    });
+});
+
+// Dropdown menus
+document.querySelectorAll('.btn-more').forEach(btn => {
+    btn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        const dropdown = this.nextElementSibling;
+        
+        // Close other dropdowns
+        document.querySelectorAll('.dropdown-menu').forEach(menu => {
+            if (menu !== dropdown) menu.classList.remove('show');
+        });
+        
+        dropdown.classList.toggle('show');
+    });
+});
+
+// Close dropdowns when clicking outside
+document.addEventListener('click', function() {
+    document.querySelectorAll('.dropdown-menu').forEach(menu => {
+        menu.classList.remove('show');
+    });
+});
+
+// Filter functionality
+let allVMs = [];
+
+function applyFilters() {
+    const searchTerm = document.getElementById('search-input').value.toLowerCase();
+    const categoryFilter = document.getElementById('category-filter').value;
+    const nodeFilter = document.getElementById('node-filter').value;
+    
+    document.querySelectorAll('.vm-table-improved tbody tr').forEach(row => {
+        const category = row.dataset.category;
+        const node = row.dataset.node;
+        const text = row.textContent.toLowerCase();
+        
+        const matchesSearch = !searchTerm || text.includes(searchTerm);
+        const matchesCategory = categoryFilter === 'all' || category === categoryFilter;
+        const matchesNode = nodeFilter === 'all' || node === nodeFilter;
+        
+        row.style.display = (matchesSearch && matchesCategory && matchesNode) ? '' : 'none';
+    });
+    
+    // Hide empty sections
+    document.querySelectorAll('.vm-section').forEach(section => {
+        const table = section.querySelector('.vm-table-improved');
+        const visibleRows = table.querySelectorAll('tbody tr[style=""]').length;
+        section.style.display = visibleRows > 0 ? 'block' : 'none';
+    });
+}
+
+document.getElementById('search-input').addEventListener('input', applyFilters);
+document.getElementById('category-filter').addEventListener('change', applyFilters);
+document.getElementById('node-filter').addEventListener('change', applyFilters);
+
+// Populate node filter
+window.addEventListener('load', function() {
+    const nodes = new Set();
+    document.querySelectorAll('[data-node]').forEach(el => {
+        nodes.add(el.getAttribute('data-node'));
+    });
+    const nodeFilter = document.getElementById('node-filter');
+    nodes.forEach(node => {
+        const option = document.createElement('option');
+        option.value = node;
+        option.textContent = node;
+        nodeFilter.appendChild(option);
+    });
+});
+
+// Load VMs (progressive)
+async function loadVMs() {
+    // Implementation continues from existing code...
+    console.log('VM loading initialized');
+}
+
+if (document.getElementById('loading-indicator')) {
+    loadVMs();
+}
+</script>
+
+{% endblock %}

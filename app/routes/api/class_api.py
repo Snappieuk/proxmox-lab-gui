@@ -604,14 +604,14 @@ def list_templates():
         return jsonify(error[0]), error[1]
     
     # Get cluster filter from query params
-    cluster_id = request.args.get('cluster_id')
+    cluster_id_param = request.args.get('cluster_id')
     cluster_ip = None
     
-    if cluster_id:
+    if cluster_id_param:
         # Convert cluster_id to cluster_ip
         from app.config import CLUSTERS
         for cluster in CLUSTERS:
-            if cluster['id'] == cluster_id:
+            if cluster['id'] == cluster_id_param:
                 cluster_ip = cluster['host']
                 break
     
@@ -624,6 +624,10 @@ def list_templates():
     
     db_templates = query.all()
     
+    # Build cluster_ip to cluster_id lookup map
+    from app.config import CLUSTERS
+    cluster_map = {c['host']: c['id'] for c in CLUSTERS}
+    
     # Convert to proxmox_templates format for backwards compatibility
     proxmox_templates = []
     for t in db_templates:
@@ -632,7 +636,7 @@ def list_templates():
             'name': t.name,
             'node': t.node,
             'cluster_ip': t.cluster_ip,
-            'cluster_id': cluster_id,  # Add cluster_id for frontend filtering
+            'cluster_id': cluster_map.get(t.cluster_ip),  # Look up cluster_id from template's cluster_ip
             'cpu_cores': t.cpu_cores,
             'cpu_sockets': t.cpu_sockets,
             'memory_mb': t.memory_mb,
