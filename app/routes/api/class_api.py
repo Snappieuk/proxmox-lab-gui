@@ -119,15 +119,15 @@ def create_new_class():
         return jsonify(error[0]), error[1]
     
     data = request.get_json()
-    name = data.get('name', '').strip()
-    description = data.get('description', '').strip()
+    name = (data.get('name') or '').strip()
+    description = (data.get('description') or '').strip()
     template_id = data.get('template_id')
     pool_size = data.get('pool_size', 0)
     cpu_cores = data.get('cpu_cores', 2)
     memory_mb = data.get('memory_mb', 2048)
     disk_size_gb = data.get('disk_size_gb', 32)
-    deployment_node = data.get('deployment_node', '').strip() or None  # Optional: single-node deployment
-    deployment_cluster = data.get('deployment_cluster', '').strip() or None  # Optional: target cluster
+    deployment_node = (data.get('deployment_node') or '').strip() or None  # Optional: single-node deployment
+    deployment_cluster = (data.get('deployment_cluster') or '').strip() or None  # Optional: target cluster
     
     if not name:
         return jsonify({"ok": False, "error": "Class name is required"}), 400

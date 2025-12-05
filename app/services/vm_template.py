@@ -210,24 +210,14 @@ def create_overlay_vm(
     storage = storage or PROXMOX_STORAGE_NAME
     images_path = DEFAULT_VM_IMAGES_PATH
     
-    # Map controller types to SCSI hardware
-    scsihw_map = {
-        'scsi': 'virtio-scsi-pci',
-        'virtio': 'virtio-scsi-pci',  # virtio disk still needs SCSI controller
-        'sata': 'ahci',
-        'ide': 'ide',
-    }
-    scsihw = scsihw_map.get(disk_controller_type, 'virtio-scsi-pci')
-    
     try:
-        # Step 1: Create VM shell with appropriate SCSI hardware and ostype
+        # Step 1: Create VM shell (let Proxmox use default controller)
         success, error = create_vm_shell(
             ssh_executor=ssh_executor,
             vmid=vmid,
             name=name,
             memory=memory,
             cores=cores,
-            scsihw=scsihw,
             ostype=ostype,
         )
         

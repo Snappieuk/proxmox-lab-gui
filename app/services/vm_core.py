@@ -51,7 +51,6 @@ def create_vm_shell(
     memory: int = 2048,
     cores: int = 2,
     network_bridge: str = "vmbr0",
-    scsihw: str = "virtio-scsi-pci",
     ostype: str = "l26",
 ) -> Tuple[bool, str]:
     """
@@ -67,7 +66,6 @@ def create_vm_shell(
         memory: Memory in MB (default: 2048)
         cores: CPU cores (default: 2)
         network_bridge: Network bridge (default: vmbr0)
-        scsihw: SCSI hardware type (default: virtio-scsi-pci)
         ostype: OS type (e.g., 'win10', 'win11', 'l26') - default: l26 (Linux)
         
     Returns:
@@ -79,7 +77,6 @@ def create_vm_shell(
         f"qm create {vmid} --name {safe_name} "
         f"--memory {memory} --cores {cores} "
         f"--net0 virtio,bridge={network_bridge} "
-        f"--scsihw {scsihw} "
         f"--ostype {ostype}"
     )
     
