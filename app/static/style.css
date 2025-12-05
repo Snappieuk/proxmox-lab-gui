@@ -2094,3 +2094,13 @@ body {
 }
 
 
+
+/* SSH and RDP button styles */
+.btn-ssh { color: #0078d4; }
+.btn-ssh:hover:not(:disabled) { background: #deecf9; border-color: #0078d4; }
+.btn-rdp { color: #8661c5; }
+.btn-rdp:hover:not(:disabled) { background: #f3eeff; border-color: #8661c5; }
+
+/* Center icons in all action buttons */
+.btn-action { padding: 0 !important; }
+.btn-action i { display: flex; align-items: center; justify-content: center; margin: 0 !important; }

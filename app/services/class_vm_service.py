@@ -1078,11 +1078,13 @@ def create_class_vms(
                     logger.info(f"Selected optimal node for {student_name}: {student_optimal_node} (current allocation: {simulated_vms_per_node})")
                 
                 # Map controller type to SCSI hardware (for VM creation)
+                # Note: SATA uses virtio-scsi-pci, not ahci (ahci is not valid for --scsihw)
+                # For SATA disks, we use virtio-scsi-pci as scsihw and specify sata in disk attachment
                 scsihw_map = {
                     'scsi': 'virtio-scsi-pci',
                     'virtio': 'virtio-scsi-pci',
-                    'sata': 'ahci',
-                    'ide': 'ide',
+                    'sata': 'virtio-scsi-pci',  # Fixed: Use virtio-scsi-pci, attach disk as sata later
+                    'ide': 'virtio-scsi-pci',   # Fixed: IDE not valid for scsihw either
                 }
                 scsihw = scsihw_map.get(disk_controller_type if base_qcow2_path else 'scsi', 'virtio-scsi-pci')
                 disk_slot = f"{disk_controller_type if base_qcow2_path else 'scsi'}0"
