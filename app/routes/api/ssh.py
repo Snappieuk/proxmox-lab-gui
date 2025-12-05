@@ -8,7 +8,7 @@ Handles SSH terminal page and WebSocket connections.
 import json
 import logging
 
-from flask import Blueprint, render_template, request, url_for, abort, current_app
+from flask import Blueprint, render_template, request, url_for, abort
 
 from app.utils.decorators import login_required
 

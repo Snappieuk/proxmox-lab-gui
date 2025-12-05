@@ -25,8 +25,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'rdp-gen'))
 def test_cluster_cache_thread_safety():
     """Test that cluster cache functions are thread-safe."""
     from proxmox_client import (
-        _cluster_cache_lock,
-        _get_cluster_resources_cached,
         invalidate_cluster_cache,
     )
     
@@ -125,7 +123,6 @@ def test_mappings_cache_thread_safety():
 def test_ip_cache_thread_safety():
     """Test that IP cache is thread-safe."""
     from proxmox_client import (
-        _ip_cache_lock,
         _get_cached_ip,
         _cache_ip,
     )
@@ -227,7 +224,6 @@ def test_mappings_write_through_cache():
         get_user_vm_map,
         set_user_vm_mapping,
         invalidate_mappings_cache,
-        _mappings_cache,
     )
     
     # Create a temporary mappings file
@@ -320,9 +316,6 @@ def test_admin_group_cache_exists():
     """Test that admin group cache variables and functions exist."""
     from proxmox_client import (
         ADMIN_GROUP_CACHE_TTL,
-        _admin_group_cache,
-        _admin_group_ts,
-        _admin_group_lock,
         _get_admin_group_members_cached,
         _invalidate_admin_group_cache,
     )
@@ -336,8 +329,6 @@ def test_admin_group_cache_exists():
 def test_admin_group_cache_invalidation():
     """Test that admin group cache can be invalidated."""
     from proxmox_client import (
-        _admin_group_cache,
-        _admin_group_ts,
         _invalidate_admin_group_cache,
     )
     import proxmox_client

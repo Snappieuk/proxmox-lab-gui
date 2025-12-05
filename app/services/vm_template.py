@@ -16,8 +16,6 @@ in inventory_service.py and background_sync.py.
 """
 
 import logging
-import os
-import re
 from typing import List, Optional, Tuple
 
 from app.services.ssh_executor import SSHExecutor
@@ -28,11 +26,9 @@ from app.services.vm_core import (
     create_overlay_disk,
     convert_disk_to_qcow2,
     get_vm_config_ssh,
-    get_vm_disk_path,
     stop_vm,
     wait_for_vm_stopped,
     PROXMOX_STORAGE_NAME,
-    DEFAULT_TEMPLATE_STORAGE_PATH,
     DEFAULT_VM_IMAGES_PATH,
 )
 from app.services.vm_utils import (

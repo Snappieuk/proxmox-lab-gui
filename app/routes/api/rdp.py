@@ -7,13 +7,12 @@ Handles RDP file generation and download.
 
 import logging
 
-from flask import Blueprint, Response, render_template, url_for, abort, current_app
+from flask import Blueprint, Response, render_template, url_for, abort
 
 from app.utils.decorators import login_required
 from app.services.rdp_service import build_rdp
 
 
-from app.services.proxmox_client import find_vm_for_user, fast_verify_vm_ip
 
 logger = logging.getLogger(__name__)
 

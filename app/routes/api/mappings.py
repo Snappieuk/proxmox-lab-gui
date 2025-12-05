@@ -45,7 +45,7 @@ def _serialize_vm_list(raw_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 def list_mappings():
     """Return current mappings, users, and lightweight VM catalog."""
     try:
-        from app.models import User, db
+        from app.models import User
         
         mapping = get_user_vm_map()
         

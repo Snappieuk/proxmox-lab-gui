@@ -7,7 +7,7 @@ Handles class management UI pages for teachers and students.
 
 import logging
 
-from flask import Blueprint, render_template, redirect, url_for, request, session, flash
+from flask import Blueprint, render_template, redirect, url_for, flash
 
 from app.utils.decorators import login_required
 
@@ -18,7 +18,6 @@ from app.services.class_service import (
     get_classes_for_teacher,
     get_classes_for_student,
     list_all_classes,
-    get_user_by_username,
     get_vm_assignments_for_class,
     get_user_vm_in_class,
     join_class_via_token,

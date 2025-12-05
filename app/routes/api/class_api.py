@@ -6,20 +6,18 @@ Handles class CRUD, template listing, VM pool management, and invite links.
 """
 
 import logging
-import re
 import threading
 import uuid
 
-from flask import Blueprint, jsonify, request, session
+from flask import Blueprint, jsonify, request
 
 from app.utils.decorators import login_required
-from app.models import User, VMAssignment, Class, db
+from app.models import VMAssignment, Class, db
 
 from app.services.class_service import (
     # Class management
     create_class,
     get_class_by_id,
-    get_class_by_token,
     get_classes_for_teacher,
     get_classes_for_student,
     list_all_classes,
@@ -33,18 +31,12 @@ from app.services.class_service import (
     # Template management
     create_template,
     get_available_templates,
-    get_global_templates,
-    # VM assignment
     create_vm_assignment,
     assign_vm_to_user,
     unassign_vm,
     delete_vm_assignment,
     get_vm_assignments_for_class,
     get_user_vm_in_class,
-    get_unassigned_vms_in_class,
-    # User management
-    get_user_by_username,
-    get_user_by_id,
     list_all_users,
     update_user_role,
 )
@@ -52,13 +44,11 @@ from app.services.class_service import (
 from app.services.proxmox_operations import (
     list_proxmox_templates,
     delete_vm,
-    get_vm_status,
     get_vm_status_from_inventory,
     CLASS_CLUSTER_IP
 )
 # NOTE: clone_vm_from_template and convert_vm_to_template are DEPRECATED
 # They use qm clone which locks templates. Use disk export workflow instead.
-from app.config import CLUSTERS
 
 from app.services.clone_progress import start_clone_progress, get_clone_progress, update_clone_progress
 from app.utils.auth_helpers import get_current_user
@@ -239,7 +229,7 @@ def create_new_class():
     threading.Thread(target=_create_class_vms, daemon=True).start()
     
     # Return immediately
-    message = f"Class created successfully"
+    message = "Class created successfully"
     if pool_size > 0:
         total_vms = pool_size + 2  # pool_size students + 1 teacher + 1 template
         message += f" - deploying {total_vms} VMs ({pool_size} student + 1 teacher + 1 template) in background using QCOW2 overlay cloning"
@@ -831,7 +821,7 @@ def promote_editable_to_base_template(class_id: int):
             app_ctx = app.app_context()
             app_ctx.push()
             from app.services.proxmox_service import get_proxmox_admin
-            from app.models import db, Class, Template, VMAssignment
+            from app.models import db, Class
 
             class_obj = Class.query.get(class_id)
             if not class_obj:
@@ -966,7 +956,6 @@ def redeploy_student_vms(class_id: int):
             app_ctx = app.app_context()
             app_ctx.push()
             from app.services.proxmox_service import get_proxmox_admin
-            import time
             
             class_obj = Class.query.get(class_id)
             if not class_obj:

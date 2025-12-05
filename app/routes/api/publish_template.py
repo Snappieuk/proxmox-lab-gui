@@ -7,12 +7,12 @@ then propagate to all student VMs.
 """
 
 import logging
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify
 import threading
 from flask import current_app
 
 from app.utils.decorators import login_required
-from app.models import Class, VMAssignment, db
+from app.models import Class, VMAssignment
 
 logger = logging.getLogger(__name__)
 

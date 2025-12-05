@@ -104,7 +104,7 @@ def get_arp_table() -> Dict[str, str]:
         pass
     except subprocess.TimeoutExpired:
         pass
-    except Exception as e:
+    except Exception:
         pass
     
     # Method 2: arp -a (traditional)
@@ -137,7 +137,7 @@ def get_arp_table() -> Dict[str, str]:
             continue
         except subprocess.TimeoutExpired:
             pass
-        except Exception as e:
+        except Exception:
             pass
     
     # Method 3: /proc/net/arp (Linux fallback)
@@ -158,7 +158,7 @@ def get_arp_table() -> Dict[str, str]:
     
     except FileNotFoundError:
         pass
-    except Exception as e:
+    except Exception:
         pass
     
     return arp_map
@@ -197,7 +197,7 @@ def broadcast_ping(subnet: str = "192.168.1.255", count: int = 1) -> bool:
             continue
         except subprocess.TimeoutExpired:
             return False
-        except Exception as e:
+        except Exception:
             continue
     
     return False
@@ -314,7 +314,7 @@ def parallel_ping_sweep(subnet_cidr: str, timeout_ms: int = 300, max_workers: in
         
         return (alive_count, rdp_hosts)
         
-    except Exception as e:
+    except Exception:
         return (0, set())
 
 
@@ -402,7 +402,7 @@ def scan_network_range(subnet_cidr: str = "10.220.8.0/21", timeout: int = 3) -> 
             continue
         except subprocess.TimeoutExpired:
             return False
-        except Exception as e:
+        except Exception:
             continue
     
     
@@ -418,7 +418,7 @@ def scan_network_range(subnet_cidr: str = "10.220.8.0/21", timeout: int = 3) -> 
             return True
         except FileNotFoundError:
             continue
-        except Exception as e:
+        except Exception:
             continue
     
     return False

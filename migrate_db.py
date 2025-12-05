@@ -47,7 +47,7 @@ def migrate():
         
         for table_name, col_name, col_type, default_value in CRITICAL_MIGRATIONS:
             # Check if table exists
-            cursor.execute(f"SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table_name,))
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table_name,))
             if not cursor.fetchone():
                 print(f"⚠ Table '{table_name}' does not exist - skipping")
                 continue
@@ -63,7 +63,7 @@ def migrate():
                 try:
                     cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN {col_name} {col_type} DEFAULT {default_value}")
                     total_changes += 1
-                    print(f"   ✓ Successfully added")
+                    print("   ✓ Successfully added")
                 except Exception as e:
                     print(f"   ❌ Failed: {e}")
             else:

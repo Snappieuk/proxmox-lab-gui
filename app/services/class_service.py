@@ -6,9 +6,8 @@ Handles class CRUD, template management, VM pool operations, and invite links.
 """
 
 import logging
-import secrets
-from datetime import datetime, timedelta
-from typing import Optional, List, Tuple, Dict, Any
+from datetime import datetime
+from typing import Optional, List, Tuple
 
 from app.models import db, User, Class, Template, VMAssignment
 
@@ -827,7 +826,6 @@ def _fetch_and_cache_template_specs(template: Template, cluster_ip: str) -> None
         template: Template object to update
         cluster_ip: Proxmox cluster IP
     """
-    from datetime import datetime
     
     try:
         from app.services.proxmox_service import get_proxmox_admin_for_cluster

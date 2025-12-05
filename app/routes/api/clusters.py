@@ -7,7 +7,7 @@ JSON API for cluster configuration and switching.
 
 import logging
 
-from flask import Blueprint, jsonify, request, session, current_app
+from flask import Blueprint, jsonify, request, session
 
 from app.utils.decorators import login_required, admin_required
 

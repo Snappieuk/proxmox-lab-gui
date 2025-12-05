@@ -9,7 +9,7 @@ Background sync keeps database current - NEVER makes direct Proxmox API calls fo
 
 import logging
 
-from flask import Blueprint, jsonify, request, current_app, session
+from flask import Blueprint, jsonify, request, session
 
 from app.utils.decorators import login_required
 from app.models import User, VMAssignment

@@ -24,7 +24,6 @@ with SSHExecutor for direct qm/qemu-img operations.
 """
 
 import logging
-import re
 from typing import List, Dict, Tuple, Any, Optional
 
 from app.services.proxmox_service import get_proxmox_admin_for_cluster
@@ -447,7 +446,6 @@ def _clone_vm_via_disk_api(proxmox, node: str, template_vmid: int, new_vmid: int
     Based on: https://www.blockbridge.com/proxmox (direct disk cloning method)
     """
     import time
-    import json
     
     try:
         # Step 1: Get template configuration
@@ -826,7 +824,7 @@ def clone_vms_for_class(template_vmid: int, node: str, count: int, name_prefix: 
                     vmid = r.get("vmid")
                     if vmid is not None:
                         used_vmids.add(int(vmid))
-                except (ValueError, TypeError) as ve:
+                except (ValueError, TypeError):
                     logger.debug(f"Skipping invalid vmid in resources: {r.get('vmid')}")
             logger.info(f"Found {len(used_vmids)} existing VMIDs via cluster resources API")
         except Exception as e:
@@ -1181,7 +1179,7 @@ def clone_vms_for_class(template_vmid: int, node: str, count: int, name_prefix: 
                             
                             # Register base template in database (optional, for tracking)
                             try:
-                                from app.models import Template, db
+                                from app.models import db
                                 from datetime import datetime
                                 # Use safe create_template to avoid race conditions
                                 from app.services.class_service import create_template
@@ -1209,7 +1207,7 @@ def clone_vms_for_class(template_vmid: int, node: str, count: int, name_prefix: 
                         logger.warning(f"Failed to verify template conversion: {verify_err}")
                     
                     if not conversion_success:
-                        raise RuntimeError(f"Template conversion did not confirm (template flag not set)")
+                        raise RuntimeError("Template conversion did not confirm (template flag not set)")
                         
                 except Exception as e:
                     logger.error(f"Failed to convert VM {class_template_vmid} to template: {e}")
@@ -1447,7 +1445,7 @@ def clone_vms_for_class(template_vmid: int, node: str, count: int, name_prefix: 
                     # Add delay between clones to prevent template locking (except for last VM)
                     if spec["index"] < count - 1:
                         time.sleep(3)  # 3-second delay between clones
-                        logger.debug(f"Waiting 3s before next clone to avoid template lock")
+                        logger.debug("Waiting 3s before next clone to avoid template lock")
                 else:
                     logger.error(f"Failed to clone VM {spec['name']}: {msg}")
                     if task_id:
@@ -1481,7 +1479,7 @@ def start_class_vm(vmid: int, node: str, cluster_ip: str = None) -> Tuple[bool, 
                 break
         
         if not cluster_id:
-            return False, f"Cluster not found"
+            return False, "Cluster not found"
         
         proxmox = get_proxmox_admin_for_cluster(cluster_id)
         
@@ -1536,7 +1534,7 @@ def stop_class_vm(vmid: int, node: str, cluster_ip: str = None) -> Tuple[bool, s
                 break
         
         if not cluster_id:
-            return False, f"Cluster not found"
+            return False, "Cluster not found"
         
         proxmox = get_proxmox_admin_for_cluster(cluster_id)
         
@@ -2350,7 +2348,7 @@ def clone_template_for_class(template_vmid: int, node: str, name: str,
     try:
         # Validate node parameter
         if not node:
-            logger.error(f"clone_template_for_class: node parameter is empty or None")
+            logger.error("clone_template_for_class: node parameter is empty or None")
             return False, None, "Template node is not set. Please ensure the template has a valid node."
         
         target_ip = cluster_ip or CLASS_CLUSTER_IP

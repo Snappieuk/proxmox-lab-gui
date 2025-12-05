@@ -97,7 +97,6 @@ def register():
 @auth_bp.route("/logout")
 def logout():
     """Handle user logout."""
-    from app.utils.decorators import login_required
     
     # Note: We can't use the decorator here since we need to redirect to login
     # But we should still check if logged in

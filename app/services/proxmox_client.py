@@ -43,11 +43,6 @@ from app.services.mappings_service import (
 # Import user manager for admin functions
 from app.services.user_manager import (
     is_admin_user,
-    get_admin_group_members,
-    add_user_to_admin_group,
-    remove_user_from_admin_group,
-    get_pve_users,
-    create_pve_user,
 )
 
 # No additional SSL warning suppression needed - already done above
@@ -475,7 +470,7 @@ def invalidate_cluster_cache() -> None:
 
 def _get_cached_ip_from_db(cluster_id: str, vmid: int) -> Optional[str]:
     """Get IP from database cache if not expired (1 hour TTL)."""
-    from datetime import datetime, timedelta
+    from datetime import datetime
     from flask import has_app_context
     from app.models import VMAssignment, VMIPCache
     
@@ -821,7 +816,6 @@ def _get_ip_from_proxmox_notes(raw: Dict[str, Any]) -> Optional[str]:
     if not description:
         return None
     
-    import re
     match = re.search(r'\[CACHED_IP:([^\]]+)\]', description)
     if match:
         ip = match.group(1).strip()
@@ -1239,7 +1233,7 @@ def _enrich_from_db_cache(vms: List[Dict[str, Any]]) -> None:
     """
     from datetime import datetime, timedelta
     from flask import has_app_context
-    from app.models import db, VMAssignment, VMIPCache
+    from app.models import VMAssignment, VMIPCache
     
     if not has_app_context():
         logger.debug("_enrich_from_db_cache: skipping (no app context)")
@@ -1337,8 +1331,6 @@ def _enrich_vms_with_arp_ips(vms: List[Dict[str, Any]], force_sync: bool = False
         force_sync: If True, run scan synchronously (blocks until complete)
                    If False, run scan in background (returns immediately)
     """
-    from datetime import datetime, timedelta
-    from app.models import db, VMAssignment, VMIPCache
     
     logger.info("=== ARP SCAN START === Total VMs=%d, ARP_SCANNER_AVAILABLE=%s", 
                 len(vms), ARP_SCANNER_AVAILABLE)

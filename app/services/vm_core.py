@@ -19,13 +19,11 @@ in inventory_service.py and background_sync.py.
 import logging
 import os
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 from app.services.ssh_executor import SSHExecutor
 from app.services.vm_utils import (
     sanitize_vm_name,
-    get_next_available_vmid_ssh,
-    get_vm_mac_address_ssh,
 )
 
 logger = logging.getLogger(__name__)
@@ -646,7 +644,7 @@ def get_vm_config_ssh(ssh_executor: SSHExecutor, vmid: int, node: str = None) ->
         # If node not specified, find it via cluster resources
         if not node:
             exit_code, stdout, stderr = ssh_executor.execute(
-                f"pvesh get /cluster/resources --type vm --output-format json",
+                "pvesh get /cluster/resources --type vm --output-format json",
                 check=False,
                 timeout=30
             )

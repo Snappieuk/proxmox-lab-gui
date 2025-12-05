@@ -8,7 +8,6 @@ Or directly: python tests/test_arp_scanner.py
 
 import os
 import sys
-import threading
 import time
 
 # Add parent directory to path for imports

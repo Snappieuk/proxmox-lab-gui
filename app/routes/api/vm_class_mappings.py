@@ -10,7 +10,7 @@ from flask import Blueprint, jsonify, request, session
 
 from app.utils.decorators import login_required
 from app.services.user_manager import is_admin_user
-from app.models import db, Class, VMAssignment, User
+from app.models import db, VMAssignment
 from app.services.class_service import get_class_by_id, get_user_by_username
 
 logger = logging.getLogger(__name__)

@@ -49,7 +49,7 @@ def main():
                 FROM vm_inventory 
                 LIMIT 5
             """)).fetchall()
-            print(f"   Sample records:")
+            print("   Sample records:")
             for cluster_id, vmid, name, status in samples:
                 print(f"   - {cluster_id}/{vmid}: {name} [{status}]")
         
@@ -66,7 +66,7 @@ def main():
             for cluster_id, vmid, count in dupes[:5]:
                 print(f"     - {cluster_id}/{vmid}: {count} copies")
         else:
-            print(f"   ✓ No duplicates")
+            print("   ✓ No duplicates")
         
         print("\n5. Test Insert:")
         test_cluster = "test_cluster"
@@ -89,7 +89,7 @@ def main():
             # Clean up
             db.session.delete(test_vm)
             db.session.commit()
-            print(f"   ✓ Cleaned up test record")
+            print("   ✓ Cleaned up test record")
             
         except Exception as e:
             print(f"   ✗ Failed to create test record: {e}")

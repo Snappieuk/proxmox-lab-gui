@@ -17,7 +17,7 @@ in inventory_service.py and background_sync.py.
 
 import logging
 import re
-from typing import Optional, Set, Dict, Any
+from typing import Optional, Set
 
 logger = logging.getLogger(__name__)
 
@@ -263,7 +263,7 @@ def get_vm_mac_address_ssh(ssh_executor, vmid: int, node: Optional[str] = None) 
         if not node:
             # Use cluster-wide query to find the VM's node
             exit_code, stdout, stderr = ssh_executor.execute(
-                f"pvesh get /cluster/resources --type vm --output-format json",
+                "pvesh get /cluster/resources --type vm --output-format json",
                 check=False,
                 timeout=10
             )

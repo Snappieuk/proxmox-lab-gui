@@ -99,7 +99,7 @@ def main():
             sys.exit(1)
         
         if backup_data:
-            print(f"\n3. Restoring data (removing duplicates)...")
+            print("\n3. Restoring data (removing duplicates)...")
             
             # Track unique (cluster_id, vmid) pairs to skip duplicates
             seen = set()

@@ -15,7 +15,6 @@ All tables use SQLite via SQLAlchemy.
 import os
 import secrets
 from datetime import datetime, timedelta
-from typing import Optional, List
 
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash

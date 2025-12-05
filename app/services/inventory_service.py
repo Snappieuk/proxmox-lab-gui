@@ -216,7 +216,7 @@ def persist_vm_inventory(vms: List[Dict], cleanup_missing: bool = True) -> int:
             db.session.commit()
             return updated_count
             
-        except OperationalError as e:
+        except OperationalError:
             # Database locked - retry with exponential backoff
             db.session.rollback()
             if attempt < max_retries - 1:

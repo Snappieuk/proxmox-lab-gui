@@ -8,7 +8,6 @@ Or directly: python tests/test_class_management.py
 
 import os
 import sys
-import tempfile
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -16,7 +15,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 def test_database_models_exist():
     """Test that database models can be imported."""
-    from app.models import db, User, Class, Template, VMAssignment
+    from app.models import User, Class, Template, VMAssignment
     
     assert User is not None
     assert Class is not None
@@ -66,7 +65,6 @@ def test_user_roles():
 def test_class_token_generation():
     """Test that class invite token generation works."""
     from app.models import Class
-    from datetime import datetime, timedelta
     
     class_ = Class(name='Test Class', teacher_id=1)
     
@@ -121,7 +119,7 @@ def test_vm_assignment_states():
 
 def test_model_to_dict():
     """Test that model to_dict methods work correctly."""
-    from app.models import User, Class, Template, VMAssignment
+    from app.models import User, Template, VMAssignment
     
     user = User(username='testuser', role='teacher')
     user.id = 1
@@ -260,7 +258,7 @@ def test_flask_app_with_database():
     
     with app.app_context():
         # Database should be initialized
-        from app.models import User, Class, Template, VMAssignment
+        from app.models import User
         
         # Create tables
         db.create_all()

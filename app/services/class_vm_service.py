@@ -25,13 +25,11 @@ prefer importing from vm_core.py and vm_template.py.
 
 import logging
 import os
-import re
-import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
-from app.models import db, Class, VMAssignment, Template
+from app.models import db, Class, VMAssignment
 from app.services.ssh_executor import (
     SSHExecutor,
     get_ssh_executor_from_config,
@@ -162,7 +160,7 @@ def get_vm_current_node(ssh_executor: SSHExecutor, vmid: int) -> Optional[str]:
     try:
         # Use pvesh to query cluster-wide resources
         exit_code, stdout, stderr = ssh_executor.execute(
-            f"pvesh get /cluster/resources --type vm --output-format json",
+            "pvesh get /cluster/resources --type vm --output-format json",
             timeout=30,
             check=False
         )
@@ -663,7 +661,7 @@ def create_class_vms(
         # Node selection will be done per-VM for better distribution
         from app.services.vm_utils import get_optimal_node
         logger.info(f"Using shared storage: {PROXMOX_STORAGE_NAME} (path: {DEFAULT_VM_IMAGES_PATH})")
-        logger.info(f"Note: All nodes must have access to shared storage for multi-node deployment")
+        logger.info("Note: All nodes must have access to shared storage for multi-node deployment")
         
         # Step 1: Handle template vs no-template workflow
         if template_vmid:
@@ -731,7 +729,7 @@ def create_class_vms(
             class_base_vmid = class_.vmid_prefix * 100 + 99  # e.g., 234 * 100 + 99 = 23499
             class_base_name = f"{class_prefix}-base"
             
-            result.details.append(f"Creating class-base VM as overlay...")
+            result.details.append("Creating class-base VM as overlay...")
             logger.info(f"Creating class-base VM with VMID {class_base_vmid}")
             
             success, error, base_mac = create_overlay_vm(
@@ -808,7 +806,7 @@ def create_class_vms(
             success, error_msg = migrate_vm_to_node(ssh_executor, teacher_vmid, teacher_optimal_node, timeout=120)
             if not success:
                 logger.warning(f"Failed to migrate teacher VM to {teacher_optimal_node}: {error_msg}. Continuing on current node.")
-                result.details.append(f"Warning: Migration failed, teacher VM remains on current node")
+                result.details.append("Warning: Migration failed, teacher VM remains on current node")
                 # Use the node where VM was created (connected SSH node)
                 teacher_optimal_node = template_node
             else:
@@ -851,7 +849,7 @@ def create_class_vms(
             class_base_vmid = class_.vmid_prefix * 100 + 99  # e.g., 234 * 100 + 99 = 23499
             class_base_name = f"{class_prefix}-base"
             
-            result.details.append(f"Creating class-base VM shell (no template)...")
+            result.details.append("Creating class-base VM shell (no template)...")
             exit_code, stdout, stderr = ssh_executor.execute(
                 f"qm create {class_base_vmid} --name {class_base_name} --memory {memory} --cores {cores} "
                 f"--net0 virtio,bridge=vmbr0 --scsihw virtio-scsi-pci "
@@ -964,7 +962,7 @@ def create_class_vms(
                     continue
                 
                 if i + 1 >= 100:
-                    logger.error(f"Class VM limit reached (99 students max per class)")
+                    logger.error("Class VM limit reached (99 students max per class)")
                     result.failed += 1
                     continue
                 student_name = f"{class_prefix}-student-{i + 1}"

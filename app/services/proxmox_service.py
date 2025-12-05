@@ -9,7 +9,7 @@ with support for multiple clusters.
 import logging
 import threading
 import ssl
-from typing import Dict, List, Any, Optional
+from typing import Dict, Any
 
 from proxmoxer import ProxmoxAPI
 

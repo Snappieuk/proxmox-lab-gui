@@ -9,7 +9,7 @@ import logging
 
 from flask import Blueprint, render_template, jsonify, request
 
-from app.utils.decorators import login_required, admin_required
+from app.utils.decorators import admin_required
 
 
 from app.services.user_manager import (

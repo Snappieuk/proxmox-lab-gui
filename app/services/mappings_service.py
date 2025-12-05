@@ -9,7 +9,7 @@ This module provides database-backed VM assignment functions.
 """
 
 import logging
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +21,7 @@ def get_user_vm_map() -> Dict[str, List[int]]:
     Returns:
         dict: {username: [vmid1, vmid2, ...]}
     """
-    from app.models import User, VMAssignment
+    from app.models import User
     
     mapping = {}
     try:

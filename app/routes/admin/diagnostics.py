@@ -7,9 +7,9 @@ Handles admin view and diagnostics/probe endpoints.
 
 import logging
 
-from flask import Blueprint, render_template, jsonify, session
+from flask import Blueprint, render_template, jsonify
 
-from app.utils.decorators import login_required, admin_required
+from app.utils.decorators import admin_required
 
 
 from app.services.proxmox_client import (
@@ -60,7 +60,6 @@ def admin_probe():
 @admin_required
 def api_debug_arp():
     """Debug endpoint to show ARP scan details for troubleshooting."""
-    from app.utils.decorators import login_required
     
     try:
         # Get all VMs

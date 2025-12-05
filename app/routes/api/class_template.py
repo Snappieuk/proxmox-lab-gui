@@ -7,20 +7,18 @@ Handles template operations: reimage, save, push.
 
 import logging
 
-from flask import Blueprint, jsonify, request, session
+from flask import Blueprint, jsonify, session
 
 from app.utils.decorators import login_required
 from app.services.class_service import get_class_by_id, get_user_by_username
 from app.services.proxmox_operations import (
-    revert_vm_to_snapshot,
-    create_vm_snapshot,
     delete_vm,
     get_vm_status,
     start_class_vm,
     stop_class_vm
 )
 from app.services.proxmox_service import get_proxmox_admin_for_cluster
-from app.models import db, VMAssignment, Template
+from app.models import db, Template
 
 logger = logging.getLogger(__name__)
 
@@ -126,7 +124,7 @@ def get_template_info(class_id: int):
                 logger.error(f"Failed to fetch node from Proxmox: {e}")
                 return jsonify({
                     "ok": False, 
-                    "error": f"Cannot access teacher VM. It may have been deleted or the cluster is unreachable."
+                    "error": "Cannot access teacher VM. It may have been deleted or the cluster is unreachable."
                 }), 500
         
         vm_config = proxmox.nodes(node).qemu(vmid).config.get()
@@ -448,7 +446,6 @@ def push_template(class_id: int):
         return jsonify({'ok': False, 'error': 'No template assigned'}), 404
     
     try:
-        from app.services.proxmox_operations import sanitize_vm_name
         from app.config import CLUSTERS
         
         template = class_.template

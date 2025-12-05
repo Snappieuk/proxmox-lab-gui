@@ -2,7 +2,7 @@
 
 import logging
 from datetime import datetime
-from flask import Blueprint, jsonify, request, session
+from flask import Blueprint, jsonify, request
 from app.models import Template, db
 from app.utils.decorators import login_required
 from app.config import CLUSTERS
