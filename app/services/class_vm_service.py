@@ -635,10 +635,17 @@ def create_class_vms(
             logger.warning(f"Could not get Proxmox API connection: {e}")
         
         # Allocate VMID prefix for this class (e.g., 234 -> VMIDs 23400-23499)
-        from app.models import Class
+        from app.models import Class, VMAssignment
         class_ = Class.query.get(class_id)
         if not class_:
             result.error = f"Class {class_id} not found"
+            return result
+        
+        # Check if VMs already exist for this class
+        existing_vms = VMAssignment.query.filter_by(class_id=class_id).count()
+        if existing_vms > 0:
+            result.error = f"VMs already exist for this class ({existing_vms} VMs found). Delete them first before creating new ones."
+            logger.warning(f"Attempted to create VMs for class {class_id} but {existing_vms} VMs already exist")
             return result
         
         if not class_.vmid_prefix:

@@ -170,74 +170,17 @@ def create_class(name: str, teacher_id: int, description: str = None,
             return None, "Template not found"
     
     try:
-        # Skip template cloning if no template provided (classes can exist without templates)
-        cloned_template_id = None
-        teacher_vm_id = None
-        if original_template and template_id:
-            if not original_template.node:
-                logger.error(f"Template {original_template.id} ({original_template.name}) has no node specified")
-                return None, "Template configuration error: node not set. Please ensure the template has a valid Proxmox node."
-            from app.services.proxmox_operations import clone_template_for_class, convert_vm_to_template, sanitize_vm_name
-            sanitized_prefix = sanitize_vm_name(name, fallback="classtemplate")
-            
-            # STEP 1: Clone original template -> Teacher's VM (leave as regular VM)
-            logger.info(f"Step 1: Creating teacher VM from template {original_template.proxmox_vmid}")
-            teacher_clone_success, teacher_vmid, teacher_msg = clone_template_for_class(
-                original_template.proxmox_vmid,
-                original_template.node,
-                f"{sanitized_prefix}-teacher",
-                original_template.cluster_ip
-            )
-            if not (teacher_clone_success and teacher_vmid):
-                logger.warning(f"Failed to clone teacher VM for class {name}: {teacher_msg}")
-                return None, f"Failed to clone teacher VM: {teacher_msg}"
-            teacher_vm_id = teacher_vmid
-            logger.info(f"Teacher VM created: VMID {teacher_vmid}")
-            
-            # STEP 2: Clone original template AGAIN -> Class base template (convert to template)
-            logger.info(f"Step 2: Creating class base template from original template {original_template.proxmox_vmid}")
-            clone_success, clone_vmid, clone_msg = clone_template_for_class(
-                original_template.proxmox_vmid,  # Clone from ORIGINAL template, not teacher VM
-                original_template.node,
-                f"{sanitized_prefix}-template",
-                original_template.cluster_ip
-            )
-            if not (clone_success and clone_vmid):
-                logger.warning(f"Failed to clone class template for class {name}: {clone_msg}")
-                return None, f"Failed to clone class template: {clone_msg}"
-            
-            # Convert the class template VM to a Proxmox template
-            logger.info(f"Converting cloned VM {clone_vmid} to template...")
-            convert_success, convert_msg = convert_vm_to_template(
-                clone_vmid,
-                original_template.node,
-                original_template.cluster_ip
-            )
-            if not convert_success:
-                logger.error(f"Failed to convert cloned VM {clone_vmid} to template: {convert_msg}")
-                return None, f"Failed to convert to template: {convert_msg}"
-            
-            # Create cloned template record using safe create_template
-            cloned_template, tpl_msg = create_template(
-                name=f"{name} Template",
-                proxmox_vmid=clone_vmid,
-                cluster_ip=original_template.cluster_ip,
-                node=original_template.node,
-                original_template_id=original_template.id,
-                is_class_template=False
-            )
-            if not cloned_template:
-                logger.error(f"Failed to register cloned template: {tpl_msg}")
-                return None, f"Failed to register template: {tpl_msg}"
-            cloned_template_id = cloned_template.id
-            logger.info(f"Created teacher VM {teacher_vmid} and class template {clone_vmid} (converted to template) for class {name}")
-
-        # Now create the class record
+        # NO VM creation during class creation anymore
+        # VMs are created later via the "Create VMs" button which calls deploy_class_vms()
+        # This uses the modern disk export + overlay approach instead of qm clone
+        
+        # Create the class record with reference to the original template
+        # (NOT a cloned template - we'll export the disk when creating VMs)
         class_ = Class(
             name=name,
             description=description,
             teacher_id=teacher_id,
-            template_id=cloned_template_id,
+            template_id=template_id,  # Reference original template directly
             pool_size=pool_size,
             cpu_cores=cpu_cores,
             memory_mb=memory_mb,
@@ -249,27 +192,14 @@ def create_class(name: str, teacher_id: int, description: str = None,
         # Auto-generate join token (7-day default) if none
         class_.generate_join_token(expires_in_days=7)
 
-        # If we created a teacher VM, register it as a VMAssignment
-        if teacher_vm_id and original_template:
-            logger.info(f"Registering teacher VM {teacher_vm_id} as VMAssignment for class {class_.id}")
-            teacher_assignment = VMAssignment(
-                class_id=class_.id,
-                proxmox_vmid=teacher_vm_id,
-                node=original_template.node,
-                assigned_user_id=teacher_id,
-                status='assigned',
-                is_template_vm=False
-            )
-            db.session.add(teacher_assignment)
-
         db.session.commit()
-        logger.info("Created class: %s by teacher %s (template_id=%s, teacher_vm=%s)", 
-                   name, teacher.username, cloned_template_id, teacher_vm_id)
+        logger.info("Created class: %s by teacher %s (template_id=%s)", 
+                   name, teacher.username, template_id)
         
-        # Note: Auto-creation of VMs is now handled by the /api/classes/{id}/pool endpoint
-        # which uses Terraform for proper step-by-step deployment with progress tracking
-        if pool_size > 0 and cloned_template_id:
-            logger.info(f"Class created with pool_size={pool_size}. VMs should be created via /api/classes/{class_.id}/pool endpoint")
+        # Note: VMs are created via the "Create VMs" button in the UI
+        # which calls /api/classes/{id}/vms endpoint -> deploy_class_vms()
+        if pool_size > 0:
+            logger.info(f"Class created with pool_size={pool_size}. Use 'Create VMs' button to deploy VMs using disk export + overlay method")
         
         return class_, "Class created successfully"
     except Exception as e:
