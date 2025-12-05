@@ -1472,4 +1472,72 @@ body {
     font-size: 12px;
 }
 
+/* Create Class Layout */
+.create-class-layout {
+    display: grid;
+    grid-template-columns: 1fr 300px;
+    gap: 24px;
+    align-items: start;
+}
+
+/* Checkbox styling for forms */
+.checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    margin: 0;
+}
+
+.checkbox-label input[type="checkbox"] {
+    width: auto;
+}
+
+.checkbox-label-text {
+    font-weight: 600;
+    color: #323130;
+}
+
+.checkbox-help {
+    margin-left: 24px;
+}
+
+/* Form actions layout */
+.form-actions-right {
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+    margin-top: 20px;
+}
+
+/* Progress modal */
+.progress-modal {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: white;
+    padding: 30px;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    z-index: 1000;
+    text-align: center;
+    min-width: 400px;
+}
+
+.progress-modal h3 {
+    margin: 0 0 10px 0;
+}
+
+.progress-modal p {
+    margin: 0;
+    color: #666;
+}
+
+.progress-modal .progress-note {
+    margin-top: 15px;
+    font-size: 0.9em;
+    color: #999;
+}
+
 

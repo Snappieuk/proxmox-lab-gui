@@ -8,7 +8,7 @@
     </div>
 </div>
 
-<div style="display: grid; grid-template-columns: 1fr 300px; gap: 24px; align-items: start;">
+<div class="create-class-layout">
     <!-- Left Column: Form Sections -->
     <div>
         <form id="create-class-form">
@@ -97,11 +97,11 @@
             <!-- Customize VM specs checkbox (shown only when template is selected) -->
             <div class="form-card-section" id="customize-specs-section" style="display: none;">
                 <div class="form-card-body" style="padding: 12px 20px;">
-                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; margin: 0;">
-                        <input type="checkbox" id="customize-specs-checkbox" style="width: auto;">
-                        <span style="font-weight: 600; color: #323130;">Customize VM specs</span>
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="customize-specs-checkbox">
+                        <span class="checkbox-label-text">Customize VM specs</span>
                     </label>
-                    <span class="form-help-compact" style="margin-left: 24px;">Override template defaults for CPU, RAM, and Disk</span>
+                    <span class="form-help-compact checkbox-help">Override template defaults for CPU, RAM, and Disk</span>
                 </div>
             </div>
             
@@ -120,7 +120,7 @@
             </div>
             
             <!-- Form Actions -->
-            <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 20px;">
+            <div class="form-actions-right">
                 <a href="{{ url_for('classes.classes_list') }}" class="btn-secondary">Cancel</a>
                 <button type="submit" class="btn-primary">
                     <i class="bi bi-check-lg"></i> Create Class
@@ -496,14 +496,14 @@ document.getElementById('create-class-form').addEventListener('submit', async fu
         if (data.ok) {
             // Show progress message
             const progressDiv = document.createElement('div');
-            progressDiv.style.cssText = 'position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 30px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 1000; text-align: center; min-width: 400px;';
+            progressDiv.className = 'progress-modal';
             progressDiv.innerHTML = `
                 <div style="margin-bottom: 20px;">
                     <div class="loading-spinner"></div>
                 </div>
-                <h3 style="margin: 0 0 10px 0;">Creating Class VMs</h3>
-                <p style="margin: 0; color: #666;">Deploying ${poolSize > 0 ? poolSize + ' student VMs + ' : ''}teacher VM + template...</p>
-                <p style="margin-top: 15px; font-size: 0.9em; color: #999;">This may take several minutes</p>
+                <h3>Creating Class VMs</h3>
+                <p>Deploying ${poolSize > 0 ? poolSize + ' student VMs + ' : ''}teacher VM + template...</p>
+                <p class="progress-note">This may take several minutes</p>
             `;
             document.body.appendChild(progressDiv);
             

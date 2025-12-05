@@ -130,6 +130,13 @@ def api_save_cluster_config():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+# Constants for resource calculations
+BYTES_TO_MB = 1024 * 1024
+# CPU overallocation factor: Proxmox best practice allows 3x physical cores for vCPUs
+# since VMs rarely use 100% CPU continuously
+CPU_OVERALLOCATION_FACTOR = 3
+
+
 @api_clusters_bp.route("/clusters/<cluster_id>/resources", methods=["GET"])
 @login_required
 def get_cluster_resources(cluster_id: str):
@@ -158,11 +165,11 @@ def get_cluster_resources(cluster_id: str):
             # CPU: maxcpu is the number of physical cores
             total_cpu_cores += node_info.get('maxcpu', 0)
             
-            # Memory: maxmem is total memory in bytes
-            total_memory_mb += node_info.get('maxmem', 0) // (1024 * 1024)
+            # Memory: maxmem is total memory in bytes, convert to MB
+            total_memory_mb += node_info.get('maxmem', 0) // BYTES_TO_MB
         
-        # Apply 3x overallocation for CPU
-        vcpu_available = total_cpu_cores * 3
+        # Apply overallocation factor for virtual CPUs
+        vcpu_available = total_cpu_cores * CPU_OVERALLOCATION_FACTOR
         
         return jsonify({
             "ok": True,
@@ -171,7 +178,7 @@ def get_cluster_resources(cluster_id: str):
                 "cpu": {
                     "physical_cores": total_cpu_cores,
                     "vcpu_available": vcpu_available,
-                    "overallocation_factor": 3
+                    "overallocation_factor": CPU_OVERALLOCATION_FACTOR
                 },
                 "memory": {
                     "total_mb": total_memory_mb,
