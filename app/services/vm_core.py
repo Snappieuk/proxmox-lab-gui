@@ -665,8 +665,9 @@ def get_vm_config_ssh(ssh_executor: SSHExecutor, vmid: int, node: str = None) ->
                 return None
         
         # Use pvesh to get config (works cluster-wide with node parameter)
+        # pvesh returns JSON format, so parse it as JSON
         exit_code, stdout, stderr = ssh_executor.execute(
-            f"pvesh get /nodes/{node}/qemu/{vmid}/config",
+            f"pvesh get /nodes/{node}/qemu/{vmid}/config --output-format json",
             check=False,
             timeout=30
         )
@@ -674,13 +675,14 @@ def get_vm_config_ssh(ssh_executor: SSHExecutor, vmid: int, node: str = None) ->
         if exit_code != 0:
             return None
         
-        config = {}
-        for line in stdout.strip().split('\n'):
-            if ':' in line:
-                key, value = line.split(':', 1)
-                config[key.strip()] = value.strip()
-        
-        return config
+        import json
+        try:
+            config = json.loads(stdout.strip())
+            # pvesh returns a dict already, no need to parse lines
+            return config
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.warning(f"Failed to parse JSON config for VM {vmid}: {e}")
+            return None
         
     except Exception as e:
         logger.debug(f"Failed to get config for VM {vmid}: {e}")
