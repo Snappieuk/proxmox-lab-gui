@@ -51,13 +51,13 @@ from app.services.class_service import (
 
 from app.services.proxmox_operations import (
     list_proxmox_templates,
-    clone_vm_from_template,
-    convert_vm_to_template,
     delete_vm,
     get_vm_status,
     get_vm_status_from_inventory,
     CLASS_CLUSTER_IP
 )
+# NOTE: clone_vm_from_template and convert_vm_to_template are DEPRECATED
+# They use qm clone which locks templates. Use disk export workflow instead.
 from app.config import CLUSTERS
 
 from app.services.clone_progress import start_clone_progress, get_clone_progress, update_clone_progress
@@ -764,19 +764,17 @@ def clone_progress_route(task_id: str):
 @api_classes_bp.route("/<int:class_id>/promote-editable", methods=["POST"])
 @login_required
 def promote_editable_to_base_template(class_id: int):
-    """Promote the Teacher Editable VM to become the new Class Base Template.
-
-    Steps:
-    1) Clone Teacher Editable VM -> convert to template (new base template)
-    2) Update class.template_id to new template
-    3) Recreate Teacher Template VM from new base template (linked clone -> convert to template)
-    4) Update assignments: remove old teacher template assignment, add new one
-    """
-    from datetime import datetime
+    """DEPRECATED: This endpoint uses qm clone which locks templates and is no longer supported.
     
-    user, error = require_teacher_or_adminer()
-    if error:
-        return jsonify(error[0]), error[1]
+    Use the new disk-export workflow instead:
+    - /api/classes/<id>/publish-template - Push teacher VM changes to all students
+    """
+    return jsonify({
+        "ok": False,
+        "error": f"This endpoint is deprecated and uses qm clone (template locking). Use /api/classes/{class_id}/publish-template instead.",
+        "deprecated": True,
+        "replacement_endpoint": f"/api/classes/{class_id}/publish-template"
+    }), 410
 
     class_ = get_class_by_id(class_id)
     if not class_:
@@ -935,21 +933,17 @@ def promote_editable_to_base_template(class_id: int):
 @api_classes_bp.route("/<int:class_id>/redeploy-student-vms", methods=["POST"])
 @login_required
 def redeploy_student_vms(class_id: int):
-    """Redeploy all student VMs from the current class base template.
+    """DEPRECATED: This endpoint uses qm clone which locks templates and is no longer supported.
     
-    Deletes all existing student VMs and recreates them from the class base template.
+    Use the new disk-export workflow instead:
+    - /api/classes/<id>/publish-template - Recreates all student VMs from teacher VM
     """
-    user, error = require_teacher_or_adminer()
-    if error:
-        return jsonify(error[0]), error[1]
-
-    class_ = get_class_by_id(class_id)
-    if not class_:
-        return jsonify({"ok": False, "error": "Class not found"}), 404
-
-    # Ownership check
-    if not user.is_adminer and not class_.is_owner(user):
-        return jsonify({"ok": False, "error": "Access denied"}), 403
+    return jsonify({
+        "ok": False,
+        "error": f"This endpoint is deprecated and uses qm clone (template locking). Use /api/classes/{class_id}/publish-template instead.",
+        "deprecated": True,
+        "replacement_endpoint": f"/api/classes/{class_id}/publish-template"
+    }), 410
     
     # Get class base template
     if not class_.template:
@@ -1316,21 +1310,17 @@ def revert_my_vm(class_id: int):
 @api_classes_bp.route("/<int:class_id>/push-updates", methods=["POST"])
 @login_required
 def push_updates(class_id: int):
-    """Push teacher's VM updates to class template.
+    """DEPRECATED: This endpoint uses qm clone which locks templates and is no longer supported.
     
-    Clones Teacher VM 1 (editable), converts clone to template,
-    and replaces the old Teacher VM 2 (class template).
+    Use the new disk-export workflow instead:
+    - /api/classes/<id>/publish-template - Push teacher VM changes using disk copy
     """
-    user, error = require_teacher_or_adminer()
-    if error:
-        return jsonify(error[0]), error[1]
-    
-    class_ = get_class_by_id(class_id)
-    if not class_:
-        return jsonify({"ok": False, "error": "Class not found"}), 404
-    
-    if not user.is_adminer and not class_.is_owner(user):
-        return jsonify({"ok": False, "error": "Access denied"}), 403
+    return jsonify({
+        "ok": False,
+        "error": f"This endpoint is deprecated and uses qm clone (template locking). Use /api/classes/{class_id}/publish-template instead.",
+        "deprecated": True,
+        "replacement_endpoint": f"/api/classes/{class_id}/publish-template"
+    }), 410
     
     # Find Teacher VM 1 (editable, is_template_vm=False)
     teacher_vm = VMAssignment.query.filter_by(

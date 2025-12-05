@@ -14,7 +14,6 @@ from app.services.class_service import get_class_by_id, get_user_by_username
 from app.services.proxmox_operations import (
     revert_vm_to_snapshot,
     create_vm_snapshot,
-    clone_vm_from_template,
     delete_vm,
     get_vm_status,
     start_class_vm,
