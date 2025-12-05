@@ -591,45 +591,68 @@ def join_via_token(token: str):
 @api_classes_bp.route("/templates", methods=["GET"])
 @login_required
 def list_templates():
-    """List available templates for class creation.
+    """List available templates for class creation from database.
     
-    Only shows templates from cluster 10.220.15.249.
+    Database-first architecture: reads from Template table (synced by background daemon).
+    
     Query params:
-    - poll: If 'true', continuously poll until templates are available (max 60s)
+    - cluster_id: Filter templates by cluster ID
+    - poll: (deprecated - kept for backwards compatibility, ignored)
     """
     user, error = require_teacher_or_adminer()
     if error:
         return jsonify(error[0]), error[1]
     
-    poll_mode = request.args.get('poll', 'false').lower() == 'true'
+    # Get cluster filter from query params
+    cluster_id = request.args.get('cluster_id')
+    cluster_ip = None
     
-    # Get templates from Proxmox
-    proxmox_templates = list_proxmox_templates(CLASS_CLUSTER_IP)
-    
-    # If in poll mode and no templates, wait and retry
-    if poll_mode and len(proxmox_templates) == 0:
-        import time
-        max_wait = 60  # seconds
-        poll_interval = 2  # seconds
-        start_time = time.time()
-        
-        while time.time() - start_time < max_wait:
-            time.sleep(poll_interval)
-            proxmox_templates = list_proxmox_templates(CLASS_CLUSTER_IP)
-            if len(proxmox_templates) > 0:
-                logger.info(f"Templates found after {time.time() - start_time:.1f}s of polling")
+    if cluster_id:
+        # Convert cluster_id to cluster_ip
+        from app.config import CLUSTERS
+        for cluster in CLUSTERS:
+            if cluster['id'] == cluster_id:
+                cluster_ip = cluster['host']
                 break
     
-    # Also get registered templates from database
+    # Query templates from database (database-first architecture)
+    from app.models import Template
+    query = Template.query.filter_by(is_class_template=False)
+    
+    if cluster_ip:
+        query = query.filter_by(cluster_ip=cluster_ip)
+    
+    db_templates = query.all()
+    
+    # Convert to proxmox_templates format for backwards compatibility
+    proxmox_templates = []
+    for t in db_templates:
+        proxmox_templates.append({
+            'vmid': t.proxmox_vmid,
+            'name': t.name,
+            'node': t.node,
+            'cluster_ip': t.cluster_ip,
+            'cluster_id': cluster_id,  # Add cluster_id for frontend filtering
+            'cpu_cores': t.cpu_cores,
+            'cpu_sockets': t.cpu_sockets,
+            'memory_mb': t.memory_mb,
+            'disk_size_gb': t.disk_size_gb,
+            'os_type': t.os_type,
+            'last_verified_at': t.last_verified_at.isoformat() if t.last_verified_at else None,
+        })
+    
+    # Also get registered templates (legacy compatibility)
     class_id = request.args.get('class_id', type=int)
-    db_templates = get_available_templates(class_id)
+    registered_templates = get_available_templates(class_id)
     
     return jsonify({
         "ok": True,
         "proxmox_templates": proxmox_templates,
-        "registered_templates": [t.to_dict() for t in db_templates],
-        "template_count": len(proxmox_templates)
+        "registered_templates": [t.to_dict() for t in registered_templates],
+        "template_count": len(proxmox_templates),
+        "source": "database"  # Indicate data comes from database cache
     })
+
 
 
 @api_classes_bp.route("/templates", methods=["POST"])

@@ -23,9 +23,17 @@
         </div>
         
         <div class="form-group">
+            <label for="deployment-cluster">Deployment Cluster *</label>
+            <select id="deployment-cluster" name="deployment_cluster">
+                <option value="">Loading clusters...</option>
+            </select>
+            <small class="form-help">Select which cluster to deploy VMs to (determines available templates)</small>
+        </div>
+        
+        <div class="form-group">
             <label for="template-select">Template</label>
             <select id="template-select" name="template_id">
-                <option value="">Loading templates...</option>
+                <option value="">Select cluster first...</option>
             </select>
             <small class="form-help">Select a template or choose "None" to create VMs without a template</small>
         </div>
@@ -66,14 +74,6 @@
             <input type="number" id="pool-size" name="pool_size" min="0" value="0"
                    placeholder="Number of VMs to pre-create">
             <small class="form-help">VMs can be created later if set to 0</small>
-        </div>
-        
-        <div class="form-group">
-            <label for="deployment-cluster">Deployment Cluster</label>
-            <select id="deployment-cluster" name="deployment_cluster">
-                <option value="">Loading clusters...</option>
-            </select>
-            <small class="form-help">Select which cluster to deploy VMs to (templates can only be used on their source cluster)</small>
         </div>
         
         <div class="form-group">
@@ -187,7 +187,6 @@
 <script>
 // Load templates when page loads
 document.addEventListener('DOMContentLoaded', async function() {
-    await loadTemplates();
     await loadClusters();
     
     // Handle template selection and checkbox changes
@@ -199,9 +198,11 @@ document.addEventListener('DOMContentLoaded', async function() {
         updateSpecsVisibility();
     });
     
-    // Update nodes dropdown when cluster changes
-    document.getElementById('deployment-cluster').addEventListener('change', function() {
-        loadNodesForCluster(this.value);
+    // Update templates and nodes when cluster changes
+    document.getElementById('deployment-cluster').addEventListener('change', async function() {
+        const clusterId = this.value;
+        await loadTemplatesForCluster(clusterId);
+        await loadNodesForCluster(clusterId);
     });
 });
 
@@ -268,17 +269,78 @@ async function loadClusters() {
         const data = await resp.json();
         
         if (data.ok && data.clusters) {
-            selectElement.innerHTML = '<option value="">Auto (use template cluster)</option>' +
-                data.clusters.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+            selectElement.innerHTML = data.clusters.map(c => 
+                `<option value="${c.id}">${c.name}</option>`
+            ).join('');
             
-            // Load nodes for first cluster
+            // Load templates and nodes for first cluster
             if (data.clusters.length > 0) {
-                loadNodesForCluster(data.clusters[0].id);
+                await loadTemplatesForCluster(data.clusters[0].id);
+                await loadNodesForCluster(data.clusters[0].id);
             }
         }
     } catch (e) {
         console.error('Failed to load clusters:', e);
         selectElement.innerHTML = '<option value="">Default Cluster</option>';
+    }
+}
+
+async function loadTemplatesForCluster(clusterId) {
+    const selectElement = document.getElementById('template-select');
+    
+    if (!clusterId) {
+        selectElement.innerHTML = '<option value="">Select cluster first...</option>';
+        return;
+    }
+    
+    selectElement.innerHTML = '<option value="">Loading templates...</option>';
+    
+    try {
+        const resp = await fetch(`/api/classes/templates?cluster_id=${clusterId}`);
+        const data = await resp.json();
+        
+        if (!data.ok) {
+            selectElement.innerHTML = '<option value="">Failed to load templates</option>';
+            return;
+        }
+        
+        const proxmoxTemplates = data.proxmox_templates || [];
+        const registeredTemplates = data.registered_templates || [];
+        
+        // Filter templates by cluster
+        const clusterTemplates = proxmoxTemplates.filter(t => 
+            t.cluster_id === clusterId || !t.cluster_id
+        );
+        
+        // Create map of registered templates by VMID for quick lookup
+        const registeredMap = {};
+        registeredTemplates.forEach(t => {
+            registeredMap[t.proxmox_vmid] = t.id;
+        });
+        
+        // Store template data for later use
+        window.templateData = {
+            proxmox: clusterTemplates,
+            registered: registeredMap
+        };
+        
+        if (clusterTemplates.length === 0) {
+            selectElement.innerHTML = '<option value="">None (No templates found for this cluster)</option>';
+        } else {
+            selectElement.innerHTML = '<option value="">None</option>' +
+                clusterTemplates.map(t => {
+                    const registered = registeredMap[t.vmid] ? ' ✓' : '';
+                    return `<option value="${t.vmid}" data-name="${t.name}" data-node="${t.node}" data-cluster="${t.cluster_id || ''}">${t.name} (VMID: ${t.vmid})${registered}</option>`;
+                }).join('');
+        }
+        
+        // Update specs visibility after templates are loaded
+        updateSpecsVisibility();
+        
+    } catch (e) {
+        console.error('Failed to load templates:', e);
+        selectElement.innerHTML = '<option value="">None</option>';
+        updateSpecsVisibility();
     }
 }
 
@@ -304,161 +366,6 @@ async function loadNodesForCluster(clusterId) {
     } catch (e) {
         console.error('Failed to load nodes:', e);
         selectElement.innerHTML = '<option value="">Auto-distribute across nodes (recommended)</option>';
-    }
-}
-
-async function loadTemplates(usePoll = false) {
-    const selectElement = document.getElementById('template-select');
-    
-    try {
-        const url = usePoll ? '/api/classes/templates?poll=true' : '/api/classes/templates';
-        const resp = await fetch(url);
-        const data = await resp.json();
-        
-        if (!data.ok) {
-            selectElement.innerHTML = '<option value="">Failed to load templates</option>';
-            return;
-        }
-        
-        const proxmoxTemplates = data.proxmox_templates || [];
-        const registeredTemplates = data.registered_templates || [];
-        
-        // Create map of registered templates by VMID for quick lookup
-        const registeredMap = {};
-        registeredTemplates.forEach(t => {
-            registeredMap[t.proxmox_vmid] = t.id;
-        });
-        
-        // Store template data for later use
-        window.templateData = {
-            proxmox: proxmoxTemplates,
-            registered: registeredMap
-        };
-        
-        if (proxmoxTemplates.length === 0) {
-            selectElement.innerHTML = '<option value="">None (No templates found)</option>';
-            // Show message to user
-            if (!usePoll) {
-                showTemplateMessage('No templates found. Templates may be replicating to nodes...', 'info');
-                // Trigger replication and start polling
-                await triggerReplicationAndPoll();
-            }
-        } else {
-            selectElement.innerHTML = '<option value="">None</option>' +
-                proxmoxTemplates.map(t => {
-                    const registered = registeredMap[t.vmid] ? ' ✓' : '';
-                    return `<option value="${t.vmid}" data-name="${t.name}" data-node="${t.node}">${t.name} (VMID: ${t.vmid})${registered}</option>`;
-                }).join('');
-            hideTemplateMessage();
-        }
-        
-        // Update specs visibility after templates are loaded
-        updateSpecsVisibility();
-        
-    } catch (e) {
-        console.error('Failed to load templates:', e);
-        selectElement.innerHTML = '<option value="">None</option>';
-        // Update specs visibility even on error
-        updateSpecsVisibility();
-    }
-}
-
-async function triggerReplicationAndPoll() {
-    showTemplateMessage('Replicating templates to all nodes... This may take a few minutes.', 'loading');
-    
-    try {
-        // Trigger replication in background
-        const resp = await fetch('/api/classes/templates/replicate', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' }
-        });
-        const data = await resp.json();
-        
-        if (!data.ok) {
-            showTemplateMessage('Failed to start template replication: ' + (data.error || 'Unknown error'), 'error');
-            return;
-        }
-        
-        // Start polling for templates (every 5 seconds, max 2 minutes)
-        let attempts = 0;
-        const maxAttempts = 24; // 24 * 5s = 2 minutes
-        const pollInterval = 5000; // 5 seconds
-        
-        const pollTimer = setInterval(async () => {
-            attempts++;
-            
-            showTemplateMessage(`Checking for templates... (${attempts}/${maxAttempts})`, 'loading');
-            
-            // Fetch templates with poll mode
-            const pollResp = await fetch('/api/classes/templates?poll=false');
-            const pollData = await pollResp.json();
-            
-            if (pollData.ok && pollData.template_count > 0) {
-                // Templates found!
-                clearInterval(pollTimer);
-                showTemplateMessage(`Found ${pollData.template_count} template(s)! Reloading...`, 'success');
-                
-                setTimeout(async () => {
-                    await loadTemplates(false);
-                    hideTemplateMessage();
-                }, 1000);
-            } else if (attempts >= maxAttempts) {
-                // Timeout
-                clearInterval(pollTimer);
-                showTemplateMessage('Template replication is taking longer than expected. Please refresh the page in a few minutes.', 'error');
-            }
-        }, pollInterval);
-        
-    } catch (e) {
-        console.error('Failed to trigger replication:', e);
-        showTemplateMessage('Failed to trigger template replication: ' + e.message, 'error');
-    }
-}
-
-function showTemplateMessage(message, type = 'info') {
-    let messageDiv = document.getElementById('template-message');
-    if (!messageDiv) {
-        messageDiv = document.createElement('div');
-        messageDiv.id = 'template-message';
-        messageDiv.style.padding = '12px';
-        messageDiv.style.marginBottom = '16px';
-        messageDiv.style.borderRadius = '4px';
-        messageDiv.style.border = '1px solid';
-        
-        const selectElement = document.getElementById('template-select');
-        selectElement.parentNode.insertBefore(messageDiv, selectElement);
-    }
-    
-    // Set colors based on type
-    if (type === 'loading') {
-        messageDiv.style.backgroundColor = '#e6f3ff';
-        messageDiv.style.borderColor = '#0078d4';
-        messageDiv.style.color = '#0078d4';
-        messageDiv.innerHTML = '<i class="bi bi-hourglass-split"></i> ' + message;
-    } else if (type === 'success') {
-        messageDiv.style.backgroundColor = '#e6f5e6';
-        messageDiv.style.borderColor = '#28a745';
-        messageDiv.style.color = '#28a745';
-        messageDiv.innerHTML = '<i class="bi bi-check-circle"></i> ' + message;
-    } else if (type === 'error') {
-        messageDiv.style.backgroundColor = '#ffe6e6';
-        messageDiv.style.borderColor = '#dc3545';
-        messageDiv.style.color = '#dc3545';
-        messageDiv.innerHTML = '<i class="bi bi-exclamation-triangle"></i> ' + message;
-    } else {
-        messageDiv.style.backgroundColor = '#fff8e6';
-        messageDiv.style.borderColor = '#ffc107';
-        messageDiv.style.color = '#856404';
-        messageDiv.innerHTML = '<i class="bi bi-info-circle"></i> ' + message;
-    }
-    
-    messageDiv.style.display = 'block';
-}
-
-function hideTemplateMessage() {
-    const messageDiv = document.getElementById('template-message');
-    if (messageDiv) {
-        messageDiv.style.display = 'none';
     }
 }
 

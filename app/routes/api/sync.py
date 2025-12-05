@@ -112,3 +112,79 @@ def inventory_summary():
             'ok': False,
             'error': str(e)
         }), 500
+
+
+@sync_bp.route('/templates/trigger', methods=['POST'])
+@admin_required
+def trigger_template_sync():
+    """Trigger an immediate template sync (admin only).
+    
+    Returns:
+        JSON with sync results
+    """
+    from app.services.template_sync import sync_templates_from_proxmox
+    
+    try:
+        stats = sync_templates_from_proxmox(full_sync=True)
+        return jsonify({
+            'ok': True,
+            'stats': stats,
+            'message': f"Template sync complete: {stats['templates_found']} found, {stats['templates_added']} added, {stats['templates_updated']} updated"
+        })
+    except Exception as e:
+        logger.exception("Failed to trigger template sync")
+        return jsonify({
+            'ok': False,
+            'error': str(e)
+        }), 500
+
+
+@sync_bp.route('/templates/status', methods=['GET'])
+@login_required
+def template_sync_status():
+    """Get template database statistics.
+    
+    Returns:
+        JSON with template counts by cluster, node, etc.
+    """
+    from sqlalchemy import func
+
+    from app.models import Template, db
+    
+    try:
+        # Count by cluster
+        by_cluster = db.session.query(
+            Template.cluster_ip,
+            func.count(Template.id).label('count')
+        ).group_by(Template.cluster_ip).all()
+        
+        # Count by node
+        by_node = db.session.query(
+            Template.node,
+            func.count(Template.id).label('count')
+        ).group_by(Template.node).all()
+        
+        # Count class templates
+        class_template_count = Template.query.filter_by(is_class_template=True).count()
+        
+        # Count replicas
+        replica_count = Template.query.filter_by(is_replica=True).count()
+        
+        # Find templates with cached specs
+        cached_specs_count = Template.query.filter(Template.specs_cached_at.isnot(None)).count()
+        
+        return jsonify({
+            'ok': True,
+            'total_templates': Template.query.count(),
+            'by_cluster': {c: count for c, count in by_cluster},
+            'by_node': {n: count for n, count in by_node},
+            'class_template_count': class_template_count,
+            'replica_count': replica_count,
+            'cached_specs_count': cached_specs_count,
+        })
+    except Exception as e:
+        logger.exception("Failed to get template sync status")
+        return jsonify({
+            'ok': False,
+            'error': str(e)
+        }), 500

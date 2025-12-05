@@ -149,6 +149,11 @@ def create_app(config=None):
     start_background_sync(app)
     logger.info("Background VM inventory sync started")
     
+    # Start background template sync (database-first architecture)
+    from app.services.template_sync import start_template_sync_daemon
+    start_template_sync_daemon(app)
+    logger.info("Background template sync started")
+    
     # Ensure templates are replicated across all nodes at startup (disabled by default)
     from app.config import ENABLE_TEMPLATE_REPLICATION
     if ENABLE_TEMPLATE_REPLICATION:
