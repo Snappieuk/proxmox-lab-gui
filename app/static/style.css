@@ -2102,5 +2102,27 @@ body {
 .btn-rdp:hover:not(:disabled) { background: #f3eeff; border-color: #8661c5; }
 
 /* Center icons in all action buttons */
-.btn-action { padding: 0 !important; }
-.btn-action i { display: flex; align-items: center; justify-content: center; margin: 0 !important; }
+.btn-action {
+    padding: 0 !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+}
+
+.btn-action i {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 !important;
+    width: 100%;
+    height: 100%;
+}
+
+/* Power button icon colors (green for start, red for stop) */
+.btn-start i {
+    color: #107c10 !important;
+}
+
+.btn-stop i {
+    color: #d13438 !important;
+}

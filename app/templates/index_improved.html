@@ -680,14 +680,14 @@ function createVMRow(vm, category) {
                             data-action="start"
                             title="Start VM"
                             ${isRunning ? 'disabled' : ''}>
-                        <i class="bi bi-play-fill"></i>
+                        <i class="bi bi-power"></i>
                     </button>
                     <button class="btn-action btn-stop btn-power" 
                             data-vmid="${vm.vmid}" 
                             data-action="stop"
                             title="Stop VM"
                             ${isStopped ? 'disabled' : ''}>
-                        <i class="bi bi-stop-fill"></i>
+                        <i class="bi bi-power"></i>
                     </button>
                     <div class="dropdown-action">
                         <button class="btn-action btn-more" title="More actions">
@@ -795,8 +795,20 @@ function attachVMEventHandlers() {
     document.querySelectorAll('.btn-ssh').forEach(btn => {
         btn.addEventListener('click', function() {
             const vmid = this.dataset.vmid;
+            const vmName = this.dataset.name || `VM ${vmid}`;
             const sshUrl = `/ssh/${vmid}`;
-            window.open(sshUrl, '_blank');
+            
+            // Open SSH in a small popup window
+            const width = 1000;
+            const height = 600;
+            const left = (screen.width - width) / 2;
+            const top = (screen.height - height) / 2;
+            
+            window.open(
+                sshUrl,
+                `ssh-${vmid}`,
+                `width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=yes`
+            );
         });
     });
 }
