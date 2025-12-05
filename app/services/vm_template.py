@@ -81,6 +81,9 @@ def export_template_to_qcow2(
             logger.error(error_msg)
             return False, error_msg
         
+        logger.info(f"Retrieved config for template {template_vmid}: {len(config)} keys")
+        logger.debug(f"Config keys: {list(config.keys())}")
+        
         # Auto-detect which disk slot has the actual disk
         # Check common disk slots in order of preference
         disk_config = None
