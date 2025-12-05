@@ -128,3 +128,57 @@ def api_save_cluster_config():
     except Exception as e:
         logger.error(f"Failed to save cluster config: {e}")
         return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@api_clusters_bp.route("/clusters/<cluster_id>/resources", methods=["GET"])
+@login_required
+def get_cluster_resources(cluster_id: str):
+    """Get resource availability for a specific cluster."""
+    from app.services.proxmox_service import get_proxmox_admin_for_cluster
+    
+    try:
+        # Validate cluster ID
+        if cluster_id not in [c["id"] for c in CLUSTERS]:
+            return jsonify({"ok": False, "error": "Cluster not found"}), 404
+        
+        proxmox = get_proxmox_admin_for_cluster(cluster_id)
+        if not proxmox:
+            return jsonify({"ok": False, "error": "Cluster not found"}), 404
+        
+        # Get all nodes
+        nodes = proxmox.nodes.get()
+        
+        total_cpu_cores = 0
+        total_memory_mb = 0
+        
+        for node_data in nodes:
+            node_name = node_data['node']
+            node_info = proxmox.nodes(node_name).status.get()
+            
+            # CPU: maxcpu is the number of physical cores
+            total_cpu_cores += node_info.get('maxcpu', 0)
+            
+            # Memory: maxmem is total memory in bytes
+            total_memory_mb += node_info.get('maxmem', 0) // (1024 * 1024)
+        
+        # Apply 3x overallocation for CPU
+        vcpu_available = total_cpu_cores * 3
+        
+        return jsonify({
+            "ok": True,
+            "cluster_id": cluster_id,
+            "resources": {
+                "cpu": {
+                    "physical_cores": total_cpu_cores,
+                    "vcpu_available": vcpu_available,
+                    "overallocation_factor": 3
+                },
+                "memory": {
+                    "total_mb": total_memory_mb,
+                    "available_mb": total_memory_mb
+                }
+            }
+        })
+    except Exception as e:
+        logger.exception("Failed to get cluster resources")
+        return jsonify({"ok": False, "error": str(e)}), 500
