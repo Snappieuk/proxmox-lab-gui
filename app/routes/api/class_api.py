@@ -422,22 +422,56 @@ def delete_class_route(class_id: int):
     if cluster_id:
         try:
             proxmox = get_proxmox_admin_for_cluster(cluster_id)
+            
+            # FIRST: Query actual nodes for all VMs (they may have been migrated)
+            logger.info(f"Querying actual nodes for {len(vm_assignments_to_delete)} VMs...")
+            try:
+                resources = proxmox.cluster.resources.get(type="vm")
+                for vm_info in vm_assignments_to_delete:
+                    for r in resources:
+                        if int(r.get('vmid', -1)) == int(vm_info['vmid']):
+                            actual_node = r.get('node')
+                            if actual_node != vm_info['node']:
+                                logger.info(f"VM {vm_info['vmid']} migrated from {vm_info['node']} to {actual_node}, updating...")
+                                vm_info['node'] = actual_node
+                            break
+            except Exception as e:
+                logger.warning(f"Failed to query cluster resources for node validation: {e}")
+            
+            # SECOND: Stop all running VMs and wait for them to stop
+            logger.info(f"Stopping and waiting for {len(vm_assignments_to_delete)} VMs...")
             for vm_info in vm_assignments_to_delete:
                 try:
                     vmid = vm_info['vmid']
                     node = vm_info['node']
-                    # Force stop (don't wait for graceful shutdown)
-                    logger.info(f"Force stopping VM {vmid}...")
-                    proxmox.nodes(node).qemu(vmid).status.stop.post()
+                    
+                    # Check if VM is running
+                    try:
+                        status = proxmox.nodes(node).qemu(vmid).status.current.get()
+                        if status.get('status') == 'running':
+                            logger.info(f"Stopping VM {vmid} on node {node}...")
+                            proxmox.nodes(node).qemu(vmid).status.stop.post()
+                            
+                            # Wait for VM to stop (poll until stopped or timeout)
+                            from app.services.vm_core import wait_for_vm_stopped
+                            from app.services.ssh_executor import get_ssh_executor_from_config
+                            
+                            ssh_executor = get_ssh_executor_from_config()
+                            stopped = wait_for_vm_stopped(ssh_executor, vmid, timeout=60, poll_interval=2)
+                            if stopped:
+                                logger.info(f"VM {vmid} stopped successfully")
+                            else:
+                                logger.warning(f"VM {vmid} did not stop within timeout, proceeding with deletion anyway")
+                        else:
+                            logger.info(f"VM {vmid} already stopped (status: {status.get('status')})")
+                    except Exception as e:
+                        logger.warning(f"Failed to stop VM {vmid}: {e}")
+                        
                 except Exception as e:
-                    logger.warning(f"Failed to stop VM {vmid}: {e}")
-            
-            # Wait a bit for VMs to stop
-            import time
-            logger.info("Waiting 5 seconds for VMs to stop...")
-            time.sleep(5)
+                    logger.warning(f"Error during VM {vm_info['vmid']} stop: {e}")
+                    
         except Exception as e:
-            logger.warning(f"Error during bulk VM stop: {e}")
+            logger.warning(f"Error during VM stop phase: {e}")
     
     # Delete VMs from Proxmox (best effort, class already deleted)
     deleted_vms = []

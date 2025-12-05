@@ -69,7 +69,7 @@ def export_template_to_qcow2(
         timeout: Conversion timeout in seconds (default: 600)
         
     Returns:
-        Tuple of (success, error_message)
+        Tuple of (success, error_message, disk_controller_type, ostype)
     """
     logger.info(f"Exporting template {template_vmid} to {output_path}")
     
@@ -125,6 +125,21 @@ def export_template_to_qcow2(
         
         logger.info(f"Found disk on {disk_slot}, storage {storage}, volume {volume}")
         
+        # Extract disk controller type from slot name (scsi0 -> scsi, virtio0 -> virtio, etc.)
+        disk_controller_type = 'scsi'  # Default
+        if disk_slot:
+            # Extract prefix (letters before digits)
+            import re
+            match = re.match(r'^([a-z]+)\d+$', disk_slot)
+            if match:
+                disk_controller_type = match.group(1)
+        
+        logger.info(f"Template uses {disk_controller_type} disk controller (from slot {disk_slot})")
+        
+        # Get ostype from template config (important for Windows VMs)
+        ostype = config.get('ostype', 'l26')  # Default to Linux 2.6+ if not specified
+        logger.info(f"Template ostype: {ostype}")
+        
         # Resolve source path
         # For NFS storage: /mnt/pve/{storage}/images/{vmid}/{volume}
         if '/' in volume:
@@ -145,13 +160,14 @@ def export_template_to_qcow2(
         )
         
         if success:
-            logger.info(f"Successfully exported template to {output_path}")
-        
-        return success, error
+            logger.info(f"Successfully exported template to {output_path} (controller: {disk_controller_type}, ostype: {ostype})")
+            return True, "", disk_controller_type, ostype
+        else:
+            return False, error, None, None
         
     except Exception as e:
         logger.exception(f"Error exporting template: {e}")
-        return False, str(e)
+        return False, str(e), None, None
 
 
 # ---------------------------------------------------------------------------
@@ -167,6 +183,8 @@ def create_overlay_vm(
     memory: int = 2048,
     cores: int = 2,
     storage: str = None,
+    disk_controller_type: str = 'scsi',
+    ostype: str = 'l26',
 ) -> Tuple[bool, str, Optional[str]]:
     """
     Create a VM using a QCOW2 overlay (copy-on-write).
@@ -183,6 +201,8 @@ def create_overlay_vm(
         memory: Memory in MB (default: 2048)
         cores: CPU cores (default: 2)
         storage: Storage name (default: PROXMOX_STORAGE_NAME)
+        disk_controller_type: Disk controller type - scsi, virtio, sata, or ide (default: scsi)
+        ostype: OS type (e.g., 'win10', 'win11', 'l26' for Linux) - default: l26
         
     Returns:
         Tuple of (success, error_message, mac_address)
@@ -190,14 +210,25 @@ def create_overlay_vm(
     storage = storage or PROXMOX_STORAGE_NAME
     images_path = DEFAULT_VM_IMAGES_PATH
     
+    # Map controller types to SCSI hardware
+    scsihw_map = {
+        'scsi': 'virtio-scsi-pci',
+        'virtio': 'virtio-scsi-pci',  # virtio disk still needs SCSI controller
+        'sata': 'ahci',
+        'ide': 'ide',
+    }
+    scsihw = scsihw_map.get(disk_controller_type, 'virtio-scsi-pci')
+    
     try:
-        # Step 1: Create VM shell
+        # Step 1: Create VM shell with appropriate SCSI hardware and ostype
         success, error = create_vm_shell(
             ssh_executor=ssh_executor,
             vmid=vmid,
             name=name,
             memory=memory,
             cores=cores,
+            scsihw=scsihw,
+            ostype=ostype,
         )
         
         if not success:
@@ -218,7 +249,7 @@ def create_overlay_vm(
             destroy_vm(ssh_executor, vmid, purge=True)
             return False, f"Failed to create overlay disk: {error}", None
         
-        # Step 3: Attach disk to VM
+        # Step 3: Attach disk to VM using correct controller type
         disk_spec = f"{vmid}/vm-{vmid}-disk-0.qcow2"
         success, error = attach_disk_to_vm(
             ssh_executor=ssh_executor,
@@ -226,6 +257,7 @@ def create_overlay_vm(
             disk_path=disk_spec,
             storage=storage,
             set_boot=True,
+            disk_slot=f"{disk_controller_type}0",  # Use detected controller type
         )
         
         if not success:
@@ -509,7 +541,7 @@ def update_overlay_backing_file(
         storage: Storage name (default: PROXMOX_STORAGE_NAME)
         
     Returns:
-        Tuple of (success, error_message)
+        Tuple of (success, error_message, disk_controller_type)
     """
     storage = storage or PROXMOX_STORAGE_NAME
     images_path = DEFAULT_VM_IMAGES_PATH

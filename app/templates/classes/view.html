@@ -240,8 +240,8 @@
             </div>
             <div id="clone-progress" style="display: none; margin-top: 1rem;">
                 <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
-                    <span style="font-weight: 600;">Cloning VMs...</span>
-                    <span id="progress-text">0 / 0</span>
+                    <span id="progress-status" style="font-weight: 600;">Cloning VMs...</span>
+                    <span id="progress-text">0%</span>
                 </div>
                 <div style="width: 100%; height: 24px; background: #f3f2f1; border-radius: 4px; overflow: hidden;">
                     <div id="progress-bar" style="height: 100%; width: 0%; background: #0078d4; transition: width 0.3s ease;"></div>
@@ -482,7 +482,14 @@ async function startVm(vmid, node) {
             const data2 = await resp2.json();
             if (!data2.ok) alert('Failed to start VM: ' + (data2.error || data.error));
         }
+        
+        // Immediate status update
         setTimeout(updateStatuses, 2000);
+        
+        // Accelerated polling to catch IP quickly (2s, 5s, 10s, 20s)
+        setTimeout(updateStatuses, 5000);
+        setTimeout(updateStatuses, 10000);
+        setTimeout(updateStatuses, 20000);
     } catch (e) {
         alert('Error starting VM: ' + e.message);
     }
@@ -656,6 +663,7 @@ async function createVms() {
     const createBtn = document.getElementById('create-vms-btn');
     const progressBar = document.getElementById('progress-bar');
     const progressText = document.getElementById('progress-text');
+    const progressStatus = document.getElementById('progress-status');
     const currentVmText = document.getElementById('current-vm');
     
     progressDiv.style.display = 'block';
@@ -684,31 +692,41 @@ async function createVms() {
                         return;
                     }
                     
-                    // Update progress bar
-                    const completed = progress.completed || 0;
-                    const total = progress.total || count;
-                    const percentage = total > 0 ? (completed / total * 100) : 0;
-                    
+                    // Update progress bar and percentage
+                    const percentage = progress.progress_percent || 0;
                     progressBar.style.width = percentage + '%';
-                    progressText.textContent = `${completed} / ${total}`;
+                    progressText.textContent = Math.round(percentage) + '%';
                     
+                    // Update status message
+                    if (progress.message) {
+                        progressStatus.textContent = progress.message;
+                    }
+                    
+                    // Update current VM if provided
                     if (progress.current_vm) {
-                        currentVmText.textContent = `Current: ${progress.current_vm}`;
+                        currentVmText.textContent = `Creating: ${progress.current_vm}`;
+                    } else {
+                        currentVmText.textContent = '';
                     }
                     
                     // Check if completed
-                    if (progress.status === 'completed' || completed >= total) {
+                    if (progress.status === 'completed') {
                         clearInterval(pollInterval);
+                        progressStatus.textContent = '✓ Complete!';
+                        progressBar.style.background = '#107c10';  // Green color
                         setTimeout(() => {
                             closeModal('add-vms-modal');
                             location.reload();
-                        }, 500);
+                        }, 1000);
                     } else if (progress.status === 'failed') {
                         clearInterval(pollInterval);
-                        alert('Clone operation failed: ' + (progress.errors ? progress.errors.join(', ') : 'Unknown error'));
+                        progressStatus.textContent = '✗ Failed';
+                        progressBar.style.background = '#d13438';  // Red color
+                        const errorMsg = progress.errors ? progress.errors.join(', ') : 'Unknown error';
+                        currentVmText.textContent = `Error: ${errorMsg}`;
+                        alert('Clone operation failed: ' + errorMsg);
                         createBtn.disabled = false;
                         createBtn.innerHTML = '<i class="bi bi-plus-circle"></i> Create VMs';
-                        progressDiv.style.display = 'none';
                     }
                 } catch (e) {
                     console.error('Progress check failed:', e);

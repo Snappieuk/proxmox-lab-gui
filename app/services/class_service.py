@@ -389,12 +389,15 @@ def join_class_via_token(token: str, user_id: int) -> Tuple[bool, str, Optional[
     # Enroll user in class
     class_.students.append(user)
     
-    # Try to find an unassigned VM in the class (exclude manually added VMs)
+    # Try to find an unassigned VM in the class
+    # CRITICAL: Exclude reserved VMs (class-base VM with index 99) and manually added VMs
     available_vm = VMAssignment.query.filter_by(
         class_id=class_.id,
         assigned_user_id=None,
-        status='available',
+        status='available',  # Only 'available' VMs, NOT 'reserved'
         manually_added=False  # Don't auto-assign manually added VMs
+    ).filter(
+        VMAssignment.is_template_vm == False  # Exclude template VMs
     ).first()
     
     if available_vm:

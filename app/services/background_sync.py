@@ -105,9 +105,27 @@ def _perform_full_sync():
     try:
         from app.services.inventory_service import persist_vm_inventory
         from app.services.proxmox_client import get_all_vms
+        from app.models import VMAssignment, db
         
         vms = get_all_vms(skip_ips=False, force_refresh=True)
         count = persist_vm_inventory(vms)
+        
+        # Update VMAssignment nodes from VMInventory (sync after migrations)
+        updated_nodes = 0
+        for vm in vms:
+            vmid = vm.get('vmid')
+            current_node = vm.get('node')
+            
+            if vmid and current_node:
+                assignment = VMAssignment.query.filter_by(proxmox_vmid=vmid).first()
+                if assignment and assignment.node != current_node:
+                    logger.info(f"Updating VMAssignment node for {vmid}: {assignment.node} -> {current_node}")
+                    assignment.node = current_node
+                    updated_nodes += 1
+        
+        if updated_nodes > 0:
+            db.session.commit()
+            logger.info(f"Updated {updated_nodes} VMAssignment nodes after migration")
         
         # Update stats
         _sync_stats['last_full_sync'] = datetime.utcnow()

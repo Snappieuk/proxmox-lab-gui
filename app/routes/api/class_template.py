@@ -99,33 +99,38 @@ def get_template_info(class_id: int):
         
         proxmox = get_proxmox_admin_for_cluster(cluster_ip)
         
-        # If node is missing or invalid, fetch it from Proxmox
-        if not node or node == "qemu" or node == "None":
-            logger.warning(f"VMAssignment {teacher_vm.id} has invalid/missing node: '{node}'. Fetching from Proxmox...")
-            try:
-                # Get all VMs from cluster to find the node
-                resources = proxmox.cluster.resources.get(type="vm")
-                for r in resources:
-                    if r.get('vmid') == vmid:
-                        node = r.get('node')
-                        logger.info(f"Found node '{node}' for VMID {vmid}")
-                        # Update assignment with correct node
-                        teacher_vm.node = node
+        # ALWAYS query actual node from Proxmox (VM may have been migrated or database could be stale)
+        logger.info(f"Querying actual node for VMID {vmid}...")
+        try:
+            # Get all VMs from cluster to find the actual node
+            resources = proxmox.cluster.resources.get(type="vm")
+            actual_node = None
+            for r in resources:
+                if int(r.get('vmid', -1)) == int(vmid):
+                    actual_node = r.get('node')
+                    if actual_node != node:
+                        logger.info(f"VM {vmid} migrated from {node} to {actual_node}, using actual node")
+                    else:
+                        logger.info(f"VM {vmid} confirmed on node {actual_node}")
+                    node = actual_node
+                    # Update database with correct node
+                    if teacher_vm.node != actual_node:
+                        teacher_vm.node = actual_node
                         db.session.commit()
-                        break
-                
-                if not node or node == "qemu" or node == "None":
-                    logger.error(f"Could not find valid node for VMID {vmid}")
-                    return jsonify({
-                        "ok": False, 
-                        "error": f"Teacher VM {vmid} not found in Proxmox. It may have been deleted."
-                    }), 404
-            except Exception as e:
-                logger.error(f"Failed to fetch node from Proxmox: {e}")
+                    break
+            
+            if not actual_node:
+                logger.error(f"VM {vmid} not found in cluster resources")
                 return jsonify({
                     "ok": False, 
-                    "error": "Cannot access teacher VM. It may have been deleted or the cluster is unreachable."
-                }), 500
+                    "error": f"Teacher VM {vmid} not found in Proxmox. It may have been deleted."
+                }), 404
+        except Exception as e:
+            logger.error(f"Failed to query cluster resources for VM {vmid}: {e}")
+            return jsonify({
+                "ok": False, 
+                "error": f"Cannot query Proxmox cluster: {e}"
+            }), 500
         
         vm_config = proxmox.nodes(node).qemu(vmid).config.get()
 

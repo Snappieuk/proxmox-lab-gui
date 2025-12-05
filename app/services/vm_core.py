@@ -52,6 +52,7 @@ def create_vm_shell(
     cores: int = 2,
     network_bridge: str = "vmbr0",
     scsihw: str = "virtio-scsi-pci",
+    ostype: str = "l26",
 ) -> Tuple[bool, str]:
     """
     Create an empty VM shell (no disk attached).
@@ -67,6 +68,7 @@ def create_vm_shell(
         cores: CPU cores (default: 2)
         network_bridge: Network bridge (default: vmbr0)
         scsihw: SCSI hardware type (default: virtio-scsi-pci)
+        ostype: OS type (e.g., 'win10', 'win11', 'l26') - default: l26 (Linux)
         
     Returns:
         Tuple of (success, error_message)
@@ -77,7 +79,8 @@ def create_vm_shell(
         f"qm create {vmid} --name {safe_name} "
         f"--memory {memory} --cores {cores} "
         f"--net0 virtio,bridge={network_bridge} "
-        f"--scsihw {scsihw}"
+        f"--scsihw {scsihw} "
+        f"--ostype {ostype}"
     )
     
     try:
@@ -390,7 +393,11 @@ def attach_disk_to_vm(
         # Relative path - use storage:path format
         disk_spec = f"{storage}:{disk_path}"
     
-    boot_opts = " --boot c --bootdisk scsi0" if set_boot and disk_slot == "scsi0" else ""
+    boot_opts = ""
+    if set_boot:
+        # Extract controller type from disk_slot (e.g., "scsi0" -> "scsi0")
+        boot_opts = f" --boot c --bootdisk {disk_slot}"
+    
     cmd = f"qm set {vmid} --{disk_slot} {disk_spec}{boot_opts}"
     
     try:

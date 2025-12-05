@@ -1105,8 +1105,8 @@ async function pollCreationProgress(taskId) {
             return;
         }
         
-        // Still running - show progress
-        const percent = progress.completed ? Math.round((progress.completed / 5) * 100) : 0;
+        // Still running - show progress with percentage
+        const percent = progress.progress_percent ? Math.round(progress.progress_percent) : 0;
         statusEl.textContent = progress.message || `Creating class VMs... ${percent}%`;
         
         // Continue polling progress
