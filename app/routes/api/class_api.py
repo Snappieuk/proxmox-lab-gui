@@ -402,6 +402,38 @@ def delete_class_route(class_id: int):
     
     logger.info(f"Class {class_id} deleted from database, now deleting {len(vm_assignments_to_delete)} VMs from Proxmox")
     
+    # First, stop all running VMs in parallel (faster than sequential)
+    logger.info(f"Stopping all running VMs for class {class_id}...")
+    from app.services.proxmox_service import get_proxmox_admin_for_cluster
+    from app.config import CLUSTERS
+    
+    # Get cluster connection
+    cluster_id = None
+    for cluster in CLUSTERS:
+        if cluster["host"] == (cluster_ip or "10.220.15.249"):
+            cluster_id = cluster["id"]
+            break
+    
+    if cluster_id:
+        try:
+            proxmox = get_proxmox_admin_for_cluster(cluster_id)
+            for vm_info in vm_assignments_to_delete:
+                try:
+                    vmid = vm_info['vmid']
+                    node = vm_info['node']
+                    # Force stop (don't wait for graceful shutdown)
+                    logger.info(f"Force stopping VM {vmid}...")
+                    proxmox.nodes(node).qemu(vmid).status.stop.post()
+                except Exception as e:
+                    logger.warning(f"Failed to stop VM {vmid}: {e}")
+            
+            # Wait a bit for VMs to stop
+            import time
+            logger.info("Waiting 5 seconds for VMs to stop...")
+            time.sleep(5)
+        except Exception as e:
+            logger.warning(f"Error during bulk VM stop: {e}")
+    
     # Delete VMs from Proxmox (best effort, class already deleted)
     deleted_vms = []
     failed_vms = []
