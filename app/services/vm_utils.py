@@ -25,20 +25,27 @@ logger = logging.getLogger(__name__)
 from app.models import VMInventory  # noqa: E402 - import after logger setup
 
 
-def get_optimal_node(ssh_executor, proxmox=None) -> str:
+def get_optimal_node(ssh_executor, proxmox=None, vm_memory_mb=2048, simulated_vms_per_node=None) -> str:
     """
     Find the optimal Proxmox node for VM creation based on resource availability.
     
-    Selects node with most available RAM and CPU capacity.
+    Selects node with most available RAM and CPU capacity, accounting for
+    VMs that will be created in the same batch (simulated weighting).
     
     Args:
         ssh_executor: SSH executor for running commands
         proxmox: Optional ProxmoxAPI connection (if None, uses SSH to query)
+        vm_memory_mb: Memory per VM in MB (for simulated weighting)
+        simulated_vms_per_node: Dict of {node_name: count} for VMs being created
         
     Returns:
         Node name with most available resources
     """
     try:
+        # Track simulated VM allocations if not provided
+        if simulated_vms_per_node is None:
+            simulated_vms_per_node = {}
+            
         # Try to use Proxmox API if available
         if proxmox:
             nodes = proxmox.nodes.get()
@@ -48,11 +55,19 @@ def get_optimal_node(ssh_executor, proxmox=None) -> str:
             for node in nodes:
                 if node.get('status') != 'online':
                     continue
+                
+                node_name = node['node']
                     
                 # Calculate availability score (higher is better)
                 # Weight RAM more heavily than CPU (RAM is usually the bottleneck)
                 mem_total = node.get('maxmem', 1)
                 mem_used = node.get('mem', 0)
+                
+                # Add simulated memory usage from VMs being created
+                simulated_count = simulated_vms_per_node.get(node_name, 0)
+                simulated_mem = simulated_count * vm_memory_mb * 1024 * 1024  # Convert MB to bytes
+                mem_used += simulated_mem
+                
                 mem_free_pct = (mem_total - mem_used) / mem_total if mem_total > 0 else 0
                 
                 node.get('maxcpu', 1)
@@ -62,14 +77,17 @@ def get_optimal_node(ssh_executor, proxmox=None) -> str:
                 # Score: 70% RAM + 30% CPU
                 score = (mem_free_pct * 0.7) + (cpu_free_pct * 0.3)
                 
-                logger.debug(f"Node {node['node']}: {mem_free_pct*100:.1f}% RAM free, {cpu_free_pct*100:.1f}% CPU free, score={score:.3f}")
+                simulated_note = f" (+{simulated_count} simulated VMs)" if simulated_count > 0 else ""
+                logger.debug(f"Node {node_name}: {mem_free_pct*100:.1f}% RAM free, {cpu_free_pct*100:.1f}% CPU free, score={score:.3f}{simulated_note}")
                 
                 if score > best_score:
                     best_score = score
-                    best_node = node['node']
+                    best_node = node_name
             
             if best_node:
                 logger.info(f"Selected optimal node: {best_node} (score={best_score:.3f})")
+                # Increment simulated count for next VM
+                simulated_vms_per_node[best_node] = simulated_vms_per_node.get(best_node, 0) + 1
                 return best_node
         
         # Fallback: use hostname command

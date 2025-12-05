@@ -115,19 +115,19 @@
                 <td>
                     <div class="action-buttons">
                         {% if can_manage or vm.assigned_user_id == user.id %}
-                        <button class="btn-icon btn-icon-success" 
+                        <button class="btn btn-sm btn-success" 
                                 onclick="startVm({{ vm.proxmox_vmid }}, '{{ vm.node }}')"
                                 data-tooltip="Start VM"
                                 title="Start VM">
                             <i class="bi bi-play-fill"></i>
                         </button>
-                        <button class="btn-icon btn-icon-danger" 
+                        <button class="btn btn-sm btn-danger" 
                                 onclick="stopVm({{ vm.proxmox_vmid }}, '{{ vm.node }}')"
                                 data-tooltip="Stop VM"
                                 title="Stop VM">
                             <i class="bi bi-stop-fill"></i>
                         </button>
-                        <button class="btn-icon btn-icon-warning" 
+                        <button class="btn btn-sm btn-warning" 
                                 onclick="revertVm({{ vm.proxmox_vmid }}, '{{ vm.node }}')"
                                 data-tooltip="Revert to Baseline"
                                 title="Revert to Baseline">
@@ -135,13 +135,13 @@
                         </button>
                         {% endif %}
                         {% if can_manage %}
-                        <button class="btn-icon btn-icon-primary" 
+                        <button class="btn btn-sm btn-primary" 
                                 onclick="showAssignModal({{ vm.id }}, {{ vm.proxmox_vmid }})"
                                 data-tooltip="Assign User"
                                 title="Assign to User">
                             <i class="bi bi-person-plus"></i>
                         </button>
-                        <button class="btn-icon btn-icon-danger" 
+                        <button class="btn btn-sm btn-outline-danger" 
                                 onclick="deleteVm({{ vm.id }}, {{ vm.proxmox_vmid }})"
                                 data-tooltip="Delete VM"
                                 title="Delete VM">

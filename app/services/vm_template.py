@@ -95,6 +95,15 @@ def export_template_to_qcow2(
                 logger.info(f"Found disk on slot {slot}: {disk_config}")
                 break
         
+        # Also check for TPM and EFI disks (Windows VMs)
+        tpm_config = config.get('tpmstate0')
+        efi_config = config.get('efidisk0')
+        
+        if tpm_config:
+            logger.info(f"Template has TPM state: {tpm_config}")
+        if efi_config:
+            logger.info(f"Template has EFI disk: {efi_config}")
+        
         if not disk_config:
             # Log all available config keys to help debug
             config_dump = '\n'.join([f"  {k}: {v}" for k, v in config.items()])

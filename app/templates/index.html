@@ -880,17 +880,16 @@ async function sendPowerAction(vmid, action, btn) {
         // Revert button icon
         icon.className = originalIcon;
         btn.style.opacity = '';
+        btn.disabled = false;
         
-        // Refresh VM status after 2 seconds (Proxmox needs time to update)
-        setTimeout(() => {
-            refreshSingleVMStatus(vmid, false); // false = do fetch IP
-        }, 2000);
-        
-        // If starting, poll again after 10 seconds to get IP (VM needs time to boot)
+        // Start accelerated polling for IP discovery after VM start
         if (action === 'start') {
+            startAcceleratedPolling(vmid);
+        } else {
+            // For stop, just refresh once after 2 seconds
             setTimeout(() => {
-                refreshSingleVMStatus(vmid, false);
-            }, 10000);
+                refreshSingleVMStatus(vmid, true); // true = skip IP lookup
+            }, 2000);
         }
         
     } catch (e) {
@@ -967,6 +966,16 @@ function startSmartPolling() {
             refreshVmStatus();
         }
     }, 30000);
+}
+
+// Accelerated polling after VM start (2s, 5s, 10s, then back to normal)
+function startAcceleratedPolling(vmid) {
+    console.log(`Starting accelerated polling for VM ${vmid} to catch IP quickly`);
+    
+    // Poll at 2s, 5s, 10s after start
+    setTimeout(() => refreshSingleVMStatus(vmid), 2000);
+    setTimeout(() => refreshSingleVMStatus(vmid), 5000);
+    setTimeout(() => refreshSingleVMStatus(vmid), 10000);
 }
 
 // Resume polling when page becomes visible

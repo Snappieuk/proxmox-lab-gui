@@ -666,13 +666,18 @@ def create_class_vms(
         logger.info(f"Using shared storage: {PROXMOX_STORAGE_NAME} (path: {DEFAULT_VM_IMAGES_PATH})")
         logger.info("Note: All nodes must have access to shared storage for multi-node deployment")
         
+        # Track simulated VM allocations across nodes for load balancing
+        simulated_vms_per_node = {}
+        
         # Step 1: Handle template vs no-template workflow
         if template_vmid:
             # WITH TEMPLATE: Export template to class base QCOW2
             base_qcow2_path = f"{DEFAULT_TEMPLATE_STORAGE_PATH}/{class_prefix}-base.qcow2"
             
-            result.details.append(f"Exporting template {template_vmid} to class base...")
+            result.details.append(f"Exporting template {template_vmid} to class base (this may take several minutes for large disks)...")
             logger.info(f"Starting template export: VMID {template_vmid}, node {template_node}, output {base_qcow2_path}")
+            logger.info(f"NOTE: Disk export is a blocking operation - no VMs can be created until export completes")
+            
             success, error = export_template_to_qcow2(
                 ssh_executor=ssh_executor,
                 template_vmid=template_vmid,
@@ -686,13 +691,14 @@ def create_class_vms(
                 logger.error(error_msg)
                 return result
             
+            logger.info(f"Template export completed successfully: {base_qcow2_path}")
             result.details.append(f"Class base created: {base_qcow2_path}")
             
             # Step 2: Create teacher VM as overlay (NOT full clone)
             result.details.append("Creating teacher VM as overlay...")
             
-            # Select optimal node for teacher VM
-            teacher_optimal_node = get_optimal_node(ssh_executor, proxmox)
+            # Select optimal node for teacher VM (with simulated load balancing)
+            teacher_optimal_node = get_optimal_node(ssh_executor, proxmox, vm_memory_mb=memory, simulated_vms_per_node=simulated_vms_per_node)
             logger.info(f"Selected optimal node for teacher VM: {teacher_optimal_node}")
             
             # Use allocated VMID from class prefix (index 0 = teacher)
@@ -726,9 +732,16 @@ def create_class_vms(
             
             logger.info(f"Teacher VM {teacher_vmid} created successfully")
             
-            # Note: For template-based workflow, teacher VM is created on template_node
-            # Migration could be added here if needed, but shared storage allows cross-node access
-            result.details.append(f"Teacher VM {teacher_vmid} created on {template_node}")
+            # Query Proxmox to find actual node where VM was created
+            # (SSH commands run on connected node, not necessarily template_node)
+            from app.services.vm_core import get_vm_current_node
+            teacher_actual_node = get_vm_current_node(ssh_executor, teacher_vmid)
+            if not teacher_actual_node:
+                logger.warning(f"Could not determine node for teacher VM {teacher_vmid}, using template_node as fallback")
+                teacher_actual_node = template_node
+            
+            result.details.append(f"Teacher VM {teacher_vmid} created on {teacher_actual_node}")
+            logger.info(f"Teacher VM {teacher_vmid} confirmed on node {teacher_actual_node}")
             
             # Step 3: Create class-base VM (for consistency and to allow template updates)
             # Use index 99 (last student slot) to keep it within allocated range
@@ -775,8 +788,8 @@ def create_class_vms(
             # WITHOUT TEMPLATE: Create empty VM shells
             result.details.append("Creating teacher VM shell (no template)...")
             
-            # Select optimal node for teacher VM
-            teacher_optimal_node = get_optimal_node(ssh_executor, proxmox)
+            # Select optimal node for teacher VM (with simulated load balancing)
+            teacher_optimal_node = get_optimal_node(ssh_executor, proxmox, vm_memory_mb=memory, simulated_vms_per_node=simulated_vms_per_node)
             logger.info(f"Selected optimal node for teacher VM: {teacher_optimal_node}")
             
             # Retry logic for VMID conflicts
@@ -847,6 +860,9 @@ def create_class_vms(
             
             result.details.append(f"Teacher VM storage attached ({disk_size_gb}GB disk)")
             
+            # Store the actual node where teacher VM ended up (after migration)
+            teacher_actual_node = current_node
+            
             # No base_qcow2_path in template-less workflow (students get empty disks)
             base_qcow2_path = None
             
@@ -897,7 +913,7 @@ def create_class_vms(
             proxmox_vmid=teacher_vmid,
             vm_name=teacher_name,
             mac_address=teacher_mac,
-            node=teacher_optimal_node,
+            node=teacher_actual_node,  # Use actual node where VM was created
             assigned_user_id=teacher_id,
             status='assigned',
             is_template_vm=False,
@@ -906,11 +922,12 @@ def create_class_vms(
         )
         db.session.add(teacher_assignment)
         db.session.commit()  # Commit immediately so VMAssignment is available
+        logger.info(f"Teacher VM assignment saved: VMID={teacher_vmid}, node={teacher_actual_node}")
         
         # Update VMInventory immediately for teacher VM (makes it visible in UI right away)
         try:
             from app.config import CLUSTERS
-            from app.services.inventory_service import persist_vm_inventory
+            from app.services.inventory_service import persist_vm_inventory, update_vm_status
 
             # Get cluster_ip from class template, or fallback to default
             cluster_ip = None
@@ -973,9 +990,9 @@ def create_class_vms(
                     continue
                 student_name = f"{class_prefix}-student-{i + 1}"
                 
-                # Select optimal node for this student VM
-                student_optimal_node = get_optimal_node(ssh_executor, proxmox)
-                logger.info(f"Selected optimal node for {student_name}: {student_optimal_node}")
+                # Select optimal node for this student VM (with simulated load balancing)
+                student_optimal_node = get_optimal_node(ssh_executor, proxmox, vm_memory_mb=memory, simulated_vms_per_node=simulated_vms_per_node)
+                logger.info(f"Selected optimal node for {student_name}: {student_optimal_node} (current allocation: {simulated_vms_per_node})")
                 
                 try:
                     # Create VM shell (will be on the connected node)
