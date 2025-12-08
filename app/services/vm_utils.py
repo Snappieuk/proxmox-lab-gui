@@ -60,8 +60,8 @@ def get_optimal_node(ssh_executor, proxmox=None, vm_memory_mb=2048, simulated_vm
                     
                 # Calculate availability score (higher is better)
                 # Weight RAM more heavily than CPU (RAM is usually the bottleneck)
-                mem_total = node.get('maxmem', 1)
-                mem_used = node.get('mem', 0)
+                mem_total = float(node.get('maxmem', 1))
+                mem_used = float(node.get('mem', 0))
                 
                 # Add simulated memory usage from VMs being created
                 simulated_count = simulated_vms_per_node.get(node_name, 0)
@@ -70,8 +70,8 @@ def get_optimal_node(ssh_executor, proxmox=None, vm_memory_mb=2048, simulated_vm
                 
                 mem_free_pct = (mem_total - mem_used) / mem_total if mem_total > 0 else 0
                 
-                node.get('maxcpu', 1)
-                cpu_used = node.get('cpu', 0)
+                cpu_total = float(node.get('maxcpu', 1))
+                cpu_used = float(node.get('cpu', 0))
                 cpu_free_pct = (1 - cpu_used) if cpu_used < 1 else 0
                 
                 # Score: 70% RAM + 30% CPU
@@ -89,6 +89,13 @@ def get_optimal_node(ssh_executor, proxmox=None, vm_memory_mb=2048, simulated_vm
                 # Increment simulated count for next VM
                 simulated_vms_per_node[best_node] = simulated_vms_per_node.get(best_node, 0) + 1
                 return best_node
+            
+            # If no online nodes found via API, try to get first available node
+            if nodes:
+                first_node = nodes[0].get('node')
+                if first_node:
+                    logger.warning(f"No optimal node found, using first available: {first_node}")
+                    return first_node
         
         # Fallback: use hostname command
         exit_code, stdout, stderr = ssh_executor.execute("hostname", timeout=10)
@@ -100,9 +107,18 @@ def get_optimal_node(ssh_executor, proxmox=None, vm_memory_mb=2048, simulated_vm
     except Exception as e:
         logger.warning(f"Failed to determine optimal node: {e}")
     
-    # Ultimate fallback
-    logger.warning("Could not determine optimal node, using 'pve' as default")
-    return "pve"
+    # Ultimate fallback - try hostname again
+    try:
+        exit_code, stdout, stderr = ssh_executor.execute("hostname", timeout=10)
+        if exit_code == 0 and stdout.strip():
+            node = stdout.strip()
+            logger.warning(f"Could not determine optimal node via API, using hostname: {node}")
+            return node
+    except:
+        pass
+    
+    logger.error("Could not determine any valid node - this should not happen!")
+    raise RuntimeError("No valid Proxmox node could be determined for VM creation")
 
 
 def sanitize_vm_name(name: str, fallback: str = "vm") -> str:

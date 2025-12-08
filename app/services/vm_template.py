@@ -251,6 +251,7 @@ def create_overlay_vm(
             machine=machine,
             cpu=cpu,
             scsihw=scsihw,
+            storage=storage,
         )
         
         if not success:

@@ -56,12 +56,14 @@ def create_vm_shell(
     machine: str = None,
     cpu: str = None,
     scsihw: str = None,
+    storage: str = "local-zfs",
 ) -> Tuple[bool, str]:
     """
     Create an empty VM shell (no disk attached).
     
     The VM is created with network interface but no storage.
     Disks can be attached later via attach_disk_to_vm().
+    For UEFI VMs (ovmf bios), an EFI disk is automatically added.
     
     Args:
         ssh_executor: SSH executor for running commands
@@ -75,6 +77,7 @@ def create_vm_shell(
         machine: Machine type (e.g., 'pc-q35-8.1') - default: auto-detect from ostype
         cpu: CPU type (e.g., 'host', 'kvm64') - default: auto-detect from ostype
         scsihw: SCSI hardware controller (e.g., 'virtio-scsi-pci', 'lsi') - default: auto-detect
+        storage: Storage pool for EFI disk (default: local-zfs)
         
     Returns:
         Tuple of (success, error_message)
@@ -108,6 +111,17 @@ def create_vm_shell(
             return False, error_msg
         
         logger.info(f"Created VM shell: {vmid} ({safe_name})")
+        
+        # For UEFI VMs (ovmf), add EFI disk automatically
+        if bios and bios.lower() == 'ovmf':
+            logger.info(f"UEFI VM detected, adding EFI disk to VM {vmid}")
+            efi_cmd = f"qm set {vmid} --efidisk0 {storage}:1,efitype=4m,pre-enrolled-keys=1"
+            exit_code, stdout, stderr = ssh_executor.execute(efi_cmd, timeout=30, check=False)
+            if exit_code != 0:
+                logger.error(f"Failed to add EFI disk to VM {vmid}: {stderr}")
+                # Don't fail the whole operation - EFI disk might already exist or be added later
+            else:
+                logger.info(f"Added EFI disk to VM {vmid}")
         
         # Enable QEMU guest agent by default (even if guest doesn't have it installed yet)
         agent_cmd = f"qm set {vmid} --agent enabled=1,fstrim_cloned_disks=1"

@@ -485,7 +485,7 @@ document.getElementById('create-class-form').addEventListener('submit', async fu
             // Redirect after a brief delay to allow background process to start
             setTimeout(() => {
                 window.location.href = '/classes/' + data.class.id + '?deployment=inprogress';
-            }, 2000);
+            }, 5000);
         } else {
             alert('Failed to create class: ' + (data.error || 'Unknown error'));
             submitBtn.disabled = false;
