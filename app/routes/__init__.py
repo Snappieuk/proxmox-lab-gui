@@ -44,7 +44,7 @@ def register_blueprints(app):
     app.register_blueprint(api_ssh_bp)
     app.register_blueprint(api_classes_bp)
     app.register_blueprint(api_class_template_bp)
-    app.register_blueprint(api_class_ip_refresh_bp)
+    app.register_blueprint(class_ip_refresh_bp)
     app.register_blueprint(api_templates_bp)
     app.register_blueprint(api_sync_bp)
     app.register_blueprint(api_vm_class_mappings_bp)
