@@ -21,23 +21,29 @@
                 Build a new VM template from scratch or convert an existing VM into a template.
             </p>
             
-            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1rem;">
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.25rem;">
                 <div class="option-card" onclick="showCreateFromScratch()">
-                    <i class="bi bi-file-earmark-plus" style="font-size: 2rem; color: #0078d4; margin-bottom: 0.5rem;"></i>
-                    <h3 style="font-size: 1.1rem; margin-bottom: 0.5rem;">Build from Scratch</h3>
-                    <p style="color: #666; font-size: 0.9rem;">Create a new VM and configure it as a template</p>
+                    <div class="option-card-icon" style="background: #e6f2ff;">
+                        <i class="bi bi-file-earmark-plus" style="font-size: 2.5rem; color: #0078d4;"></i>
+                    </div>
+                    <h3 style="font-size: 1.15rem; margin: 1rem 0 0.5rem; font-weight: 600;">Build from Scratch</h3>
+                    <p style="color: #666; font-size: 0.9rem; margin: 0;">Create a new VM and configure it as a template</p>
                 </div>
                 
                 <div class="option-card" onclick="showConvertExisting()">
-                    <i class="bi bi-arrow-repeat" style="font-size: 2rem; color: #107c10; margin-bottom: 0.5rem;"></i>
-                    <h3 style="font-size: 1.1rem; margin-bottom: 0.5rem;">Convert Existing VM</h3>
-                    <p style="color: #666; font-size: 0.9rem;">Turn an existing VM into a reusable template</p>
+                    <div class="option-card-icon" style="background: #e6f4ea;">
+                        <i class="bi bi-arrow-repeat" style="font-size: 2.5rem; color: #107c10;"></i>
+                    </div>
+                    <h3 style="font-size: 1.15rem; margin: 1rem 0 0.5rem; font-weight: 600;">Convert Existing VM</h3>
+                    <p style="color: #666; font-size: 0.9rem; margin: 0;">Turn an existing VM into a reusable template</p>
                 </div>
                 
                 <div class="option-card" onclick="showMigrateTemplate()">
-                    <i class="bi bi-arrow-left-right" style="font-size: 2rem; color: #5c2d91; margin-bottom: 0.5rem;"></i>
-                    <h3 style="font-size: 1.1rem; margin-bottom: 0.5rem;">Migrate Template</h3>
-                    <p style="color: #666; font-size: 0.9rem;">Move or copy a template between clusters</p>
+                    <div class="option-card-icon" style="background: #f3e5f5;">
+                        <i class="bi bi-arrow-left-right" style="font-size: 2.5rem; color: #5c2d91;"></i>
+                    </div>
+                    <h3 style="font-size: 1.15rem; margin: 1rem 0 0.5rem; font-weight: 600;">Migrate Template</h3>
+                    <p style="color: #666; font-size: 0.9rem; margin: 0;">Move or copy a template between clusters</p>
                 </div>
             </div>
         </div>
@@ -309,19 +315,35 @@
 }
 
 .option-card {
-    padding: 1.5rem;
+    padding: 2rem 1.5rem;
     border: 2px solid #e1e4e8;
-    border-radius: 8px;
+    border-radius: 12px;
     text-align: center;
     cursor: pointer;
-    transition: all 0.2s ease;
+    transition: all 0.3s ease;
+    background: white;
 }
 
 .option-card:hover {
     border-color: #0078d4;
-    background-color: #f6f8fa;
-    transform: translateY(-2px);
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    background-color: #f8f9fa;
+    transform: translateY(-4px);
+    box-shadow: 0 8px 24px rgba(0, 120, 212, 0.15);
+}
+
+.option-card-icon {
+    width: 80px;
+    height: 80px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto 1rem;
+    transition: transform 0.3s ease;
+}
+
+.option-card:hover .option-card-icon {
+    transform: scale(1.1);
 }
 
 .template-item {
@@ -499,7 +521,25 @@ function deleteTemplate(templateId) {
 // Load templates on page load
 document.addEventListener('DOMContentLoaded', function() {
     loadTemplates();
+    // Pre-load templates for migration modal
+    loadTemplatesForMigration();
 });
+
+// Pre-load templates from database for instant migration modal
+function loadTemplatesForMigration() {
+    fetch('/api/templates')
+        .then(r => r.json())
+        .then(data => {
+            if (data.ok && data.templates) {
+                allTemplates = data.templates;
+                templatesLoaded = true;
+                console.log('Pre-loaded', allTemplates.length, 'templates from database');
+            }
+        })
+        .catch(err => {
+            console.error('Failed to pre-load templates:', err);
+        });
+}
 
 // Migration modal functions
 let migrationClusters = [];
@@ -509,16 +549,20 @@ let templatesLoaded = false;
 function populateMigrationOptions(clusters) {
     migrationClusters = clusters;
     
-    // Load all templates first (with await to ensure they're loaded)
-    fetch('/api/templates').then(r => r.json()).then(data => {
-        if (data.ok && data.templates) {
-            allTemplates = data.templates;
-            templatesLoaded = true;
-            console.log('Loaded templates:', allTemplates);
-        }
-    }).catch(err => {
-        console.error('Failed to load templates:', err);
-    });
+    // Templates are already pre-loaded, so this is instant
+    console.log('Using pre-loaded templates:', allTemplates.length);
+    if (!templatesLoaded) {
+        // Fallback: load now if pre-load failed
+        fetch('/api/templates').then(r => r.json()).then(data => {
+            if (data.ok && data.templates) {
+                allTemplates = data.templates;
+                templatesLoaded = true;
+                console.log('Loaded templates (fallback):', allTemplates);
+            }
+        }).catch(err => {
+            console.error('Failed to load templates:', err);
+        });
+    }
     
     // Populate source clusters
     const sourceClusterSelect = document.getElementById('source-cluster');
@@ -554,8 +598,9 @@ function updateSourceTemplates() {
     
     if (!templatesLoaded || allTemplates.length === 0) {
         sourceTemplateSelect.innerHTML = '<option value="">Loading templates...</option>';
-        // Retry after a short delay
-        setTimeout(updateSourceTemplates, 500);
+        console.log('Templates not yet loaded, waiting...');
+        // Retry after templates load
+        setTimeout(updateSourceTemplates, 200);
         return;
     }
     
@@ -563,16 +608,14 @@ function updateSourceTemplates() {
     const selectedOption = sourceClusterSelect.options[sourceClusterSelect.selectedIndex];
     const selectedClusterHost = selectedOption.getAttribute('data-host');
     
-    console.log('Selected cluster ID:', selectedClusterId, 'Host:', selectedClusterHost);
+    console.log('Filtering templates for cluster:', selectedClusterHost);
     
-    // Filter templates by matching cluster_ip to cluster host
+    // Filter templates by matching cluster_ip to cluster host (instant from pre-loaded data)
     const clusterTemplates = allTemplates.filter(t => {
-        const matches = t.cluster_ip === selectedClusterHost;
-        console.log('Template', t.name, '- cluster_ip:', t.cluster_ip, 'matches:', matches);
-        return matches;
+        return t.cluster_ip === selectedClusterHost;
     });
     
-    console.log('Found', clusterTemplates.length, 'templates for cluster', selectedClusterHost);
+    console.log('Found', clusterTemplates.length, 'templates on cluster', selectedClusterHost);
     
     sourceTemplateSelect.innerHTML = '<option value="">Select a template to migrate...</option>';
     
