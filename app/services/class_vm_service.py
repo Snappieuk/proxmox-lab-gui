@@ -1476,3 +1476,274 @@ def save_and_deploy_teacher_vm(
                 ssh_executor.disconnect()
             except Exception:
                 pass
+
+
+def recreate_teacher_vm_from_base(class_id: int, class_name: str) -> tuple[bool, str, Optional[int]]:
+    """
+    Recreate teacher VM from class base QCOW2 (used for reimage operation).
+    
+    Args:
+        class_id: Database ID of the class
+        class_name: Name of the class
+        
+    Returns:
+        Tuple of (success, message, new_vmid)
+    """
+    from app.models import Class, VMAssignment, db
+    from app.services.vm_template import create_overlay_vm
+    from app.services.vm_utils import sanitize_vm_name, get_vm_current_node
+    
+    try:
+        class_ = Class.query.get(class_id)
+        if not class_:
+            return False, f"Class {class_id} not found", None
+        
+        if not class_.vmid_prefix:
+            return False, "Class has no VMID prefix allocated", None
+        
+        # Get class base QCOW2 path
+        class_prefix = sanitize_vm_name(class_name)
+        if not class_prefix:
+            class_prefix = f"class-{class_id}"
+        
+        base_qcow2_path = f"{DEFAULT_TEMPLATE_STORAGE_PATH}/{class_prefix}-base.qcow2"
+        
+        # Get template specs (if available)
+        memory = class_.memory_mb or 4096
+        cores = class_.cpu_cores or 2
+        
+        # Determine node
+        cluster_ip = class_.template.cluster_ip if class_.template else None
+        if not cluster_ip:
+            from app.config import CLUSTERS
+            if CLUSTERS:
+                cluster_ip = CLUSTERS[0]["host"]
+            else:
+                return False, "No clusters configured", None
+        
+        # Connect to SSH
+        ssh_executor = get_cached_ssh_executor()
+        ssh_executor.connect()
+        
+        # Allocate VMID (use index 0 = teacher)
+        teacher_vmid = class_.vmid_prefix * 100  # e.g., 234 * 100 = 23400
+        teacher_name = f"{class_prefix}-teacher"
+        
+        logger.info(f"Recreating teacher VM {teacher_vmid} from class base {base_qcow2_path}")
+        
+        # Get node from existing class-base VM or use default
+        from app.services.proxmox_service import get_proxmox_admin_for_cluster
+        proxmox = get_proxmox_admin_for_cluster(cluster_ip)
+        
+        # Find class-base VM to determine node
+        class_base_vmid = class_.vmid_prefix * 100 + 99
+        node = None
+        try:
+            resources = proxmox.cluster.resources.get(type="vm")
+            for r in resources:
+                if r.get('vmid') == class_base_vmid:
+                    node = r.get('node')
+                    break
+        except Exception:
+            pass
+        
+        if not node:
+            # Fallback to first available node
+            from app.services.vm_utils import get_optimal_node
+            node = get_optimal_node(ssh_executor, proxmox, vm_memory_mb=memory)
+        
+        # Get template specs from class-base VM if available
+        disk_controller_type = "scsi"
+        ostype = "l26"
+        bios = "seabios"
+        machine = None
+        cpu = "host"
+        scsihw = "virtio-scsi-single"
+        efi_disk = None
+        tpm_state = None
+        
+        try:
+            config = proxmox.nodes(node).qemu(class_base_vmid).config.get()
+            # Extract specs from class-base VM config
+            if 'ostype' in config:
+                ostype = config['ostype']
+            if 'bios' in config:
+                bios = config['bios']
+            if 'machine' in config:
+                machine = config['machine']
+            if 'cpu' in config:
+                cpu = config['cpu']
+            if 'scsihw' in config:
+                scsihw = config['scsihw']
+            # Check for disk controller type
+            for key in config.keys():
+                if key.startswith('scsi'):
+                    disk_controller_type = "scsi"
+                    break
+                elif key.startswith('virtio'):
+                    disk_controller_type = "virtio"
+                    break
+                elif key.startswith('sata'):
+                    disk_controller_type = "sata"
+                    break
+                elif key.startswith('ide'):
+                    disk_controller_type = "ide"
+                    break
+        except Exception as e:
+            logger.warning(f"Could not get class-base VM config: {e}, using defaults")
+        
+        # Create teacher VM as overlay
+        success, error, mac_address = create_overlay_vm(
+            ssh_executor=ssh_executor,
+            vmid=teacher_vmid,
+            name=teacher_name,
+            base_qcow2_path=base_qcow2_path,
+            node=node,
+            memory=memory,
+            cores=cores,
+            disk_controller_type=disk_controller_type,
+            ostype=ostype,
+            bios=bios,
+            machine=machine,
+            cpu=cpu,
+            scsihw=scsihw,
+            efi_disk=efi_disk,
+            tpm_state=tpm_state,
+        )
+        
+        if not success:
+            ssh_executor.disconnect()
+            return False, f"Failed to create teacher VM: {error}", None
+        
+        # Query actual node
+        actual_node = get_vm_current_node(ssh_executor, teacher_vmid)
+        if not actual_node:
+            actual_node = node
+        
+        # Create VMAssignment record
+        assignment = VMAssignment(
+            proxmox_vmid=teacher_vmid,
+            vm_name=teacher_name,
+            node=actual_node,
+            class_id=class_id,
+            assigned_user_id=class_.teacher_id,
+            status='available',
+            is_teacher_vm=True,
+            is_template_vm=False,
+            mac_address=mac_address
+        )
+        db.session.add(assignment)
+        db.session.commit()
+        
+        ssh_executor.disconnect()
+        
+        logger.info(f"Teacher VM {teacher_vmid} recreated successfully on node {actual_node}")
+        return True, "Teacher VM recreated successfully", teacher_vmid
+        
+    except Exception as e:
+        logger.exception(f"Failed to recreate teacher VM: {e}")
+        if 'db' in locals():
+            db.session.rollback()
+        return False, str(e), None
+
+
+def save_teacher_vm_to_base(class_id: int, teacher_vmid: int, teacher_node: str, class_name: str) -> tuple[bool, str]:
+    """
+    Export teacher VM disk to update the class base QCOW2.
+    
+    This updates the class template so that future student VMs (when pushed)
+    will have the teacher's changes.
+    
+    Args:
+        class_id: Database ID of the class
+        teacher_vmid: VMID of the teacher's working VM
+        teacher_node: Node where teacher VM resides
+        class_name: Name of the class
+        
+    Returns:
+        Tuple of (success, message)
+    """
+    from app.models import Class
+    from app.services.vm_utils import sanitize_vm_name
+    
+    try:
+        class_ = Class.query.get(class_id)
+        if not class_:
+            return False, f"Class {class_id} not found"
+        
+        # Get paths
+        class_prefix = sanitize_vm_name(class_name)
+        if not class_prefix:
+            class_prefix = f"class-{class_id}"
+        
+        base_qcow2_path = f"{DEFAULT_TEMPLATE_STORAGE_PATH}/{class_prefix}-base.qcow2"
+        backup_path = f"{base_qcow2_path}.backup"
+        temp_export_path = f"{DEFAULT_TEMPLATE_STORAGE_PATH}/{class_prefix}-teacher-export.qcow2"
+        
+        logger.info(f"Exporting teacher VM {teacher_vmid} disk to update class base QCOW2")
+        
+        # Connect to SSH
+        ssh_executor = get_cached_ssh_executor()
+        ssh_executor.connect()
+        
+        # Step 1: Find teacher VM disk
+        find_cmd = f"qm config {teacher_vmid} | grep -E '^(scsi|virtio|sata|ide)[0-9]+:' | head -1"
+        exit_code, disk_line, stderr = ssh_executor.execute(find_cmd, check=False)
+        
+        if exit_code != 0 or not disk_line:
+            ssh_executor.disconnect()
+            return False, f"Could not find disk for teacher VM {teacher_vmid}"
+        
+        # Extract disk path from config line (format: "scsi0: STORAGE:vm-VMID-disk-0")
+        parts = disk_line.split(':', 1)
+        if len(parts) < 2:
+            ssh_executor.disconnect()
+            return False, f"Could not parse disk config: {disk_line}"
+        
+        disk_spec = parts[1].strip()
+        
+        # Convert storage:vm-ID format to actual path
+        if ':' in disk_spec:
+            storage, disk_id = disk_spec.split(':', 1)
+            teacher_disk_path = f"/mnt/pve/{storage}/images/{teacher_vmid}/{disk_id}.qcow2"
+        else:
+            teacher_disk_path = disk_spec
+        
+        logger.info(f"Teacher VM disk: {teacher_disk_path}")
+        
+        # Step 2: Backup current class base
+        logger.info(f"Backing up current class base to {backup_path}")
+        ssh_executor.execute(f"cp {base_qcow2_path} {backup_path}", check=True)
+        
+        # Step 3: Export teacher VM disk (collapse all overlays into flat image)
+        logger.info(f"Exporting teacher VM disk to {temp_export_path}")
+        export_cmd = f"qemu-img convert -f qcow2 -O qcow2 {teacher_disk_path} {temp_export_path}"
+        exit_code, stdout, stderr = ssh_executor.execute(export_cmd, check=False)
+        
+        if exit_code != 0:
+            ssh_executor.execute(f"rm -f {backup_path}", check=False)
+            ssh_executor.disconnect()
+            return False, f"Failed to export teacher VM disk: {stderr}"
+        
+        # Step 4: Replace class base with exported disk
+        logger.info(f"Replacing class base QCOW2 with teacher's exported disk")
+        ssh_executor.execute(f"mv {temp_export_path} {base_qcow2_path}", check=True)
+        
+        # Step 5: Clean up backup
+        ssh_executor.execute(f"rm -f {backup_path}", check=False)
+        
+        ssh_executor.disconnect()
+        
+        logger.info(f"Successfully updated class base QCOW2 from teacher VM {teacher_vmid}")
+        return True, "Template saved successfully"
+        
+    except Exception as e:
+        logger.exception(f"Failed to save teacher VM to base: {e}")
+        # Try to restore backup
+        try:
+            if 'ssh_executor' in locals() and ssh_executor:
+                ssh_executor.execute(f"mv {backup_path} {base_qcow2_path}", check=False)
+                ssh_executor.disconnect()
+        except Exception:
+            pass
+        return False, str(e)
