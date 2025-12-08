@@ -697,18 +697,23 @@
 <script>
 // Global variables from Flask context
 const CURRENT_CLUSTER_ID = '{{ current_cluster }}';
+console.log('=== Template Builder JavaScript Loading ===');
 console.log('Template Builder initialized with cluster:', CURRENT_CLUSTER_ID);
+console.log('Script is executing - buttons should work');
 
 function showCreateFromScratch() {
+    console.log('showCreateFromScratch clicked');
     document.getElementById('build-modal').style.display = 'flex';
     loadBuildOptions();
 }
 
 function showConvertExisting() {
+    console.log('showConvertExisting clicked');
     alert('Convert Existing VM - Feature coming soon!\n\nThis will let you select an existing VM and convert it to a template.');
 }
 
 async function showMigrateTemplate() {
+    console.log('showMigrateTemplate clicked');
     // Show migration modal
     document.getElementById('migrate-modal').style.display = 'flex';
     
@@ -1316,9 +1321,6 @@ async function submitUploadISO(event) {
         
     } catch (error) {
         console.error('Upload failed:', error);
-        alert('Upload setup failed: ' + error.message);
-        submitBtn.disabled = false;
-        submitBtn.innerHTML = '<i class="bi bi-upload"></i> Upload ISO';
         document.getElementById('upload-progress').style.display = 'none';
         alert('Upload failed: ' + error.message);
         submitBtn.disabled = false;
