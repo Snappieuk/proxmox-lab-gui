@@ -179,20 +179,33 @@ def get_cluster_resources(cluster_id: str):
             # Try to get node info even if status shows offline
             # (status field may be unreliable during connection issues)
             try:
+                # Get full node status (not just the status endpoint)
                 node_info = proxmox.nodes(node_name).status.get()
                 
                 # Log the raw response for debugging
-                logger.info(f"[RESOURCES API] Node {node_name} raw response: maxcpu={node_info.get('maxcpu')}, cpu={node_info.get('cpu')}, maxmem={node_info.get('maxmem')}, mem={node_info.get('mem')}")
+                logger.info(f"[RESOURCES API] Node {node_name} raw API response: {node_info}")
                 
-                # CPU: maxcpu is physical cores, cpuinfo shows current usage (0.0-1.0 per core)
-                max_cpu_cores = node_info.get('maxcpu', 0)
-                cpu_usage = node_info.get('cpu', 0)  # Usage ratio (e.g., 0.5 = 50%)
+                # CPU: maxcpu is physical cores, cpu shows current usage (0.0-1.0 per core)
+                max_cpu_cores = float(node_info.get('maxcpu', 0))
+                cpu_usage = float(node_info.get('cpu', 0))  # Usage ratio (e.g., 0.5 = 50%)
+                
+                # Check if we got valid data
+                if max_cpu_cores == 0:
+                    logger.warning(f"Node {node_name} returned maxcpu=0, trying alternative API...")
+                    # Try using the node list data instead (it has cpuinfo)
+                    max_cpu_cores = float(node_data.get('maxcpu', 0))
+                    cpu_usage = float(node_data.get('cpu', 0))
+                    max_memory_bytes = int(node_data.get('maxmem', 0))
+                    used_memory_bytes = int(node_data.get('mem', 0))
+                    logger.info(f"Node {node_name} from nodes list: maxcpu={max_cpu_cores}, cpu={cpu_usage}, maxmem={max_memory_bytes}, mem={used_memory_bytes}")
+                else:
+                    # Memory: maxmem is total bytes, mem is used bytes
+                    max_memory_bytes = int(node_info.get('maxmem', 0))
+                    used_memory_bytes = int(node_info.get('mem', 0))
+                
                 used_cpu_cores = max_cpu_cores * cpu_usage
                 available_cpu_cores = max_cpu_cores - used_cpu_cores
                 
-                # Memory: maxmem is total bytes, mem is used bytes
-                max_memory_bytes = node_info.get('maxmem', 0)
-                used_memory_bytes = node_info.get('mem', 0)
                 available_memory_bytes = max_memory_bytes - used_memory_bytes
                 available_memory_mb = available_memory_bytes // BYTES_TO_MB
                 
