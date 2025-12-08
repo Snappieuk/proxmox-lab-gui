@@ -630,24 +630,24 @@
                                 </p>
                             </div>
                             
-                            <!-- Max Session Duration -->
+                            <!-- Max Usage Time -->
                             <div class="setting-field">
-                                <label class="setting-label">Maximum Session Duration</label>
+                                <label class="setting-label">Maximum Usage Time</label>
                                 <div style="display: flex; align-items: center; gap: 12px;">
                                     <input 
                                         type="number" 
-                                        id="max-session-minutes" 
+                                        id="max-usage-hours" 
                                         min="0" 
-                                        max="1440" 
+                                        max="500" 
                                         value="0" 
                                         placeholder="0"
                                         class="settings-input"
                                         style="width: 100px;"
                                     >
-                                    <span style="color: #64748b; font-size: 14px;">minutes (0 = unlimited)</span>
+                                    <span style="color: #64748b; font-size: 14px;">hours (0 = unlimited)</span>
                                 </div>
                                 <p class="setting-description">
-                                    VMs will automatically shut down after running for this duration
+                                    Total hours students can use their VM in this class (cumulative)
                                 </p>
                             </div>
                         </div>
@@ -658,7 +658,7 @@
                             <div style="flex: 1;">
                                 <div style="font-weight: 600; font-size: 14px; color: #7c2d12; margin-bottom: 8px;">How Time Restrictions Work</div>
                                 <div style="font-size: 14px; color: #9a3412; line-height: 1.5;">
-                                    VMs can only be started during the allowed time window. Running VMs outside these hours will be automatically shut down. Session duration limits apply regardless of allowed hours. Students will receive clear error messages when restrictions apply.
+                                    VMs can only be started during the allowed time window. Running VMs outside these hours will be automatically shut down. Maximum usage time tracks total cumulative hours across all sessions. Teachers can reset usage time for individual students or the entire class.
                                 </div>
                             </div>
                         </div>
@@ -2728,7 +2728,7 @@ async function loadSettings() {
             document.getElementById('hours-start').value = `${String(startHour).padStart(2, '0')}:00`;
             document.getElementById('hours-end').value = `${String(endHour).padStart(2, '0')}:00`;
             
-            document.getElementById('max-session-minutes').value = data.settings.max_session_minutes || 0;
+            document.getElementById('max-usage-hours').value = data.settings.max_usage_hours || 0;
             
             // Update time restriction UI state
             toggleTimeRestrictions();
@@ -2749,7 +2749,7 @@ async function saveAllSettings() {
     const restrictHours = document.getElementById('restrict-hours').checked;
     const hoursStart = document.getElementById('hours-start').value;
     const hoursEnd = document.getElementById('hours-end').value;
-    const maxSessionMinutes = parseInt(document.getElementById('max-session-minutes').value);
+    const maxUsageHours = parseInt(document.getElementById('max-usage-hours').value);
     
     // Parse time strings to hours (HH:MM -> HH)
     const startHour = parseInt(hoursStart.split(':')[0]);
@@ -2771,8 +2771,8 @@ async function saveAllSettings() {
         return;
     }
     
-    if (maxSessionMinutes < 0 || maxSessionMinutes > 1440) {
-        showSettingsStatus('Session duration must be between 0 and 1440 minutes', 'error');
+    if (maxUsageHours < 0 || maxUsageHours > 500) {
+        showSettingsStatus('Maximum usage time must be between 0 and 500 hours', 'error');
         return;
     }
     
@@ -2787,7 +2787,7 @@ async function saveAllSettings() {
                 restrict_hours: restrictHours,
                 hours_start: startHour,
                 hours_end: endHour,
-                max_session_minutes: maxSessionMinutes
+                max_usage_hours: maxUsageHours
             })
         });
         

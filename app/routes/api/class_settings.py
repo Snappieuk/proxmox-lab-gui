@@ -50,7 +50,7 @@ def get_class_settings(class_id: int):
             "restrict_hours": class_.restrict_hours or False,
             "hours_start": class_.hours_start or 0,
             "hours_end": class_.hours_end or 23,
-            "max_session_minutes": class_.max_session_minutes or 0
+            "max_usage_hours": class_.max_usage_hours or 0
         }
     })
 
@@ -95,7 +95,7 @@ def update_class_settings(class_id: int):
         restrict_hours = data.get('restrict_hours', False)
         hours_start = data.get('hours_start', 0)
         hours_end = data.get('hours_end', 23)
-        max_session_minutes = data.get('max_session_minutes', 0)
+        max_usage_hours = data.get('max_usage_hours', 0)
         
         if not isinstance(restrict_hours, bool):
             return jsonify({"ok": False, "error": "restrict_hours must be boolean"}), 400
@@ -106,13 +106,13 @@ def update_class_settings(class_id: int):
         if not isinstance(hours_end, int) or hours_end < 0 or hours_end > 23:
             return jsonify({"ok": False, "error": "hours_end must be between 0 and 23"}), 400
         
-        if not isinstance(max_session_minutes, int) or max_session_minutes < 0 or max_session_minutes > 1440:
-            return jsonify({"ok": False, "error": "max_session_minutes must be between 0 and 1440"}), 400
+        if not isinstance(max_usage_hours, int) or max_usage_hours < 0 or max_usage_hours > 500:
+            return jsonify({"ok": False, "error": "max_usage_hours must be between 0 and 500"}), 400
         
         class_.restrict_hours = restrict_hours
         class_.hours_start = hours_start
         class_.hours_end = hours_end
-        class_.max_session_minutes = max_session_minutes
+        class_.max_usage_hours = max_usage_hours
     
     try:
         db.session.commit()
@@ -126,7 +126,7 @@ def update_class_settings(class_id: int):
                 "restrict_hours": class_.restrict_hours,
                 "hours_start": class_.hours_start,
                 "hours_end": class_.hours_end,
-                "max_session_minutes": class_.max_session_minutes
+                "max_usage_hours": class_.max_usage_hours
             }
         })
     except Exception as e:
@@ -287,3 +287,69 @@ def get_vm_session_progress(class_id: int, vmid: int):
             result["within_hours"] = current_hour >= start or current_hour < end
     
     return jsonify(result)
+
+
+@bp.route('/api/classes/<int:class_id>/reset-usage/<int:vm_assignment_id>', methods=['POST'])
+@login_required
+def reset_vm_usage(class_id: int, vm_assignment_id: int):
+    """Reset usage hours for a specific VM assignment."""
+    user_id = session.get("user")
+    
+    class_ = Class.query.get(class_id)
+    if not class_:
+        return jsonify({"ok": False, "error": "Class not found"}), 404
+    
+    # Check permissions
+    if not require_teacher_or_admin(class_, user_id):
+        return jsonify({"ok": False, "error": "Permission denied"}), 403
+    
+    vm = VMAssignment.query.get(vm_assignment_id)
+    if not vm or vm.class_id != class_id:
+        return jsonify({"ok": False, "error": "VM not found in this class"}), 404
+    
+    vm.usage_hours = 0.0
+    vm.usage_last_reset = datetime.utcnow()
+    
+    try:
+        db.session.commit()
+        return jsonify({
+            "ok": True,
+            "message": f"Usage reset for {vm.vm_name or 'VM ' + str(vm.proxmox_vmid)}"
+        })
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"ok": False, "error": f"Database error: {str(e)}"}), 500
+
+
+@bp.route('/api/classes/<int:class_id>/reset-all-usage', methods=['POST'])
+@login_required
+def reset_all_class_usage(class_id: int):
+    """Reset usage hours for all VMs in the class."""
+    user_id = session.get("user")
+    
+    class_ = Class.query.get(class_id)
+    if not class_:
+        return jsonify({"ok": False, "error": "Class not found"}), 404
+    
+    # Check permissions
+    if not require_teacher_or_admin(class_, user_id):
+        return jsonify({"ok": False, "error": "Permission denied"}), 403
+    
+    reset_time = datetime.utcnow()
+    count = 0
+    
+    for vm in class_.vm_assignments:
+        if not vm.is_teacher_vm and not vm.is_template_vm:
+            vm.usage_hours = 0.0
+            vm.usage_last_reset = reset_time
+            count += 1
+    
+    try:
+        db.session.commit()
+        return jsonify({
+            "ok": True,
+            "message": f"Usage reset for {count} student VMs"
+        })
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"ok": False, "error": f"Database error: {str(e)}"}), 500

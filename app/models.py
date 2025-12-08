@@ -204,7 +204,7 @@ class Class(db.Model):
     restrict_hours = db.Column(db.Boolean, default=False)  # Enable hour restrictions
     hours_start = db.Column(db.Integer, default=0)  # Start hour (0-23)
     hours_end = db.Column(db.Integer, default=23)  # End hour (0-23)
-    max_session_minutes = db.Column(db.Integer, default=0)  # Max session duration in minutes (0=unlimited)
+    max_usage_hours = db.Column(db.Integer, default=0)  # Max cumulative hours students can use VM (0=unlimited)
     
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -435,6 +435,8 @@ class VMAssignment(db.Model):
     is_template_vm = db.Column(db.Boolean, default=False)  # True if this is the class template VM (master copy)
     is_teacher_vm = db.Column(db.Boolean, default=False)  # True if this is the teacher's personal VM
     manually_added = db.Column(db.Boolean, default=False)  # True if VM was manually added (don't auto-assign)
+    usage_hours = db.Column(db.Float, default=0.0)  # Cumulative hours this VM has been used by student
+    usage_last_reset = db.Column(db.DateTime, nullable=True)  # When usage was last reset by teacher
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     assigned_at = db.Column(db.DateTime, nullable=True)
     

@@ -28,10 +28,12 @@ CRITICAL_MIGRATIONS = [
     ('classes', 'restrict_hours', 'BOOLEAN', '0'),  # Enable hour restrictions
     ('classes', 'hours_start', 'INTEGER', '0'),  # Start hour (0-23)
     ('classes', 'hours_end', 'INTEGER', '23'),  # End hour (0-23)
-    ('classes', 'max_session_minutes', 'INTEGER', '0'),  # Max session duration (0=unlimited)
+    ('classes', 'max_usage_hours', 'INTEGER', '0'),  # Max cumulative hours students can use VM (0=unlimited)
     ('vm_assignments', 'manually_added', 'BOOLEAN', '0'),
     ('vm_assignments', 'is_teacher_vm', 'BOOLEAN', '0'),
     ('vm_assignments', 'vm_name', 'TEXT', 'NULL'),
+    ('vm_assignments', 'usage_hours', 'REAL', '0.0'),  # Cumulative hours VM has been used
+    ('vm_assignments', 'usage_last_reset', 'TIMESTAMP', 'NULL'),  # When usage was last reset by teacher
     # Template spec caching columns
     ('templates', 'cpu_cores', 'INTEGER', 'NULL'),
     ('templates', 'cpu_sockets', 'INTEGER', 'NULL'),
