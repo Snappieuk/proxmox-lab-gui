@@ -181,6 +181,9 @@ def get_cluster_resources(cluster_id: str):
             try:
                 node_info = proxmox.nodes(node_name).status.get()
                 
+                # Log the raw response for debugging
+                logger.info(f"[RESOURCES API] Node {node_name} raw response: maxcpu={node_info.get('maxcpu')}, cpu={node_info.get('cpu')}, maxmem={node_info.get('maxmem')}, mem={node_info.get('mem')}")
+                
                 # CPU: maxcpu is physical cores, cpuinfo shows current usage (0.0-1.0 per core)
                 max_cpu_cores = node_info.get('maxcpu', 0)
                 cpu_usage = node_info.get('cpu', 0)  # Usage ratio (e.g., 0.5 = 50%)
@@ -193,6 +196,12 @@ def get_cluster_resources(cluster_id: str):
                 available_memory_bytes = max_memory_bytes - used_memory_bytes
                 available_memory_mb = available_memory_bytes // BYTES_TO_MB
                 
+                # Sanity check - if showing 0 available but max > 0, log warning
+                if max_cpu_cores > 0 and available_cpu_cores <= 0:
+                    logger.warning(f"Node {node_name}: CPU shows 0 available but has {max_cpu_cores} total cores (usage: {cpu_usage:.2%})")
+                if max_memory_bytes > 0 and available_memory_mb <= 0:
+                    logger.warning(f"Node {node_name}: Memory shows 0 available but has {max_memory_bytes // BYTES_TO_MB} MB total (used: {used_memory_bytes // BYTES_TO_MB} MB)")
+                
                 logger.info(f"Node {node_name}: {max_cpu_cores} cores ({available_cpu_cores:.1f} available), "
                            f"{max_memory_bytes // BYTES_TO_MB} MB RAM ({available_memory_mb} MB available)")
                 
@@ -201,7 +210,8 @@ def get_cluster_resources(cluster_id: str):
                 successful_nodes.append(node_name)
                 
             except Exception as e:
-                logger.warning(f"Failed to get status for node {node_name}: {e}")
+                logger.error(f"Failed to get status for node {node_name}: {type(e).__name__}: {e}")
+                logger.exception(f"Full traceback for node {node_name} failure:")
                 failed_nodes.append(node_name)
                 continue
         
