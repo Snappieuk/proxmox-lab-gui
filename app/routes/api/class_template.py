@@ -160,15 +160,21 @@ def get_template_info(class_id: int):
             # For running VMs, try guest agent first
             if vm_status == 'running':
                 try:
+                    logger.info(f"Attempting guest agent network lookup for VM {vmid} on node {node}")
                     # Try to get network interfaces from QEMU guest agent
                     result = proxmox.nodes(node).qemu(vmid).agent('network-get-interfaces').get()
+                    logger.debug(f"Guest agent response for VM {vmid}: {result}")
+                    
                     if result and 'result' in result:
                         interfaces = result['result']
+                        logger.info(f"Found {len(interfaces)} network interfaces for VM {vmid}")
                         # Look for first non-loopback IPv4 address
                         for iface in interfaces:
-                            if iface.get('name') in ('lo', 'loopback'):
+                            iface_name = iface.get('name', 'unknown')
+                            if iface_name in ('lo', 'loopback'):
                                 continue
                             ip_addresses = iface.get('ip-addresses', [])
+                            logger.debug(f"Interface {iface_name}: {len(ip_addresses)} addresses")
                             for addr in ip_addresses:
                                 if addr.get('ip-address-type') == 'ipv4':
                                     found_ip = addr.get('ip-address')
@@ -178,11 +184,14 @@ def get_template_info(class_id: int):
                                         break
                             if ip_address:
                                 break
+                    else:
+                        logger.warning(f"Guest agent returned no result for VM {vmid}")
                 except Exception as e:
-                    logger.debug(f"Guest agent network lookup failed for VM {vmid}: {e}")
+                    logger.warning(f"Guest agent network lookup failed for VM {vmid}: {e}")
                 
                 # Fallback: ARP scan if guest agent failed
                 if not ip_address and mac_address:
+                    logger.info(f"Attempting ARP scan for VM {vmid} with MAC {mac_address}")
                     from app.config import ARP_SUBNETS, CLUSTERS
                     from app.services.arp_scanner import discover_ips_via_arp
                     cluster_id = None
@@ -196,6 +205,13 @@ def get_template_info(class_id: int):
                         ip_address = discovered.get(composite_key)
                         if ip_address:
                             logger.info(f"Found IP via ARP scan for VM {vmid}: {ip_address}")
+                        else:
+                            logger.warning(f"ARP scan found no IP for VM {vmid}")
+                    else:
+                        logger.warning(f"Could not find cluster_id for cluster_ip {cluster_ip}")
+                else:
+                    if not mac_address:
+                        logger.warning(f"No MAC address available for VM {vmid}, cannot perform ARP scan")
                 
                 if ip_address:
                     # Basic RDP availability heuristic: Windows category or port open

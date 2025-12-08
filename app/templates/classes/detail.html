@@ -1152,10 +1152,13 @@ function updateTemplateDisplay() {
         }
     }
     
-    // Update power toggle
+    // Update power toggle (only if not currently being changed by user)
     const powerToggle = document.getElementById('power-toggle');
     const isRunning = currentTemplateInfo.status === 'running';
-    powerToggle.checked = isRunning;
+    // Don't override toggle state if it's disabled (operation in progress)
+    if (!powerToggle.disabled) {
+        powerToggle.checked = isRunning;
+    }
     
     // Always show RDP button for templates
     const rdpBtn = document.getElementById('btn-rdp-template');
@@ -1183,8 +1186,11 @@ async function togglePower() {
             await stopTemplate();
         }
     } finally {
-        // Re-enable toggle (status refresh handled by start/stopTemplate)
-        powerToggle.disabled = false;
+        // Keep toggle disabled until status refresh completes
+        // It will be re-enabled when updateTemplateDisplay runs
+        setTimeout(() => {
+            powerToggle.disabled = false;
+        }, 4000); // Re-enable after status should be refreshed
     }
 }
 

@@ -187,6 +187,15 @@ def create_vm_with_disk(
             return False, error_msg
         
         logger.info(f"Created VM with disk: {vmid} ({safe_name}), {disk_size_gb}GB on {storage}")
+        
+        # Enable QEMU guest agent by default
+        agent_cmd = f"qm set {vmid} --agent enabled=1,fstrim_cloned_disks=1"
+        exit_code, stdout, stderr = ssh_executor.execute(agent_cmd, timeout=30, check=False)
+        if exit_code == 0:
+            logger.info(f"Enabled QEMU guest agent for VM {vmid}")
+        else:
+            logger.warning(f"Failed to enable QEMU guest agent for VM {vmid}: {stderr}")
+        
         return True, ""
         
     except Exception as e:

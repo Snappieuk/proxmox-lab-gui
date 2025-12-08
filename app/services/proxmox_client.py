@@ -1267,9 +1267,9 @@ def _enrich_from_db_cache(vms: List[Dict[str, Any]]) -> None:
         for assignment in assignments:
             age = now - assignment.ip_updated_at
             if age < cache_ttl:
-                class_vm_cache[assignment.vmid] = assignment.cached_ip
+                class_vm_cache[assignment.proxmox_vmid] = assignment.cached_ip
             else:
-                logger.debug("VM %d: cached IP expired (age=%s)", assignment.vmid, age)
+                logger.debug("VM %d: cached IP expired (age=%s)", assignment.proxmox_vmid, age)
                 expired += 1
         
         logger.debug("Loaded %d cached IPs from VMAssignment (expired=%d)", 
