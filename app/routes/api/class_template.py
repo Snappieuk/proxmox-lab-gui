@@ -157,13 +157,32 @@ def get_template_info(class_id: int):
         ip_address = None
         rdp_available = False
         try:
-            from app.services import proxmox_client as pc
-
-            # Use existing internal lookup (guest agent if running)
+            # For running VMs, try guest agent first
             if vm_status == 'running':
-                ip_address = pc._lookup_vm_ip(node, vmid, 'qemu')  # private helper
+                try:
+                    # Try to get network interfaces from QEMU guest agent
+                    result = proxmox.nodes(node).qemu(vmid).agent('network-get-interfaces').get()
+                    if result and 'result' in result:
+                        interfaces = result['result']
+                        # Look for first non-loopback IPv4 address
+                        for iface in interfaces:
+                            if iface.get('name') in ('lo', 'loopback'):
+                                continue
+                            ip_addresses = iface.get('ip-addresses', [])
+                            for addr in ip_addresses:
+                                if addr.get('ip-address-type') == 'ipv4':
+                                    found_ip = addr.get('ip-address')
+                                    if found_ip and not found_ip.startswith('127.'):
+                                        ip_address = found_ip
+                                        logger.info(f"Found IP via guest agent for VM {vmid}: {ip_address}")
+                                        break
+                            if ip_address:
+                                break
+                except Exception as e:
+                    logger.debug(f"Guest agent network lookup failed for VM {vmid}: {e}")
+                
+                # Fallback: ARP scan if guest agent failed
                 if not ip_address and mac_address:
-                    # Fallback: synchronous ARP scan for this single MAC
                     from app.config import ARP_SUBNETS, CLUSTERS
                     from app.services.arp_scanner import discover_ips_via_arp
                     cluster_id = None
@@ -175,6 +194,9 @@ def get_template_info(class_id: int):
                         composite_key = f"{cluster_id}:{vmid}"
                         discovered = discover_ips_via_arp({composite_key: mac_address}, subnets=ARP_SUBNETS, background=False)
                         ip_address = discovered.get(composite_key)
+                        if ip_address:
+                            logger.info(f"Found IP via ARP scan for VM {vmid}: {ip_address}")
+                
                 if ip_address:
                     # Basic RDP availability heuristic: Windows category or port open
                     # We don't have ostype here; attempt port check

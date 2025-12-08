@@ -1183,9 +1183,8 @@ async function togglePower() {
             await stopTemplate();
         }
     } finally {
-        // Re-enable and refresh status
+        // Re-enable toggle (status refresh handled by start/stopTemplate)
         powerToggle.disabled = false;
-        setTimeout(() => loadTemplateInfo(), 2000);
     }
 }
 
@@ -1203,7 +1202,7 @@ async function startTemplate() {
         
         if (data.ok) {
             showAlert(data.message, 'success');
-            setTimeout(() => loadTemplateInfo(), 2000);
+            setTimeout(() => loadTemplateInfo(), 3000);
         } else {
             showAlert(data.error || 'Failed to start template', 'error');
         }
@@ -1221,7 +1220,7 @@ async function stopTemplate() {
         
         if (data.ok) {
             showAlert(data.message, 'success');
-            setTimeout(() => loadTemplateInfo(), 2000);
+            setTimeout(() => loadTemplateInfo(), 3000);
         } else {
             showAlert(data.error || 'Failed to stop template', 'error');
         }
