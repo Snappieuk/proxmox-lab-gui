@@ -209,7 +209,10 @@ def get_any_vm_session_progress(vmid: int):
         else:
             result["within_hours"] = current_hour >= start or current_hour < end
     
-    return jsonify(result)\n\n\n@bp.route('/api/classes/<int:class_id>/vm/<int:vmid>/session-progress', methods=['GET'])
+    return jsonify(result)
+
+
+@bp.route('/api/classes/<int:class_id>/vm/<int:vmid>/session-progress', methods=['GET'])
 @login_required
 def get_vm_session_progress(class_id: int, vmid: int):
     """Get VM session progress for student (uptime vs limits)."""
