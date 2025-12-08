@@ -218,8 +218,33 @@ def get_class_by_id(class_id: int) -> Optional[Class]:
 
 
 def get_class_by_token(token: str) -> Optional[Class]:
-    """Get class by join token."""
-    return Class.query.filter_by(join_token=token).first()
+    """Get class by join token.
+    
+    Supports both old secure tokens and new simple format (classname-vmidprefix).
+    """
+    # Try direct token lookup first (supports both old and new formats)
+    class_ = Class.query.filter_by(join_token=token).first()
+    if class_:
+        return class_
+    
+    # Fallback: try to parse new token format (classname-identifier)
+    # This helps with case-insensitive lookups and minor variations
+    if '-' in token:
+        try:
+            parts = token.rsplit('-', 1)  # Split from right to get last number
+            identifier = parts[-1]
+            
+            # Try VMID prefix lookup
+            if identifier.isdigit():
+                class_ = Class.query.filter_by(vmid_prefix=int(identifier)).first()
+                if class_ and class_.join_token:
+                    # Verify token roughly matches (case-insensitive)
+                    if class_.join_token.lower() == token.lower():
+                        return class_
+        except (ValueError, IndexError):
+            pass
+    
+    return None
 
 
 def get_classes_for_teacher(teacher_id: int) -> List[Class]:

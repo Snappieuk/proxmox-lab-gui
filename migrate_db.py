@@ -181,6 +181,35 @@ def migrate():
             else:
                 print(f"✓ {table_name}.{col_name} already exists")
         
+        # Step 2.5: Regenerate join tokens to use new simple format
+        print("\n🔄 Checking join token format...")
+        cursor.execute("SELECT id, name, vmid_prefix, join_token FROM classes WHERE join_token IS NOT NULL")
+        classes_with_tokens = cursor.fetchall()
+        
+        regenerated = 0
+        for class_id, class_name, vmid_prefix, current_token in classes_with_tokens:
+            # Check if token is old format (long random string)
+            if len(current_token) > 30 or '-' not in current_token:
+                import re
+                # Generate new simple token
+                sanitized_name = re.sub(r'[^a-z0-9]+', '-', class_name.lower()).strip('-')
+                identifier = str(vmid_prefix) if vmid_prefix else str(class_id)
+                new_token = f"{sanitized_name}-{identifier}"
+                
+                print(f"   🔄 Updating class '{class_name}': {current_token[:20]}... → {new_token}")
+                
+                try:
+                    cursor.execute("UPDATE classes SET join_token = ? WHERE id = ?", (new_token, class_id))
+                    regenerated += 1
+                except Exception as e:
+                    print(f"   ⚠ Failed to update class {class_id}: {e}")
+        
+        if regenerated > 0:
+            print(f"   ✅ Regenerated {regenerated} join token(s) to simple format")
+            total_changes += regenerated
+        else:
+            print("   ✓ All join tokens already use simple format")
+        
         # Step 3: Migrate clusters from JSON to database
         clusters_migrated = migrate_clusters_from_json(cursor)
         if clusters_migrated > 0:

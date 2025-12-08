@@ -150,7 +150,7 @@ class Class(db.Model):
     description = db.Column(db.Text, nullable=True)
     teacher_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     template_id = db.Column(db.Integer, db.ForeignKey('templates.id'), nullable=True)
-    join_token = db.Column(db.String(64), unique=True, nullable=True, index=True)
+    join_token = db.Column(db.String(128), unique=True, nullable=True, index=True)
     token_expires_at = db.Column(db.DateTime, nullable=True)
     token_never_expires = db.Column(db.Boolean, default=False)
     pool_size = db.Column(db.Integer, default=0)  # Target number of VMs in pool
@@ -171,8 +171,19 @@ class Class(db.Model):
     vm_assignments = db.relationship('VMAssignment', back_populates='class_', cascade='all, delete-orphan')
     
     def generate_join_token(self, expires_in_days: int = 7) -> str:
-        """Generate a new join token for this class."""
-        self.join_token = secrets.token_urlsafe(32)
+        """Generate a new join token for this class.
+        
+        Token format: classname-vmidprefix (e.g., 'python101-230' or 'windows-server-450')
+        """
+        # Sanitize class name: lowercase, replace spaces/special chars with hyphens
+        import re
+        sanitized_name = re.sub(r'[^a-z0-9]+', '-', self.name.lower()).strip('-')
+        
+        # Use VMID prefix if available, otherwise use class ID
+        identifier = str(self.vmid_prefix) if self.vmid_prefix else str(self.id)
+        
+        self.join_token = f"{sanitized_name}-{identifier}"
+        
         if expires_in_days > 0:
             self.token_expires_at = datetime.utcnow() + timedelta(days=expires_in_days)
             self.token_never_expires = False
