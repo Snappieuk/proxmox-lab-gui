@@ -113,3 +113,38 @@ def api_debug_arp():
     except Exception as e:
         logger.exception("Debug ARP endpoint failed")
         return jsonify({"error": str(e)}), 500
+
+
+@admin_diagnostics_bp.route("/ssh-pool")
+@admin_required
+def ssh_pool_status():
+    """Get SSH connection pool status."""
+    try:
+        from app.services.ssh_executor import _connection_pool
+        import time
+        
+        pool_status = {
+            "active_connections": len(_connection_pool._connections),
+            "connections": []
+        }
+        
+        current_time = time.time()
+        with _connection_pool._lock:
+            for key, executor in _connection_pool._connections.items():
+                host, username = key
+                last_used = _connection_pool._last_used.get(key, 0)
+                idle_seconds = int(current_time - last_used)
+                
+                pool_status["connections"].append({
+                    "host": host,
+                    "username": username,
+                    "connected": executor.is_connected(),
+                    "idle_seconds": idle_seconds,
+                    "idle_minutes": round(idle_seconds / 60, 1)
+                })
+        
+        return jsonify(pool_status)
+        
+    except Exception as e:
+        logger.exception("SSH pool status endpoint failed")
+        return jsonify({"error": str(e)}), 500

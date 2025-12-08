@@ -8,7 +8,8 @@ Used by class VM service for direct qm and qemu-img operations.
 
 import logging
 import threading
-from typing import Optional, Tuple
+import time
+from typing import Dict, Optional, Tuple
 
 # Import paramiko for SSH execution
 try:
@@ -18,6 +19,127 @@ except ImportError:
     PARAMIKO_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
+
+
+# Global SSH connection pool
+class SSHConnectionPool:
+    """
+    Thread-safe SSH connection pool for reusing connections.
+    
+    Maintains one connection per (host, username) pair.
+    Connections are lazily created and automatically reconnected if dropped.
+    """
+    
+    def __init__(self):
+        self._connections: Dict[Tuple[str, str], 'SSHExecutor'] = {}
+        self._lock = threading.Lock()
+        self._last_used: Dict[Tuple[str, str], float] = {}
+        self._connection_timeout = 600  # Close connections idle for 10 minutes
+    
+    def get_executor(self, host: str, username: str, password: str, port: int = 22) -> 'SSHExecutor':
+        """
+        Get or create an SSH executor from the pool.
+        
+        Args:
+            host: Proxmox node hostname/IP
+            username: SSH username
+            password: SSH password
+            port: SSH port
+            
+        Returns:
+            SSHExecutor instance (connected)
+        """
+        key = (host, username)
+        
+        with self._lock:
+            # Clean up stale connections
+            self._cleanup_stale_connections()
+            
+            # Check if we have a connection
+            if key in self._connections:
+                executor = self._connections[key]
+                
+                # Verify connection is still alive
+                if executor.is_connected():
+                    self._last_used[key] = time.time()
+                    logger.debug(f"Reusing SSH connection to {username}@{host}")
+                    return executor
+                else:
+                    logger.info(f"SSH connection to {username}@{host} dropped, reconnecting...")
+                    try:
+                        executor.connect()
+                        self._last_used[key] = time.time()
+                        return executor
+                    except Exception as e:
+                        logger.warning(f"Failed to reconnect SSH to {username}@{host}: {e}")
+                        # Remove dead connection
+                        del self._connections[key]
+                        if key in self._last_used:
+                            del self._last_used[key]
+            
+            # Create new connection
+            logger.info(f"Creating new pooled SSH connection to {username}@{host}")
+            executor = SSHExecutor(host, username, password, port)
+            executor.connect()
+            self._connections[key] = executor
+            self._last_used[key] = time.time()
+            return executor
+    
+    def _cleanup_stale_connections(self):
+        """Close connections that haven't been used recently."""
+        current_time = time.time()
+        stale_keys = []
+        
+        for key, last_used in self._last_used.items():
+            if current_time - last_used > self._connection_timeout:
+                stale_keys.append(key)
+        
+        for key in stale_keys:
+            if key in self._connections:
+                try:
+                    self._connections[key].disconnect()
+                    logger.info(f"Closed stale SSH connection to {key[1]}@{key[0]}")
+                except Exception as e:
+                    logger.warning(f"Error closing stale connection: {e}")
+                finally:
+                    del self._connections[key]
+                    if key in self._last_used:
+                        del self._last_used[key]
+    
+    def close_all(self):
+        """Close all pooled connections."""
+        with self._lock:
+            for executor in self._connections.values():
+                try:
+                    executor.disconnect()
+                except Exception as e:
+                    logger.warning(f"Error closing connection: {e}")
+            self._connections.clear()
+            self._last_used.clear()
+            logger.info("Closed all pooled SSH connections")
+
+
+# Global connection pool instance
+_connection_pool = SSHConnectionPool()
+
+
+def get_pooled_ssh_executor(host: str, username: str, password: str, port: int = 22) -> 'SSHExecutor':
+    """
+    Get an SSH executor from the global connection pool.
+    
+    This is more efficient than creating new connections, especially for
+    repeated operations like class VM creation.
+    
+    Args:
+        host: Proxmox node hostname/IP
+        username: SSH username
+        password: SSH password
+        port: SSH port
+        
+    Returns:
+        SSHExecutor instance (already connected)
+    """
+    return _connection_pool.get_executor(host, username, password, port)
 
 
 class SSHExecutor:
@@ -47,6 +169,19 @@ class SSHExecutor:
         self.port = port
         self._client: Optional[paramiko.SSHClient] = None
         self._lock = threading.Lock()
+    
+    def is_connected(self) -> bool:
+        """Check if SSH connection is active."""
+        with self._lock:
+            if self._client is None:
+                return False
+            
+            try:
+                # Try to get transport and check if it's active
+                transport = self._client.get_transport()
+                return transport is not None and transport.is_active()
+            except Exception:
+                return False
     
     def connect(self) -> None:
         """Establish SSH connection."""
@@ -150,8 +285,10 @@ def get_ssh_executor_from_config() -> SSHExecutor:
     """
     Create an SSH executor using the current Proxmox cluster configuration.
     
+    DEPRECATED: Use get_pooled_ssh_executor_from_config() for better performance.
+    
     Returns:
-        SSHExecutor configured with current cluster credentials
+        SSHExecutor configured with current cluster credentials (NOT connected)
     """
     from app.services.proxmox_client import get_current_cluster
     
@@ -161,6 +298,30 @@ def get_ssh_executor_from_config() -> SSHExecutor:
     username = cluster["user"].split("@")[0] if "@" in cluster["user"] else cluster["user"]
     
     return SSHExecutor(
+        host=cluster["host"],
+        username=username,
+        password=cluster["password"],
+    )
+
+
+def get_pooled_ssh_executor_from_config() -> SSHExecutor:
+    """
+    Get an SSH executor from the connection pool using current cluster config.
+    
+    This is the RECOMMENDED way to get SSH connections - it reuses existing
+    connections and is much faster than creating new ones.
+    
+    Returns:
+        SSHExecutor from pool (already connected and ready to use)
+    """
+    from app.services.proxmox_client import get_current_cluster
+    
+    cluster = get_current_cluster()
+    
+    # Extract username without realm (root@pam -> root)
+    username = cluster["user"].split("@")[0] if "@" in cluster["user"] else cluster["user"]
+    
+    return get_pooled_ssh_executor(
         host=cluster["host"],
         username=username,
         password=cluster["password"],

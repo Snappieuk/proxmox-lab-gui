@@ -1867,8 +1867,9 @@ def delete_vm(vmid: int, node: str, cluster_ip: str = None) -> Tuple[bool, str]:
         proxmox = get_proxmox_admin_for_cluster(cluster_id)
         
         # Get SSH executor for status checking and deletion
-        ssh_executor = get_ssh_executor_from_config()
-        ssh_executor.connect()
+        from app.services.ssh_executor import get_pooled_ssh_executor_from_config
+        ssh_executor = get_pooled_ssh_executor_from_config()
+        # Pooled executor is already connected
         
         # Check current VM status using SSH
         try:

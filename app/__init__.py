@@ -149,6 +149,18 @@ def create_app(config=None):
     start_background_sync(app)
     logger.info("Background VM inventory sync started")
     
+    # Register cleanup handler for SSH connection pool
+    import atexit
+    from app.services.ssh_executor import _connection_pool
+    
+    def cleanup_ssh_pool():
+        """Close all SSH connections on app shutdown."""
+        logger.info("Closing SSH connection pool...")
+        _connection_pool.close_all()
+    
+    atexit.register(cleanup_ssh_pool)
+    logger.info("SSH connection pool cleanup handler registered")
+    
     # Start background template sync (database-first architecture)
     from app.services.template_sync import start_template_sync_daemon
     start_template_sync_daemon(app)

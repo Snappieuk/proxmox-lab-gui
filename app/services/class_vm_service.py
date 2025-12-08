@@ -34,6 +34,7 @@ from app.models import Class, VMAssignment, db
 from app.services.ssh_executor import (
     SSHExecutor,
     get_ssh_executor_from_config,
+    get_pooled_ssh_executor_from_config,
 )
 from app.services.vm_core import wait_for_vm_stopped
 from app.services.vm_template import export_template_to_qcow2
@@ -60,9 +61,12 @@ _ssh_connection_cache = threading.local()
 
 
 def get_cached_ssh_executor():
-    """Get or create cached SSH executor for current thread."""
+    """Get or create cached SSH executor for current thread.
+    
+    Uses global connection pool for better reuse across threads.
+    """
     if not hasattr(_ssh_connection_cache, 'executor'):
-        _ssh_connection_cache.executor = get_ssh_executor_from_config()
+        _ssh_connection_cache.executor = get_pooled_ssh_executor_from_config()
     return _ssh_connection_cache.executor
 
 
@@ -448,8 +452,8 @@ def recreate_student_vms_from_template(
     created_vmids = []
     
     try:
-        ssh_executor = get_ssh_executor_from_config()
-        ssh_executor.connect()
+        ssh_executor = get_pooled_ssh_executor_from_config()
+        # Pooled executor is already connected
         
         # Export template to temporary base QCOW2
         base_qcow2_path = f"{DEFAULT_TEMPLATE_STORAGE_PATH}/{class_prefix}-base.qcow2"
@@ -1384,8 +1388,8 @@ def save_and_deploy_teacher_vm(
     updated_count = 0
     
     try:
-        ssh_executor = get_ssh_executor_from_config()
-        ssh_executor.connect()
+        ssh_executor = get_pooled_ssh_executor_from_config()
+        # Pooled executor is already connected
         
         # Step 1: Stop teacher VM (required for disk export)
         logger.info(f"Stopping teacher VM {teacher_vmid}...")
