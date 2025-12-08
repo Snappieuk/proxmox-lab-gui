@@ -169,7 +169,7 @@
                         <div class="form-col">
                             <label for="build-storage" class="compact-label">Storage (for VM disk)</label>
                             <select id="build-storage" class="form-control compact-input" required>
-                                <option value="">Loading storages...</option>
+                                <option value="">Select storage...</option>
                             </select>
                         </div>
                         <div class="form-col">
@@ -177,10 +177,14 @@
                             <select id="build-iso" class="form-control compact-input" required>
                                 <option value="">Loading ISOs...</option>
                             </select>
-                            <small style="color: #666; margin-top: 0.25rem; display: block;">
-                                VM will be created on the node where this ISO is located. 
-                                <a href="#" onclick="openUploadISOModal(); return false;" style="color: #3b82f6; text-decoration: underline;">Upload new ISO</a>
-                            </small>
+                            <div style="display: flex; align-items: center; gap: 0.5rem; margin-top: 0.5rem;">
+                                <small style="color: #666; flex: 1;">
+                                    VM will be created on the node where this ISO is located.
+                                </small>
+                                <button type="button" onclick="openUploadISOModal()" class="btn-action" style="padding: 0.4rem 0.75rem; font-size: 0.875rem; white-space: nowrap;">
+                                    <i class="bi bi-upload" style="margin-right: 0.35rem;"></i>Upload ISO
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -296,18 +300,13 @@
                 <div class="form-section">
                     <div class="form-row">
                         <div class="form-col" style="grid-column: 1 / -1;">
-                            <label for="upload-node" class="compact-label">Target Node</label>
-                            <select id="upload-node" class="form-control compact-input" required>
-                                <option value="">Loading nodes...</option>
-                            </select>
-                        </div>
-                    </div>
-                    <div class="form-row">
-                        <div class="form-col" style="grid-column: 1 / -1;">
                             <label for="upload-storage" class="compact-label">Target Storage</label>
-                            <select id="upload-storage" class="form-control compact-input" required>
-                                <option value="local">local</option>
+                            <select id="upload-storage" class="form-control compact-input" disabled>
+                                <option value="TRUENAS" selected>TRUENAS (Global Storage)</option>
                             </select>
+                            <small style="color: #666; margin-top: 0.5rem; display: block;">
+                                ISOs are automatically uploaded to TRUENAS storage, which is accessible from all nodes.
+                            </small>
                         </div>
                     </div>
                     <div class="form-row">
@@ -1080,21 +1079,7 @@ function closeConsoleModal() {
 
 // Upload ISO functions
 async function openUploadISOModal() {
-    // Load nodes
-    try {
-        const response = await fetch('/api/vm-builder/nodes');
-        const data = await response.json();
-        
-        if (data.ok) {
-            const nodeSelect = document.getElementById('upload-node');
-            nodeSelect.innerHTML = data.nodes.map(node => 
-                `<option value="${node.node}">${node.node}</option>`
-            ).join('');
-        }
-    } catch (error) {
-        console.error('Failed to load nodes:', error);
-    }
-    
+    // No need to load nodes - we'll auto-detect first available node with TRUENAS
     const modal = document.getElementById('upload-iso-modal');
     modal.style.display = 'flex';
     modal.style.visibility = 'visible';
@@ -1119,8 +1104,7 @@ async function submitUploadISO(event) {
         return;
     }
     
-    const node = document.getElementById('upload-node').value;
-    const storage = document.getElementById('upload-storage').value;
+    const storage = 'TRUENAS';
     
     const submitBtn = document.getElementById('upload-iso-btn');
     submitBtn.disabled = true;
@@ -1130,6 +1114,17 @@ async function submitUploadISO(event) {
     document.getElementById('upload-progress').style.display = 'block';
     
     try {
+        // First, find a node with TRUENAS storage
+        const nodesResp = await fetch('/api/vm-builder/nodes');
+        const nodesData = await nodesResp.json();
+        
+        if (!nodesData.ok || !nodesData.nodes || nodesData.nodes.length === 0) {
+            throw new Error('No nodes available');
+        }
+        
+        // Use first available node (TRUENAS is global storage, accessible from all nodes)
+        const node = nodesData.nodes[0].node;
+        
         // Create FormData
         const formData = new FormData();
         formData.append('content', file);
@@ -1152,7 +1147,7 @@ async function submitUploadISO(event) {
             if (xhr.status === 200) {
                 const data = JSON.parse(xhr.responseText);
                 if (data.ok) {
-                    alert('✓ ISO uploaded successfully!');
+                    alert('✓ ISO uploaded successfully to TRUENAS!');
                     closeUploadISOModal();
                     // Reload ISOs
                     await loadBuildOptions();

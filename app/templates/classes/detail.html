@@ -1276,9 +1276,9 @@ function startContinuousStatusUpdates() {
             
             if (data.ok && data.template) {
                 currentTemplateInfo = data.template;
-                // Update power toggle to reflect current status
+                // Update power toggle to reflect current status (but not during user action)
                 const powerToggle = document.getElementById('power-toggle');
-                if (powerToggle && !powerToggle.disabled) {
+                if (powerToggle && !powerToggle.disabled && !window.vmActionInProgress) {
                     const isRunning = currentTemplateInfo.status === 'running';
                     powerToggle.checked = isRunning;
                 }
@@ -1429,9 +1429,9 @@ function updateTemplateDisplay() {
         }
     }
     
-    // Update power toggle based on current status
+    // Update power toggle based on current status (but not during user action)
     const powerToggle = document.getElementById('power-toggle');
-    if (powerToggle) {
+    if (powerToggle && !window.vmActionInProgress) {
         const isRunning = currentTemplateInfo.status === 'running';
         // Always update toggle to reflect actual VM status
         powerToggle.checked = isRunning;
