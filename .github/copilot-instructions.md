@@ -11,6 +11,8 @@ A Flask webapp providing a lab VM portal similar to Azure Labs for self-service 
 
 **Performance architecture**: Database-first design with background sync daemon. All VM reads (<100ms) come from VMInventory table, never directly from slow Proxmox API (5-30s). Background sync updates database every 5min (full) and 30sec (quick status).
 
+**Shell environment**: This repo is deployed on Linux servers but development may occur in Windows PowerShell environments. When generating terminal commands for deployment/maintenance, assume Linux bash. For local development on Windows, use PowerShell syntax with `;` for command chaining (never `&&`).
+
 ## Current state & architecture decisions (READ THIS FIRST!)
 - **VMInventory + background_sync system**: **Core architecture** - database-first design where all VM reads come from `VMInventory` table (see `DATABASE_FIRST_ARCHITECTURE.md`). Background sync daemon updates DB every 5min (full) and 30sec (quick). Provides 100x faster page loads vs direct Proxmox API calls. Code in `app/__init__.py` (lines 137-139), `app/routes/api/vms.py`, `app/services/inventory_service.py`, `app/services/background_sync.py`.
 - **Progressive UI loading**: Frontend shows "Starting..." badge for VMs that are running but have no IP yet. Only transitions to "Running" after IP is discovered. Polls at 2s and 10s intervals after VM start, background sync triggers IP discovery 15s after start operation.
@@ -255,6 +257,27 @@ api/
 - Wrapper functions in `class_vm_service.py` properly delegate to canonical implementations in `vm_utils`
 - Total reduction: ~230 lines of duplicate code eliminated
 
+**Frontend patterns**:
+- **Progressive loading**: Routes render skeleton HTML, JavaScript fetches data via `/api/vms` (prevents timeout on initial page load)
+- **Async patterns**: Use `async/await` for all fetch operations, error handling with try/catch blocks
+- **Status polling**: After VM power operations, poll at 2s and 10s intervals to update status badges
+- **Example**: See `app/templates/index.html` functions: `loadVMs()`, `refreshVmStatus()`, `sendPowerAction()`
+- **Error handling**: API routes return `{"ok": false, "error": "message"}` format, frontend shows alerts
+
+**API response patterns**:
+- Success: `return jsonify({"ok": True, "data": ...}), 200`
+- Client error: `return jsonify({"ok": False, "error": "message"}), 400/404`
+- Server error: `return jsonify({"ok": False, "error": str(e)}), 500`
+- All API routes use `@login_required` or `@admin_required` decorators from `app/utils/decorators.py`
+- Use `require_user()` to get current username, `is_admin_user(user)` to check admin privileges
+
+**Database patterns**:
+- SQLAlchemy ORM with declarative models in `app/models.py`
+- Relationships: `Class` ↔ `User` (teacher), `Class` ↔ `Template`, `VMAssignment` ↔ `User` (assigned_user)
+- Many-to-many: `class_enrollments` (students), `class_co_owners` (co-teachers)
+- Always use `db.session.commit()` after modifications, wrap in try/except with `db.session.rollback()` on error
+- Query patterns: `User.query.filter_by(username=x).first()`, `Class.query.get(id)`, `VMAssignment.query.filter_by(class_id=x).all()`
+
 ## Developer workflows
 
 **Local dev setup**:
@@ -341,6 +364,8 @@ git add . && git commit -m "Changes" && git push
 - Admin access issues: verify `is_admin_user(userid)` returns True, check logs for "inject_admin_flag" entries
 - Cache debugging: check `_vm_cache_data` age, manually call `_invalidate_vm_cache()` if stale
 - ARP scanner: verify nmap installed, run with `sudo` for ARP probe access, check `_arp_cache` status
+- VMInventory issues: run `python3 debug_vminventory.py` to query table directly, `python3 fix_vminventory.py` to repair
+- Background sync status: visit `/api/sync/status` to see last sync times and stats
 
 **Testing without Proxmox** (no test suite exists):
 - Create mock `ProxmoxAPI` class with methods: `version.get()`, `nodes().qemu().status.current.get()`, etc.
@@ -435,3 +460,178 @@ from app.services.user_manager import authenticate_proxmox_user
 result = authenticate_proxmox_user("student1", "password")
 print(result)  # Should return "student1@pve" or None
 ```
+
+**Add database column** (safe, non-destructive):
+1. Edit `app/models.py`, add column: `new_field = db.Column(db.String(100))`
+2. Add to `CRITICAL_MIGRATIONS` list in `migrate_db.py` (for ALTER TABLE)
+3. Run `python3 migrate_db.py` - safe to run multiple times
+4. Never use `db.drop_all()` in production - data loss!
+
+**Frontend: Add new VM action button**:
+1. In `index.html`, add button in VM card actions section
+2. Call async function with `await fetch("/api/vm/<vmid>/action", {method: "POST"})`
+3. Handle response: show alert on error, refresh VM status on success
+4. Use `refreshSingleVMStatus(vmid)` to update single VM without full page reload
+
+## Key troubleshooting patterns
+
+**VM not appearing in portal**:
+1. Check VMInventory: `python3 debug_vminventory.py` - is VM in database?
+2. Check VMAssignment: Does user have assignment record? Query `VMAssignment.query.filter_by(assigned_user_id=user.id).all()`
+3. Force sync: Visit `/api/sync/trigger?type=full` to trigger background sync
+4. Check cluster: Is VM on active cluster? Session has correct `cluster_id`?
+
+**IP not showing for VM**:
+1. Check VMInventory: `python3 debug_vminventory.py` - is IP in database?
+2. Guest agent: QEMU VMs need guest agent installed and running
+3. ARP scan: Background sync uses ARP as fallback - check `nmap` installed, has root access
+4. Force discovery: Start VM, wait 15 seconds for boot, background sync triggers IP discovery
+5. LXC containers: IP discovery works even when stopped via `.interfaces.get()` API
+
+**Background sync not running**:
+1. Check `/api/sync/status` - shows last sync times and stats
+2. Check logs: `journalctl -u proxmox-gui -f | grep background_sync`
+3. Restart app: `sudo systemctl restart proxmox-gui` or `./restart.sh`
+4. Manual trigger: Visit `/api/sync/trigger?type=full` to force sync
+
+**Slow page loads despite database-first architecture**:
+1. Check if route queries Proxmox API directly - should only query database
+2. Background sync might be overloaded - check sync intervals in config
+3. Database query inefficiency - add indexes for frequent lookups
+4. Frontend making too many API calls - use progressive loading pattern
+
+**Class VM deployment fails**:
+1. SSH access: Verify SSH credentials in `.env` (SSH_HOST, SSH_USER, SSH_PASSWORD)
+2. Storage paths: Check QCOW2_TEMPLATE_PATH and QCOW2_IMAGES_PATH exist on Proxmox server
+3. Template export: Look for "qemu-img convert" errors in logs
+4. Overlay creation: Check "qemu-img create -f qcow2 -F qcow2 -b" errors
+5. Never use `qm clone` - always use disk export + overlay approach
+
+## Project-specific conventions
+
+**Naming patterns**:
+- Database models: PascalCase (`Class`, `VMAssignment`, `VMInventory`)
+- Service functions: snake_case (`create_class_vms()`, `fetch_vm_inventory()`)
+- API routes: kebab-case URLs (`/api/vm-builder/build`, `/api/user-vm-assignments`)
+- Blueprint prefixes: descriptive (`api_vms_bp`, `admin_users_bp`, `auth_bp`)
+- Private functions: leading underscore (`_resolve_user_owned_vmids()`, `_build_vm_dict()`)
+
+**Import organization**:
+```python
+#!/usr/bin/env python3
+"""Module docstring."""
+
+# Standard library imports
+import logging
+import os
+from datetime import datetime
+
+# Third-party imports
+from flask import Blueprint, jsonify, request
+from werkzeug.security import generate_password_hash
+
+# Local application imports
+from app.models import User, Class, VMAssignment
+from app.services.proxmox_client import get_all_vms
+from app.utils.decorators import login_required
+```
+
+**Logging patterns**:
+- Use module-level logger: `logger = logging.getLogger(__name__)`
+- Log levels: DEBUG (verbose), INFO (normal flow), WARNING (recoverable issues), ERROR (failures)
+- Log before expensive operations: `logger.info(f"Syncing {len(vms)} VMs to database")`
+- Log exceptions with context: `logger.error(f"Failed to start VM {vmid}: {str(e)}")`
+
+**Error handling in API routes**:
+```python
+@api_bp.route("/api/example", methods=["POST"])
+@login_required
+def api_example():
+    try:
+        user = require_user()
+        data = request.get_json()
+        
+        # Validate inputs
+        if not data.get("required_field"):
+            return jsonify({"ok": False, "error": "Required field missing"}), 400
+        
+        # Perform operation
+        result = some_service_function(data)
+        
+        return jsonify({"ok": True, "data": result}), 200
+        
+    except ValueError as e:
+        logger.warning(f"Validation error: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 400
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}", exc_info=True)
+        return jsonify({"ok": False, "error": "Internal server error"}), 500
+```
+
+**Database transaction patterns**:
+```python
+from app.models import db, Class
+
+try:
+    # Make changes
+    new_class = Class(name="Example", teacher_id=user.id)
+    db.session.add(new_class)
+    db.session.commit()
+    
+    return new_class
+    
+except Exception as e:
+    db.session.rollback()
+    logger.error(f"Database error: {e}")
+    raise
+```
+
+**Frontend fetch patterns** (from `app/templates/index.html`):
+```javascript
+async function loadVMs() {
+    try {
+        const response = await fetch('/api/vms');
+        const data = await response.json();
+        
+        if (!data.ok) {
+            showError(data.error || 'Failed to load VMs');
+            return;
+        }
+        
+        // Process data.data (array of VMs)
+        renderVMCards(data.data);
+        
+    } catch (error) {
+        console.error('Error loading VMs:', error);
+        showError('Network error - please try again');
+    }
+}
+```
+
+**Configuration precedence** (highest to lowest):
+1. Environment variables (`.env` file or exported)
+2. Database (Cluster table for cluster configs)
+3. JSON files (legacy `clusters.json` for backwards compatibility)
+4. Hardcoded defaults in `app/config.py` (insecure, dev only)
+
+**When to use each data source**:
+- **VMInventory table**: All VM status/metadata reads in frontend
+- **Proxmox API**: Only during background sync, VM operations (start/stop/create/delete)
+- **VMAssignment table**: All user-to-VM permission checks
+- **Cluster table**: All cluster connection configurations (replaces clusters.json)
+
+**Performance guidelines**:
+- NEVER query Proxmox API in request handlers (use VMInventory table)
+- NEVER synchronous loops over VMs calling Proxmox API (use background sync)
+- Cache expensive lookups (IP discovery, MAC addresses) with TTL
+- Use database indexes for frequently queried fields (vmid, cluster_id, assigned_user_id)
+- Background threads for slow operations (ARP scan, template export)
+
+**Security practices**:
+- All routes require `@login_required` or `@admin_required` decorators
+- Never trust client input - validate all JSON request data
+- Use `require_user()` to get authenticated username from session
+- Check `is_admin_user(user)` before admin operations
+- Password hashing via `werkzeug.security.generate_password_hash()` with scrypt
+- Session secret must be changed in production (`SECRET_KEY` env var)
+

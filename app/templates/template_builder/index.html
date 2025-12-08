@@ -22,7 +22,7 @@
             </p>
             
             <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.25rem;">
-                <div class="option-card" id="btn-create-from-scratch" style="cursor: pointer;">
+                <div class="option-card" id="btn-create-from-scratch" style="cursor: pointer;" onclick="showCreateFromScratch()">
                     <div class="option-card-icon" style="background: #e6f2ff;">
                         <i class="bi bi-file-earmark-plus" style="font-size: 2.5rem; color: #0078d4;"></i>
                     </div>
@@ -30,7 +30,7 @@
                     <p style="color: #666; font-size: 0.9rem; margin: 0;">Create a new VM and configure it as a template</p>
                 </div>
                 
-                <div class="option-card" id="btn-convert-existing" style="cursor: pointer;">
+                <div class="option-card" id="btn-convert-existing" style="cursor: pointer;" onclick="showConvertExisting()">
                     <div class="option-card-icon" style="background: #e6f4ea;">
                         <i class="bi bi-arrow-repeat" style="font-size: 2.5rem; color: #107c10;"></i>
                     </div>
@@ -38,7 +38,7 @@
                     <p style="color: #666; font-size: 0.9rem; margin: 0;">Turn an existing VM into a reusable template</p>
                 </div>
                 
-                <div class="option-card" id="btn-migrate-template" style="cursor: pointer;">
+                <div class="option-card" id="btn-migrate-template" style="cursor: pointer;" onclick="showMigrateTemplate()">
                     <div class="option-card-icon" style="background: #f3e5f5;">
                         <i class="bi bi-arrow-left-right" style="font-size: 2.5rem; color: #5c2d91;"></i>
                     </div>
@@ -754,8 +754,20 @@ async function loadTemplates() {
     const loadingDiv = document.getElementById('templates-loading');
     const listDiv = document.getElementById('templates-list');
     
+    console.log('🔄 loadTemplates() called');
+    
+    if (!loadingDiv) {
+        console.error('❌ templates-loading element not found!');
+        return;
+    }
+    
+    if (!listDiv) {
+        console.error('❌ templates-list element not found!');
+        return;
+    }
+    
     try {
-        console.log('🔄 Loading templates from /api/templates...');
+        console.log('🔄 Fetching templates from /api/templates...');
         console.log('Current cluster ID:', CURRENT_CLUSTER_ID);
         
         const response = await fetch('/api/templates');
@@ -765,12 +777,14 @@ async function loadTemplates() {
         if (!response.ok) {
             const errorText = await response.text();
             console.error('❌ HTTP error:', response.status, errorText);
-            loadingDiv.innerHTML = `<p style="color: #d32f2f;">Failed to load templates (HTTP ${response.status}): ${errorText}</p>`;
+            loadingDiv.innerHTML = `<p style="color: #d32f2f;">Failed to load templates (HTTP ${response.status})</p>
+                <p style="color: #666; font-size: 0.9rem;">${errorText.substring(0, 200)}</p>`;
             return;
         }
         
         const responseText = await response.text();
-        console.log('📄 Raw response text:', responseText.substring(0, 500));
+        console.log('📄 Raw response length:', responseText.length);
+        console.log('📄 Raw response preview:', responseText.substring(0, 500));
         
         let data;
         try {
@@ -778,6 +792,7 @@ async function loadTemplates() {
             console.log('✅ Parsed JSON data:', data);
         } catch (parseError) {
             console.error('❌ JSON parse error:', parseError);
+            console.error('Response was:', responseText.substring(0, 1000));
             loadingDiv.innerHTML = '<p style="color: #d32f2f;">Invalid JSON response from server</p>';
             return;
         }
@@ -800,7 +815,7 @@ async function loadTemplates() {
             return;
         }
         
-        console.log(`✅ Loaded ${data.templates.length} templates:`, data.templates.map(t => `${t.name} (${t.proxmox_vmid})`));
+        console.log(`✅ Successfully loaded ${data.templates.length} templates:`, data.templates.map(t => `${t.name} (${t.proxmox_vmid})`));
         loadingDiv.style.display = 'none';
         listDiv.style.display = 'block';
         
@@ -860,6 +875,7 @@ function deleteTemplate(templateId) {
 // Load templates on page load
 document.addEventListener('DOMContentLoaded', function() {
     console.log('🔧 DOM loaded - attaching event listeners');
+    console.log('🔧 Template builder page initialized');
     
     // Attach click event listeners to buttons
     const btnCreateFromScratch = document.getElementById('btn-create-from-scratch');
@@ -887,9 +903,11 @@ document.addEventListener('DOMContentLoaded', function() {
         console.error('❌ btn-migrate-template not found');
     }
     
+    console.log('📋 Starting template load...');
     loadTemplates();
     // Pre-load templates for migration modal
     loadTemplatesForMigration();
+    console.log('🎉 Template builder initialization complete');
 });
 
 // Pre-load templates from database for instant migration modal
