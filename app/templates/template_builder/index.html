@@ -730,16 +730,22 @@ async function showMigrateTemplate() {
 
 // Load user's templates
 async function loadTemplates() {
+    const loadingDiv = document.getElementById('templates-loading');
+    const listDiv = document.getElementById('templates-list');
+    
     try {
         console.log('Loading templates from /api/templates...');
         const response = await fetch('/api/templates');
         console.log('Response status:', response.status);
         
+        if (!response.ok) {
+            console.error('HTTP error:', response.status, response.statusText);
+            loadingDiv.innerHTML = `<p style="color: #d32f2f;">Failed to load templates (HTTP ${response.status}). Please check server logs.</p>`;
+            return;
+        }
+        
         const data = await response.json();
         console.log('Templates data:', data);
-        
-        const loadingDiv = document.getElementById('templates-loading');
-        const listDiv = document.getElementById('templates-list');
         
         if (!data.ok) {
             console.error('API returned ok=false');
@@ -791,9 +797,10 @@ async function loadTemplates() {
         `).join('');
         
     } catch (error) {
-        console.error('Failed to load templates:', error);
-        document.getElementById('templates-loading').innerHTML = 
-            '<p style="color: #d32f2f;">Failed to load templates: ' + error.message + '</p>';
+        console.error('Failed to load templates (exception):', error);
+        if (loadingDiv) {
+            loadingDiv.innerHTML = '<p style="color: #d32f2f;">Failed to load templates: ' + error.message + '</p>';
+        }
     }
 }
 
