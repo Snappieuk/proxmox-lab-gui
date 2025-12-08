@@ -694,8 +694,14 @@
 }
 </style>
 
+<!-- Inline test script to verify JavaScript is executing -->
 <script>
-console.log('=== SCRIPT TAG EXECUTING ===');
+console.log('🚀 INLINE SCRIPT LOADED - VERSION 2024-12-08-v3');
+alert('JavaScript is working! If you see this, scripts are executing.');
+</script>
+
+<script>
+console.log('=== SCRIPT TAG EXECUTING - VERSION 2024-12-08-v3 ===');
 console.log('Window object:', typeof window);
 console.log('Document ready state:', document.readyState);
 
@@ -705,18 +711,18 @@ console.log('Template Builder initialized with cluster:', CURRENT_CLUSTER_ID);
 
 // Define functions in global scope IMMEDIATELY
 function showCreateFromScratch() {
-    console.log('showCreateFromScratch called');
+    console.log('✅ showCreateFromScratch called - VERSION v3');
     document.getElementById('build-modal').style.display = 'flex';
     loadBuildOptions();
 }
 
 function showConvertExisting() {
-    console.log('showConvertExisting called');
+    console.log('✅ showConvertExisting called - VERSION v3');
     alert('Convert Existing VM - Feature coming soon!\n\nThis will let you select an existing VM and convert it to a template.');
 }
 
 async function showMigrateTemplate() {
-    console.log('showMigrateTemplate called');
+    console.log('✅ showMigrateTemplate called - VERSION v3');
     document.getElementById('migrate-modal').style.display = 'flex';
     
     try {
@@ -739,8 +745,15 @@ window.showCreateFromScratch = showCreateFromScratch;
 window.showConvertExisting = showConvertExisting;
 window.showMigrateTemplate = showMigrateTemplate;
 
-console.log('✅ Functions defined - types:', typeof showCreateFromScratch, typeof showConvertExisting, typeof showMigrateTemplate);
-console.log('✅ Window functions:', typeof window.showCreateFromScratch, typeof window.showConvertExisting, typeof window.showMigrateTemplate);
+console.log('✅ Functions defined VERSION v3 - types:', typeof showCreateFromScratch, typeof showConvertExisting, typeof showMigrateTemplate);
+console.log('✅ Window functions VERSION v3:', typeof window.showCreateFromScratch, typeof window.showConvertExisting, typeof window.showMigrateTemplate);
+console.log('✅ Testing direct call...');
+try {
+    console.log('Can call showCreateFromScratch?', typeof showCreateFromScratch === 'function');
+    console.log('Can call window.showCreateFromScratch?', typeof window.showCreateFromScratch === 'function');
+} catch (e) {
+    console.error('❌ Error testing functions:', e);
+}
 
 // Load user's templates
 async function loadTemplates() {
