@@ -289,88 +289,58 @@ def _deploy_vm_with_iso(
 
 
 def list_available_isos(cluster_id: str) -> Tuple[bool, list, str]:
-    proxmox,
-    cluster_config: Dict,
-    node: str,
-    vmid: int,
-    vm_name: str,
-    cpu_cores: int,
-    cpu_sockets: int,
-    memory_mb: int,
-    disk_size_gb: int,
-    storage: str,
-    iso_storage: str,
-    iso_file: Optional[str],
-    network_bridge: str,
-    cpu_type: str,
-    bios_type: str,
-    machine_type: str,
-    vga_type: str,
-    boot_order: str,
-    scsihw: str,
-    agent_enabled: bool,
-    onboot: bool,
-    convert_to_template: bool
-) -> Tuple[bool, str]:
-    """Deploy a Windows VM with VirtIO drivers."""
+    """List available ISO images across all nodes in the cluster."""
     try:
-        logger.info(f"Creating Windows VM {vmid} on node {node}")
+        from app.services.proxmox_service import get_proxmox_admin_for_cluster
         
-        # Build Windows VM configuration
-        vm_config = {
-            "vmid": vmid,
-            "name": vm_name,
-            "cores": cpu_cores,
-            "sockets": cpu_sockets,
-            "memory": memory_mb,
-            "scsihw": scsihw,
-            f"scsi0": f"{storage}:{disk_size_gb}",
-            "net0": f"virtio,bridge={network_bridge}",
-            "ostype": "win10",  # Windows OS type
-            "cpu": cpu_type,
-            "bios": "ovmf" if bios_type == "ovmf" else "seabios",  # UEFI for modern Windows
-            "machine": machine_type,
-            "vga": vga_type,
-            "boot": f"order={boot_order}",
-            "onboot": 1 if onboot else 0,
-            "agent": 1 if agent_enabled else 0
-        }
+        proxmox = get_proxmox_admin_for_cluster(cluster_id)
+        if not proxmox:
+            return False, [], f"Failed to connect to cluster {cluster_id}"
         
-        # Add Windows ISO if specified
-        if iso_file:
-            vm_config["ide2"] = f"{iso_file},media=cdrom"
+        isos = []
+        nodes = proxmox.nodes.get()
         
-        # Create VM
-        logger.info(f"Creating Windows VM with config: {vm_config}")
-        proxmox.nodes(node).qemu.post(**vm_config)
-        
-        logger.info(f"Windows VM {vmid} created successfully")
-        
-        # Wait for VM creation to finalize
-        time.sleep(2)
-        
-        # Try to add VirtIO drivers ISO
-        virtio_iso = _ensure_virtio_iso(proxmox, node, iso_storage)
-        if virtio_iso:
-            logger.info(f"Adding VirtIO ISO: {virtio_iso}")
+        for node in nodes:
+            node_name = node['node']
             try:
-                proxmox.nodes(node).qemu(vmid).config.put(ide0=f"{virtio_iso},media=cdrom")
+                # Get all storages on this node
+                storages = proxmox.nodes(node_name).storage.get()
+                
+                for storage in storages:
+                    storage_name = storage['storage']
+                    storage_type = storage.get('type', '')
+                    content_types = storage.get('content', '').split(',')
+                    
+                    # Only check storages that can contain ISOs
+                    if 'iso' not in content_types:
+                        continue
+                    
+                    try:
+                        # List ISO files in this storage
+                        content = proxmox.nodes(node_name).storage(storage_name).content.get(content='iso')
+                        
+                        for item in content:
+                            isos.append({
+                                'volid': item['volid'],
+                                'name': item['volid'].split('/')[-1],
+                                'size': item.get('size', 0),
+                                'node': node_name,
+                                'storage': storage_name
+                            })
+                    except Exception as e:
+                        logger.warning(f"Could not list ISOs in {node_name}:{storage_name}: {e}")
+                        continue
+                        
             except Exception as e:
-                logger.warning(f"Failed to add VirtIO ISO: {e}")
-        else:
-            logger.warning("VirtIO ISO not available")
+                logger.warning(f"Could not access node {node_name}: {e}")
+                continue
         
-        # Convert to template if requested
-        if convert_to_template:
-            logger.info(f"Converting VM {vmid} to template")
-            proxmox.nodes(node).qemu(vmid).template.post()
-            return True, f"Windows VM {vmid} created and converted to template successfully"
-        
-        return True, f"Windows VM {vmid} created. Ready for manual OS installation via console."
+        logger.info(f"Found {len(isos)} ISO images across all nodes")
+        return True, isos, f"Found {len(isos)} ISO images"
         
     except Exception as e:
-        logger.error(f"Failed to deploy Windows VM: {e}", exc_info=True)
-        return False, f"Failed to create Windows VM: {str(e)}"
+        logger.error(f"Failed to list ISOs: {e}", exc_info=True)
+        return False, [], f"Failed to list ISOs: {str(e)}"
 
 
 def _ensure_virtio_iso(
