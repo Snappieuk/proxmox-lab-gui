@@ -494,190 +494,397 @@
                 </div>
             </div>
             
-            <div class="content-card">
-                <h3 style="margin: 0 0 1.5rem 0;">Auto-Shutdown Configuration</h3>
-                <p style="color: #666; margin-bottom: 2rem;">
-                    Automatically shut down VMs in this class when they're idle to save resources. VMs will be monitored for CPU activity, and shut down if they stay below the threshold for the specified duration.
-                </p>
+            <!-- Settings Form Container -->
+            <div style="max-width: 1200px; margin: 0 auto; padding-bottom: 100px;">
                 
-                <form id="settings-form" style="max-width: 600px;">
-                    <!-- Enable Auto-Shutdown -->
-                    <div style="margin-bottom: 2rem;">
-                        <label style="display: flex; align-items: center; gap: 0.75rem; cursor: pointer;">
-                            <input type="checkbox" id="auto-shutdown-enabled" style="width: 20px; height: 20px; cursor: pointer;">
+                <!-- Auto-Shutdown Configuration Section -->
+                <div class="settings-card">
+                    <div class="settings-card-header" onclick="toggleSection('auto-shutdown')">
+                        <div style="display: flex; align-items: center; gap: 12px;">
+                            <i class="bi bi-power" style="font-size: 20px; color: #1e293b;"></i>
                             <div>
-                                <div style="font-weight: 600; font-size: 1.05rem;">Enable Auto-Shutdown</div>
-                                <div style="color: #666; font-size: 0.9rem; margin-top: 0.25rem;">
-                                    Automatically turn off idle VMs in this class
+                                <h2 style="margin: 0; font-size: 17px; font-weight: 600; color: #1e293b;">Auto-Shutdown Configuration</h2>
+                                <p style="margin: 4px 0 0 0; font-size: 14px; color: #64748b;">Automatically shut down idle VMs to save resources</p>
+                            </div>
+                        </div>
+                        <i id="auto-shutdown-chevron" class="bi bi-chevron-down" style="font-size: 20px; color: #64748b; transition: transform 0.2s;"></i>
+                    </div>
+                    
+                    <div id="auto-shutdown-content" class="settings-card-content">
+                        <!-- Enable Toggle -->
+                        <div style="margin-bottom: 32px; padding: 16px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px;">
+                            <label style="display: flex; align-items: center; gap: 12px; cursor: pointer;">
+                                <input type="checkbox" id="auto-shutdown-enabled" class="settings-toggle">
+                                <div>
+                                    <div style="font-weight: 600; font-size: 15px; color: #1e293b;">Enable Auto-Shutdown</div>
+                                    <div style="color: #64748b; font-size: 14px; margin-top: 2px;">
+                                        Automatically turn off idle VMs in this class
+                                    </div>
+                                </div>
+                            </label>
+                        </div>
+                        
+                        <!-- Settings Grid -->
+                        <div class="settings-grid">
+                            <!-- CPU Threshold -->
+                            <div class="setting-field">
+                                <label class="setting-label">CPU Threshold</label>
+                                <div style="display: flex; align-items: center; gap: 12px;">
+                                    <input 
+                                        type="range" 
+                                        id="cpu-threshold" 
+                                        min="5" 
+                                        max="50" 
+                                        value="20" 
+                                        class="settings-slider"
+                                        oninput="document.getElementById('cpu-threshold-value').textContent = this.value"
+                                    >
+                                    <div style="display: flex; align-items: center; gap: 4px; min-width: 60px;">
+                                        <span id="cpu-threshold-value" style="font-weight: 600; font-size: 15px; color: #1e293b;">20</span>
+                                        <span style="color: #64748b; font-size: 14px;">%</span>
+                                    </div>
+                                </div>
+                                <p class="setting-description">
+                                    VMs will be shut down if CPU usage stays below this percentage
+                                </p>
+                            </div>
+                            
+                            <!-- Idle Duration -->
+                            <div class="setting-field">
+                                <label class="setting-label">Idle Duration</label>
+                                <div style="display: flex; align-items: center; gap: 12px;">
+                                    <input 
+                                        type="number" 
+                                        id="idle-minutes" 
+                                        min="5" 
+                                        max="240" 
+                                        value="30" 
+                                        class="settings-input"
+                                        style="width: 100px;"
+                                    >
+                                    <span style="color: #64748b; font-size: 14px;">minutes</span>
+                                </div>
+                                <p class="setting-description">
+                                    How long VMs must stay idle before shutdown (5-240 minutes)
+                                </p>
+                            </div>
+                        </div>
+                        
+                        <!-- Inline Info Callout -->
+                        <div class="info-callout">
+                            <i class="bi bi-info-circle" style="font-size: 18px; color: #0284c7; flex-shrink: 0;"></i>
+                            <div style="flex: 1;">
+                                <div style="font-weight: 600; font-size: 14px; color: #0c4a6e; margin-bottom: 8px;">How Auto-Shutdown Works</div>
+                                <div style="font-size: 14px; color: #075985; line-height: 1.5;">
+                                    VMs are checked every 5 minutes for activity. If CPU usage stays below the threshold for the specified duration, the VM is automatically shut down. Students can restart their VMs at any time. Teacher VMs are excluded from auto-shutdown.
                                 </div>
                             </div>
-                        </label>
-                    </div>
-                    
-                    <!-- CPU Threshold -->
-                    <div style="margin-bottom: 2rem;">
-                        <label style="display: block; font-weight: 600; margin-bottom: 0.5rem;">
-                            CPU Threshold
-                        </label>
-                        <div style="display: flex; align-items: center; gap: 1rem;">
-                            <input 
-                                type="range" 
-                                id="cpu-threshold" 
-                                min="5" 
-                                max="50" 
-                                value="20" 
-                                style="flex: 1;"
-                                oninput="document.getElementById('cpu-threshold-value').textContent = this.value"
-                            >
-                            <span id="cpu-threshold-value" style="font-weight: 600; min-width: 40px; text-align: right;">20</span>
-                            <span style="color: #666;">%</span>
                         </div>
-                        <p style="color: #666; font-size: 0.85rem; margin: 0.5rem 0 0 0;">
-                            VMs will be shut down if CPU usage stays below this percentage
-                        </p>
                     </div>
-                    
-                    <!-- Idle Duration -->
-                    <div style="margin-bottom: 2rem;">
-                        <label style="display: block; font-weight: 600; margin-bottom: 0.5rem;">
-                            Idle Duration
-                        </label>
-                        <div style="display: flex; align-items: center; gap: 1rem;">
-                            <input 
-                                type="number" 
-                                id="idle-minutes" 
-                                min="5" 
-                                max="240" 
-                                value="30" 
-                                style="padding: 0.5rem; border: 1px solid #8a8886; border-radius: 4px; width: 100px;"
-                            >
-                            <span style="color: #666;">minutes</span>
-                        </div>
-                        <p style="color: #666; font-size: 0.85rem; margin: 0.5rem 0 0 0;">
-                            How long VMs must stay idle before being shut down (5-240 minutes)
-                        </p>
-                    </div>
-                    
-                    <!-- Info Box -->
-                    <div style="background: #e6f4ff; border: 1px solid #91d5ff; border-radius: 6px; padding: 1rem; margin-bottom: 2rem;">
-                        <div style="display: flex; gap: 0.75rem;">
-                            <i class="bi bi-info-circle" style="color: #0078d4; font-size: 1.25rem;"></i>
-                            <div style="flex: 1;">
-                                <div style="font-weight: 600; color: #003d7a; margin-bottom: 0.5rem;">How Auto-Shutdown Works</div>
-                                <ul style="margin: 0; padding-left: 1.25rem; color: #003d7a; font-size: 0.9rem;">
-                                    <li>VMs are checked every 5 minutes for activity</li>
-                                    <li>If CPU usage is below the threshold for the specified duration, the VM is shut down</li>
-                                    <li>Students can restart their VMs at any time</li>
-                                    <li>Teacher VMs are excluded from auto-shutdown</li>
-                                </ul>
+                </div>
+                
+                <!-- Available Hours & Session Limits Section -->
+                <div class="settings-card">
+                    <div class="settings-card-header" onclick="toggleSection('time-limits')">
+                        <div style="display: flex; align-items: center; gap: 12px;">
+                            <i class="bi bi-clock-history" style="font-size: 20px; color: #1e293b;"></i>
+                            <div>
+                                <h2 style="margin: 0; font-size: 17px; font-weight: 600; color: #1e293b;">Available Hours & Session Limits</h2>
+                                <p style="margin: 4px 0 0 0; font-size: 14px; color: #64748b;">Control when VMs can be used and for how long</p>
                             </div>
                         </div>
+                        <i id="time-limits-chevron" class="bi bi-chevron-down" style="font-size: 20px; color: #64748b; transition: transform 0.2s;"></i>
                     </div>
-                </form>
-                
-                <hr style="margin: 3rem 0; border: 0; border-top: 1px solid #e0e0e0;">
-                
-                <h3 style="margin: 0 0 1.5rem 0;">Available Hours & Session Limits</h3>
-                <p style="color: #666; margin-bottom: 2rem;">
-                    Control when students can start VMs and limit how long they can run. VMs started outside allowed hours or exceeding session limits will be automatically shut down.
-                </p>
-                
-                <form id="hours-form" style="max-width: 600px;">
-                    <!-- Enable Hour Restrictions -->
-                    <div style="margin-bottom: 2rem;">
-                        <label style="display: flex; align-items: center; gap: 0.75rem; cursor: pointer;">
-                            <input type="checkbox" id="restrict-hours" style="width: 20px; height: 20px; cursor: pointer;">
-                            <div>
-                                <div style="font-weight: 600; font-size: 1.05rem;">Restrict Available Hours</div>
-                                <div style="color: #666; font-size: 0.9rem; margin-top: 0.25rem;">
-                                    Limit when students can start and use VMs
+                    
+                    <div id="time-limits-content" class="settings-card-content">
+                        <!-- Enable Toggle -->
+                        <div style="margin-bottom: 32px; padding: 16px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px;">
+                            <label style="display: flex; align-items: center; gap: 12px; cursor: pointer;">
+                                <input type="checkbox" id="restrict-hours" class="settings-toggle" onchange="toggleTimeRestrictions()">
+                                <div>
+                                    <div style="font-weight: 600; font-size: 15px; color: #1e293b;">Restrict Available Hours</div>
+                                    <div style="color: #64748b; font-size: 14px; margin-top: 2px;">
+                                        Limit when students can start and use VMs
+                                    </div>
+                                </div>
+                            </label>
+                        </div>
+                        
+                        <!-- Settings Grid -->
+                        <div class="settings-grid">
+                            <!-- Time Window -->
+                            <div class="setting-field" id="time-window-field">
+                                <label class="setting-label">Allowed Time Window</label>
+                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                                    <div>
+                                        <label style="display: block; color: #64748b; font-size: 13px; margin-bottom: 6px;">Start Time</label>
+                                        <input type="time" id="hours-start" value="00:00" class="settings-input">
+                                    </div>
+                                    <div>
+                                        <label style="display: block; color: #64748b; font-size: 13px; margin-bottom: 6px;">End Time</label>
+                                        <input type="time" id="hours-end" value="23:00" class="settings-input">
+                                    </div>
+                                </div>
+                                <p class="setting-description">
+                                    Students can only start VMs during this window (server timezone)
+                                </p>
+                            </div>
+                            
+                            <!-- Max Session Duration -->
+                            <div class="setting-field">
+                                <label class="setting-label">Maximum Session Duration</label>
+                                <div style="display: flex; align-items: center; gap: 12px;">
+                                    <input 
+                                        type="number" 
+                                        id="max-session-minutes" 
+                                        min="0" 
+                                        max="1440" 
+                                        value="0" 
+                                        placeholder="0"
+                                        class="settings-input"
+                                        style="width: 100px;"
+                                    >
+                                    <span style="color: #64748b; font-size: 14px;">minutes (0 = unlimited)</span>
+                                </div>
+                                <p class="setting-description">
+                                    VMs will automatically shut down after running for this duration
+                                </p>
+                            </div>
+                        </div>
+                        
+                        <!-- Inline Warning Callout -->
+                        <div class="warning-callout">
+                            <i class="bi bi-exclamation-triangle" style="font-size: 18px; color: #ea580c; flex-shrink: 0;"></i>
+                            <div style="flex: 1;">
+                                <div style="font-weight: 600; font-size: 14px; color: #7c2d12; margin-bottom: 8px;">How Time Restrictions Work</div>
+                                <div style="font-size: 14px; color: #9a3412; line-height: 1.5;">
+                                    VMs can only be started during the allowed time window. Running VMs outside these hours will be automatically shut down. Session duration limits apply regardless of allowed hours. Students will receive clear error messages when restrictions apply.
                                 </div>
                             </div>
-                        </label>
-                    </div>
-                    
-                    <!-- Time Range -->
-                    <div id="time-range-settings" style="margin-bottom: 2rem; opacity: 0.5; pointer-events: none;">
-                        <label style="display: block; font-weight: 600; margin-bottom: 0.5rem;">
-                            Allowed Time Window
-                        </label>
-                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 0.5rem;">
-                            <div>
-                                <label style="display: block; color: #666; font-size: 0.85rem; margin-bottom: 0.25rem;">Start Time</label>
-                                <input type="time" id="hours-start" value="00:00" style="width: 100%; padding: 0.5rem; border: 1px solid #8a8886; border-radius: 4px;">
-                            </div>
-                            <div>
-                                <label style="display: block; color: #666; font-size: 0.85rem; margin-bottom: 0.25rem;">End Time</label>
-                                <input type="time" id="hours-end" value="23:00" style="width: 100%; padding: 0.5rem; border: 1px solid #8a8886; border-radius: 4px;">
-                            </div>
-                        </div>
-                        <p style="color: #666; font-size: 0.85rem; margin: 0.5rem 0 0 0;">
-                            Students can only start VMs during this time window (server timezone)
-                        </p>
-                    </div>
-                    
-                    <!-- Max Session Duration -->
-                    <div style="margin-bottom: 2rem;">
-                        <label style="display: block; font-weight: 600; margin-bottom: 0.5rem;">
-                            Maximum Session Duration
-                        </label>
-                        <div style="display: flex; align-items: center; gap: 1rem;">
-                            <input 
-                                type="number" 
-                                id="max-session-minutes" 
-                                min="0" 
-                                max="1440" 
-                                value="0" 
-                                placeholder="0"
-                                style="padding: 0.5rem; border: 1px solid #8a8886; border-radius: 4px; width: 100px;"
-                            >
-                            <span style="color: #666;">minutes (0 = unlimited)</span>
-                        </div>
-                        <p style="color: #666; font-size: 0.85rem; margin: 0.5rem 0 0 0;">
-                            Automatically shut down VMs after running for this duration (0-1440 minutes)
-                        </p>
-                    </div>
-                    
-                    <!-- Info Box -->
-                    <div style="background: #fff3cd; border: 1px solid #ffc107; border-radius: 6px; padding: 1rem; margin-bottom: 2rem;">
-                        <div style="display: flex; gap: 0.75rem;">
-                            <i class="bi bi-clock-history" style="color: #856404; font-size: 1.25rem;"></i>
-                            <div style="flex: 1;">
-                                <div style="font-weight: 600; color: #856404; margin-bottom: 0.5rem;">How Time Restrictions Work</div>
-                                <ul style="margin: 0; padding-left: 1.25rem; color: #856404; font-size: 0.9rem;">
-                                    <li>VMs can only be started during the allowed time window</li>
-                                    <li>Running VMs outside allowed hours will be automatically shut down</li>
-                                    <li>Session duration limits apply regardless of allowed hours</li>
-                                    <li>Students receive clear error messages when restrictions apply</li>
-                                </ul>
-                            </div>
                         </div>
                     </div>
-                    
-                    <!-- Save Button -->
-                    <div style="display: flex; gap: 1rem;">
-                        <button type="submit" class="btn-primary">
-                            <i class="bi bi-check-circle"></i> Save Schedule
-                        </button>
-                        <button type="button" class="btn-secondary" onclick="loadSettings()">
-                            <i class="bi bi-arrow-clockwise"></i> Reset
-                        </button>
-                    </div>
-                    
-                    <!-- Save Button -->
-                    <div style="display: flex; gap: 1rem;">
-                        <button type="submit" class="btn-primary">
+                </div>
+                
+                <!-- Settings Status Message -->
+                <div id="settings-status" style="display: none; margin-top: 24px; padding: 16px; border-radius: 8px;"></div>
+            </div>
+            
+            <!-- Sticky Footer with Action Buttons -->
+            <div class="settings-footer">
+                <div style="max-width: 1200px; margin: 0 auto; display: flex; justify-content: space-between; align-items: center;">
+                    <button type="button" class="btn-secondary" onclick="loadSettings()">
+                        <i class="bi bi-arrow-counterclockwise"></i> Reset to Saved
+                    </button>
+                    <div style="display: flex; gap: 12px;">
+                        <button type="button" class="btn-primary" onclick="saveAllSettings()">
                             <i class="bi bi-check-circle"></i> Save Settings
                         </button>
-                        <button type="button" class="btn-secondary" onclick="loadSettings()">
-                            <i class="bi bi-arrow-clockwise"></i> Reset
-                        </button>
                     </div>
-                </form>
-                
-                <!-- Settings Status -->
-                <div id="settings-status" style="margin-top: 2rem; padding: 1rem; border-radius: 6px; display: none;"></div>
+                </div>
             </div>
+            
+            <style>
+                /* Settings Card Styles */
+                .settings-card {
+                    background: white;
+                    border: 1px solid #e2e8f0;
+                    border-radius: 8px;
+                    margin-bottom: 16px;
+                    overflow: hidden;
+                }
+                
+                .settings-card-header {
+                    padding: 24px;
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    cursor: pointer;
+                    user-select: none;
+                    transition: background-color 0.2s;
+                }
+                
+                .settings-card-header:hover {
+                    background-color: #f8fafc;
+                }
+                
+                .settings-card-content {
+                    padding: 0 24px 24px 24px;
+                    display: block;
+                }
+                
+                .settings-card-content.collapsed {
+                    display: none;
+                }
+                
+                /* Settings Grid Layout */
+                .settings-grid {
+                    display: grid;
+                    grid-template-columns: 1fr 1fr;
+                    gap: 24px;
+                    margin-bottom: 24px;
+                }
+                
+                @media (max-width: 768px) {
+                    .settings-grid {
+                        grid-template-columns: 1fr;
+                    }
+                }
+                
+                /* Setting Field Styles */
+                .setting-field {
+                    display: flex;
+                    flex-direction: column;
+                }
+                
+                .setting-label {
+                    display: block;
+                    font-weight: 600;
+                    font-size: 15px;
+                    color: #1e293b;
+                    margin-bottom: 8px;
+                }
+                
+                .setting-description {
+                    color: #64748b;
+                    font-size: 13px;
+                    margin: 8px 0 0 0;
+                    line-height: 1.4;
+                }
+                
+                /* Input Styles */
+                .settings-input {
+                    padding: 10px 12px;
+                    border: 1px solid #cbd5e1;
+                    border-radius: 6px;
+                    font-size: 14px;
+                    color: #1e293b;
+                    transition: border-color 0.2s, box-shadow 0.2s;
+                }
+                
+                .settings-input:focus {
+                    outline: none;
+                    border-color: #0ea5e9;
+                    box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.1);
+                }
+                
+                .settings-toggle {
+                    width: 20px;
+                    height: 20px;
+                    cursor: pointer;
+                    accent-color: #0ea5e9;
+                }
+                
+                .settings-slider {
+                    flex: 1;
+                    height: 6px;
+                    border-radius: 3px;
+                    background: #e2e8f0;
+                    outline: none;
+                    -webkit-appearance: none;
+                }
+                
+                .settings-slider::-webkit-slider-thumb {
+                    -webkit-appearance: none;
+                    appearance: none;
+                    width: 18px;
+                    height: 18px;
+                    border-radius: 50%;
+                    background: #0ea5e9;
+                    cursor: pointer;
+                    transition: transform 0.2s;
+                }
+                
+                .settings-slider::-webkit-slider-thumb:hover {
+                    transform: scale(1.1);
+                }
+                
+                .settings-slider::-moz-range-thumb {
+                    width: 18px;
+                    height: 18px;
+                    border-radius: 50%;
+                    background: #0ea5e9;
+                    cursor: pointer;
+                    border: none;
+                    transition: transform 0.2s;
+                }
+                
+                .settings-slider::-moz-range-thumb:hover {
+                    transform: scale(1.1);
+                }
+                
+                /* Info Callout Styles */
+                .info-callout {
+                    display: flex;
+                    gap: 12px;
+                    padding: 16px;
+                    background: #f0f9ff;
+                    border: 1px solid #bae6fd;
+                    border-radius: 8px;
+                    margin-top: 8px;
+                }
+                
+                .warning-callout {
+                    display: flex;
+                    gap: 12px;
+                    padding: 16px;
+                    background: #fff7ed;
+                    border: 1px solid #fed7aa;
+                    border-radius: 8px;
+                    margin-top: 8px;
+                }
+                
+                /* Sticky Footer Styles */
+                .settings-footer {
+                    position: fixed;
+                    bottom: 0;
+                    left: 0;
+                    right: 0;
+                    background: white;
+                    border-top: 1px solid #e2e8f0;
+                    padding: 16px 24px;
+                    box-shadow: 0 -4px 6px -1px rgba(0, 0, 0, 0.05);
+                    z-index: 100;
+                }
+                
+                /* Disabled State for Time Window */
+                .setting-field.disabled {
+                    opacity: 0.5;
+                    pointer-events: none;
+                }
+            </style>
+            
+            <script>
+                // Toggle collapsible sections
+                function toggleSection(sectionId) {
+                    const content = document.getElementById(sectionId + '-content');
+                    const chevron = document.getElementById(sectionId + '-chevron');
+                    
+                    if (content.classList.contains('collapsed')) {
+                        content.classList.remove('collapsed');
+                        chevron.style.transform = 'rotate(0deg)';
+                    } else {
+                        content.classList.add('collapsed');
+                        chevron.style.transform = 'rotate(-90deg)';
+                    }
+                }
+                
+                // Toggle time restrictions enable/disable
+                function toggleTimeRestrictions() {
+                    const enabled = document.getElementById('restrict-hours').checked;
+                    const timeWindowField = document.getElementById('time-window-field');
+                    
+                    if (enabled) {
+                        timeWindowField.classList.remove('disabled');
+                    } else {
+                        timeWindowField.classList.add('disabled');
+                    }
+                }
+                
+                // Initialize on page load
+                document.addEventListener('DOMContentLoaded', function() {
+                    toggleTimeRestrictions();
+                });
+            </script>
         </div>
         {% endif %}
         
@@ -2523,78 +2730,21 @@ async function loadSettings() {
             
             document.getElementById('max-session-minutes').value = data.settings.max_session_minutes || 0;
             
-            // Update time range UI state
-            updateTimeRangeState();
+            // Update time restriction UI state
+            toggleTimeRestrictions();
         }
     } catch (e) {
         console.error('Failed to load settings:', e);
-        showAlert('Failed to load settings', 'error');
+        showSettingsStatus('Failed to load settings', 'error');
     }
 }
 
-// Toggle time range settings based on restrict hours checkbox
-function updateTimeRangeState() {
-    const restrictHours = document.getElementById('restrict-hours').checked;
-    const timeRangeDiv = document.getElementById('time-range-settings');
-    
-    if (restrictHours) {
-        timeRangeDiv.style.opacity = '1';
-        timeRangeDiv.style.pointerEvents = 'auto';
-    } else {
-        timeRangeDiv.style.opacity = '0.5';
-        timeRangeDiv.style.pointerEvents = 'none';
-    }
-}
-
-// Attach event listener to restrict hours checkbox
-document.getElementById('restrict-hours').addEventListener('change', updateTimeRangeState);
-
-// Handle settings form submission
-document.getElementById('settings-form').addEventListener('submit', async function(e) {
-    e.preventDefault();
-    
-    const enabled = document.getElementById('auto-shutdown-enabled').checked;
+// Unified save function for all settings
+async function saveAllSettings() {
+    // Gather all settings
+    const autoShutdownEnabled = document.getElementById('auto-shutdown-enabled').checked;
     const cpuThreshold = parseInt(document.getElementById('cpu-threshold').value);
     const idleMinutes = parseInt(document.getElementById('idle-minutes').value);
-    
-    // Validation
-    if (cpuThreshold < 5 || cpuThreshold > 50) {
-        showAlert('CPU threshold must be between 5% and 50%', 'error');
-        return;
-    }
-    
-    if (idleMinutes < 5 || idleMinutes > 240) {
-        showAlert('Idle duration must be between 5 and 240 minutes', 'error');
-        return;
-    }
-    
-    try {
-        const resp = await fetch(`/api/classes/{{ class_.id }}/settings`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                auto_shutdown_enabled: enabled,
-                auto_shutdown_cpu_threshold: cpuThreshold,
-                auto_shutdown_idle_minutes: idleMinutes
-            })
-        });
-        
-        const data = await resp.json();
-        
-        if (data.ok) {
-            showAlert('Auto-shutdown settings saved successfully', 'success');
-        } else {
-            showAlert(data.error || 'Failed to save settings', 'error');
-        }
-    } catch (e) {
-        console.error('Failed to save settings:', e);
-        showAlert('Failed to save settings', 'error');
-    }
-});
-
-// Handle hours form submission
-document.getElementById('hours-form').addEventListener('submit', async function(e) {
-    e.preventDefault();
     
     const restrictHours = document.getElementById('restrict-hours').checked;
     const hoursStart = document.getElementById('hours-start').value;
@@ -2606,13 +2756,23 @@ document.getElementById('hours-form').addEventListener('submit', async function(
     const endHour = parseInt(hoursEnd.split(':')[0]);
     
     // Validation
+    if (cpuThreshold < 5 || cpuThreshold > 50) {
+        showSettingsStatus('CPU threshold must be between 5% and 50%', 'error');
+        return;
+    }
+    
+    if (idleMinutes < 5 || idleMinutes > 240) {
+        showSettingsStatus('Idle duration must be between 5 and 240 minutes', 'error');
+        return;
+    }
+    
     if (restrictHours && startHour === endHour) {
-        showAlert('Start and end times cannot be the same', 'error');
+        showSettingsStatus('Start and end times cannot be the same', 'error');
         return;
     }
     
     if (maxSessionMinutes < 0 || maxSessionMinutes > 1440) {
-        showAlert('Session duration must be between 0 and 1440 minutes', 'error');
+        showSettingsStatus('Session duration must be between 0 and 1440 minutes', 'error');
         return;
     }
     
@@ -2621,6 +2781,9 @@ document.getElementById('hours-form').addEventListener('submit', async function(
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
+                auto_shutdown_enabled: autoShutdownEnabled,
+                auto_shutdown_cpu_threshold: cpuThreshold,
+                auto_shutdown_idle_minutes: idleMinutes,
                 restrict_hours: restrictHours,
                 hours_start: startHour,
                 hours_end: endHour,
@@ -2631,15 +2794,37 @@ document.getElementById('hours-form').addEventListener('submit', async function(
         const data = await resp.json();
         
         if (data.ok) {
-            showAlert('Schedule settings saved successfully', 'success');
+            showSettingsStatus('Settings saved successfully', 'success');
         } else {
-            showAlert(data.error || 'Failed to save settings', 'error');
+            showSettingsStatus(data.error || 'Failed to save settings', 'error');
         }
     } catch (e) {
         console.error('Failed to save settings:', e);
-        showAlert('Failed to save settings', 'error');
+        showSettingsStatus('Failed to save settings', 'error');
     }
-});
+}
+
+// Show settings status message
+function showSettingsStatus(message, type) {
+    const statusDiv = document.getElementById('settings-status');
+    statusDiv.textContent = message;
+    statusDiv.style.display = 'block';
+    
+    if (type === 'success') {
+        statusDiv.style.background = '#d1fae5';
+        statusDiv.style.border = '1px solid #6ee7b7';
+        statusDiv.style.color = '#065f46';
+    } else {
+        statusDiv.style.background = '#fee2e2';
+        statusDiv.style.border = '1px solid #fca5a5';
+        statusDiv.style.color = '#991b1b';
+    }
+    
+    // Auto-hide after 5 seconds
+    setTimeout(() => {
+        statusDiv.style.display = 'none';
+    }, 5000);
+}
 
 {% if is_student %}
 // Student session progress monitoring

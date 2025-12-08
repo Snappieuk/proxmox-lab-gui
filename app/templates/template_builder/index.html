@@ -695,30 +695,30 @@
 </style>
 
 <script>
+console.log('=== SCRIPT TAG EXECUTING ===');
+console.log('Window object:', typeof window);
+console.log('Document ready state:', document.readyState);
+
 // Global variables from Flask context
 const CURRENT_CLUSTER_ID = '{{ current_cluster }}';
-console.log('=== Template Builder JavaScript Loading ===');
 console.log('Template Builder initialized with cluster:', CURRENT_CLUSTER_ID);
-console.log('Script is executing - buttons should work');
 
-// Define functions in global scope explicitly
-window.showCreateFromScratch = function() {
-    console.log('showCreateFromScratch clicked');
+// Define functions in global scope IMMEDIATELY
+function showCreateFromScratch() {
+    console.log('showCreateFromScratch called');
     document.getElementById('build-modal').style.display = 'flex';
     loadBuildOptions();
-};
+}
 
-window.showConvertExisting = function() {
-    console.log('showConvertExisting clicked');
+function showConvertExisting() {
+    console.log('showConvertExisting called');
     alert('Convert Existing VM - Feature coming soon!\n\nThis will let you select an existing VM and convert it to a template.');
-};
+}
 
-window.showMigrateTemplate = async function() {
-    console.log('showMigrateTemplate clicked');
-    // Show migration modal
+async function showMigrateTemplate() {
+    console.log('showMigrateTemplate called');
     document.getElementById('migrate-modal').style.display = 'flex';
     
-    // Load migration options (clusters and storages)
     try {
         const response = await fetch('/api/templates/migration-options');
         const data = await response.json();
@@ -732,9 +732,15 @@ window.showMigrateTemplate = async function() {
         console.error('Failed to load migration options:', error);
         alert('Failed to load migration options: ' + error.message);
     }
-};
+}
 
-console.log('Functions defined:', typeof window.showCreateFromScratch, typeof window.showConvertExisting, typeof window.showMigrateTemplate);
+// Also attach to window for redundancy
+window.showCreateFromScratch = showCreateFromScratch;
+window.showConvertExisting = showConvertExisting;
+window.showMigrateTemplate = showMigrateTemplate;
+
+console.log('✅ Functions defined - types:', typeof showCreateFromScratch, typeof showConvertExisting, typeof showMigrateTemplate);
+console.log('✅ Window functions:', typeof window.showCreateFromScratch, typeof window.showConvertExisting, typeof window.showMigrateTemplate);
 
 // Load user's templates
 async function loadTemplates() {
@@ -742,38 +748,52 @@ async function loadTemplates() {
     const listDiv = document.getElementById('templates-list');
     
     try {
-        console.log('Loading templates from /api/templates...');
+        console.log('🔄 Loading templates from /api/templates...');
+        console.log('Current cluster ID:', CURRENT_CLUSTER_ID);
+        
         const response = await fetch('/api/templates');
-        console.log('Response status:', response.status);
+        console.log('📥 Response status:', response.status, response.statusText);
+        console.log('📥 Response headers:', Object.fromEntries(response.headers.entries()));
         
         if (!response.ok) {
-            console.error('HTTP error:', response.status, response.statusText);
-            loadingDiv.innerHTML = `<p style="color: #d32f2f;">Failed to load templates (HTTP ${response.status}). Please check server logs.</p>`;
+            const errorText = await response.text();
+            console.error('❌ HTTP error:', response.status, errorText);
+            loadingDiv.innerHTML = `<p style="color: #d32f2f;">Failed to load templates (HTTP ${response.status}): ${errorText}</p>`;
             return;
         }
         
-        const data = await response.json();
-        console.log('Templates data:', data);
+        const responseText = await response.text();
+        console.log('📄 Raw response text:', responseText.substring(0, 500));
+        
+        let data;
+        try {
+            data = JSON.parse(responseText);
+            console.log('✅ Parsed JSON data:', data);
+        } catch (parseError) {
+            console.error('❌ JSON parse error:', parseError);
+            loadingDiv.innerHTML = '<p style="color: #d32f2f;">Invalid JSON response from server</p>';
+            return;
+        }
         
         if (!data.ok) {
-            console.error('API returned ok=false');
-            loadingDiv.innerHTML = '<p style="color: #d32f2f;">Failed to load templates. API error.</p>';
+            console.error('❌ API returned ok=false:', data.error);
+            loadingDiv.innerHTML = `<p style="color: #d32f2f;">Failed to load templates: ${data.error || 'Unknown error'}</p>`;
             return;
         }
         
         if (!data.templates) {
-            console.error('No templates array in response');
-            loadingDiv.innerHTML = '<p style="color: #d32f2f;">Invalid API response format.</p>';
+            console.error('❌ No templates array in response, got:', Object.keys(data));
+            loadingDiv.innerHTML = '<p style="color: #d32f2f;">Invalid API response format (missing templates array)</p>';
             return;
         }
         
         if (data.templates.length === 0) {
-            console.log('No templates found in database');
+            console.log('ℹ️ No templates found in database');
             loadingDiv.innerHTML = '<p style="color: #666;">No templates found. Create your first template above!</p>';
             return;
         }
         
-        console.log(`Loaded ${data.templates.length} templates`);
+        console.log(`✅ Loaded ${data.templates.length} templates:`, data.templates.map(t => `${t.name} (${t.proxmox_vmid})`));
         loadingDiv.style.display = 'none';
         listDiv.style.display = 'block';
         
@@ -805,7 +825,8 @@ async function loadTemplates() {
         `).join('');
         
     } catch (error) {
-        console.error('Failed to load templates (exception):', error);
+        console.error('❌ Exception loading templates:', error);
+        console.error('Stack trace:', error.stack);
         if (loadingDiv) {
             loadingDiv.innerHTML = '<p style="color: #d32f2f;">Failed to load templates: ' + error.message + '</p>';
         }
