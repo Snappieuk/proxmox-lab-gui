@@ -27,7 +27,7 @@ api_class_template_bp = Blueprint('api_class_template', __name__, url_prefix='/a
 
 
 def require_teacher_or_admin(class_id: int):
-    """Verify user is teacher of class or admin."""
+    """Verify user is teacher, co-owner of class, or admin."""
     username = session.get('user', '').split('@')[0]
     user = get_user_by_username(username)
     
@@ -38,7 +38,8 @@ def require_teacher_or_admin(class_id: int):
     if not class_:
         return None, jsonify({'ok': False, 'error': 'Class not found'}), 404
     
-    if not user.is_adminer and class_.teacher_id != user.id:
+    # Check if user is admin, primary teacher, or co-owner
+    if not user.is_adminer and not class_.is_owner(user):
         return None, jsonify({'ok': False, 'error': 'Permission denied'}), 403
     
     return class_, None, None

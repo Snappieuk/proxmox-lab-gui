@@ -409,12 +409,22 @@ function toggleSection(tableId) {
     const table = document.getElementById(tableId);
     const icon = document.getElementById(tableId + '-icon');
     
-    if (table.style.display === 'none') {
-        table.style.display = '';
-        icon.className = 'bi bi-chevron-down';
-    } else {
+    if (!table || !icon) {
+        console.error('Table or icon not found:', tableId);
+        return;
+    }
+    
+    // Check if table is currently visible (handles empty string or 'table'/'block' values)
+    const isVisible = table.style.display !== 'none';
+    
+    if (isVisible) {
+        // Hide the table
         table.style.display = 'none';
         icon.className = 'bi bi-chevron-right';
+    } else {
+        // Show the table
+        table.style.display = '';
+        icon.className = 'bi bi-chevron-down';
     }
 }
 
@@ -431,13 +441,19 @@ function applyFilters() {
         const node = row.getAttribute('data-node');
         const text = row.textContent.toLowerCase();
         
-        // Get status from badge text
+        // Get status from badge text - normalize and extract status
         const statusBadge = row.querySelector('.badge');
         let rowStatus = 'unknown';
         if (statusBadge) {
-            const badgeText = statusBadge.textContent.toLowerCase();
-            if (badgeText.includes('running')) rowStatus = 'running';
-            else if (badgeText.includes('stopped')) rowStatus = 'stopped';
+            const badgeText = statusBadge.textContent.toLowerCase().trim();
+            // Remove bullet point and extract status
+            if (badgeText.includes('running')) {
+                rowStatus = 'running';
+            } else if (badgeText.includes('stopped')) {
+                rowStatus = 'stopped';
+            } else if (badgeText.includes('starting')) {
+                rowStatus = 'running'; // Treat "starting" as running for filter purposes
+            }
         }
         
         const matchesSearch = !searchTerm || text.includes(searchTerm);
