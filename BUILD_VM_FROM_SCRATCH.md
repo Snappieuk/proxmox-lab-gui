@@ -1,7 +1,7 @@
 # Build VM from Scratch Feature
 
 ## Overview
-The "Build VM from Scratch" feature allows teachers and administrators to create fully configured VMs with comprehensive hardware and network settings, based on the deployment architecture from deployment.py.
+The "Build VM from Scratch" feature allows teachers and administrators to create VMs from ISO images with comprehensive hardware configuration. VMs are automatically created on the node where the ISO is located.
 
 ## Architecture
 
@@ -9,22 +9,20 @@ The "Build VM from Scratch" feature allows teachers and administrators to create
 
 1. **Service Layer** (`app/services/vm_deployment_service.py`)
    - Core VM deployment logic
+   - Automatic node detection from ISO location
    - Handles both Linux and Windows VMs
-   - Cloud-init integration for Linux VMs
    - VirtIO driver support for Windows VMs
-   - ISO management and configuration
+   - ISO-based VM creation
 
 2. **API Layer** (`app/routes/api/vm_builder.py`)
    - `/api/vm-builder/build` - Build VM with full configuration
-   - `/api/vm-builder/nodes` - List available nodes
+   - `/api/vm-builder/isos` - List available ISO images from all nodes
    - `/api/vm-builder/storages` - List storage pools
-   - `/api/vm-builder/isos` - List available ISO images
 
 3. **UI Layer** (`app/templates/template_builder/index.html`)
-   - Modal form with comprehensive configuration options
-   - Dynamic OS-specific options (Linux cloud-init vs Windows)
-   - Real-time storage and ISO loading
-   - Network configuration (DHCP or static)
+   - Modal form with hardware configuration options
+   - ISO selection from all available nodes
+   - Real-time ISO loading
 
 ## Features
 
@@ -33,7 +31,7 @@ The "Build VM from Scratch" feature allows teachers and administrators to create
 **Basic Configuration:**
 - VM name
 - OS type (Ubuntu, Debian, CentOS, Rocky, Alma, Windows)
-- Target node selection
+- ISO image selection (required)
 - Storage pool selection
 
 **Hardware Configuration:**
@@ -42,22 +40,10 @@ The "Build VM from Scratch" feature allows teachers and administrators to create
 - Disk size (8GB - 2TB)
 - Network bridge selection
 
-**Linux-Specific (Cloud-init):**
-- Username and password
-- DHCP or static IP configuration
-- Gateway and DNS configuration
-- SSH configuration
-- Automatic package installation (qemu-guest-agent, openssh-server)
-
 **Windows-Specific:**
 - Automatic VirtIO drivers ISO attachment
-- UEFI/BIOS configuration
+- UEFI configuration
 - Manual installation via console
-
-**ISO Options:**
-- Optional ISO selection for manual OS installation
-- Auto-disables cloud-init when ISO selected
-- Downloads from available ISO storage
 
 **Template Options:**
 - Checkbox to convert VM to template after creation
@@ -65,38 +51,31 @@ The "Build VM from Scratch" feature allows teachers and administrators to create
 
 ## Workflow
 
-### Linux VM with Cloud-init (Recommended)
+### VM Creation with ISO
 
-1. Select Linux OS type (Ubuntu, Debian, etc.)
-2. Configure hardware (CPU, RAM, disk)
-3. Provide username and password
-4. Choose DHCP or configure static IP
-5. Leave ISO blank
+1. Select OS type (Ubuntu, Debian, Windows, etc.)
+2. Select ISO image from dropdown (shows node and storage location)
+3. Configure hardware (CPU, RAM, disk)
+4. Choose storage pool for VM disk
+5. Optionally enable "Convert to template after creation"
 6. Click "Build VM"
 
-**Result:** Fully configured VM with:
-- Operating system deployed from cloud image
-- User account configured
-- Network configured (DHCP or static)
-- QEMU guest agent installed and running
-- SSH enabled with password authentication
-- VM automatically started
+**Result:** VM created with:
+- ISO attached for OS installation
+- Windows VMs get VirtIO drivers ISO automatically
+- VM created on the node where ISO is located
+- VM left stopped for manual OS installation via console
+- Optional conversion to template after creation
 
-### Linux VM with ISO (Manual Install)
+### Example: Linux VM
 
-1. Select Linux OS type
-2. Configure hardware
-3. Select ISO from dropdown
-4. Click "Build VM"
+1. Select "Ubuntu" OS type
+2. Select `ubuntu-22.04-live-server-amd64.iso` from dropdown
+3. Configure: 4 cores, 4096MB RAM, 50GB disk
+4. Select storage: `local-lvm`
+5. Click "Build VM"
 
-**Result:** VM created with ISO attached, ready for manual installation via console.
-
-### Windows VM
-
-1. Select "Windows" OS type
-2. Configure hardware
-3. Select Windows ISO
-4. Click "Build VM"
+**Result:** VM created on node where ISO exists, ready to boot from console and install Ubuntu manually.
 
 **Result:** VM created with:
 - Windows ISO attached
@@ -118,36 +97,30 @@ The "Build VM from Scratch" feature allows teachers and administrators to create
 
 For Linux VMs without ISO, the service:
 
-1. Creates VM with empty disk
-2. Adds cloud-init drive (`ide2:cloudinit`)
-3. Configures cloud-init settings:
-   - User account (`ciuser`, `cipassword`)
-   - Network configuration (`ipconfig0`)
-   - DNS servers (`searchdomain`)
-   - SSH keys (optional)
-4. Creates custom user-data snippet:
-   ```yaml
-   #cloud-config
-   users:
-     - name: <username>
-       sudo: ALL=(ALL) NOPASSWD:ALL
-       groups: users, admin, sudo
-       shell: /bin/bash
-   packages:
-     - qemu-guest-agent
-     - openssh-server
-   runcmd:
-     - systemctl enable qemu-guest-agent
-     - systemctl start qemu-guest-agent
-     - sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
-     - systemctl restart ssh
-   ```
-5. Starts VM (cloud-init runs automatically on first boot)
+
+### Example: Windows VM
+
+1. Select "Windows" OS type
+2. Select `Win10_22H2_English_x64.iso` from dropdown
+3. Configure: 4 cores, 8192MB RAM, 100GB disk
+4. Select storage: `local-lvm`
+5. Click "Build VM"
+
+**Result:** VM created with Windows ISO and VirtIO drivers ISO attached, UEFI configured, ready to boot and install Windows.
+
+## Technical Details
+
+### Node Auto-detection
+
+When you select an ISO, the system:
+1. Scans all nodes in the cluster
+2. Checks all storage pools for ISO content
+3. Finds the node and storage where the ISO exists
+4. Creates the VM on that node automatically
 
 ### Windows VirtIO Drivers
 
 For Windows VMs, the service:
-
 1. Checks for `virtio-win.iso` in storage
 2. If not found, downloads from Fedora repository
 3. Attaches VirtIO ISO to `ide0`
@@ -156,7 +129,7 @@ For Windows VMs, the service:
 
 ### Advanced Hardware Options
 
-The service supports all deployment.py hardware options:
+The service supports advanced hardware options:
 
 - **CPU:** type, flags, limit, NUMA
 - **BIOS:** SeaBIOS or UEFI (OVMF)
@@ -174,36 +147,34 @@ The service supports all deployment.py hardware options:
 
 ### Common Scenarios
 
-1. **Missing cloud-init credentials:**
-   - Alert: "For Linux VMs without ISO, you must provide username and password"
-   - Solution: Fill in username/password or select an ISO
+1. **No ISO selected:**
+   - Alert: "Please select an ISO image"
+   - Solution: Select an ISO from the dropdown
 
-2. **Storage full:**
+2. **ISO not found:**
+   - Error: "ISO file not found on any node"
+   - Solution: Verify ISO uploaded to Proxmox storage
+
+3. **Storage full:**
    - API returns error with storage details
-   - Solution: Select different storage pool
+   - Solution: Select different storage pool or free up space
 
-3. **VirtIO ISO download failure:**
+4. **VirtIO ISO download failure:**
    - VM created without VirtIO drivers
    - Warning logged, VM still usable
    - Solution: Manually download and upload virtio-win.iso
 
-4. **Cloud-init failure:**
-   - VM created and started, but cloud-init may not run
-   - Check VM console for cloud-init logs
-   - Solution: Reinstall with ISO or debug cloud-init
-
 ## Security Considerations
 
-1. **Password transmission:** Passwords sent over HTTPS, stored temporarily in Proxmox cloud-init config
-2. **SSH keys:** Supported as alternative to password authentication
-3. **Network isolation:** VMs created on specified bridge (vmbr0 default)
-4. **Access control:** Only teachers and administrators can build VMs
+1. **Access control:** Only teachers and administrators can build VMs
+2. **Network isolation:** VMs created on specified bridge (vmbr0 default)
+3. **Manual OS installation:** No automatic credentials or network config (user controls security)
 
 ## Future Enhancements
 
 Potential improvements:
 
-1. **Cloud image selection:** Choose from pre-downloaded cloud images (Ubuntu 22.04, Debian 12, etc.)
+1. **Storage selection UI:** Show available space per storage pool
 2. **Advanced hardware options UI:** Expose CPU flags, NUMA, etc. in modal
 3. **Bulk VM creation:** Build multiple VMs with same configuration
 4. **Progress tracking:** Show real-time deployment progress
@@ -214,30 +185,28 @@ Potential improvements:
 
 ### Similarities
 - Uses same ProxmoxAPI operations (`qm create`, `config.put`)
-- Cloud-init configuration approach
 - VirtIO driver handling
 - SSH executor for complex operations
 - Error handling patterns
 
 ### Differences
-- **Simplified UI:** Fewer options exposed (deployment.py has 40+ parameters)
-- **No database:** VMs not tracked in depl0y database
-- **No cloud image templates:** Uses direct ISO or cloud-init, not template cloning
+- **Simplified approach:** ISO-only, no cloud-init complexity
+- **No database:** VMs not tracked in deploy database
+- **Automatic node detection:** No manual node selection
 - **Immediate execution:** No background job queue
-- **Manual template management:** Teachers manage templates via Proxmox GUI
+- **Manual OS installation:** User installs OS via console (no automation)
 
 ### Integration Points
 - Both use `ProxmoxAPI` library
 - SSH operations use similar patterns
-- Cloud-init user-data format identical
 - VirtIO ISO download logic ported directly
 
 ## Deployment
 
 ### Prerequisites
 - Proxmox cluster configured in app/config.py
-- SSH access to Proxmox nodes (for advanced operations)
-- Storage with ISO content enabled
+- ISO images uploaded to Proxmox storage (must have 'iso' content type)
+- Storage with 'images' content enabled for VM disks
 - (Optional) virtio-win.iso uploaded for Windows VMs
 
 ### Installation
@@ -257,17 +226,14 @@ Potential improvements:
 3. Fill in form:
    - Name: `test-ubuntu-vm`
    - OS: Ubuntu
-   - Node: `pve1`
+   - ISO: `ubuntu-22.04-live-server-amd64.iso`
+   - Storage: `local-lvm`
    - CPU: 2 cores
    - Memory: 2048 MB
    - Disk: 32 GB
-   - Username: `testuser`
-   - Password: `TestPassword123`
-   - DHCP: checked
 4. Click "Build VM"
-5. Verify VM created in Proxmox
-6. Check VM console for cloud-init progress
-7. SSH to VM after boot completes
+5. Verify VM created in Proxmox on node where ISO exists
+6. Open VM console and install OS manually
 
 ## Troubleshooting
 
@@ -288,8 +254,6 @@ Potential improvements:
 ### Network not configured
 - Verify network bridge exists (`vmbr0`)
 - Check Proxmox network configuration
-- Verify DHCP server available (if using DHCP)
-- Check static IP settings (if not using DHCP)
 
 ### Permission denied
 - Verify user is teacher or admin
@@ -298,45 +262,35 @@ Potential improvements:
 
 ## API Examples
 
-### Build Linux VM with DHCP
+### Build Linux VM with ISO
 ```bash
 curl -X POST http://localhost:8080/api/vm-builder/build \
   -H "Content-Type: application/json" \
   -d '{
     "vm_name": "ubuntu-test",
     "os_type": "ubuntu",
-    "node": "pve1",
+    "iso_file": "local:iso/ubuntu-22.04-live-server-amd64.iso",
     "cpu_cores": 2,
     "memory_mb": 2048,
     "disk_size_gb": 32,
     "storage": "local-lvm",
-    "network_bridge": "vmbr0",
-    "username": "ubuntu",
-    "password": "SecurePass123",
-    "use_dhcp": true
+    "network_bridge": "vmbr0"
   }'
 ```
 
-### Build Linux VM with Static IP
+### Build Linux VM as Template
 ```bash
 curl -X POST http://localhost:8080/api/vm-builder/build \
   -H "Content-Type: application/json" \
   -d '{
-    "vm_name": "debian-web",
+    "vm_name": "debian-template",
     "os_type": "debian",
-    "node": "pve2",
+    "iso_file": "local:iso/debian-12.0.0-amd64-netinst.iso",
     "cpu_cores": 4,
     "memory_mb": 4096,
     "disk_size_gb": 64,
-    "storage": "TRUENAS-NFS",
+    "storage": "local-lvm",
     "network_bridge": "vmbr0",
-    "username": "admin",
-    "password": "SecurePass123",
-    "use_dhcp": false,
-    "ip_address": "192.168.1.100",
-    "netmask": "24",
-    "gateway": "192.168.1.1",
-    "dns_servers": "8.8.8.8,8.8.4.4",
     "convert_to_template": true
   }'
 ```
@@ -348,28 +302,45 @@ curl -X POST http://localhost:8080/api/vm-builder/build \
   -d '{
     "vm_name": "windows-10",
     "os_type": "windows",
-    "node": "pve1",
+    "iso_file": "local:iso/Win10_22H2_English_x64.iso",
     "cpu_cores": 4,
     "memory_mb": 8192,
     "disk_size_gb": 128,
     "storage": "local-lvm",
-    "iso_storage": "local",
-    "iso_file": "local:iso/Win10_22H2_English_x64.iso",
     "network_bridge": "vmbr0",
     "bios_type": "ovmf"
   }'
 ```
 
-### List Available Nodes
-```bash
-curl http://localhost:8080/api/vm-builder/nodes
-```
-
 ### List Available ISOs
 ```bash
-curl http://localhost:8080/api/vm-builder/isos?node=pve1&storage=local
+curl http://localhost:8080/api/vm-builder/isos
+```
+
+Response:
+```json
+{
+  "ok": true,
+  "isos": [
+    {
+      "volid": "local:iso/ubuntu-22.04-live-server-amd64.iso",
+      "name": "ubuntu-22.04-live-server-amd64.iso",
+      "size": 1474873344,
+      "node": "pve1",
+      "storage": "local"
+    },
+    {
+      "volid": "local:iso/Win10_22H2_English_x64.iso",
+      "name": "Win10_22H2_English_x64.iso",
+      "size": 5200000000,
+      "node": "pve1",
+      "storage": "local"
+    }
+  ]
+}
 ```
 
 ## Conclusion
 
-The "Build VM from Scratch" feature provides a comprehensive, user-friendly interface for creating VMs with full configuration control. It integrates deployment.py's robust VM creation logic while maintaining the simplicity expected by teachers and administrators. The feature supports both automated cloud-init deployment (for Linux) and manual ISO installation (for any OS), making it flexible for various use cases.
+The "Build VM from Scratch" feature provides a simple, ISO-based interface for creating VMs with hardware configuration control. VMs are automatically created on the node where the ISO is located, eliminating manual node selection. The feature supports manual OS installation for both Linux and Windows, making it flexible for creating custom templates or lab VMs.
+

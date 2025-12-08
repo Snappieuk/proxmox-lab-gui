@@ -25,9 +25,9 @@ logger = logging.getLogger(__name__)
 
 def build_vm_from_scratch(
     cluster_id: str,
-    node: str,
     vm_name: str,
     os_type: str,
+    iso_file: str,
     # Hardware configuration
     cpu_cores: int = 2,
     cpu_sockets: int = 1,
@@ -35,20 +35,8 @@ def build_vm_from_scratch(
     disk_size_gb: int = 32,
     # Network configuration
     network_bridge: str = "vmbr0",
-    use_dhcp: bool = True,
-    ip_address: Optional[str] = None,
-    netmask: Optional[str] = None,
-    gateway: Optional[str] = None,
-    dns_servers: Optional[str] = None,
-    # Cloud-init configuration (for Linux)
-    username: Optional[str] = None,
-    password: Optional[str] = None,
-    ssh_key: Optional[str] = None,
     # Storage configuration
     storage: str = "local-lvm",
-    iso_storage: str = "local",
-    # ISO configuration
-    iso_file: Optional[str] = None,
     # Advanced hardware options
     cpu_type: str = "host",
     cpu_flags: Optional[str] = None,
@@ -66,25 +54,34 @@ def build_vm_from_scratch(
     convert_to_template: bool = False
 ) -> Tuple[bool, Optional[int], str]:
     """
-    Build a VM from scratch with comprehensive configuration options.
+    Build a VM from scratch with ISO-based installation.
+    VM will be created on the node where the ISO is located.
     
     Args:
         cluster_id: Proxmox cluster ID
-        node: Node name to deploy on
         vm_name: Name for the VM
         os_type: OS type (ubuntu, debian, centos, rocky, alma, windows)
+        iso_file: ISO file path (e.g., 'local:iso/ubuntu-22.04.iso')
         ... (see parameters above)
         
     Returns:
         Tuple of (success: bool, vmid: Optional[int], message: str)
     """
     try:
-        logger.info(f"Building VM from scratch: {vm_name} on cluster {cluster_id}, node {node}")
+        logger.info(f"Building VM from scratch: {vm_name} on cluster {cluster_id} with ISO {iso_file}")
         
         # Get Proxmox connection
         proxmox = get_proxmox_admin_for_cluster(cluster_id)
         if not proxmox:
             return False, None, f"Failed to connect to cluster {cluster_id}"
+        
+        # Find which node has the ISO
+        logger.info(f"Detecting node for ISO {iso_file}...")
+        node = _find_node_with_iso(proxmox, iso_file)
+        if not node:
+            return False, None, f"Could not find ISO {iso_file} on any node"
+        
+        logger.info(f"Building VM on node {node}")
         
         # Get cluster config for SSH operations
         cluster_config = None
@@ -104,70 +101,36 @@ def build_vm_from_scratch(
         # Determine VM type (Windows vs Linux)
         is_windows = os_type.lower() in ['windows', 'win10', 'win11', 'windows10', 'windows11']
         
-        if is_windows:
-            # Deploy Windows VM
-            success, message = _deploy_windows_vm(
-                proxmox=proxmox,
-                cluster_config=cluster_config,
-                node=node,
-                vmid=vmid,
-                vm_name=vm_name,
-                cpu_cores=cpu_cores,
-                cpu_sockets=cpu_sockets,
-                memory_mb=memory_mb,
-                disk_size_gb=disk_size_gb,
-                storage=storage,
-                iso_storage=iso_storage,
-                iso_file=iso_file,
-                network_bridge=network_bridge,
-                cpu_type=cpu_type,
-                bios_type=bios_type,
-                machine_type=machine_type,
-                vga_type=vga_type,
-                boot_order=boot_order,
-                scsihw=scsihw,
-                agent_enabled=agent_enabled,
-                onboot=onboot,
-                convert_to_template=convert_to_template
-            )
-        else:
-            # Deploy Linux VM
-            success, message = _deploy_linux_vm(
-                proxmox=proxmox,
-                cluster_config=cluster_config,
-                node=node,
-                vmid=vmid,
-                vm_name=vm_name,
-                os_type=os_type,
-                cpu_cores=cpu_cores,
-                cpu_sockets=cpu_sockets,
-                memory_mb=memory_mb,
-                disk_size_gb=disk_size_gb,
-                storage=storage,
-                iso_file=iso_file,
-                network_bridge=network_bridge,
-                use_dhcp=use_dhcp,
-                ip_address=ip_address,
-                netmask=netmask,
-                gateway=gateway,
-                dns_servers=dns_servers,
-                username=username,
-                password=password,
-                ssh_key=ssh_key,
-                cpu_type=cpu_type,
-                cpu_flags=cpu_flags,
-                cpu_limit=cpu_limit,
-                numa_enabled=numa_enabled,
-                bios_type=bios_type,
-                machine_type=machine_type,
-                vga_type=vga_type,
-                boot_order=boot_order,
-                scsihw=scsihw,
-                tablet=tablet,
-                agent_enabled=agent_enabled,
-                onboot=onboot,
-                convert_to_template=convert_to_template
-            )
+        # Deploy VM with ISO
+        success, message = _deploy_vm_with_iso(
+            proxmox=proxmox,
+            cluster_config=cluster_config,
+            node=node,
+            vmid=vmid,
+            vm_name=vm_name,
+            os_type=os_type,
+            is_windows=is_windows,
+            cpu_cores=cpu_cores,
+            cpu_sockets=cpu_sockets,
+            memory_mb=memory_mb,
+            disk_size_gb=disk_size_gb,
+            storage=storage,
+            iso_file=iso_file,
+            network_bridge=network_bridge,
+            cpu_type=cpu_type,
+            cpu_flags=cpu_flags,
+            cpu_limit=cpu_limit,
+            numa_enabled=numa_enabled,
+            bios_type=bios_type,
+            machine_type=machine_type,
+            vga_type=vga_type,
+            boot_order=boot_order,
+            scsihw=scsihw,
+            tablet=tablet,
+            agent_enabled=agent_enabled,
+            onboot=onboot,
+            convert_to_template=convert_to_template
+        )
         
         if success:
             return True, vmid, message
@@ -179,28 +142,57 @@ def build_vm_from_scratch(
         return False, None, str(e)
 
 
-def _deploy_linux_vm(
+def _find_node_with_iso(proxmox, iso_file: str) -> Optional[str]:
+    """Find which node has the specified ISO."""
+    try:
+        # Get all nodes
+        nodes = proxmox.nodes.get()
+        
+        # Extract storage from iso_file (format: storage:iso/filename)
+        if ':' not in iso_file:
+            logger.error(f"Invalid ISO path format: {iso_file}")
+            return None
+        
+        storage_part = iso_file.split(':')[0]
+        
+        # Check each node for the ISO
+        for node in nodes:
+            try:
+                node_name = node['node']
+                logger.debug(f"Checking node {node_name} for ISO {iso_file}")
+                # Get storage content for this node
+                storage_content = proxmox.nodes(node_name).storage(storage_part).content.get()
+                for item in storage_content:
+                    if item.get('volid') == iso_file:
+                        logger.info(f"Found ISO {iso_file} on node {node_name}")
+                        return node_name
+            except Exception as e:
+                logger.debug(f"Could not check node {node.get('node')}: {e}")
+                continue
+        
+        logger.warning(f"ISO {iso_file} not found on any node")
+        return None
+        
+    except Exception as e:
+        logger.error(f"Failed to find node with ISO: {e}")
+        return None
+
+
+def _deploy_vm_with_iso(
     proxmox,
     cluster_config: Dict,
     node: str,
     vmid: int,
     vm_name: str,
     os_type: str,
+    is_windows: bool,
     cpu_cores: int,
     cpu_sockets: int,
     memory_mb: int,
     disk_size_gb: int,
     storage: str,
-    iso_file: Optional[str],
+    iso_file: str,
     network_bridge: str,
-    use_dhcp: bool,
-    ip_address: Optional[str],
-    netmask: Optional[str],
-    gateway: Optional[str],
-    dns_servers: Optional[str],
-    username: Optional[str],
-    password: Optional[str],
-    ssh_key: Optional[str],
     cpu_type: str,
     cpu_flags: Optional[str],
     cpu_limit: Optional[int],
@@ -215,9 +207,18 @@ def _deploy_linux_vm(
     onboot: bool,
     convert_to_template: bool
 ) -> Tuple[bool, str]:
-    """Deploy a Linux VM with optional cloud-init configuration."""
+    """Deploy a VM with ISO-based installation."""
     try:
-        logger.info(f"Creating Linux VM {vmid} ({os_type}) on node {node}")
+        logger.info(f"Creating VM {vmid} ({os_type}) on node {node} with ISO {iso_file}")
+        
+        # Determine OS type for Proxmox
+        if is_windows:
+            ostype = "win10"
+            # Use UEFI for Windows by default
+            if bios_type == "seabios":
+                bios_type = "ovmf"
+        else:
+            ostype = "l26"  # Linux 2.6+ kernel
         
         # Build VM configuration
         vm_config = {
@@ -227,9 +228,9 @@ def _deploy_linux_vm(
             "sockets": cpu_sockets,
             "memory": memory_mb,
             "scsihw": scsihw,
-            f"scsi0": f"{storage}:{disk_size_gb}",
+            "scsi0": f"{storage}:{disk_size_gb}",
             "net0": f"virtio,bridge={network_bridge}",
-            "ostype": "l26",  # Linux 2.6+ kernel
+            "ostype": ostype,
             "cpu": cpu_type,
             "bios": bios_type,
             "machine": machine_type,
@@ -252,9 +253,17 @@ def _deploy_linux_vm(
         if numa_enabled:
             vm_config["numa"] = 1
         
-        # Add ISO if specified
-        if iso_file:
-            vm_config["ide2"] = f"{iso_file},media=cdrom"
+        # Add ISO
+        vm_config["ide2"] = f"{iso_file},media=cdrom"
+        
+        # For Windows, try to add VirtIO drivers ISO
+        if is_windows:
+            # Extract storage from iso_file
+            iso_storage = iso_file.split(':')[0] if ':' in iso_file else 'local'
+            virtio_iso = _ensure_virtio_iso(proxmox, node, iso_storage)
+            if virtio_iso:
+                logger.info(f"Adding VirtIO ISO: {virtio_iso}")
+                vm_config["ide0"] = f"{virtio_iso},media=cdrom"
         
         # Create VM
         logger.info(f"Creating VM with config: {vm_config}")
@@ -265,49 +274,21 @@ def _deploy_linux_vm(
         # Wait for VM creation to finalize
         time.sleep(2)
         
-        # If cloud-init credentials provided, configure cloud-init
-        if username and password and not iso_file:
-            logger.info(f"Configuring cloud-init for VM {vmid}")
-            success = _configure_cloud_init(
-                proxmox=proxmox,
-                cluster_config=cluster_config,
-                node=node,
-                vmid=vmid,
-                storage=storage,
-                use_dhcp=use_dhcp,
-                ip_address=ip_address,
-                netmask=netmask,
-                gateway=gateway,
-                dns_servers=dns_servers,
-                username=username,
-                password=password,
-                ssh_key=ssh_key
-            )
-            
-            if not success:
-                logger.warning(f"Cloud-init configuration failed for VM {vmid}")
-        
         # Convert to template if requested
         if convert_to_template:
             logger.info(f"Converting VM {vmid} to template")
             proxmox.nodes(node).qemu(vmid).template.post()
-            return True, f"VM {vmid} created and converted to template successfully"
+            return True, f"VM {vmid} created and converted to template successfully. Ready to use in classes."
         
-        # Start VM if not converting to template
-        logger.info(f"Starting VM {vmid}")
-        proxmox.nodes(node).qemu(vmid).status.start.post()
-        
-        if iso_file:
-            return True, f"VM {vmid} created and started. Access via console to install {os_type}."
-        else:
-            return True, f"VM {vmid} created and started successfully."
+        # VM left stopped for manual installation
+        return True, f"VM {vmid} created successfully. Boot VM via console to begin {os_type} installation."
             
     except Exception as e:
-        logger.error(f"Failed to deploy Linux VM: {e}", exc_info=True)
+        logger.error(f"Failed to deploy VM: {e}", exc_info=True)
         return False, f"Failed to create VM: {str(e)}"
 
 
-def _deploy_windows_vm(
+def list_available_isos(cluster_id: str) -> Tuple[bool, list, str]:
     proxmox,
     cluster_config: Dict,
     node: str,
@@ -392,117 +373,6 @@ def _deploy_windows_vm(
         return False, f"Failed to create Windows VM: {str(e)}"
 
 
-def _configure_cloud_init(
-    proxmox,
-    cluster_config: Dict,
-    node: str,
-    vmid: int,
-    storage: str,
-    use_dhcp: bool,
-    ip_address: Optional[str],
-    netmask: Optional[str],
-    gateway: Optional[str],
-    dns_servers: Optional[str],
-    username: str,
-    password: str,
-    ssh_key: Optional[str]
-) -> bool:
-    """Configure cloud-init for a VM."""
-    try:
-        # Add cloud-init drive
-        logger.info(f"Adding cloud-init drive to VM {vmid}")
-        proxmox.nodes(node).qemu(vmid).config.put(ide2=f"{storage}:cloudinit")
-        
-        # Prepare IP configuration
-        ip_config = None
-        if not use_dhcp and ip_address and netmask and gateway:
-            ip_config = f"ip={ip_address}/{netmask},gw={gateway}"
-        
-        # Prepare DNS
-        nameserver = None
-        if dns_servers:
-            nameserver = dns_servers.replace(",", " ")
-        
-        # Configure cloud-init settings
-        config_update = {
-            "ciuser": username,
-            "cipassword": password,
-            "ipconfig0": ip_config or "ip=dhcp",
-            "searchdomain": nameserver
-        }
-        
-        if ssh_key:
-            config_update["sshkeys"] = ssh_key
-        
-        logger.info(f"Applying cloud-init config: {config_update}")
-        proxmox.nodes(node).qemu(vmid).config.put(**config_update)
-        
-        # Create custom user-data for package installation
-        logger.info(f"Creating cloud-init user-data snippet for VM {vmid}")
-        try:
-            ssh_executor = get_ssh_executor_from_config(cluster_config, node)
-            
-            user_data = f"""#cloud-config
-users:
-  - name: {username}
-    gecos: {username}
-    sudo: ALL=(ALL) NOPASSWD:ALL
-    groups: users, admin, sudo
-    shell: /bin/bash
-    lock_passwd: false
-chpasswd:
-  list: |
-    {username}:{password}
-  expire: false
-disable_root: false
-ssh_pwauth: true
-package_update: true
-package_upgrade: true
-packages:
-  - qemu-guest-agent
-  - openssh-server
-runcmd:
-  - systemctl enable qemu-guest-agent
-  - systemctl start qemu-guest-agent
-  - systemctl enable ssh
-  - systemctl start ssh
-  - sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
-  - sed -i 's/^#*PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config
-  - sed -i 's/^#*PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
-  - systemctl restart ssh || systemctl restart sshd
-"""
-            
-            # Create temporary file
-            with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.yml') as f:
-                f.write(user_data)
-                temp_file = f.name
-            
-            # Upload user-data snippet
-            snippet_path = f"/var/lib/vz/snippets/vm-{vmid}-user-data.yml"
-            ssh_executor.upload_file(temp_file, snippet_path)
-            
-            # Update VM config to use custom user-data
-            proxmox.nodes(node).qemu(vmid).config.put(cicustom=f"user=local:snippets/vm-{vmid}-user-data.yml")
-            
-            # Cleanup
-            os.unlink(temp_file)
-            
-            logger.info(f"Cloud-init user-data configured for VM {vmid}")
-            
-        except Exception as e:
-            logger.warning(f"Could not create custom cloud-init snippet: {e}")
-        
-        # Regenerate cloud-init drive
-        proxmox.nodes(node).qemu(vmid).config.put(ide2=f"{storage}:cloudinit")
-        time.sleep(1)
-        
-        return True
-        
-    except Exception as e:
-        logger.error(f"Failed to configure cloud-init: {e}")
-        return False
-
-
 def _ensure_virtio_iso(
     proxmox,
     node_name: str,
@@ -571,9 +441,9 @@ def _ensure_virtio_iso(
         return None
 
 
-def list_available_isos(cluster_id: str, node: str, storage: str = "local") -> Tuple[bool, list, str]:
+def list_available_isos(cluster_id: str) -> Tuple[bool, list, str]:
     """
-    List available ISO images in storage.
+    List available ISO images from all nodes in the cluster.
     
     Returns:
         Tuple of (success: bool, isos: list, message: str)
@@ -583,21 +453,41 @@ def list_available_isos(cluster_id: str, node: str, storage: str = "local") -> T
         if not proxmox:
             return False, [], f"Failed to connect to cluster {cluster_id}"
         
-        logger.info(f"Listing ISOs in {storage} on node {node}")
+        logger.info(f"Listing ISOs from all nodes in cluster {cluster_id}")
         
-        storage_content = proxmox.nodes(node).storage(storage).content.get()
+        # Get all nodes
+        nodes = proxmox.nodes.get()
         
         isos = []
-        for item in storage_content:
-            if item.get('content') == 'iso':
-                isos.append({
-                    'volid': item['volid'],
-                    'name': item.get('volid', '').split('/')[-1],
-                    'size': item.get('size', 0),
-                    'format': item.get('format', 'iso')
-                })
+        for node in nodes:
+            node_name = node['node']
+            try:
+                # Get all storages for this node
+                storages = proxmox.nodes(node_name).storage.get()
+                
+                for storage in storages:
+                    storage_name = storage['storage']
+                    # Check if storage supports ISO content
+                    if 'content' in storage and 'iso' in storage.get('content', ''):
+                        try:
+                            storage_content = proxmox.nodes(node_name).storage(storage_name).content.get()
+                            
+                            for item in storage_content:
+                                if item.get('content') == 'iso':
+                                    isos.append({
+                                        'volid': item['volid'],
+                                        'name': item.get('volid', '').split('/')[-1],
+                                        'size': item.get('size', 0),
+                                        'format': item.get('format', 'iso'),
+                                        'node': node_name,
+                                        'storage': storage_name
+                                    })
+                        except Exception as e:
+                            logger.debug(f"Could not read ISOs from {storage_name} on {node_name}: {e}")
+            except Exception as e:
+                logger.debug(f"Could not read storages from node {node_name}: {e}")
         
-        logger.info(f"Found {len(isos)} ISO images")
+        logger.info(f"Found {len(isos)} ISO images across all nodes")
         return True, isos, "ISOs retrieved successfully"
         
     except Exception as e:

@@ -37,14 +37,14 @@ def api_build_vm():
         
         # Required parameters
         cluster_id = data.get('cluster_id') or session.get('cluster_id')
-        node = data.get('node')
         vm_name = data.get('vm_name')
+        iso_file = data.get('iso_file')
         os_type = data.get('os_type', 'ubuntu')
         
-        if not all([cluster_id, node, vm_name]):
+        if not all([cluster_id, vm_name, iso_file]):
             return jsonify({
                 "ok": False,
-                "error": "Missing required parameters: cluster_id, node, vm_name"
+                "error": "Missing required parameters: cluster_id, vm_name, iso_file"
             }), 400
         
         # Hardware configuration
@@ -55,21 +55,9 @@ def api_build_vm():
         
         # Network configuration
         network_bridge = data.get('network_bridge', 'vmbr0')
-        use_dhcp = data.get('use_dhcp', True)
-        ip_address = data.get('ip_address')
-        netmask = data.get('netmask')
-        gateway = data.get('gateway')
-        dns_servers = data.get('dns_servers')
-        
-        # Cloud-init configuration
-        username_ci = data.get('username')
-        password = data.get('password')
-        ssh_key = data.get('ssh_key')
         
         # Storage configuration
         storage = data.get('storage', 'local-lvm')
-        iso_storage = data.get('iso_storage', 'local')
-        iso_file = data.get('iso_file')
         
         # Advanced hardware options
         cpu_type = data.get('cpu_type', 'host')
@@ -88,30 +76,20 @@ def api_build_vm():
         # Template options
         convert_to_template = data.get('convert_to_template', False)
         
-        logger.info(f"Building VM: {vm_name} on cluster {cluster_id}, node {node}")
+        logger.info(f"Building VM: {vm_name} on cluster {cluster_id} with ISO {iso_file}")
         
-        # Build the VM
+        # Build the VM (node will be auto-detected from ISO location)
         success, vmid, message = build_vm_from_scratch(
             cluster_id=cluster_id,
-            node=node,
             vm_name=vm_name,
+            iso_file=iso_file,
             os_type=os_type,
             cpu_cores=cpu_cores,
             cpu_sockets=cpu_sockets,
             memory_mb=memory_mb,
             disk_size_gb=disk_size_gb,
             network_bridge=network_bridge,
-            use_dhcp=use_dhcp,
-            ip_address=ip_address,
-            netmask=netmask,
-            gateway=gateway,
-            dns_servers=dns_servers,
-            username=username_ci,
-            password=password,
-            ssh_key=ssh_key,
             storage=storage,
-            iso_storage=iso_storage,
-            iso_file=iso_file,
             cpu_type=cpu_type,
             cpu_flags=cpu_flags,
             cpu_limit=cpu_limit,
@@ -151,7 +129,7 @@ def api_build_vm():
 @vm_builder_bp.route("/isos", methods=["GET"])
 @login_required
 def api_list_isos():
-    """List available ISO images."""
+    """List available ISO images across all nodes."""
     try:
         user = require_user()
         
@@ -167,16 +145,14 @@ def api_list_isos():
             }), 403
         
         cluster_id = request.args.get('cluster_id') or session.get('cluster_id')
-        node = request.args.get('node')
-        storage = request.args.get('storage', 'local')
         
-        if not cluster_id or not node:
+        if not cluster_id:
             return jsonify({
                 "ok": False,
-                "error": "Missing required parameters: cluster_id, node"
+                "error": "Missing required parameter: cluster_id"
             }), 400
         
-        success, isos, message = list_available_isos(cluster_id, node, storage)
+        success, isos, message = list_available_isos(cluster_id)
         
         if success:
             return jsonify({

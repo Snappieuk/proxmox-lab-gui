@@ -33,7 +33,7 @@ A Flask webapp providing a lab VM portal similar to Azure Labs for self-service 
 - **Template publishing workflow**: Teachers can publish VM changes to class template, then propagate to all student VMs. Located at `app/routes/api/publish_template.py` and `app/routes/api/class_template.py`. Deletes old student VMs and recreates fresh ones from updated template using disk copy approach (same as initial class creation).
 - **User VM assignments**: All VM→user mappings stored in database via VMAssignment table. Direct assignments (no class) use `class_id=NULL`. Located at `app/routes/api/user_vm_assignments.py`. NO JSON files used.
 - **Authentication model**: **Proxmox users = Admins only**. Going forward, no application users (students/teachers) should have Proxmox accounts. All non-admin users managed via SQLite database.
-- **Build VM from Scratch feature** (see `BUILD_VM_FROM_SCRATCH.md`): Teachers can create fully configured VMs with comprehensive hardware/network settings. Supports Linux (cloud-init) and Windows (VirtIO drivers). Service in `app/services/vm_deployment_service.py`, API at `app/routes/api/vm_builder.py`, UI in template_builder modal. Based on deployment.py architecture.
+- **Build VM from Scratch feature** (see `BUILD_VM_FROM_SCRATCH.md`): Teachers can create VMs from ISO images with hardware configuration. ISO-based deployment (no cloud-init). VM automatically created on node where ISO is located. Service in `app/services/vm_deployment_service.py`, API at `app/routes/api/vm_builder.py`, UI in template_builder modal.
 
 ## Architecture patterns
 **Database-first user access control**:
@@ -105,7 +105,7 @@ api/
   publish_template.py → /api/classes/<id>/publish-template (teacher→student VM propagation)
   user_vm_assignments.py → /api/user-vm-assignments (direct VM assignments, no class)
   vm_class_mappings.py → /api/vm-class-mappings (bulk assign VMs to classes)
-  vm_builder.py  → /api/vm-builder/build (build VM from scratch), /nodes, /storages, /isos
+  vm_builder.py  → /api/vm-builder/build (build VM from scratch with ISO), /isos (list ISOs from all nodes)
   rdp.py         → /rdp/<vmid>.rdp (download RDP file)
   ssh.py         → /ssh/<vmid> (WebSocket terminal, requires flask-sock)
   mappings.py    → /api/mappings (DEPRECATED - migrated to database, kept for legacy compat)
@@ -176,19 +176,17 @@ api/
 - Student enrollment: `join_class_via_token()` (auto-assigns unassigned VM), `generate_class_invite()`
 - Template registration: `register_template()` (scans Proxmox for templates, saves to DB)
 
-**`app/services/vm_deployment_service.py`** (VM builder service, ~650 lines):
-- **Build VM from Scratch**: Creates fully configured VMs with comprehensive hardware/network settings
-- **Based on deployment.py architecture**: Ported from external deployment system with proven reliability
+**`app/services/vm_deployment_service.py`** (VM builder service, ~490 lines):
+- **Build VM from Scratch**: Creates VMs from ISO images with hardware configuration
+- **ISO-only deployment**: No cloud-init, automatic node detection from ISO location
 - **Key functions**:
-  - `build_vm_from_scratch()`: Main entry point - orchestrates VM creation with full configuration
-  - `_deploy_linux_vm()`: Creates Linux VMs with cloud-init (Ubuntu, Debian, CentOS, Rocky, Alma)
-  - `_deploy_windows_vm()`: Creates Windows VMs with VirtIO drivers and UEFI
-  - `_configure_cloud_init()`: Sets up cloud-init with user, network, and package configuration
+  - `build_vm_from_scratch()`: Main entry point - orchestrates VM creation with ISO
+  - `_find_node_with_iso()`: Scans all nodes to locate ISO file
+  - `_deploy_vm_with_iso()`: Creates VM with ISO attached, unified for Linux/Windows
   - `_ensure_virtio_iso()`: Downloads/checks VirtIO drivers ISO for Windows VMs
-  - `list_available_isos()`: Returns available ISO images from storage
-- **Cloud-init support**: Automatic OS configuration for Linux VMs (user account, network, SSH, packages)
+  - `list_available_isos()`: Returns available ISO images from all nodes with location info
+- **Automatic node detection**: VM created on node where ISO exists (no manual selection)
 - **Windows support**: VirtIO drivers ISO attachment, UEFI configuration, manual installation
-- **ISO support**: Optional ISO selection for manual OS installation
 - **Template conversion**: Can convert created VMs to templates
 - **Hardware options**: CPU, memory, disk, network, BIOS, boot order, SCSI controller, etc.
 

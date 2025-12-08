@@ -155,7 +155,7 @@
                         </div>
                         <div class="form-col">
                             <label for="build-os-type" class="compact-label">OS Type</label>
-                            <select id="build-os-type" class="form-control compact-input" onchange="toggleOSOptions()" required>
+                            <select id="build-os-type" class="form-control compact-input" required>
                                 <option value="ubuntu">Ubuntu</option>
                                 <option value="debian">Debian</option>
                                 <option value="centos">CentOS</option>
@@ -167,16 +167,17 @@
                     </div>
                     <div class="form-row">
                         <div class="form-col">
-                            <label for="build-node" class="compact-label">Node</label>
-                            <select id="build-node" class="form-control compact-input" onchange="loadStoragesForNode()" required>
-                                <option value="">Loading nodes...</option>
-                            </select>
-                        </div>
-                        <div class="form-col">
                             <label for="build-storage" class="compact-label">Storage</label>
                             <select id="build-storage" class="form-control compact-input" required>
                                 <option value="local-lvm">local-lvm</option>
                             </select>
+                        </div>
+                        <div class="form-col">
+                            <label for="build-iso" class="compact-label">ISO Image</label>
+                            <select id="build-iso" class="form-control compact-input" required>
+                                <option value="">Loading ISOs...</option>
+                            </select>
+                            <small style="color: #666; margin-top: 0.25rem; display: block;">VM will be created on the node where this ISO is located</small>
                         </div>
                     </div>
                 </div>
@@ -202,65 +203,6 @@
                         <div class="form-col">
                             <label for="build-network-bridge" class="compact-label">Network Bridge</label>
                             <input type="text" id="build-network-bridge" class="form-control compact-input" value="vmbr0" required>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Linux Cloud-init Section (hidden for Windows) -->
-                <div id="linux-cloudinit-section" class="form-section">
-                    <div class="section-label">Cloud-init Configuration (Linux Only)</div>
-                    <div class="form-row">
-                        <div class="form-col">
-                            <label for="build-username" class="compact-label">Username</label>
-                            <input type="text" id="build-username" class="form-control compact-input" placeholder="ubuntu">
-                        </div>
-                        <div class="form-col">
-                            <label for="build-password" class="compact-label">Password</label>
-                            <input type="password" id="build-password" class="form-control compact-input" placeholder="Leave blank for ISO install">
-                        </div>
-                    </div>
-                    <div class="form-row">
-                        <div class="form-col">
-                            <label for="build-use-dhcp" class="compact-label" style="display: flex; align-items: center; gap: 0.5rem;">
-                                <input type="checkbox" id="build-use-dhcp" onchange="toggleNetworkConfig()" checked>
-                                Use DHCP
-                            </label>
-                        </div>
-                    </div>
-                    <div id="static-network-config" style="display: none;">
-                        <div class="form-row">
-                            <div class="form-col">
-                                <label for="build-ip" class="compact-label">IP Address</label>
-                                <input type="text" id="build-ip" class="form-control compact-input" placeholder="192.168.1.100">
-                            </div>
-                            <div class="form-col">
-                                <label for="build-netmask" class="compact-label">Netmask</label>
-                                <input type="text" id="build-netmask" class="form-control compact-input" placeholder="24">
-                            </div>
-                        </div>
-                        <div class="form-row">
-                            <div class="form-col">
-                                <label for="build-gateway" class="compact-label">Gateway</label>
-                                <input type="text" id="build-gateway" class="form-control compact-input" placeholder="192.168.1.1">
-                            </div>
-                            <div class="form-col">
-                                <label for="build-dns" class="compact-label">DNS Servers</label>
-                                <input type="text" id="build-dns" class="form-control compact-input" placeholder="8.8.8.8,8.8.4.4">
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- ISO Selection (optional) -->
-                <div class="form-section">
-                    <div class="section-label">ISO Image (Optional)</div>
-                    <div class="form-row">
-                        <div class="form-col" style="grid-column: 1 / -1;">
-                            <label for="build-iso" class="compact-label">Select ISO (leave blank for cloud-init)</label>
-                            <select id="build-iso" class="form-control compact-input" onchange="toggleISOMode()">
-                                <option value="">No ISO - Use Cloud-init</option>
-                            </select>
-                            <small style="color: #666; margin-top: 0.25rem; display: block;">If ISO selected, cloud-init will be disabled. You'll need to install OS manually.</small>
                         </div>
                     </div>
                 </div>
@@ -866,108 +808,18 @@ async function submitMigration(event) {
 // Build VM from Scratch functions
 async function loadBuildOptions() {
     try {
-        // Load nodes
-        const nodesResponse = await fetch('/api/vm-builder/nodes');
-        const nodesData = await nodesResponse.json();
-        
-        if (nodesData.ok) {
-            const nodeSelect = document.getElementById('build-node');
-            nodeSelect.innerHTML = nodesData.nodes.map(node => 
-                `<option value="${node.node}">${node.node}</option>`
-            ).join('');
-            
-            // Load storages for first node
-            if (nodesData.nodes.length > 0) {
-                await loadStoragesForNode();
-            }
-        }
-        
-        // Load ISOs for first node
-        if (nodesData.ok && nodesData.nodes.length > 0) {
-            await loadISOsForNode();
-        }
-        
-    } catch (error) {
-        console.error('Failed to load build options:', error);
-    }
-}
-
-async function loadStoragesForNode() {
-    try {
-        const node = document.getElementById('build-node').value;
-        if (!node) return;
-        
-        const response = await fetch(`/api/vm-builder/storages?node=${node}`);
-        const data = await response.json();
-        
-        if (data.ok) {
-            const storageSelect = document.getElementById('build-storage');
-            storageSelect.innerHTML = data.storages
-                .filter(s => s.content.includes('images'))
-                .map(storage => 
-                    `<option value="${storage.storage}">${storage.storage} (${(storage.avail / 1073741824).toFixed(1)}GB free)</option>`
-                ).join('');
-        }
-    } catch (error) {
-        console.error('Failed to load storages:', error);
-    }
-}
-
-async function loadISOsForNode() {
-    try {
-        const node = document.getElementById('build-node').value;
-        if (!node) return;
-        
-        const response = await fetch(`/api/vm-builder/isos?node=${node}`);
+        // Load ISOs from all nodes
+        const response = await fetch('/api/vm-builder/isos');
         const data = await response.json();
         
         if (data.ok) {
             const isoSelect = document.getElementById('build-iso');
-            const options = ['<option value="">No ISO - Use Cloud-init</option>'];
-            options.push(...data.isos.map(iso => 
-                `<option value="${iso.volid}">${iso.name} (${(iso.size / 1073741824).toFixed(2)}GB)</option>`
-            ));
-            isoSelect.innerHTML = options.join('');
+            isoSelect.innerHTML = data.isos.map(iso => 
+                `<option value="${iso.volid}">${iso.name} - ${iso.node}/${iso.storage} (${(iso.size / 1073741824).toFixed(2)}GB)</option>`
+            ).join('');
         }
     } catch (error) {
         console.error('Failed to load ISOs:', error);
-    }
-}
-
-function toggleOSOptions() {
-    const osType = document.getElementById('build-os-type').value;
-    const cloudInitSection = document.getElementById('linux-cloudinit-section');
-    
-    if (osType === 'windows') {
-        cloudInitSection.style.display = 'none';
-    } else {
-        cloudInitSection.style.display = 'block';
-    }
-}
-
-function toggleNetworkConfig() {
-    const useDHCP = document.getElementById('build-use-dhcp').checked;
-    const staticConfig = document.getElementById('static-network-config');
-    
-    if (useDHCP) {
-        staticConfig.style.display = 'none';
-    } else {
-        staticConfig.style.display = 'block';
-    }
-}
-
-function toggleISOMode() {
-    const isoFile = document.getElementById('build-iso').value;
-    const cloudInitSection = document.getElementById('linux-cloudinit-section');
-    
-    if (isoFile) {
-        // ISO selected - hide cloud-init options
-        cloudInitSection.style.opacity = '0.5';
-        cloudInitSection.querySelectorAll('input').forEach(input => input.disabled = true);
-    } else {
-        // No ISO - enable cloud-init options
-        cloudInitSection.style.opacity = '1';
-        cloudInitSection.querySelectorAll('input').forEach(input => input.disabled = false);
     }
 }
 
@@ -979,14 +831,11 @@ function closeBuildModal() {
 async function submitBuildVM(event) {
     event.preventDefault();
     
-    const osType = document.getElementById('build-os-type').value;
     const isoFile = document.getElementById('build-iso').value;
-    const username = document.getElementById('build-username').value;
-    const password = document.getElementById('build-password').value;
     
-    // Validate cloud-init requirements for Linux without ISO
-    if (osType !== 'windows' && !isoFile && (!username || !password)) {
-        alert('For Linux VMs without ISO, you must provide username and password for cloud-init.\n\nAlternatively, select an ISO for manual installation.');
+    // Validate ISO is selected
+    if (!isoFile) {
+        alert('Please select an ISO image.');
         return;
     }
     
@@ -997,8 +846,8 @@ async function submitBuildVM(event) {
     try {
         const formData = {
             vm_name: document.getElementById('build-vm-name').value,
-            os_type: osType,
-            node: document.getElementById('build-node').value,
+            os_type: document.getElementById('build-os-type').value,
+            iso_file: isoFile,
             storage: document.getElementById('build-storage').value,
             cpu_cores: parseInt(document.getElementById('build-cpu-cores').value),
             memory_mb: parseInt(document.getElementById('build-memory').value),
@@ -1006,25 +855,6 @@ async function submitBuildVM(event) {
             network_bridge: document.getElementById('build-network-bridge').value,
             convert_to_template: document.getElementById('build-convert-template').checked
         };
-        
-        // Add cloud-init config if applicable
-        if (osType !== 'windows' && !isoFile) {
-            formData.username = username;
-            formData.password = password;
-            formData.use_dhcp = document.getElementById('build-use-dhcp').checked;
-            
-            if (!formData.use_dhcp) {
-                formData.ip_address = document.getElementById('build-ip').value;
-                formData.netmask = document.getElementById('build-netmask').value;
-                formData.gateway = document.getElementById('build-gateway').value;
-                formData.dns_servers = document.getElementById('build-dns').value;
-            }
-        }
-        
-        // Add ISO if selected
-        if (isoFile) {
-            formData.iso_file = isoFile;
-        }
         
         const response = await fetch('/api/vm-builder/build', {
             method: 'POST',
