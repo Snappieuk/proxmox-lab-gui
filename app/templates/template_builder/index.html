@@ -175,8 +175,8 @@
                                 <small style="color: #666; flex: 1;">
                                     VM will be created on TRUENAS storage. ISO location determines node.
                                 </small>
-                                <button type="button" onclick="openUploadISOModal()" class="btn-action">
-                                    <i class="bi bi-upload" style="margin-right: 0.35rem;"></i>Upload ISO
+                                <button type="button" onclick="openUploadISOModal()" class="btn-upload-iso">
+                                    <i class="bi bi-upload"></i>Upload ISO
                                 </button>
                             </div>
                         </div>
@@ -530,6 +530,44 @@
     background: #d1d1d1;
     cursor: not-allowed;
     box-shadow: none;
+}
+
+.btn-upload-iso {
+    padding: 0.5rem 1rem;
+    background: #0078d4;
+    border: none;
+    border-radius: 4px;
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: white;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    white-space: nowrap;
+    box-shadow: 0 1px 3px rgba(0, 120, 212, 0.2);
+}
+
+.btn-upload-iso:hover {
+    background: #106ebe;
+    box-shadow: 0 2px 6px rgba(0, 120, 212, 0.3);
+    transform: translateY(-1px);
+}
+
+.btn-upload-iso:active {
+    transform: translateY(0);
+}
+
+.btn-upload-iso:disabled {
+    background: #d1d1d1;
+    cursor: not-allowed;
+    box-shadow: none;
+    transform: none;
+}
+
+.btn-upload-iso i {
+    font-size: 1rem;
 }
 
 /* Remove old styles */
