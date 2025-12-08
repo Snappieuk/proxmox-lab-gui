@@ -364,6 +364,33 @@ def api_upload_iso():
                 "error": "Failed to connect to cluster"
             }), 500
         
+        # Verify storage exists and is available on the node
+        try:
+            storages = proxmox.nodes(node).storage.get()
+            storage_found = False
+            for s in storages:
+                if s['storage'] == storage and s.get('status') == 'available':
+                    storage_found = True
+                    # Check if storage supports ISO content
+                    if 'iso' not in s.get('content', '').split(','):
+                        return jsonify({
+                            "ok": False,
+                            "error": f"Storage '{storage}' does not support ISO content"
+                        }), 400
+                    break
+            
+            if not storage_found:
+                return jsonify({
+                    "ok": False,
+                    "error": f"Storage '{storage}' is not available on node '{node}'. Please check Proxmox storage configuration."
+                }), 400
+        except Exception as e:
+            logger.error(f"Failed to verify storage: {e}")
+            return jsonify({
+                "ok": False,
+                "error": f"Failed to verify storage availability: {str(e)}"
+            }), 500
+        
         logger.info(f"Uploading ISO {file.filename} to {node}:{storage}")
         
         # Get file size for logging

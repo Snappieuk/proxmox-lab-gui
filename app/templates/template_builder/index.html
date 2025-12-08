@@ -210,7 +210,7 @@
 
                 <!-- Template Options -->
                 <div class="form-section">
-                    <div class="section-label">Template Options</div>
+                    <div class="section-label">Options</div>
                     <div class="form-row">
                         <div class="form-col">
                             <label for="build-convert-template" class="compact-label" style="display: flex; align-items: center; gap: 0.5rem;">
@@ -1034,6 +1034,7 @@ async function submitBuildVM(event) {
             memory_mb: parseInt(document.getElementById('build-memory').value),
             disk_size_gb: parseInt(document.getElementById('build-disk-size').value),
             network_bridge: document.getElementById('build-network-bridge').value,
+            agent_enabled: true,  // Always enabled
             convert_to_template: document.getElementById('build-convert-template').checked
         };
         
@@ -1206,17 +1207,40 @@ async function submitUploadISO(event) {
             }
         });
         
-        xhr.addEventListener('error', () => {
-            alert('Upload failed: Network error');
+        xhr.addEventListener('error', (e) => {
+            console.error('Upload error:', e);
+            alert('Upload failed: Network error. Check server logs for details.');
             submitBtn.disabled = false;
             submitBtn.innerHTML = '<i class="bi bi-upload"></i> Upload ISO';
+            document.getElementById('upload-progress').style.display = 'none';
+        });
+        
+        xhr.addEventListener('abort', () => {
+            console.log('Upload aborted');
+            alert('Upload was cancelled');
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = '<i class="bi bi-upload"></i> Upload ISO';
+            document.getElementById('upload-progress').style.display = 'none';
+        });
+        
+        xhr.addEventListener('timeout', () => {
+            console.error('Upload timeout');
+            alert('Upload timed out. File may be too large or connection too slow.');
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = '<i class="bi bi-upload"></i> Upload ISO';
+            document.getElementById('upload-progress').style.display = 'none';
         });
         
         xhr.open('POST', '/api/vm-builder/upload-iso');
+        xhr.timeout = 1800000; // 30 minute timeout
         xhr.send(formData);
         
     } catch (error) {
         console.error('Upload failed:', error);
+        alert('Upload setup failed: ' + error.message);
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = '<i class="bi bi-upload"></i> Upload ISO';
+        document.getElementById('upload-progress').style.display = 'none';
         alert('Upload failed: ' + error.message);
         submitBtn.disabled = false;
         submitBtn.innerHTML = '<i class="bi bi-upload"></i> Upload ISO';
