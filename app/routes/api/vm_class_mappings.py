@@ -22,13 +22,23 @@ api_vm_class_mappings_bp = Blueprint('api_vm_class_mappings', __name__, url_pref
 @api_vm_class_mappings_bp.route("/vm-class-mappings", methods=["GET"])
 @login_required
 def list_vm_class_mappings():
-    """Get all VM:Class mappings (manually added VMs only)."""
+    """Get all VM:Class mappings (manually added VMs only).
+    
+    Admins see all mappings. Teachers see mappings for classes they own/co-own.
+    """
     user = session.get("user")
-    if not is_admin_user(user):
-        return jsonify({"ok": False, "error": "Admin access required"}), 403
+    user_obj = get_user_by_username(user)
+    
+    if not user_obj:
+        return jsonify({"ok": False, "error": "User not found"}), 404
     
     # Get all manually added VM assignments
     assignments = VMAssignment.query.filter_by(manually_added=True).all()
+    
+    # Filter based on permissions
+    if not is_admin_user(user):
+        # Teachers only see mappings for classes they own or co-own
+        assignments = [a for a in assignments if a.class_ and a.class_.is_owner(user_obj)]
     
     mappings = []
     for assignment in assignments:
@@ -51,15 +61,32 @@ def list_vm_class_mappings():
 @api_vm_class_mappings_bp.route("/vm-class-mappings", methods=["POST"])
 @login_required
 def add_vm_to_class():
-    """Manually add a VM to a class (won't be auto-assigned)."""
+    """Manually add a VM to a class (won't be auto-assigned).
+    
+    Admins and class owners/co-owners can add VMs.
+    """
     user = session.get("user")
-    if not is_admin_user(user):
-        return jsonify({"ok": False, "error": "Admin access required"}), 403
+    user_obj = get_user_by_username(user)
+    
+    if not user_obj:
+        return jsonify({"ok": False, "error": "User not found"}), 404
     
     data = request.get_json()
     vmid = data.get('vmid')
     node = data.get('node')
     class_id = data.get('class_id')
+    
+    if not vmid or not class_id:
+        return jsonify({"ok": False, "error": "vmid and class_id are required"}), 400
+    
+    # Verify class exists
+    class_ = get_class_by_id(class_id)
+    if not class_:
+        return jsonify({"ok": False, "error": "Class not found"}), 404
+    
+    # Check permissions: admin or class owner/co-owner
+    if not is_admin_user(user) and not class_.is_owner(user_obj):
+        return jsonify({"ok": False, "error": "Access denied - only class owners can add VMs"}), 403
     
     if not vmid or not class_id:
         return jsonify({"ok": False, "error": "vmid and class_id are required"}), 400
@@ -115,10 +142,15 @@ def add_vm_to_class():
 @api_vm_class_mappings_bp.route("/vm-class-mappings/<int:mapping_id>", methods=["DELETE"])
 @login_required
 def remove_vm_from_class(mapping_id: int):
-    """Remove a manually added VM from a class."""
+    """Remove a manually added VM from a class.
+    
+    Admins and class owners/co-owners can remove VMs.
+    """
     user = session.get("user")
-    if not is_admin_user(user):
-        return jsonify({"ok": False, "error": "Admin access required"}), 403
+    user_obj = get_user_by_username(user)
+    
+    if not user_obj:
+        return jsonify({"ok": False, "error": "User not found"}), 404
     
     assignment = VMAssignment.query.get(mapping_id)
     if not assignment:
@@ -126,6 +158,10 @@ def remove_vm_from_class(mapping_id: int):
     
     if not assignment.manually_added:
         return jsonify({"ok": False, "error": "Can only remove manually added VMs"}), 400
+    
+    # Check permissions: admin or class owner/co-owner
+    if not is_admin_user(user) and (not assignment.class_ or not assignment.class_.is_owner(user_obj)):
+        return jsonify({"ok": False, "error": "Access denied - only class owners can remove VMs"}), 403
     
     vmid = assignment.proxmox_vmid
     class_name = assignment.class_.name if assignment.class_ else 'Unknown'

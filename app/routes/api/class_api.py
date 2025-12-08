@@ -349,10 +349,10 @@ def delete_class_route(class_id: int):
         logger.error(f"Class {class_id} not found")
         return jsonify({"ok": False, "error": "Class not found"}), 404
     
-    # Check ownership
-    if not user.is_adminer and not class_.is_owner(user):
-        logger.error(f"User {user.username} not authorized to delete class {class_id}")
-        return jsonify({"ok": False, "error": "Access denied"}), 403
+    # Check ownership - ONLY primary owner or admin can delete (not co-owners)
+    if not user.is_adminer and class_.teacher_id != user.id:
+        logger.error(f"User {user.username} not authorized to delete class {class_id} (only primary owner can delete)")
+        return jsonify({"ok": False, "error": "Only the primary class owner can delete the class"}), 403
     
     # CRITICAL: Do NOT delete the original template VM (class_.template)
     # The template is shared across classes and should never be touched during class deletion
