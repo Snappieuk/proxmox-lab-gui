@@ -695,6 +695,10 @@
 </style>
 
 <script>
+// Global variables from Flask context
+const CURRENT_CLUSTER_ID = '{{ current_cluster }}';
+console.log('Template Builder initialized with cluster:', CURRENT_CLUSTER_ID);
+
 function showCreateFromScratch() {
     document.getElementById('build-modal').style.display = 'flex';
     loadBuildOptions();
@@ -976,8 +980,14 @@ async function submitMigration(event) {
 async function loadBuildOptions() {
     try {
         // Get current cluster_id from session (injected by Flask context processor)
-        const clusterId = '{{ current_cluster }}';
+        const clusterId = CURRENT_CLUSTER_ID;
         console.log('Loading ISOs for cluster:', clusterId);
+        
+        if (!clusterId || clusterId === 'None' || clusterId === '') {
+            console.error('No valid cluster ID available');
+            document.getElementById('build-iso').innerHTML = '<option value="">No cluster selected</option>';
+            return;
+        }
         
         // Load ISOs from all nodes (cached in background)
         const isoResponse = await fetch(`/api/vm-builder/isos?cluster_id=${clusterId}`);
@@ -985,7 +995,13 @@ async function loadBuildOptions() {
         
         console.log('ISO response:', isoData);
         
-        if (isoData.ok && isoData.isos.length > 0) {
+        if (!isoData.ok) {
+            console.error('ISO API returned error:', isoData.error);
+            document.getElementById('build-iso').innerHTML = `<option value="">Error: ${isoData.error || 'Unknown error'}</option>`;
+            return;
+        }
+        
+        if (isoData.isos && isoData.isos.length > 0) {
             const isoSelect = document.getElementById('build-iso');
             isoSelect.innerHTML = isoData.isos.map(iso => 
                 `<option value="${iso.volid}">${iso.name} - ${iso.node}/${iso.storage} (${(iso.size / 1073741824).toFixed(2)}GB)</option>`
@@ -993,12 +1009,12 @@ async function loadBuildOptions() {
             console.log(`Loaded ${isoData.isos.length} ISOs`);
         } else {
             const isoSelect = document.getElementById('build-iso');
-            isoSelect.innerHTML = '<option value="">No ISOs found - Please upload ISO files to TRUENAS storage</option>';
-            console.warn('No ISOs found:', isoData.error || 'No error message');
+            isoSelect.innerHTML = '<option value="">No ISOs found - Upload ISO to TRUENAS storage first</option>';
+            console.warn('No ISOs found in response');
         }
     } catch (error) {
         console.error('Failed to load build options:', error);
-        document.getElementById('build-iso').innerHTML = '<option value="">Error loading ISOs</option>';
+        document.getElementById('build-iso').innerHTML = '<option value="">Error loading ISOs - Check console</option>';
     }
 }
 

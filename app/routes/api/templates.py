@@ -74,7 +74,11 @@ def list_templates():
             pass
     
     templates = query.all()
-    return jsonify([t.to_dict() for t in templates])
+    
+    return jsonify({
+        "ok": True,
+        "templates": [t.to_dict() for t in templates]
+    })
 
 
 @bp.route("/by-name/<template_name>", methods=["GET"])

@@ -132,6 +132,7 @@ def api_list_isos():
     """List available ISO images across all nodes."""
     try:
         user = require_user()
+        logger.info(f"ISO list request from user: {user}")
         
         # Check if user is teacher or admin
         is_admin = is_admin_user(user)
@@ -139,20 +140,25 @@ def api_list_isos():
         local_user = get_user_by_username(username)
         
         if not is_admin and (not local_user or local_user.role not in ['teacher', 'adminer']):
+            logger.warning(f"Access denied for user {user} - not teacher/admin")
             return jsonify({
                 "ok": False,
                 "error": "Access denied"
             }), 403
         
         cluster_id = request.args.get('cluster_id') or session.get('cluster_id')
+        logger.info(f"Listing ISOs for cluster_id: {cluster_id}")
         
         if not cluster_id:
+            logger.error("No cluster_id provided in request or session")
             return jsonify({
                 "ok": False,
                 "error": "Missing required parameter: cluster_id"
             }), 400
         
+        logger.info(f"Calling list_available_isos for cluster {cluster_id}")
         success, isos, message = list_available_isos(cluster_id)
+        logger.info(f"list_available_isos returned: success={success}, iso_count={len(isos)}, message={message}")
         
         if success:
             return jsonify({
