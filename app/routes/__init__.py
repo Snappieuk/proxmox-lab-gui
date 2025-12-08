@@ -22,6 +22,7 @@ from app.routes.api.templates import bp as api_templates_bp
 from app.routes.api.template_migrate import api_template_migrate_bp
 from app.routes.api.user_vm_assignments import api_user_vm_assignments_bp
 from app.routes.api.users import api_users_bp
+from app.routes.api.vm_builder import vm_builder_bp
 from app.routes.api.vm_class_mappings import api_vm_class_mappings_bp
 from app.routes.api.vms import api_vms_bp
 from app.routes.auth import auth_bp
@@ -59,3 +60,4 @@ def register_blueprints(app):
     app.register_blueprint(api_users_bp)
     app.register_blueprint(api_profile_bp)
     app.register_blueprint(api_publish_template_bp)
+    app.register_blueprint(vm_builder_bp)
