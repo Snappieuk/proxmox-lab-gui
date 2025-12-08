@@ -314,31 +314,43 @@ def list_available_isos(cluster_id: str) -> Tuple[bool, list, str]:
             return False, [], f"Failed to connect to cluster {cluster_id}"
         
         isos = []
+        seen_volids = set()  # Track unique ISOs to avoid duplicates from shared storage
         nodes = proxmox.nodes.get()
         
         for node in nodes:
             node_name = node['node']
             try:
-                # Get all storages on this node
+                # Get storages available on THIS specific node (not cluster-wide)
                 storages = proxmox.nodes(node_name).storage.get()
                 
                 for storage in storages:
                     storage_name = storage['storage']
-                    storage_type = storage.get('type', '')
-                    content_types = storage.get('content', '').split(',')
                     
-                    # Only check storages that can contain ISOs
+                    # Skip if storage is not active or available on this node
+                    if storage.get('status') != 'available':
+                        continue
+                    
+                    # Check if storage supports ISO content
+                    content_types = storage.get('content', '').split(',')
                     if 'iso' not in content_types:
                         continue
                     
                     try:
-                        # List ISO files in this storage
+                        # List ISO files in this storage on this node
                         content = proxmox.nodes(node_name).storage(storage_name).content.get(content='iso')
                         
                         for item in content:
+                            volid = item['volid']
+                            
+                            # Skip if we've already seen this ISO (shared storage across nodes)
+                            if volid in seen_volids:
+                                continue
+                            
+                            seen_volids.add(volid)
+                            
                             iso_data = {
-                                'volid': item['volid'],
-                                'name': item['volid'].split('/')[-1],
+                                'volid': volid,
+                                'name': volid.split('/')[-1],
                                 'size': item.get('size', 0),
                                 'node': node_name,
                                 'storage': storage_name
@@ -347,7 +359,7 @@ def list_available_isos(cluster_id: str) -> Tuple[bool, list, str]:
                             
                             # Update database cache
                             try:
-                                existing = ISOImage.query.filter_by(volid=item['volid']).first()
+                                existing = ISOImage.query.filter_by(volid=volid).first()
                                 if existing:
                                     existing.last_seen = datetime.utcnow()
                                     existing.node = node_name
@@ -355,7 +367,7 @@ def list_available_isos(cluster_id: str) -> Tuple[bool, list, str]:
                                     existing.size = item.get('size', 0)
                                 else:
                                     new_iso = ISOImage(
-                                        volid=item['volid'],
+                                        volid=volid,
                                         name=iso_data['name'],
                                         size=item.get('size', 0),
                                         node=node_name,
@@ -364,10 +376,14 @@ def list_available_isos(cluster_id: str) -> Tuple[bool, list, str]:
                                     )
                                     db.session.add(new_iso)
                             except Exception as db_error:
-                                logger.warning(f"Failed to cache ISO {item['volid']}: {db_error}")
+                                logger.warning(f"Failed to cache ISO {volid}: {db_error}")
                                 
                     except Exception as e:
-                        logger.warning(f"Could not list ISOs in {node_name}:{storage_name}: {e}")
+                        # Don't spam warnings for unavailable storage on nodes
+                        if "is not available on node" in str(e):
+                            logger.debug(f"Storage {storage_name} not available on {node_name}, skipping")
+                        else:
+                            logger.warning(f"Could not list ISOs in {node_name}:{storage_name}: {e}")
                         continue
                         
             except Exception as e:
