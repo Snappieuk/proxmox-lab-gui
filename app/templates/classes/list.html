@@ -60,9 +60,16 @@
                 </div>
                 <div class="class-card-footer">
                     {% if user_role == 'teacher' and class.teacher_id != user.id %}
-                    <span class="badge badge-enrolled">
-                        <i class="bi bi-person-check"></i> Enrolled
-                    </span>
+                        {% set user_is_co_owner = user.id in [co.id for co in class.co_owners] if class.co_owners else False %}
+                        {% if user_is_co_owner %}
+                        <span class="badge badge-co-owner">
+                            <i class="bi bi-people"></i> Co-Owner
+                        </span>
+                        {% else %}
+                        <span class="badge badge-enrolled">
+                            <i class="bi bi-person-check"></i> Enrolled
+                        </span>
+                        {% endif %}
                     {% endif %}
                     {% if class.token_valid %}
                     <span class="badge badge-success">
@@ -265,6 +272,12 @@
     background: #fff4ce;
     color: #8a5c00;
     border: 1px solid #f5e5a4;
+}
+
+.badge-co-owner {
+    background: #f3e5f5;
+    color: #6a1b9a;
+    border: 1px solid #ce93d8;
 }
 
 .role-badge {

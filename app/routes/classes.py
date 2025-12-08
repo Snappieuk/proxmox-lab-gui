@@ -88,14 +88,21 @@ def view_class(class_id: int):
     # Check access
     can_manage = False
     is_student = False
+    is_co_owner = False
+    is_owner = False
     if user:
         if user.is_adminer:
             can_manage = True
         elif user.is_teacher and class_.teacher_id == user.id:
             # Teacher who owns the class
             can_manage = True
+            is_owner = True
+        elif user.is_teacher and class_.is_owner(user):
+            # Teacher who is co-owner of the class
+            can_manage = True
+            is_co_owner = True
         elif user in class_.students:
-            # User is enrolled as a student (includes teachers enrolled in other teachers' classes)
+            # User is enrolled as a student
             is_student = True
         else:
             flash("You don't have access to this class.", "error")
@@ -115,6 +122,8 @@ def view_class(class_id: int):
         vm_assignments=[v.to_dict() for v in vm_assignments] if vm_assignments else [],
         can_manage=can_manage,
         is_student=is_student,
+        is_co_owner=is_co_owner,
+        is_owner=is_owner,
         user_role=user.role if user else 'user',
         user=user
     )

@@ -200,9 +200,16 @@
         
         {% if can_manage %}
         <div class="sidebar-section-title" style="margin-top: 1rem;">Danger Zone</div>
+        {% if is_owner or (user_role == 'adminer') %}
         <a class="sidebar-link" href="#" onclick="deleteClass(); return false;" style="color: #dc3545;">
             <i class="bi bi-trash"></i> Delete Class
         </a>
+        {% endif %}
+        {% if is_co_owner %}
+        <div style="padding: 0.75rem 1rem; font-size: 0.85rem; color: #666; background: #f9f9f9; border-radius: 4px; margin: 0.5rem 0;">
+            <i class="bi bi-info-circle"></i> Co-owners cannot delete classes
+        </div>
+        {% endif %}
         {% endif %}
     </nav>
 
