@@ -237,7 +237,10 @@ class Class(db.Model):
         if self.teacher_id == user.id:
             return True
         # Check if co-owner
-        return user in self.co_owners.all()
+        try:
+            return user in self.co_owners.all()
+        except Exception:
+            return False
     
     def to_dict(self) -> dict:
         # Get enrolled students with their VM assignments
@@ -256,13 +259,19 @@ class Class(db.Model):
                 'vm_status': vm_assignment.status if vm_assignment else None
             })
         
+        # Safely get co_owners list
+        try:
+            co_owners_list = [{'id': co.id, 'username': co.username} for co in self.co_owners.all()]
+        except Exception:
+            co_owners_list = []
+        
         return {
             'id': self.id,
             'name': self.name,
             'description': self.description,
             'teacher_id': self.teacher_id,
             'teacher_name': self.teacher.username if self.teacher else None,
-            'co_owners': [{'id': co.id, 'username': co.username} for co in self.co_owners.all()],
+            'co_owners': co_owners_list,
             'template_id': self.template_id,
             'template_name': self.template.name if self.template else None,
             'template_original_name': self.template.original_template.name if (self.template and getattr(self.template, 'original_template', None)) else None,
