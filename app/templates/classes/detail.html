@@ -307,6 +307,12 @@
                     <p class="page-subtitle">Manage student VMs for this class</p>
                 </div>
                 <div style="display: flex; gap: 0.5rem;">
+                    <button onclick="bulkStartVMs()" class="btn-secondary" id="bulk-start-btn" style="display: none;">
+                        <i class="bi bi-power"></i> Start Selected
+                    </button>
+                    <button onclick="bulkStopVMs()" class="btn-secondary" id="bulk-stop-btn" style="display: none;">
+                        <i class="bi bi-power"></i> Stop Selected
+                    </button>
                     <button onclick="showAddVMsModal()" class="btn-secondary">
                         <i class="bi bi-plus-circle"></i> Add VMs
                     </button>
@@ -339,6 +345,9 @@
                 <table class="vm-table">
                     <thead>
                         <tr>
+                            <th style="width: 40px;">
+                                <input type="checkbox" id="select-all-vms" onchange="toggleAllVMs(this)">
+                            </th>
                             <th>Name</th>
                             <th>VMID</th>
                             <th>Node</th>
@@ -352,6 +361,10 @@
                         {% for vm in vm_assignments %}
                         {% if not vm.is_template_vm and not vm.is_teacher_vm and not ('-teacher' in (vm.vm_name or '').lower()) %}
                         <tr data-vmid="{{ vm.proxmox_vmid }}" data-node="{{ vm.node }}">
+                            <td>
+                                <input type="checkbox" class="vm-checkbox" value="{{ vm.proxmox_vmid }}" 
+                                       data-node="{{ vm.node }}" onchange="updateBulkButtons()">
+                            </td>
                             <td><strong id="name-{{ vm.proxmox_vmid }}">{{ vm.vm_name or 'N/A' }}</strong></td>
                             <td>{{ vm.proxmox_vmid }}</td>
                             <td>{{ vm.node or 'N/A' }}</td>
@@ -1338,6 +1351,8 @@ async function startVm(vmid, node) {
             showAlert('Failed to start VM: ' + (data.error || 'Unknown error'), 'error');
         } else {
             showAlert('VM starting...', 'info');
+            // Start polling for IP
+            setTimeout(() => pollVmForIP(vmid), 3000);
         }
         setTimeout(() => updateVmRow(vmid), 2000);
     } catch (e) {
@@ -1403,6 +1418,121 @@ function sshVm(vmid, ip, name) {
         `ssh-${vmid}`,
         `width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=yes`
     );
+}
+
+// Bulk operations
+function toggleAllVMs(checkbox) {
+    const checkboxes = document.querySelectorAll('.vm-checkbox');
+    checkboxes.forEach(cb => cb.checked = checkbox.checked);
+    updateBulkButtons();
+}
+
+function updateBulkButtons() {
+    const checked = document.querySelectorAll('.vm-checkbox:checked').length;
+    const startBtn = document.getElementById('bulk-start-btn');
+    const stopBtn = document.getElementById('bulk-stop-btn');
+    
+    if (checked > 0) {
+        startBtn.style.display = 'inline-flex';
+        stopBtn.style.display = 'inline-flex';
+        startBtn.textContent = `Start ${checked} VM${checked > 1 ? 's' : ''}`;
+        stopBtn.textContent = `Stop ${checked} VM${checked > 1 ? 's' : ''}`;
+    } else {
+        startBtn.style.display = 'none';
+        stopBtn.style.display = 'none';
+    }
+}
+
+async function bulkStartVMs() {
+    const checkboxes = document.querySelectorAll('.vm-checkbox:checked');
+    if (checkboxes.length === 0) return;
+    
+    if (!confirm(`Start ${checkboxes.length} VM(s)?`)) return;
+    
+    showAlert(`Starting ${checkboxes.length} VM(s)...`, 'info');
+    
+    const vmids = [];
+    for (const cb of checkboxes) {
+        const vmid = parseInt(cb.value);
+        vmids.push(vmid);
+        try {
+            await fetch(`/api/vm/${vmid}/start`, { method: 'POST' });
+        } catch (e) {
+            console.error(`Failed to start VM ${vmid}:`, e);
+        }
+    }
+    
+    showAlert('VMs starting... IPs will appear shortly', 'success');
+    
+    // Uncheck all
+    document.getElementById('select-all-vms').checked = false;
+    checkboxes.forEach(cb => cb.checked = false);
+    updateBulkButtons();
+    
+    // Start polling for IP addresses
+    setTimeout(() => {
+        vmids.forEach(vmid => pollVmForIP(vmid));
+        refreshVMs();
+    }, 3000);
+}
+
+async function bulkStopVMs() {
+    const checkboxes = document.querySelectorAll('.vm-checkbox:checked');
+    if (checkboxes.length === 0) return;
+    
+    if (!confirm(`Stop ${checkboxes.length} VM(s)?`)) return;
+    
+    showAlert(`Stopping ${checkboxes.length} VM(s)...`, 'info');
+    
+    for (const cb of checkboxes) {
+        const vmid = parseInt(cb.value);
+        try {
+            await fetch(`/api/vm/${vmid}/stop`, { method: 'POST' });
+        } catch (e) {
+            console.error(`Failed to stop VM ${vmid}:`, e);
+        }
+    }
+    
+    showAlert('VMs stopped', 'success');
+    
+    // Uncheck all
+    document.getElementById('select-all-vms').checked = false;
+    checkboxes.forEach(cb => cb.checked = false);
+    updateBulkButtons();
+    
+    setTimeout(() => refreshVMs(), 2000);
+}
+
+// Poll for VM IP address after startup
+async function pollVmForIP(vmid, attempts = 0) {
+    const maxAttempts = 10; // Poll for up to 50 seconds (5s intervals)
+    
+    if (attempts >= maxAttempts) {
+        console.log(`Stopped polling for VM ${vmid} IP after ${maxAttempts} attempts`);
+        return;
+    }
+    
+    try {
+        const resp = await fetch(`/api/vm/${vmid}/ip`);
+        const data = await resp.json();
+        
+        if (data.ok && data.ip) {
+            // Found IP, update display
+            const ipCell = document.getElementById(`ip-${vmid}`);
+            if (ipCell) {
+                ipCell.textContent = data.ip;
+                ipCell.style.color = '#0b6a0b';
+            }
+            console.log(`Found IP for VM ${vmid}: ${data.ip}`);
+            return;
+        }
+        
+        // No IP yet, try again
+        setTimeout(() => pollVmForIP(vmid, attempts + 1), 5000);
+    } catch (e) {
+        console.error(`Error polling IP for VM ${vmid}:`, e);
+        setTimeout(() => pollVmForIP(vmid, attempts + 1), 5000);
+    }
 }
 
 function rdpVm(vmid) {

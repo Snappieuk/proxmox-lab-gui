@@ -6,6 +6,7 @@ Handles template operations: reimage, save, push.
 """
 
 import logging
+from datetime import datetime
 
 from flask import Blueprint, jsonify, session
 
@@ -156,9 +157,30 @@ def get_template_info(class_id: int):
         # Attempt fast IP discovery for teacher usable VM
         ip_address = None
         rdp_available = False
+        
+        # First: Check database cache
+        if teacher_vm.cached_ip:
+            ip_address = teacher_vm.cached_ip
+            logger.info(f"Using cached IP for VM {vmid}: {ip_address}")
+        
+        # Second: Check VMInventory cache
+        if not ip_address:
+            from app.models import VMInventory
+            from app.config import CLUSTERS
+            cluster_id = None
+            for c in CLUSTERS:
+                if c['host'] == cluster_ip:
+                    cluster_id = c['id']
+                    break
+            if cluster_id:
+                inventory = VMInventory.query.filter_by(cluster_id=cluster_id, vmid=vmid).first()
+                if inventory and inventory.ip_address:
+                    ip_address = inventory.ip_address
+                    logger.info(f"Using VMInventory cached IP for VM {vmid}: {ip_address}")
+        
         try:
-            # For running VMs, try guest agent first
-            if vm_status == 'running':
+            # Third: For running VMs, try guest agent if no cached IP
+            if not ip_address and vm_status == 'running':
                 try:
                     logger.info(f"Attempting guest agent network lookup for VM {vmid} on node {node}")
                     # Try to get network interfaces from QEMU guest agent
@@ -213,12 +235,25 @@ def get_template_info(class_id: int):
                     if not mac_address:
                         logger.warning(f"No MAC address available for VM {vmid}, cannot perform ARP scan")
                 
+                # Update cache if we found an IP
                 if ip_address:
-                    # Basic RDP availability heuristic: Windows category or port open
-                    # We don't have ostype here; attempt port check
-                    rdp_available = pc.has_rdp_port_open(ip_address)
+                    teacher_vm.cached_ip = ip_address
+                    teacher_vm.ip_updated_at = datetime.utcnow()
+                    db.session.commit()
+                    logger.info(f"Cached IP {ip_address} for VM {vmid}")
+                
+                # RDP availability: true if we have an IP (teacher VMs are Windows with RDP)
+                if ip_address:
+                    rdp_available = True
+                    # Optional: verify port is open
+                    try:
+                        rdp_available = pc.has_rdp_port_open(ip_address)
+                    except Exception as e:
+                        logger.debug(f"RDP port check failed for {ip_address}: {e}")
+                        # Assume RDP is available anyway for teacher VMs
+                        rdp_available = True
         except Exception as ip_err:
-            logger.debug(f"Teacher VM IP discovery failed: {ip_err}")
+            logger.warning(f"Teacher VM IP discovery failed: {ip_err}")
 
         return jsonify({
             'ok': True,
