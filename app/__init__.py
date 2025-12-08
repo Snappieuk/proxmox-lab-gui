@@ -40,6 +40,10 @@ def create_app(config=None):
     # Configure secret key
     app.secret_key = SECRET_KEY
     
+    # Configure file upload limits (10GB max for ISOs)
+    app.config['MAX_CONTENT_LENGTH'] = 10 * 1024 * 1024 * 1024  # 10GB
+    app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
+    
     # Apply any additional config
     if config:
         app.config.update(config)

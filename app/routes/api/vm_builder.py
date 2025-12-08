@@ -366,6 +366,12 @@ def api_upload_iso():
         
         logger.info(f"Uploading ISO {file.filename} to {node}:{storage}")
         
+        # Get file size for logging
+        file.stream.seek(0, 2)  # Seek to end
+        file_size = file.stream.tell()
+        file.stream.seek(0)  # Reset to beginning
+        logger.info(f"ISO file size: {file_size / (1024*1024):.2f} MB")
+        
         # Upload file to Proxmox storage
         # Note: The ProxmoxAPI library's upload method can be unreliable for large files
         # We need to use the storage content upload endpoint properly
@@ -375,6 +381,8 @@ def api_upload_iso():
             # with multipart form data containing 'content' and 'filename'
             
             import requests
+            from requests.adapters import HTTPAdapter
+            from requests.packages.urllib3.util.retry import Retry
             from app.models import Cluster
             
             # Find cluster config from database
@@ -386,8 +394,20 @@ def api_upload_iso():
             # Build Proxmox API URL
             api_url = f"https://{cluster.host}:{cluster.port}/api2/json/nodes/{node}/storage/{storage}/upload"
             
-            # Prepare the file for upload
-            file.stream.seek(0)  # Reset stream position
+            # Create a session with retry logic
+            session_obj = requests.Session()
+            retry_strategy = Retry(
+                total=3,
+                status_forcelist=[429, 500, 502, 503, 504],
+                method_whitelist=["POST"],
+                backoff_factor=1
+            )
+            adapter = HTTPAdapter(max_retries=retry_strategy)
+            session_obj.mount("https://", adapter)
+            session_obj.mount("http://", adapter)
+            
+            # Prepare the file for upload (don't read entire file into memory)
+            file.stream.seek(0)
             files = {
                 'content': (file.filename, file.stream, 'application/octet-stream')
             }
@@ -398,21 +418,25 @@ def api_upload_iso():
                 'content': 'iso'
             }
             
-            # Make request with authentication
+            # Make request with authentication and extended timeout
             auth = (cluster.user, cluster.password)
             verify_ssl = cluster.verify_ssl
             
-            response = requests.post(
+            logger.info(f"Starting upload to {api_url}")
+            response = session_obj.post(
                 api_url,
                 auth=auth,
                 files=files,
                 data=data,
                 verify=verify_ssl,
-                timeout=600  # 10 minute timeout for large files
+                timeout=(30, 1800),  # (connect timeout, read timeout) - 30 min read timeout
+                stream=False
             )
             
             if response.status_code != 200:
-                raise Exception(f"Proxmox API returned status {response.status_code}: {response.text}")
+                error_text = response.text[:500]  # Limit error text
+                logger.error(f"Proxmox API error {response.status_code}: {error_text}")
+                raise Exception(f"Proxmox API returned status {response.status_code}: {error_text}")
             
             result = response.json()
             logger.info(f"ISO uploaded successfully: {result}")
