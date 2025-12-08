@@ -55,6 +55,10 @@
                href="{{ url_for('classes.classes_list') }}">
                 <i class="bi bi-mortarboard"></i> Classes
             </a>
+            <a class="sidebar-link {% if request.endpoint == 'portal.profile' %}sidebar-link-active{% endif %}"
+               href="{{ url_for('portal.profile') }}">
+                <i class="bi bi-person-circle"></i> Profile
+            </a>
             {% if is_admin or (local_user and local_user.role in ['teacher', 'adminer']) %}
                 <a class="sidebar-link {% if request.endpoint == 'template_builder.template_builder_page' %}sidebar-link-active{% endif %}"
                    href="{{ url_for('template_builder.template_builder_page') }}">

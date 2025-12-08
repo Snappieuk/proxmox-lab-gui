@@ -48,3 +48,26 @@ def portal():
 def health():
     """Health check endpoint."""
     return jsonify({"ok": True})
+
+
+@portal_bp.route("/profile")
+@login_required
+def profile():
+    """User profile and settings page."""
+    from app.utils.auth_helpers import get_current_user
+    from app.services.user_manager import is_admin_user
+    
+    user = get_current_user()
+    if not user:
+        return redirect(url_for("auth.login"))
+    
+    # Check if this is a Proxmox user (has @pve or @pam suffix or is in admin list)
+    from flask import session
+    session_user = session.get("user", "")
+    is_proxmox_user = "@" in session_user or is_admin_user(session_user)
+    
+    return render_template(
+        "profile.html",
+        user=user,
+        is_proxmox_user=is_proxmox_user
+    )

@@ -12,6 +12,7 @@ from app.routes.api.class_template import api_class_template_bp
 from app.routes.api.class_ip_refresh import class_ip_refresh_bp
 from app.routes.api.clusters import api_clusters_bp
 from app.routes.api.mappings import api_mappings_bp
+from app.routes.api.profile import api_profile_bp
 from app.routes.api.publish_template import api_publish_template_bp
 from app.routes.api.rdp import api_rdp_bp
 from app.routes.api.ssh import api_ssh_bp
@@ -54,4 +55,5 @@ def register_blueprints(app):
     app.register_blueprint(api_class_owners_bp)
     app.register_blueprint(api_user_vm_assignments_bp)
     app.register_blueprint(api_users_bp)
+    app.register_blueprint(api_profile_bp)
     app.register_blueprint(api_publish_template_bp)

@@ -1,0 +1,310 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1><i class="bi bi-person-circle"></i> Profile Settings</h1>
+        <p class="page-subtitle">Manage your account settings and password</p>
+    </div>
+</div>
+
+<div class="content-card" style="max-width: 600px; margin: 0 auto;">
+    <h2 style="margin-bottom: 1.5rem; font-size: 1.25rem; color: #323130;">
+        <i class="bi bi-person"></i> Account Information
+    </h2>
+    
+    <div class="info-row">
+        <label>Username</label>
+        <div class="info-value">{{ user.username }}</div>
+    </div>
+    
+    <div class="info-row">
+        <label>Role</label>
+        <div class="info-value">
+            {% if user.role == 'adminer' %}
+                <span class="badge badge-success">Administrator</span>
+            {% elif user.role == 'teacher' %}
+                <span class="badge badge-primary">Teacher</span>
+            {% else %}
+                <span class="badge badge-secondary">Student</span>
+            {% endif %}
+        </div>
+    </div>
+    
+    {% if is_proxmox_user %}
+    <div class="alert alert-info" style="margin-top: 1.5rem;">
+        <i class="bi bi-info-circle"></i>
+        <strong>Proxmox Account:</strong> Your password is managed by Proxmox. You cannot change it here.
+    </div>
+    {% else %}
+    <hr style="margin: 2rem 0; border: none; border-top: 1px solid #edebe9;">
+    
+    <h2 style="margin-bottom: 1.5rem; font-size: 1.25rem; color: #323130;">
+        <i class="bi bi-key"></i> Change Password
+    </h2>
+    
+    <form id="change-password-form" onsubmit="changePassword(event)">
+        <div class="form-group">
+            <label for="current-password">Current Password</label>
+            <input type="password" 
+                   id="current-password" 
+                   name="current_password" 
+                   class="form-control" 
+                   required 
+                   autocomplete="current-password">
+        </div>
+        
+        <div class="form-group">
+            <label for="new-password">New Password</label>
+            <input type="password" 
+                   id="new-password" 
+                   name="new_password" 
+                   class="form-control" 
+                   required 
+                   minlength="6"
+                   autocomplete="new-password">
+            <small style="color: #605e5c; font-size: 0.85rem;">Minimum 6 characters</small>
+        </div>
+        
+        <div class="form-group">
+            <label for="confirm-password">Confirm New Password</label>
+            <input type="password" 
+                   id="confirm-password" 
+                   name="confirm_password" 
+                   class="form-control" 
+                   required 
+                   minlength="6"
+                   autocomplete="new-password">
+        </div>
+        
+        <div class="form-actions" style="margin-top: 1.5rem;">
+            <button type="submit" class="btn-primary">
+                <i class="bi bi-check-circle"></i> Change Password
+            </button>
+            <a href="{{ url_for('portal.portal') }}" class="btn-secondary">
+                <i class="bi bi-x-circle"></i> Cancel
+            </a>
+        </div>
+    </form>
+    {% endif %}
+</div>
+
+<div id="alert-container"></div>
+
+<style>
+.content-card {
+    background: white;
+    border-radius: 8px;
+    padding: 2rem;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.info-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 0;
+    border-bottom: 1px solid #edebe9;
+}
+
+.info-row label {
+    font-weight: 600;
+    color: #605e5c;
+    font-size: 0.95rem;
+}
+
+.info-value {
+    color: #323130;
+    font-size: 0.95rem;
+}
+
+.form-group {
+    margin-bottom: 1.5rem;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 0.5rem;
+    font-weight: 600;
+    color: #323130;
+}
+
+.form-control {
+    width: 100%;
+    padding: 0.75rem;
+    border: 1px solid #8a8886;
+    border-radius: 4px;
+    font-size: 0.95rem;
+    font-family: inherit;
+}
+
+.form-control:focus {
+    outline: none;
+    border-color: #0078d4;
+    box-shadow: 0 0 0 2px rgba(0, 120, 212, 0.2);
+}
+
+.form-actions {
+    display: flex;
+    gap: 1rem;
+}
+
+.alert {
+    padding: 1rem;
+    border-radius: 6px;
+    display: flex;
+    align-items: start;
+    gap: 0.75rem;
+    line-height: 1.5;
+}
+
+.alert i {
+    font-size: 1.25rem;
+    margin-top: 0.1rem;
+}
+
+.alert-info {
+    background: #e8f4fd;
+    color: #004578;
+    border: 1px solid #b3d7f5;
+}
+
+.alert-success {
+    background: #dff6dd;
+    color: #0b5a08;
+    border: 1px solid #92d050;
+}
+
+.alert-error {
+    background: #fde8e8;
+    color: #a80000;
+    border: 1px solid #f5a4a4;
+}
+
+.badge {
+    padding: 0.35rem 0.75rem;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+.badge-success {
+    background: #dff6dd;
+    color: #0b5a08;
+}
+
+.badge-primary {
+    background: #e8f4fd;
+    color: #004578;
+}
+
+.badge-secondary {
+    background: #f3f2f1;
+    color: #605e5c;
+}
+
+.btn-primary, .btn-secondary {
+    padding: 0.75rem 1.5rem;
+    border-radius: 4px;
+    border: none;
+    font-size: 0.95rem;
+    font-weight: 600;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    text-decoration: none;
+    transition: background 0.2s;
+}
+
+.btn-primary {
+    background: #0078d4;
+    color: white;
+}
+
+.btn-primary:hover {
+    background: #106ebe;
+}
+
+.btn-secondary {
+    background: #f3f2f1;
+    color: #323130;
+}
+
+.btn-secondary:hover {
+    background: #e1dfdd;
+}
+
+#alert-container {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    z-index: 1000;
+    max-width: 400px;
+}
+</style>
+
+<script>
+function showAlert(message, type = 'info') {
+    const container = document.getElementById('alert-container');
+    const alertClass = type === 'success' ? 'alert-success' : type === 'error' ? 'alert-error' : 'alert-info';
+    const icon = type === 'success' ? 'check-circle' : type === 'error' ? 'exclamation-circle' : 'info-circle';
+    
+    const alert = document.createElement('div');
+    alert.className = `alert ${alertClass}`;
+    alert.style.marginBottom = '1rem';
+    alert.innerHTML = `
+        <i class="bi bi-${icon}"></i>
+        <span>${message}</span>
+    `;
+    
+    container.appendChild(alert);
+    
+    setTimeout(() => {
+        alert.remove();
+    }, 5000);
+}
+
+async function changePassword(event) {
+    event.preventDefault();
+    
+    const form = event.target;
+    const currentPassword = form['current_password'].value;
+    const newPassword = form['new_password'].value;
+    const confirmPassword = form['confirm_password'].value;
+    
+    // Client-side validation
+    if (newPassword !== confirmPassword) {
+        showAlert('New passwords do not match', 'error');
+        return;
+    }
+    
+    if (newPassword.length < 6) {
+        showAlert('Password must be at least 6 characters', 'error');
+        return;
+    }
+    
+    try {
+        const resp = await fetch('/api/profile/change-password', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                current_password: currentPassword,
+                new_password: newPassword
+            })
+        });
+        
+        const data = await resp.json();
+        
+        if (data.ok) {
+            showAlert(data.message || 'Password changed successfully!', 'success');
+            form.reset();
+        } else {
+            showAlert(data.error || 'Failed to change password', 'error');
+        }
+    } catch (e) {
+        showAlert('Failed to change password: ' + e.message, 'error');
+    }
+}
+</script>
+{% endblock %}
