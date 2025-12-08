@@ -271,14 +271,29 @@
         function connect(username, password) {
             modal.classList.add('hidden');
             
-            // Use wss:// for HTTPS, ws:// for HTTP
+            // Determine WebSocket protocol and host
+            // Use current page's protocol/host to work through reverse proxies
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            
+            // Build WebSocket URL using current hostname to work with reverse proxy
+            // This ensures the WebSocket goes through the same proxy as HTTP requests
             const wsUrl = `${protocol}//${window.location.host}/ws/ssh/${vmid}?ip=${encodeURIComponent(ip)}`;
             
             console.log('Attempting WebSocket connection to:', wsUrl);
+            console.log('Using protocol:', protocol, 'from window.location.protocol:', window.location.protocol);
+            
             status.textContent = 'Connecting...';
             status.className = '';
-            ws = new WebSocket(wsUrl);
+            
+            try {
+                ws = new WebSocket(wsUrl);
+            } catch (e) {
+                console.error('Failed to create WebSocket:', e);
+                status.textContent = 'Connection failed: ' + e.message;
+                status.className = 'error';
+                showLoginModal();
+                return;
+            }
             
             ws.onopen = () => {
                 console.log('WebSocket connected, sending credentials');
@@ -315,10 +330,29 @@
             };
             
             ws.onerror = (error) => {
-                status.textContent = 'Connection error';
+                status.textContent = 'Connection error - WebSocket proxy configuration needed';
                 status.className = 'error';
                 console.error('WebSocket error:', error);
-                term.write('\r\n\x1b[1;31mWebSocket connection failed. Check browser console for details.\x1b[0m\r\n');
+                
+                // Show helpful error message for proxy issues
+                term.write('\r\n\x1b[1;31m╔══════════════════════════════════════════════════════════╗\x1b[0m\r\n');
+                term.write('\x1b[1;31m║  WebSocket Connection Failed                            ║\x1b[0m\r\n');
+                term.write('\x1b[1;31m╠══════════════════════════════════════════════════════════╣\x1b[0m\r\n');
+                term.write('\x1b[1;33m║  This usually happens when running behind a proxy.      ║\x1b[0m\r\n');
+                term.write('\x1b[1;33m║                                                          ║\x1b[0m\r\n');
+                term.write('\x1b[1;33m║  If using nginx, add to your config:                    ║\x1b[0m\r\n');
+                term.write('\x1b[0m║                                                          ║\x1b[0m\r\n');
+                term.write('\x1b[0m║    location /ws/ {                                       ║\x1b[0m\r\n');
+                term.write('\x1b[0m║      proxy_pass http://localhost:8080;                  ║\x1b[0m\r\n');
+                term.write('\x1b[0m║      proxy_http_version 1.1;                            ║\x1b[0m\r\n');
+                term.write('\x1b[0m║      proxy_set_header Upgrade $http_upgrade;            ║\x1b[0m\r\n');
+                term.write('\x1b[0m║      proxy_set_header Connection "upgrade";             ║\x1b[0m\r\n');
+                term.write('\x1b[0m║      proxy_set_header Host $host;                       ║\x1b[0m\r\n');
+                term.write('\x1b[0m║      proxy_set_header X-Real-IP $remote_addr;           ║\x1b[0m\r\n');
+                term.write('\x1b[0m║    }                                                     ║\x1b[0m\r\n');
+                term.write('\x1b[0m║                                                          ║\x1b[0m\r\n');
+                term.write('\x1b[1;33m║  Alternative: Use RDP connection instead                ║\x1b[0m\r\n');
+                term.write('\x1b[1;31m╚══════════════════════════════════════════════════════════╝\x1b[0m\r\n');
             };
             
             ws.onclose = (event) => {

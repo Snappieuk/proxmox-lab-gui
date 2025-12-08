@@ -37,17 +37,41 @@ def init_websocket(app, sock):
     if WEBSOCKET_AVAILABLE and sock:
         @sock.route("/ws/ssh/<int:vmid>")
         def ssh_websocket(ws, vmid: int):
-            """WebSocket endpoint for SSH connection."""
+            """WebSocket endpoint for SSH connection.
+            
+            Note: When running behind a reverse proxy (nginx/apache), ensure WebSocket
+            upgrade headers are properly forwarded:
+            
+            Nginx example:
+                location /ws/ {
+                    proxy_pass http://localhost:8080;
+                    proxy_http_version 1.1;
+                    proxy_set_header Upgrade $http_upgrade;
+                    proxy_set_header Connection "upgrade";
+                    proxy_set_header Host $host;
+                    proxy_set_header X-Real-IP $remote_addr;
+                    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                    proxy_set_header X-Forwarded-Proto $scheme;
+                }
+            """
             from app.services.ssh_service import SSHWebSocketHandler
             
+            # Log proxy headers for debugging
             logger.info("WebSocket SSH connection attempt for VM %d", vmid)
+            logger.debug("Headers: Upgrade=%s, Connection=%s, X-Forwarded-For=%s",
+                        request.headers.get('Upgrade'),
+                        request.headers.get('Connection'),
+                        request.headers.get('X-Forwarded-For'))
             
             # Get IP from query parameters
             ip = request.args.get('ip')
             
             if not ip:
                 logger.error("SSH WebSocket: No IP provided")
-                ws.send("\r\n\x1b[1;31mError: IP address not provided.\x1b[0m\r\n")
+                try:
+                    ws.send("\r\n\x1b[1;31mError: IP address not provided.\x1b[0m\r\n")
+                except Exception:
+                    pass
                 return
             
             logger.info("SSH WebSocket: vmid=%d, ip=%s, waiting for credentials", vmid, ip)
