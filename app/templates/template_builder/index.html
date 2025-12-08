@@ -234,6 +234,51 @@
     </div>
 </div>
 
+<!-- Console Modal -->
+<div id="console-modal" class="modal" style="display: none;">
+    <div class="modal-content" style="max-width: 1400px; width: 95%; max-height: 95vh;">
+        <div class="modal-header">
+            <h2 style="font-size: 1.25rem; font-weight: 600; margin: 0;">
+                <i class="bi bi-terminal" style="margin-right: 0.5rem;"></i>VM Console - <span id="console-vm-name"></span>
+            </h2>
+            <button class="btn-close" onclick="closeConsoleModal()">&times;</button>
+        </div>
+        <div class="modal-body" style="padding: 0; height: calc(95vh - 80px);">
+            <iframe id="console-frame" style="width: 100%; height: 100%; border: none;" frameborder="0"></iframe>
+        </div>
+    </div>
+</div>
+
+<!-- Build Success Modal -->
+<div id="build-success-modal" class="modal" style="display: none;">
+    <div class="modal-content" style="max-width: 500px;">
+        <div class="modal-header">
+            <h2 style="font-size: 1.25rem; font-weight: 600; margin: 0; color: #22c55e;">
+                <i class="bi bi-check-circle" style="margin-right: 0.5rem;"></i>VM Created Successfully
+            </h2>
+            <button class="btn-close" onclick="closeBuildSuccessModal()">&times;</button>
+        </div>
+        <div class="modal-body" style="padding: 1.5rem;">
+            <p style="margin-bottom: 1rem;" id="build-success-message"></p>
+            <div style="background: #f3f4f6; padding: 1rem; border-radius: 0.5rem; margin-bottom: 1rem;">
+                <div style="font-size: 0.875rem; color: #6b7280; margin-bottom: 0.5rem;">VM ID:</div>
+                <div style="font-size: 1.25rem; font-weight: 600;" id="build-success-vmid"></div>
+            </div>
+            <p style="font-size: 0.875rem; color: #6b7280; margin-bottom: 1rem;">
+                The VM has been created but is not started. You can now open the console to install the operating system.
+            </p>
+        </div>
+        <div class="modal-actions">
+            <button type="button" onclick="closeBuildSuccessModal()" class="btn-cancel">
+                Close
+            </button>
+            <button type="button" onclick="openConsoleFromSuccess()" class="btn-migrate">
+                <i class="bi bi-terminal" style="margin-right: 0.5rem;"></i>Open Console
+            </button>
+        </div>
+    </div>
+</div>
+
 <style>
 .modal {
     position: fixed;
@@ -865,8 +910,14 @@ async function submitBuildVM(event) {
         const data = await response.json();
         
         if (data.ok) {
-            alert(`✓ ${data.message}\\n\\nVMID: ${data.vmid}`);
             closeBuildModal();
+            
+            // Show success modal with console option
+            document.getElementById('build-success-message').textContent = data.message;
+            document.getElementById('build-success-vmid').textContent = data.vmid;
+            document.getElementById('build-success-modal').setAttribute('data-vmid', data.vmid);
+            document.getElementById('build-success-modal').setAttribute('data-vm-name', formData.vm_name);
+            document.getElementById('build-success-modal').style.display = 'flex';
             
             // Refresh templates after a delay
             setTimeout(() => {
@@ -883,6 +934,47 @@ async function submitBuildVM(event) {
         submitBtn.disabled = false;
         submitBtn.innerHTML = '<i class="bi bi-play-circle"></i> Build VM';
     }
+}
+
+function closeBuildSuccessModal() {
+    document.getElementById('build-success-modal').style.display = 'none';
+}
+
+async function openConsoleFromSuccess() {
+    const modal = document.getElementById('build-success-modal');
+    const vmid = modal.getAttribute('data-vmid');
+    const vmName = modal.getAttribute('data-vm-name');
+    
+    closeBuildSuccessModal();
+    await openConsole(vmid, vmName);
+}
+
+async function openConsole(vmid, vmName) {
+    try {
+        // Get console URL from API
+        const response = await fetch(`/api/console/${vmid}/vnc`);
+        const data = await response.json();
+        
+        if (data.ok) {
+            // Set console info
+            document.getElementById('console-vm-name').textContent = vmName || `VM ${vmid}`;
+            document.getElementById('console-frame').src = data.console_url;
+            
+            // Show console modal
+            document.getElementById('console-modal').style.display = 'flex';
+        } else {
+            alert('Failed to open console: ' + (data.error || 'Unknown error'));
+        }
+    } catch (error) {
+        console.error('Failed to open console:', error);
+        alert('Failed to open console: ' + error.message);
+    }
+}
+
+function closeConsoleModal() {
+    document.getElementById('console-modal').style.display = 'none';
+    document.getElementById('console-frame').src = '';
+}
 }
 </script>
 
