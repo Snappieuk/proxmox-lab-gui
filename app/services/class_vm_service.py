@@ -455,7 +455,7 @@ def recreate_student_vms_from_template(
         base_qcow2_path = f"{DEFAULT_TEMPLATE_STORAGE_PATH}/{class_prefix}-base.qcow2"
         
         logger.info(f"Exporting template {template_vmid} to {base_qcow2_path}")
-        success, error, disk_controller_type, ostype = export_template_to_qcow2(
+        success, error, disk_controller_type, ostype, bios, machine, cpu, scsihw, memory, cores, sockets, efi_disk, tpm_state = export_template_to_qcow2(
             ssh_executor=ssh_executor,
             template_vmid=template_vmid,
             node=template_node,
@@ -464,6 +464,10 @@ def recreate_student_vms_from_template(
         
         if not success:
             return False, f"Failed to export template: {error}", []
+        
+        logger.info(f"Template hardware: controller={disk_controller_type}, ostype={ostype}, bios={bios}, machine={machine}, cpu={cpu}, scsihw={scsihw}")
+        logger.info(f"Template resources: memory={memory}MB, cores={cores}, sockets={sockets}")
+        logger.info(f"Template boot: EFI={bool(efi_disk)}, TPM={bool(tpm_state)}")
         
         # Create student VMs as overlays using prefix-based VMID allocation
         for i in range(count):
@@ -693,7 +697,7 @@ def create_class_vms(
                     progress_percent=5
                 )
             
-            success, error, disk_controller_type, ostype = export_template_to_qcow2(
+            success, error, disk_controller_type, ostype, bios, machine, cpu, scsihw, memory, cores, sockets, efi_disk, tpm_state = export_template_to_qcow2(
                 ssh_executor=ssh_executor,
                 template_vmid=template_vmid,
                 node=template_node,
@@ -706,8 +710,8 @@ def create_class_vms(
                 logger.error(error_msg)
                 return result
             
-            logger.info(f"Template export completed successfully: {base_qcow2_path} (controller: {disk_controller_type}, ostype: {ostype})")
-            result.details.append(f"Class base created: {base_qcow2_path} ({disk_controller_type} disk)")
+            logger.info(f"Template export completed successfully: {base_qcow2_path} (controller: {disk_controller_type}, ostype: {ostype}, bios: {bios}, scsihw: {scsihw}, memory: {memory}MB, cores: {cores}, EFI: {bool(efi_disk)}, TPM: {bool(tpm_state)})")
+            result.details.append(f"Class base created: {base_qcow2_path} ({disk_controller_type} disk, {bios} firmware, {scsihw} controller, {memory}MB RAM, {cores} cores, {'UEFI' if efi_disk else 'BIOS'})")
             
             # Update progress: template export complete
             if class_.clone_task_id:
@@ -748,10 +752,16 @@ def create_class_vms(
                 name=teacher_name,
                 base_qcow2_path=base_qcow2_path,
                 node=template_node,
-                memory=memory,
-                cores=cores,
+                memory=memory,  # Use template's memory spec
+                cores=cores,  # Use template's CPU cores
                 disk_controller_type=disk_controller_type,  # Use template's disk controller type
                 ostype=ostype,  # Use template's OS type (important for Windows VMs)
+                bios=bios,  # Preserve template's BIOS (UEFI vs BIOS)
+                machine=machine,  # Preserve template's machine type
+                cpu=cpu,  # Preserve template's CPU type
+                scsihw=scsihw,  # Preserve template's SCSI controller
+                efi_disk=efi_disk,  # Preserve template's EFI disk (critical for Windows UEFI boot)
+                tpm_state=tpm_state,  # Preserve template's TPM (required for Windows 11)
             )
             
             if not success:
@@ -785,10 +795,16 @@ def create_class_vms(
                 name=class_base_name,
                 base_qcow2_path=base_qcow2_path,
                 node=template_node,
-                memory=memory,
-                cores=cores,
+                memory=memory,  # Use template's memory spec
+                cores=cores,  # Use template's CPU cores
                 disk_controller_type=disk_controller_type,  # Use template's disk controller type
                 ostype=ostype,  # Use template's OS type (important for Windows VMs)
+                bios=bios,  # Preserve template's BIOS (UEFI vs BIOS)
+                machine=machine,  # Preserve template's machine type
+                cpu=cpu,  # Preserve template's CPU type
+                scsihw=scsihw,  # Preserve template's SCSI controller
+                efi_disk=efi_disk,  # Preserve template's EFI disk (critical for Windows UEFI boot)
+                tpm_state=tpm_state,  # Preserve template's TPM (required for Windows 11)
             )
             
             if not success:
@@ -1346,7 +1362,7 @@ def save_and_deploy_teacher_vm(
         ssh_executor.execute(f"mv {new_base_path} {backup_path}", check=False)
         
         # Export teacher VM disk
-        success, error, disk_controller_type, ostype = export_template_to_qcow2(
+        success, error, disk_controller_type, ostype, bios, machine, cpu, scsihw, memory, cores, sockets, efi_disk, tpm_state = export_template_to_qcow2(
             ssh_executor=ssh_executor,
             template_vmid=teacher_vmid,
             node=node,

@@ -52,6 +52,10 @@ def create_vm_shell(
     cores: int = 2,
     network_bridge: str = "vmbr0",
     ostype: str = "l26",
+    bios: str = None,
+    machine: str = None,
+    cpu: str = None,
+    scsihw: str = None,
 ) -> Tuple[bool, str]:
     """
     Create an empty VM shell (no disk attached).
@@ -67,18 +71,33 @@ def create_vm_shell(
         cores: CPU cores (default: 2)
         network_bridge: Network bridge (default: vmbr0)
         ostype: OS type (e.g., 'win10', 'win11', 'l26') - default: l26 (Linux)
+        bios: BIOS type ('seabios' or 'ovmf' for UEFI) - default: auto-detect from ostype
+        machine: Machine type (e.g., 'pc-q35-8.1') - default: auto-detect from ostype
+        cpu: CPU type (e.g., 'host', 'kvm64') - default: auto-detect from ostype
+        scsihw: SCSI hardware controller (e.g., 'virtio-scsi-pci', 'lsi') - default: auto-detect
         
     Returns:
         Tuple of (success, error_message)
     """
     safe_name = sanitize_vm_name(name)
     
+    # Base command
     cmd = (
         f"qm create {vmid} --name {safe_name} "
         f"--memory {memory} --cores {cores} "
         f"--net0 virtio,bridge={network_bridge} "
         f"--ostype {ostype}"
     )
+    
+    # Add hardware settings (use explicit values if provided, otherwise use defaults)
+    if cpu:
+        cmd += f" --cpu {cpu}"
+    if machine:
+        cmd += f" --machine {machine}"
+    if bios:
+        cmd += f" --bios {bios}"
+    if scsihw:
+        cmd += f" --scsihw {scsihw}"
     
     try:
         exit_code, stdout, stderr = ssh_executor.execute(cmd, timeout=60, check=False)
@@ -89,6 +108,15 @@ def create_vm_shell(
             return False, error_msg
         
         logger.info(f"Created VM shell: {vmid} ({safe_name})")
+        
+        # Enable QEMU guest agent by default (even if guest doesn't have it installed yet)
+        agent_cmd = f"qm set {vmid} --agent enabled=1,fstrim_cloned_disks=1"
+        exit_code, stdout, stderr = ssh_executor.execute(agent_cmd, timeout=30, check=False)
+        if exit_code == 0:
+            logger.info(f"Enabled QEMU guest agent for VM {vmid}")
+        else:
+            logger.warning(f"Failed to enable QEMU guest agent for VM {vmid}: {stderr}")
+        
         return True, ""
         
     except Exception as e:

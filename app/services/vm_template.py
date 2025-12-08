@@ -69,7 +69,7 @@ def export_template_to_qcow2(
         timeout: Conversion timeout in seconds (default: 600)
         
     Returns:
-        Tuple of (success, error_message, disk_controller_type, ostype)
+        Tuple of (success, error_message, disk_controller_type, ostype, bios, machine, cpu, scsihw, memory, cores, sockets, efi_disk, tpm_state)
     """
     logger.info(f"Exporting template {template_vmid} to {output_path}")
     
@@ -79,7 +79,7 @@ def export_template_to_qcow2(
         if not config:
             error_msg = f"Failed to get template {template_vmid} config from node {node}"
             logger.error(error_msg)
-            return False, error_msg
+            return False, error_msg, None, None, None, None, None, None, None, None, None, None, None
         
         logger.info(f"Retrieved config for template {template_vmid}: {len(config)} keys")
         logger.debug(f"Config keys: {list(config.keys())}")
@@ -109,7 +109,7 @@ def export_template_to_qcow2(
             config_dump = '\n'.join([f"  {k}: {v}" for k, v in config.items()])
             error_msg = f"No disk found in template {template_vmid}. Config dump:\n{config_dump}"
             logger.error(error_msg)
-            return False, error_msg
+            return False, error_msg, None, None, None, None, None, None, None, None, None, None, None
         
         # Parse disk configuration
         disk_info = parse_disk_config(disk_config)
@@ -121,7 +121,7 @@ def export_template_to_qcow2(
         if not storage or not volume:
             error_msg = f"Could not parse disk config for {disk_slot}: '{disk_config}'. Parsed as: storage={storage}, volume={volume}"
             logger.error(error_msg)
-            return False, error_msg
+            return False, error_msg, None, None, None, None, None, None, None, None, None, None, None
         
         logger.info(f"Found disk on {disk_slot}, storage {storage}, volume {volume}")
         
@@ -136,9 +136,25 @@ def export_template_to_qcow2(
         
         logger.info(f"Template uses {disk_controller_type} disk controller (from slot {disk_slot})")
         
-        # Get ostype from template config (important for Windows VMs)
+        # Get hardware specs from template config (important for Windows VMs)
         ostype = config.get('ostype', 'l26')  # Default to Linux 2.6+ if not specified
-        logger.info(f"Template ostype: {ostype}")
+        bios = config.get('bios', 'seabios')  # BIOS type (seabios or ovmf/UEFI)
+        machine = config.get('machine')  # Machine type (e.g., pc-q35-8.1)
+        cpu = config.get('cpu')  # CPU type (e.g., host, kvm64)
+        scsihw = config.get('scsihw')  # SCSI hardware controller (e.g., virtio-scsi-pci, lsi)
+        
+        # Get resource specs from template
+        memory = config.get('memory', 2048)  # Memory in MB
+        cores = config.get('cores', 2)  # CPU cores
+        sockets = config.get('sockets', 1)  # CPU sockets
+        
+        # Store EFI and TPM config to pass to cloned VMs
+        efi_disk = efi_config  # Will be used to create EFI disk on clones
+        tpm_state = tpm_config  # Will be used to create TPM on clones
+        
+        logger.info(f"Template hardware config - ostype: {ostype}, bios: {bios}, machine: {machine}, cpu: {cpu}, scsihw: {scsihw}")
+        logger.info(f"Template resources - memory: {memory}MB, cores: {cores}, sockets: {sockets}")
+        logger.info(f"Template boot config - EFI: {efi_disk}, TPM: {tpm_state}")
         
         # Resolve source path
         # For NFS storage: /mnt/pve/{storage}/images/{vmid}/{volume}
@@ -160,14 +176,14 @@ def export_template_to_qcow2(
         )
         
         if success:
-            logger.info(f"Successfully exported template to {output_path} (controller: {disk_controller_type}, ostype: {ostype})")
-            return True, "", disk_controller_type, ostype
+            logger.info(f"Successfully exported template to {output_path} (controller: {disk_controller_type}, ostype: {ostype}, bios: {bios}, scsihw: {scsihw}, memory: {memory}MB, cores: {cores}, EFI: {bool(efi_disk)}, TPM: {bool(tpm_state)})")
+            return True, "", disk_controller_type, ostype, bios, machine, cpu, scsihw, memory, cores, sockets, efi_disk, tpm_state
         else:
-            return False, error, None, None
+            return False, error, None, None, None, None, None, None, None, None, None, None, None
         
     except Exception as e:
         logger.exception(f"Error exporting template: {e}")
-        return False, str(e), None, None
+        return False, str(e), None, None, None, None, None, None, None, None, None, None, None, None, None
 
 
 # ---------------------------------------------------------------------------
@@ -185,6 +201,12 @@ def create_overlay_vm(
     storage: str = None,
     disk_controller_type: str = 'scsi',
     ostype: str = 'l26',
+    bios: str = None,
+    machine: str = None,
+    cpu: str = None,
+    scsihw: str = None,
+    efi_disk: str = None,
+    tpm_state: str = None,
 ) -> Tuple[bool, str, Optional[str]]:
     """
     Create a VM using a QCOW2 overlay (copy-on-write).
@@ -203,6 +225,12 @@ def create_overlay_vm(
         storage: Storage name (default: PROXMOX_STORAGE_NAME)
         disk_controller_type: Disk controller type - scsi, virtio, sata, or ide (default: scsi)
         ostype: OS type (e.g., 'win10', 'win11', 'l26' for Linux) - default: l26
+        bios: BIOS type ('seabios' or 'ovmf') - copied from template
+        machine: Machine type - copied from template
+        cpu: CPU type - copied from template
+        scsihw: SCSI hardware controller - copied from template
+        efi_disk: EFI disk config from template (for UEFI Windows VMs)
+        tpm_state: TPM state config from template (for Windows 11)
         
     Returns:
         Tuple of (success, error_message, mac_address)
@@ -211,7 +239,7 @@ def create_overlay_vm(
     images_path = DEFAULT_VM_IMAGES_PATH
     
     try:
-        # Step 1: Create VM shell (let Proxmox use default controller)
+        # Step 1: Create VM shell with same hardware config as template
         success, error = create_vm_shell(
             ssh_executor=ssh_executor,
             vmid=vmid,
@@ -219,10 +247,39 @@ def create_overlay_vm(
             memory=memory,
             cores=cores,
             ostype=ostype,
+            bios=bios,
+            machine=machine,
+            cpu=cpu,
+            scsihw=scsihw,
         )
         
         if not success:
             return False, f"Failed to create VM shell: {error}", None
+        
+        # Step 1.5: Add EFI disk and TPM if template had them (critical for Windows UEFI boot)
+        if efi_disk:
+            logger.info(f"Template has EFI disk, adding to VM {vmid}: {efi_disk}")
+            # Parse EFI disk config (format: "storage:size,efitype=4m,pre-enrolled-keys=1")
+            # For clones, create new EFI disk with same parameters
+            efi_cmd = f"qm set {vmid} --efidisk0 {storage}:1,efitype=4m,pre-enrolled-keys=1"
+            exit_code, stdout, stderr = ssh_executor.execute(efi_cmd, timeout=30, check=False)
+            if exit_code != 0:
+                logger.error(f"Failed to add EFI disk to VM {vmid}: {stderr}")
+                destroy_vm(ssh_executor, vmid, purge=True)
+                return False, f"Failed to add EFI disk: {stderr}", None
+            logger.info(f"Added EFI disk to VM {vmid}")
+        
+        if tpm_state:
+            logger.info(f"Template has TPM, adding to VM {vmid}: {tpm_state}")
+            # Parse TPM config (format: "storage:size,version=v2.0")
+            # For clones, create new TPM with same parameters
+            tpm_cmd = f"qm set {vmid} --tpmstate0 {storage}:1,version=v2.0"
+            exit_code, stdout, stderr = ssh_executor.execute(tpm_cmd, timeout=30, check=False)
+            if exit_code != 0:
+                logger.warning(f"Failed to add TPM to VM {vmid}: {stderr}")
+                # Don't fail the whole operation for TPM
+            else:
+                logger.info(f"Added TPM to VM {vmid}")
         
         # Step 2: Create overlay disk
         overlay_dir = f"{images_path}/{vmid}"

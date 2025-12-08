@@ -336,15 +336,14 @@
             </div>
             
             <div class="content-card">
-                <table class="data-table">
+                <table class="vm-table">
                     <thead>
                         <tr>
+                            <th>Name</th>
                             <th>VMID</th>
-                            <th>VM Name</th>
                             <th>Node</th>
-                            <th>MAC</th>
-                            <th>IP</th>
                             <th>Status</th>
+                            <th>IP Address</th>
                             <th>Assigned Student</th>
                             <th>Actions</th>
                         </tr>
@@ -353,39 +352,42 @@
                         {% for vm in vm_assignments %}
                         {% if not vm.is_template_vm and not vm.is_teacher_vm and not ('-teacher' in (vm.vm_name or '').lower()) %}
                         <tr data-vmid="{{ vm.proxmox_vmid }}" data-node="{{ vm.node }}">
-                            <td><strong>{{ vm.proxmox_vmid }}</strong></td>
-                            <td><span id="name-{{ vm.proxmox_vmid }}">{{ vm.vm_name or 'N/A' }}</span></td>
+                            <td><strong id="name-{{ vm.proxmox_vmid }}">{{ vm.vm_name or 'N/A' }}</strong></td>
+                            <td>{{ vm.proxmox_vmid }}</td>
                             <td>{{ vm.node or 'N/A' }}</td>
-                            <td><span id="mac-{{ vm.proxmox_vmid }}">{{ vm.mac or 'N/A' }}</span></td>
-                            <td><span id="ip-{{ vm.proxmox_vmid }}">{{ vm.ip or 'N/A' }}</span></td>
-                            <td><span class="status-badge" id="status-{{ vm.proxmox_vmid }}">{{ vm.status or 'unknown' }}</span></td>
+                            <td>
+                                <span class="badge {% if vm.status == 'running' %}badge-success{% elif vm.status == 'stopped' %}badge-danger{% else %}badge-secondary{% endif %}" id="status-{{ vm.proxmox_vmid }}">
+                                    {% if vm.status == 'running' %}● Running{% elif vm.status == 'stopped' %}● Stopped{% else %}● {{ vm.status or 'Unknown' }}{% endif %}
+                                </span>
+                            </td>
+                            <td class="vm-ip" id="ip-{{ vm.proxmox_vmid }}">{{ vm.ip or 'N/A' }}</td>
                             <td>{{ vm.assigned_user_name or '<span style="color: #999;">Unassigned</span>' | safe }}</td>
                             <td>
                                 <div class="action-buttons">
-                                    <button class="btn-icon btn-icon-success" 
+                                    <button class="btn-icon btn-icon-success btn-start btn-power" 
                                             onclick="startVm({{ vm.proxmox_vmid }}, '{{ vm.node }}')"
-                                            data-tooltip="Start VM">
-                                        <i class="bi bi-play-fill"></i>
+                                            title="Start VM">
+                                        <i class="bi bi-power"></i>
                                     </button>
-                                    <button class="btn-icon btn-icon-danger" 
+                                    <button class="btn-icon btn-icon-danger btn-stop btn-power" 
                                             onclick="stopVm({{ vm.proxmox_vmid }}, '{{ vm.node }}')"
-                                            data-tooltip="Stop VM">
-                                        <i class="bi bi-stop-fill"></i>
+                                            title="Stop VM">
+                                        <i class="bi bi-power"></i>
                                     </button>
                                     <button class="btn-icon btn-icon-dark" 
                                             onclick="revertVm({{ vm.proxmox_vmid }}, '{{ vm.node }}')"
-                                            data-tooltip="Revert to Baseline">
+                                            title="Revert to Baseline">
                                         <i class="bi bi-arrow-counterclockwise"></i>
                                     </button>
                                     <button class="btn-icon btn-icon-dark" 
-                                            onclick="sshVm({{ vm.proxmox_vmid }})"
-                                            data-tooltip="Open SSH Terminal">
-                                        <i class="bi bi-terminal"></i>
+                                            onclick="sshVm({{ vm.proxmox_vmid }}, '{{ vm.ip }}', '{{ vm.vm_name }}')"
+                                            title="Open SSH Terminal">
+                                        <i class="bi bi-terminal-fill"></i>
                                     </button>
                                     <a class="btn-icon btn-icon-primary" 
                                        href="/rdp/{{ vm.proxmox_vmid }}.rdp"
-                                       data-tooltip="Download RDP File">
-                                        <i class="bi bi-download"></i>
+                                       title="Download RDP File">
+                                        <i class="bi bi-windows"></i>
                                     </a>
                                 </div>
                             </td>
@@ -1373,8 +1375,29 @@ async function revertVm(vmid, node) {
     }
 }
 
-function sshVm(vmid) {
-    window.open(`/ssh/${vmid}`, '_blank');
+function sshVm(vmid, ip, name) {
+    // Build URL with query parameters for IP and name
+    const params = new URLSearchParams();
+    if (ip && ip !== 'N/A') {
+        params.append('ip', ip);
+    }
+    if (name && name !== 'N/A') {
+        params.append('name', name);
+    }
+    
+    const url = `/ssh/${vmid}${params.toString() ? '?' + params.toString() : ''}`;
+    
+    // Open in popup window (1000x600, centered)
+    const width = 1000;
+    const height = 600;
+    const left = (screen.width - width) / 2;
+    const top = (screen.height - height) / 2;
+    
+    window.open(
+        url,
+        `ssh-${vmid}`,
+        `width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=yes`
+    );
 }
 
 function rdpVm(vmid) {
