@@ -60,8 +60,7 @@
                 </div>
                 <div class="class-card-footer">
                     {% if user_role == 'teacher' and class.teacher_id != user.id %}
-                        {% set user_is_co_owner = (user.id in [co.id for co in class.co_owners]) if class.co_owners else False %}
-                        {% if user_is_co_owner %}
+                        {% if class.co_owners and user.id in [co.id for co in class.co_owners] %}
                         <span class="badge badge-co-owner">
                             <i class="bi bi-people"></i> Co-Owner
                         </span>
