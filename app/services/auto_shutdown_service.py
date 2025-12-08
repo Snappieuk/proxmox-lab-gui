@@ -76,12 +76,11 @@ def _auto_shutdown_daemon_worker(app):
 
 
 def check_and_shutdown_idle_vms():
-    """Check all VMs and enforce auto-shutdown, hour restrictions, and session limits."""
-    # Get all classes (check all settings, not just auto-shutdown)
+    """Check all VMs and enforce auto-shutdown and hour restrictions."""
+    # Get all classes with restrictions enabled
     classes = Class.query.filter(
         (Class.auto_shutdown_enabled == True) | 
-        (Class.restrict_hours == True) | 
-        (Class.max_session_minutes > 0)
+        (Class.restrict_hours == True)
     ).all()
     
     if not classes:
@@ -118,8 +117,8 @@ def check_class_vms(class_: Class):
         restrictions.append(f"CPU<{class_.auto_shutdown_cpu_threshold}%/{class_.auto_shutdown_idle_minutes}min")
     if class_.restrict_hours:
         restrictions.append(f"hours:{class_.hours_start}-{class_.hours_end}")
-    if class_.max_session_minutes > 0:
-        restrictions.append(f"max:{class_.max_session_minutes}min")
+    if class_.max_usage_hours and class_.max_usage_hours > 0:
+        restrictions.append(f"max:{class_.max_usage_hours}hrs cumulative")
     
     logger.info(f"Checking {len(vms)} VMs in class {class_.name} ({', '.join(restrictions)})")
     
@@ -142,10 +141,8 @@ def check_class_vms(class_: Class):
                     shutdown_vm_outside_hours(vm, proxmox, class_)
                     continue
             
-            # Check session duration limits
-            if class_.max_session_minutes > 0:
-                if should_shutdown_for_session_limit(vm, proxmox, class_.max_session_minutes):
-                    continue
+            # Note: max_usage_hours is tracked cumulatively and enforced at VM start time
+            # (not during runtime shutdown checks)
             
             # Check idle auto-shutdown
             if class_.auto_shutdown_enabled:

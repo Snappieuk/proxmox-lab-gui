@@ -161,7 +161,7 @@ def get_any_vm_session_progress(vmid: int):
     
     # Check if class has any restrictions
     has_restrictions = (
-        (class_.max_session_minutes or 0) > 0 or
+        (class_.max_usage_hours or 0) > 0 or
         (class_.restrict_hours or False)
     )
     
@@ -170,7 +170,8 @@ def get_any_vm_session_progress(vmid: int):
         "has_restrictions": has_restrictions,
         "status": "stopped",
         "uptime_minutes": 0,
-        "max_session_minutes": class_.max_session_minutes or 0,
+        "max_usage_hours": class_.max_usage_hours or 0,
+        "usage_hours": vm.usage_hours or 0.0,
         "restrict_hours": class_.restrict_hours or False,
         "hours_start": class_.hours_start or 0,
         "hours_end": class_.hours_end or 23,
@@ -238,7 +239,7 @@ def get_vm_session_progress(class_id: int, vmid: int):
     
     # Check if class has any restrictions
     has_restrictions = (
-        (class_.max_session_minutes or 0) > 0 or
+        (class_.max_usage_hours or 0) > 0 or
         (class_.restrict_hours or False)
     )
     
@@ -247,7 +248,8 @@ def get_vm_session_progress(class_id: int, vmid: int):
         "has_restrictions": has_restrictions,
         "status": "stopped",
         "uptime_minutes": 0,
-        "max_session_minutes": class_.max_session_minutes or 0,
+        "max_usage_hours": class_.max_usage_hours or 0,
+        "usage_hours": vm.usage_hours or 0.0,
         "restrict_hours": class_.restrict_hours or False,
         "hours_start": class_.hours_start or 0,
         "hours_end": class_.hours_end or 23,
