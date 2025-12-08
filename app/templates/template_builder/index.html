@@ -292,10 +292,10 @@
                         <div class="form-col" style="grid-column: 1 / -1;">
                             <label for="upload-storage" class="compact-label">Target Storage</label>
                             <select id="upload-storage" class="form-control compact-input" disabled>
-                                <option value="TRUENAS" selected>TRUENAS (Global Storage)</option>
+                                <option value="TRUENAS-NFS" selected>TRUENAS-NFS (Global Storage)</option>
                             </select>
                             <small style="color: #666; margin-top: 0.5rem; display: block;">
-                                ISOs are automatically uploaded to TRUENAS storage, which is accessible from all nodes.
+                                ISOs are automatically uploaded to TRUENAS-NFS storage, which is accessible from all nodes.
                             </small>
                         </div>
                     </div>
@@ -924,9 +924,7 @@ async function submitMigration(event) {
     const sourceClusterId = document.getElementById('source-cluster').value;
     const sourceTemplateId = document.getElementById('source-template').value;
     const destinationClusterId = document.getElementById('destination-cluster').value;
-    const destinationStorage = 'TRUENAS';  // Hardcoded to TRUENAS storage
-    
-    if (!sourceClusterId || !sourceTemplateId || !destinationClusterId) {
+        const destinationStorage = 'TRUENAS-NFS';  // Hardcoded to TRUENAS-NFS storage    if (!sourceClusterId || !sourceTemplateId || !destinationClusterId) {
         alert('Please fill in all required fields');
         return;
     }
@@ -985,7 +983,7 @@ async function loadBuildOptions() {
         
         if (!clusterId || clusterId === 'None' || clusterId === '') {
             console.error('No valid cluster ID available');
-            document.getElementById('build-iso').innerHTML = '<option value="">No cluster selected</option>';
+            document.getElementById('build-iso').innerHTML = '<option value="">No cluster selected - Please refresh page</option>';
             return;
         }
         

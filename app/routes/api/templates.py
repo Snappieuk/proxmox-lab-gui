@@ -394,7 +394,7 @@ def migrate_template():
     source_template_id = data.get("source_template_id")
     source_cluster_id = data.get("source_cluster_id")
     destination_cluster_id = data.get("destination_cluster_id")
-    destination_storage = data.get("destination_storage", "TRUENAS")
+    destination_storage = data.get("destination_storage", "TRUENAS-NFS")
     operation = data.get("operation", "copy")
     
     if not all([source_template_id, source_cluster_id, destination_cluster_id]):

@@ -375,7 +375,12 @@ def api_upload_iso():
             storages = proxmox.nodes(node).storage.get()
             storage_found = False
             for s in storages:
-                if s['storage'] == storage and s.get('status') == 'available':
+                # Check storage name and that it's not explicitly unavailable
+                if s['storage'] == storage:
+                    status = s.get('status')
+                    if status and status == 'unavailable':
+                        continue  # Skip if explicitly unavailable
+                    
                     storage_found = True
                     # Check if storage supports ISO content
                     if 'iso' not in s.get('content', '').split(','):

@@ -187,7 +187,18 @@
 <script>
 // Load templates when page loads
 document.addEventListener('DOMContentLoaded', async function() {
+    // Check if template ID was passed in URL (from "Use in Class" button)
+    const urlParams = new URLSearchParams(window.location.search);
+    const preselectedTemplateId = urlParams.get('template');
+    
     await loadClusters();
+    
+    // If template ID was provided, try to select it after templates load
+    if (preselectedTemplateId) {
+        console.log('Preselecting template ID:', preselectedTemplateId);
+        // Store for later selection after templates are loaded
+        window.preselectedTemplateId = preselectedTemplateId;
+    }
     
     // Handle template selection and checkbox changes
     document.getElementById('template-select').addEventListener('change', function() {
@@ -249,6 +260,12 @@ async function loadTemplates(usePoll = false) {
                     return `<option value="${t.vmid}" data-name="${t.name}" data-node="${t.node}" data-cluster="${t.cluster_id || ''}">${t.name} (VMID: ${t.vmid})${registered}</option>`;
                 }).join('');
             hideTemplateMessage();
+            
+            // Auto-select template if ID was provided in URL
+            if (window.preselectedTemplateId) {
+                await selectTemplateById(window.preselectedTemplateId);
+                delete window.preselectedTemplateId; // Clear after use
+            }
         }
         
         // Update specs visibility after templates are loaded
@@ -259,6 +276,48 @@ async function loadTemplates(usePoll = false) {
         selectElement.innerHTML = '<option value="">None</option>';
         // Update specs visibility even on error
         updateSpecsVisibility();
+    }
+}
+
+async function selectTemplateById(templateId) {
+    try {
+        // Fetch template details from database by ID
+        const resp = await fetch(`/api/templates?id=${templateId}`);
+        const data = await resp.json();
+        
+        if (!data.ok || !data.templates || data.templates.length === 0) {
+            console.warn('Template not found:', templateId);
+            return;
+        }
+        
+        const template = data.templates[0];
+        const selectElement = document.getElementById('template-select');
+        
+        // Try to find and select the template by VMID
+        const vmid = template.proxmox_vmid;
+        const option = Array.from(selectElement.options).find(opt => opt.value == vmid);
+        
+        if (option) {
+            selectElement.value = vmid;
+            console.log('Auto-selected template:', template.name, 'VMID:', vmid);
+            
+            // Trigger change event to update UI
+            selectElement.dispatchEvent(new Event('change'));
+            
+            // Show success message
+            const messageDiv = document.createElement('div');
+            messageDiv.style.cssText = 'background: #d4edda; color: #155724; padding: 12px; border-radius: 4px; margin-bottom: 16px; border: 1px solid #c3e6cb;';
+            messageDiv.innerHTML = `<i class="bi bi-check-circle"></i> Template "${template.name}" has been pre-selected for your class.`;
+            document.querySelector('.form-card').insertBefore(messageDiv, document.querySelector('.form-card').firstChild);
+            
+            // Remove message after 5 seconds
+            setTimeout(() => messageDiv.remove(), 5000);
+        } else {
+            console.warn('Template VMID not found in dropdown:', vmid);
+        }
+        
+    } catch (e) {
+        console.error('Failed to select template:', e);
     }
 }
 
@@ -329,6 +388,12 @@ async function loadTemplatesForCluster(clusterId) {
                     const registered = registeredMap[t.vmid] ? ' ✓' : '';
                     return `<option value="${t.vmid}" data-name="${t.name}" data-node="${t.node}" data-cluster="${t.cluster_id || ''}">${t.name} (VMID: ${t.vmid})${registered}</option>`;
                 }).join('');
+            
+            // Auto-select template if ID was provided in URL
+            if (window.preselectedTemplateId) {
+                await selectTemplateById(window.preselectedTemplateId);
+                delete window.preselectedTemplateId; // Clear after use
+            }
         }
         
         // Update specs visibility after templates are loaded
