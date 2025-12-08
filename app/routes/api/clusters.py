@@ -286,15 +286,36 @@ def get_node_resources(cluster_id: str, node_name: str):
         try:
             node_info = proxmox.nodes(node_name).status.get()
             
+            # Log the raw response for debugging
+            logger.info(f"[NODE RESOURCES] Node {node_name} raw API response: {node_info}")
+            
             # CPU: maxcpu is physical cores, cpu shows current usage ratio
-            max_cpu_cores = node_info.get('maxcpu', 0)
-            cpu_usage = node_info.get('cpu', 0)
+            max_cpu_cores = float(node_info.get('maxcpu', 0))
+            cpu_usage = float(node_info.get('cpu', 0))
+            
+            # Check if we got valid data
+            if max_cpu_cores == 0:
+                logger.warning(f"Node {node_name} status API returned maxcpu=0, trying nodes list API...")
+                # Try using the nodes list as fallback
+                nodes = proxmox.nodes.get()
+                node_data = next((n for n in nodes if n['node'] == node_name), None)
+                if node_data:
+                    max_cpu_cores = float(node_data.get('maxcpu', 0))
+                    cpu_usage = float(node_data.get('cpu', 0))
+                    max_memory_bytes = int(node_data.get('maxmem', 0))
+                    used_memory_bytes = int(node_data.get('mem', 0))
+                    logger.info(f"Node {node_name} from nodes list: maxcpu={max_cpu_cores}, cpu={cpu_usage}, maxmem={max_memory_bytes}, mem={used_memory_bytes}")
+                else:
+                    logger.error(f"Node {node_name} not found in nodes list")
+                    return jsonify({"ok": False, "error": f"Node {node_name} not found"}), 404
+            else:
+                # Memory: maxmem is total bytes, mem is used bytes
+                max_memory_bytes = int(node_info.get('maxmem', 0))
+                used_memory_bytes = int(node_info.get('mem', 0))
+            
             used_cpu_cores = max_cpu_cores * cpu_usage
             available_cpu_cores = max_cpu_cores - used_cpu_cores
             
-            # Memory: maxmem is total bytes, mem is used bytes
-            max_memory_bytes = node_info.get('maxmem', 0)
-            used_memory_bytes = node_info.get('mem', 0)
             available_memory_bytes = max_memory_bytes - used_memory_bytes
             available_memory_mb = available_memory_bytes // BYTES_TO_MB
             
