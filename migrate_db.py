@@ -63,6 +63,29 @@ CREATE TABLE IF NOT EXISTS clusters (
 )
 """
 
+# ISO images cache table schema
+ISO_IMAGES_TABLE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS iso_images (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    volid VARCHAR(255) UNIQUE NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    size BIGINT NOT NULL,
+    node VARCHAR(50) NOT NULL,
+    storage VARCHAR(50) NOT NULL,
+    cluster_id VARCHAR(50) NOT NULL,
+    discovered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)
+"""
+
+ISO_IMAGES_INDEXES = [
+    "CREATE INDEX IF NOT EXISTS idx_iso_volid ON iso_images(volid)",
+    "CREATE INDEX IF NOT EXISTS idx_iso_name ON iso_images(name)",
+    "CREATE INDEX IF NOT EXISTS idx_iso_node ON iso_images(node)",
+    "CREATE INDEX IF NOT EXISTS idx_iso_storage ON iso_images(storage)",
+    "CREATE INDEX IF NOT EXISTS idx_iso_cluster ON iso_images(cluster_id)",
+]
+
 def create_clusters_table(cursor):
     """Create clusters table if it doesn't exist."""
     print("\n📋 Checking clusters table...")
@@ -74,6 +97,26 @@ def create_clusters_table(cursor):
         return True
     else:
         print("✓ Clusters table already exists")
+        return False
+
+
+def create_iso_images_table(cursor):
+    """Create iso_images table if it doesn't exist."""
+    print("\n📋 Checking iso_images table...")
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='iso_images'")
+    if not cursor.fetchone():
+        print("➕ Creating iso_images table")
+        cursor.execute(ISO_IMAGES_TABLE_SCHEMA)
+        print("   ✓ ISO images table created")
+        
+        # Create indexes
+        print("➕ Creating indexes for iso_images table")
+        for index_sql in ISO_IMAGES_INDEXES:
+            cursor.execute(index_sql)
+        print("   ✓ Indexes created")
+        return True
+    else:
+        print("✓ ISO images table already exists")
         return False
 
 
@@ -221,6 +264,11 @@ def migrate():
         clusters_migrated = migrate_clusters_from_json(cursor)
         if clusters_migrated > 0:
             total_changes += clusters_migrated
+        
+        # Step 4: Create ISO images cache table
+        iso_table_created = create_iso_images_table(cursor)
+        if iso_table_created:
+            total_changes += 1
         
         # Commit all changes
         if total_changes > 0:

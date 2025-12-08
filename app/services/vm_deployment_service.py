@@ -289,9 +289,25 @@ def _deploy_vm_with_iso(
 
 
 def list_available_isos(cluster_id: str) -> Tuple[bool, list, str]:
-    """List available ISO images across all nodes in the cluster."""
+    """List available ISO images across all nodes in the cluster (with database cache)."""
+    from app.models import ISOImage, db
+    from app.services.proxmox_service import get_proxmox_admin_for_cluster
+    from datetime import datetime, timedelta
+    
     try:
-        from app.services.proxmox_service import get_proxmox_admin_for_cluster
+        # First, try to return cached ISOs (updated within last 5 minutes)
+        five_minutes_ago = datetime.utcnow() - timedelta(minutes=5)
+        cached_isos = ISOImage.query.filter(
+            ISOImage.cluster_id == cluster_id,
+            ISOImage.last_seen >= five_minutes_ago
+        ).all()
+        
+        if cached_isos:
+            logger.info(f"Returning {len(cached_isos)} cached ISOs for cluster {cluster_id}")
+            return True, [iso.to_dict() for iso in cached_isos], f"Found {len(cached_isos)} ISO images (cached)"
+        
+        # Cache miss or stale - scan Proxmox and update database
+        logger.info(f"Scanning Proxmox for ISOs in cluster {cluster_id}")
         
         proxmox = get_proxmox_admin_for_cluster(cluster_id)
         if not proxmox:
@@ -320,13 +336,36 @@ def list_available_isos(cluster_id: str) -> Tuple[bool, list, str]:
                         content = proxmox.nodes(node_name).storage(storage_name).content.get(content='iso')
                         
                         for item in content:
-                            isos.append({
+                            iso_data = {
                                 'volid': item['volid'],
                                 'name': item['volid'].split('/')[-1],
                                 'size': item.get('size', 0),
                                 'node': node_name,
                                 'storage': storage_name
-                            })
+                            }
+                            isos.append(iso_data)
+                            
+                            # Update database cache
+                            try:
+                                existing = ISOImage.query.filter_by(volid=item['volid']).first()
+                                if existing:
+                                    existing.last_seen = datetime.utcnow()
+                                    existing.node = node_name
+                                    existing.storage = storage_name
+                                    existing.size = item.get('size', 0)
+                                else:
+                                    new_iso = ISOImage(
+                                        volid=item['volid'],
+                                        name=iso_data['name'],
+                                        size=item.get('size', 0),
+                                        node=node_name,
+                                        storage=storage_name,
+                                        cluster_id=cluster_id
+                                    )
+                                    db.session.add(new_iso)
+                            except Exception as db_error:
+                                logger.warning(f"Failed to cache ISO {item['volid']}: {db_error}")
+                                
                     except Exception as e:
                         logger.warning(f"Could not list ISOs in {node_name}:{storage_name}: {e}")
                         continue
@@ -334,6 +373,13 @@ def list_available_isos(cluster_id: str) -> Tuple[bool, list, str]:
             except Exception as e:
                 logger.warning(f"Could not access node {node_name}: {e}")
                 continue
+        
+        # Commit database changes
+        try:
+            db.session.commit()
+        except Exception as e:
+            logger.error(f"Failed to commit ISO cache: {e}")
+            db.session.rollback()
         
         logger.info(f"Found {len(isos)} ISO images across all nodes")
         return True, isos, f"Found {len(isos)} ISO images"

@@ -376,6 +376,39 @@ def api_upload_iso():
             
             logger.info(f"ISO uploaded successfully: {response}")
             
+            # Cache the uploaded ISO in database immediately
+            try:
+                from app.models import ISOImage, db
+                from datetime import datetime
+                
+                # Build volid (format: storage:iso/filename.iso)
+                volid = f"{storage}:iso/{file.filename}"
+                
+                # Check if already exists
+                existing = ISOImage.query.filter_by(volid=volid).first()
+                if existing:
+                    existing.last_seen = datetime.utcnow()
+                    existing.node = node
+                    existing.storage = storage
+                    logger.info(f"Updated existing ISO cache entry: {volid}")
+                else:
+                    new_iso = ISOImage(
+                        volid=volid,
+                        name=file.filename,
+                        size=0,  # Size not returned by upload API
+                        node=node,
+                        storage=storage,
+                        cluster_id=cluster_id
+                    )
+                    db.session.add(new_iso)
+                    logger.info(f"Created new ISO cache entry: {volid}")
+                
+                db.session.commit()
+            except Exception as db_error:
+                logger.warning(f"Failed to cache uploaded ISO: {db_error}")
+                # Don't fail the upload if caching fails
+                db.session.rollback()
+            
             return jsonify({
                 "ok": True,
                 "message": f"ISO {file.filename} uploaded successfully to {node}:{storage}",

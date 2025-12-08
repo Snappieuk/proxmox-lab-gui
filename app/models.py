@@ -90,6 +90,39 @@ class Cluster(db.Model):
         return f'<Cluster {self.name} ({self.host})>'
 
 
+class ISOImage(db.Model):
+    """ISO image cache for fast lookups."""
+    __tablename__ = 'iso_images'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    volid = db.Column(db.String(255), unique=True, nullable=False, index=True)  # e.g., "local:iso/ubuntu-22.04.iso"
+    name = db.Column(db.String(255), nullable=False, index=True)  # Filename
+    size = db.Column(db.BigInteger, nullable=False)  # Size in bytes
+    node = db.Column(db.String(50), nullable=False, index=True)  # Node where ISO exists
+    storage = db.Column(db.String(50), nullable=False, index=True)  # Storage name
+    cluster_id = db.Column(db.String(50), nullable=False, index=True)  # Cluster identifier
+    
+    # Timestamps
+    discovered_at = db.Column(db.DateTime, default=datetime.utcnow)  # First time found
+    last_seen = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)  # Last sync
+    
+    def to_dict(self) -> dict:
+        """Convert to dictionary format."""
+        return {
+            'volid': self.volid,
+            'name': self.name,
+            'size': self.size,
+            'node': self.node,
+            'storage': self.storage,
+            'cluster_id': self.cluster_id,
+            'discovered_at': self.discovered_at.isoformat() if self.discovered_at else None,
+            'last_seen': self.last_seen.isoformat() if self.last_seen else None,
+        }
+    
+    def __repr__(self):
+        return f'<ISOImage {self.name} on {self.node}:{self.storage}>'
+
+
 class User(db.Model):
     """Local user account with role-based access."""
     __tablename__ = 'users'
