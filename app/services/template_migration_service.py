@@ -38,82 +38,112 @@ def get_storage_path(storage_name: str, storage_type: str) -> str:
 
 def migrate_template_between_clusters(
     source_template: Template,
-    destination_cluster_id: str,
+    source_cluster: dict,
+    destination_cluster: dict,
     destination_storage: str,
-    operation: str = 'copy',
-    new_name: Optional[str] = None
+    operation: str = 'copy'
 ) -> bool:
-    """Migrate a template from one cluster to another.
+    """Migrate/copy a template from one cluster to another.
+    
+    Workflow:
+    1. Get source template config and disk info
+    2. Find destination node with specified storage
+    3. Export source disk to QCOW2
+    4. Copy QCOW2 to destination via SCP
+    5. Create VM shell on destination with same specs
+    6. Attach copied disk
+    7. Convert to template
+    8. If operation='move', delete source template
     
     Args:
-        source_template: Source Template object
-        destination_cluster_id: Destination cluster ID
-        destination_storage: Storage pool name on destination
-        operation: 'copy' or 'move'
-        new_name: Optional new name for template
+        source_template: Source Template database object
+        source_cluster: Source cluster config dict (with id, name, host, user, password)
+        destination_cluster: Destination cluster config dict
+        destination_storage: Storage name on destination (default: "TRUENAS")
+        operation: 'copy' (keep source) or 'move' (delete source after success)
         
     Returns:
         True if successful, False otherwise
     """
     logger.info(f"Starting template migration: {source_template.name} (VMID {source_template.proxmox_vmid}) "
-                f"to cluster {destination_cluster_id}")
+                f"from {source_cluster['name']} to {destination_cluster['name']}")
     
     try:
-        # Get source cluster connection
-        from app.config import CLUSTERS
-        
-        source_cluster = next((c for c in CLUSTERS if c["host"] == source_template.cluster_ip), None)
-        if not source_cluster:
-            logger.error(f"Source cluster not found for IP {source_template.cluster_ip}")
-            return False
-        
-        destination_cluster = next((c for c in CLUSTERS if c["id"] == destination_cluster_id), None)
-        if not destination_cluster:
-            logger.error(f"Destination cluster {destination_cluster_id} not found")
-            return False
-        
         source_proxmox = get_proxmox_admin_for_cluster(source_cluster["id"])
-        dest_proxmox = get_proxmox_admin_for_cluster(destination_cluster_id)
+        dest_proxmox = get_proxmox_admin_for_cluster(destination_cluster["id"])
         
-        # Get source VM config
         source_node = source_template.node
         source_vmid = source_template.proxmox_vmid
+        source_name = source_template.name
         
-        logger.info(f"Fetching source VM config from {source_node}/{source_vmid}")
+        # Step 1: Get template config from source
+        logger.info(f"Step 1: Getting template config from {source_node}/{source_vmid}")
         source_config = source_proxmox.nodes(source_node).qemu(source_vmid).config.get()
         
-        # Find available VMID on destination
-        logger.info("Finding available VMID on destination cluster")
-        dest_resources = dest_proxmox.cluster.resources.get(type="vm")
-        used_vmids = {int(r.get('vmid', 0)) for r in dest_resources}
+        # Extract specs from source config
+        cpu_cores = source_config.get("cores", 2)
+        cpu_sockets = source_config.get("sockets", 1)
+        memory_mb = source_config.get("memory", 2048)
+        os_type = source_config.get("ostype", "l26")
         
-        dest_vmid = source_vmid
-        while dest_vmid in used_vmids:
-            dest_vmid += 1
+        # Get network config
+        net0 = source_config.get("net0", "")
+        network_bridge = "vmbr0"
+        if "bridge=" in net0:
+            network_bridge = net0.split("bridge=")[1].split(",")[0]
         
-        logger.info(f"Using destination VMID: {dest_vmid}")
+        # Get primary disk (scsi0)
+        scsi0 = source_config.get("scsi0", "")
+        if not scsi0:
+            return {"ok": False, "error": "Template has no scsi0 disk"}
         
-        # Select destination node (pick first available)
+        # Parse disk config: "STORAGE:DISK_ID,size=10G"
+        disk_parts = scsi0.split(",")
+        disk_location = disk_parts[0]
+        disk_size_str = next((p.split("=")[1] for p in disk_parts if p.startswith("size=")), "10G")
+        
+        if ":" not in disk_location:
+            return {"ok": False, "error": f"Invalid disk location: {disk_location}"}
+        
+        source_storage, disk_id = disk_location.split(":", 1)
+        logger.info(f"Source disk: {source_storage}:{disk_id}, size: {disk_size_str}")
+        
+        # Step 2: Find destination node with TRUENAS storage
+        logger.info("Step 2: Finding destination node with TRUENAS storage...")
         dest_nodes = dest_proxmox.nodes.get()
-        if not dest_nodes:
-            logger.error("No nodes available on destination cluster")
-            return False
+        dest_node = None
         
-        dest_node = dest_nodes[0]['node']
-        logger.info(f"Using destination node: {dest_node}")
+        for node in dest_nodes:
+            node_name = node["node"]
+            try:
+                storages = dest_proxmox.nodes(node_name).storage.get()
+                for storage in storages:
+                    if storage["storage"] == destination_storage and "images" in storage.get("content", ""):
+                        dest_node = node_name
+                        break
+                if dest_node:
+                    break
+            except Exception as e:
+                logger.warning(f"Failed to check storage on {node_name}: {e}")
+        
+        if not dest_node:
+            return {"ok": False, "error": f"No node with {destination_storage} storage found"}
+        
+        logger.info(f"Selected destination node: {dest_node}")
+        
+        # Get next available VMID
+        dest_vmids = [vm["vmid"] for vm in dest_proxmox.cluster.resources.get(type="vm")]
+        dest_vmid = max(dest_vmids) + 1 if dest_vmids else 100
+        logger.info(f"Assigned VMID: {dest_vmid}")
         
         # Get SSH connections
-        source_ssh = get_pooled_ssh_executor(
-            host=source_cluster["host"],
-            username=source_cluster["user"].split("@")[0],
-            password=source_cluster["password"]
-        )
+        from app.services.ssh_executor import get_ssh_executor_from_config
         
-        dest_ssh = get_pooled_ssh_executor(
-            host=destination_cluster["host"],
-            username=destination_cluster["user"].split("@")[0],
-            password=destination_cluster["password"]
-        )
+        source_ssh = get_ssh_executor_from_config(source_cluster)
+        source_ssh.connect(source_node)
+        
+        dest_ssh = get_ssh_executor_from_config(destination_cluster)
+        dest_ssh.connect(dest_node)
         
         # Extract disk info from source config
         disk_configs = {}

@@ -326,13 +326,15 @@ def list_available_isos(cluster_id: str) -> Tuple[bool, list, str]:
                 for storage in storages:
                     storage_name = storage['storage']
                     
-                    # Skip if storage is not active or available on this node
-                    if storage.get('status') != 'available':
-                        continue
-                    
                     # Check if storage supports ISO content
                     content_types = storage.get('content', '').split(',')
                     if 'iso' not in content_types:
+                        continue
+                    
+                    # Skip if storage is explicitly disabled (but allow if status is missing)
+                    status = storage.get('status')
+                    if status and status == 'unavailable':
+                        logger.debug(f"Storage {storage_name} is unavailable on {node_name}, skipping")
                         continue
                     
                     try:

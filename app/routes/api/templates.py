@@ -359,3 +359,90 @@ def sync_templates_from_proxmox():
         "updated": updated_count,
         "errors": errors if errors else None
     })
+
+
+@bp.route("/migrate", methods=["POST"])
+@login_required
+def migrate_template():
+    """Migrate/copy a template from one cluster to another.
+    
+    Simplified workflow:
+    1. Get template specs from source cluster
+    2. Export template disk to QCOW2
+    3. Copy QCOW2 to destination cluster TRUENAS storage
+    4. Create VM shell on destination with same specs
+    5. Attach copied disk
+    6. Convert to template
+    
+    Request body:
+    {
+        "source_template_id": int (Template.id from database),
+        "source_cluster_id": str (cluster ID),
+        "destination_cluster_id": str (cluster ID),
+        "destination_storage": str (default: "TRUENAS"),
+        "operation": str ("copy" or "move", default: "copy")
+    }
+    """
+    import threading
+    from app.services.proxmox_service import get_proxmox_admin_for_cluster
+    
+    data = request.get_json()
+    source_template_id = data.get("source_template_id")
+    source_cluster_id = data.get("source_cluster_id")
+    destination_cluster_id = data.get("destination_cluster_id")
+    destination_storage = data.get("destination_storage", "TRUENAS")
+    operation = data.get("operation", "copy")
+    
+    if not all([source_template_id, source_cluster_id, destination_cluster_id]):
+        return jsonify({"ok": False, "error": "Missing required fields"}), 400
+    
+    if source_cluster_id == destination_cluster_id:
+        return jsonify({"ok": False, "error": "Source and destination clusters must be different"}), 400
+    
+    # Get source template from database
+    source_template = Template.query.get(source_template_id)
+    if not source_template:
+        return jsonify({"ok": False, "error": f"Template {source_template_id} not found"}), 404
+    
+    # Find cluster configs
+    source_cluster = None
+    destination_cluster = None
+    for cluster in CLUSTERS:
+        if cluster["id"] == source_cluster_id:
+            source_cluster = cluster
+        if cluster["id"] == destination_cluster_id:
+            destination_cluster = cluster
+    
+    if not source_cluster or not destination_cluster:
+        return jsonify({"ok": False, "error": "Invalid cluster ID"}), 400
+    
+    # Start migration in background thread
+    def do_migration():
+        try:
+            from app.services.template_migration_service import migrate_template_between_clusters
+            
+            logger.info(f"Starting template copy: {source_template.name} from {source_cluster['name']} to {destination_cluster['name']}")
+            
+            success = migrate_template_between_clusters(
+                source_template=source_template,
+                source_cluster=source_cluster,
+                destination_cluster=destination_cluster,
+                destination_storage=destination_storage,
+                operation=operation
+            )
+            
+            if success:
+                logger.info(f"Template copy completed: {source_template.name} → {destination_cluster['name']}")
+            else:
+                logger.error(f"Template copy failed: {source_template.name} - check logs")
+                
+        except Exception as e:
+            logger.exception(f"Template copy failed with exception: {e}")
+    
+    thread = threading.Thread(target=do_migration, daemon=True)
+    thread.start()
+    
+    return jsonify({
+        "ok": True,
+        "message": f"Template '{source_template.name}' is being copied from {source_cluster['name']} to {destination_cluster['name']} (TRUENAS storage)"
+    })

@@ -104,18 +104,14 @@
                 <div class="form-section">
                     <div class="section-label">Destination</div>
                     <div class="form-row">
-                        <div class="form-col">
+                        <div class="form-col" style="grid-column: 1 / -1;">
                             <label for="destination-cluster" class="compact-label">Cluster</label>
                             <select id="destination-cluster" class="form-control compact-input" required>
                                 <option value="">Select cluster...</option>
                             </select>
-                        </div>
-                        <div class="form-col">
-                            <label for="migration-operation" class="compact-label">Operation</label>
-                            <select id="migration-operation" class="form-control compact-input" required>
-                                <option value="copy">Copy (keep original)</option>
-                                <option value="move">Move (delete original)</option>
-                            </select>
+                            <small style="color: #666; margin-top: 0.5rem; display: block;">
+                                Template will be copied to TRUENAS storage on the destination cluster
+                            </small>
                         </div>
                     </div>
                 </div>
@@ -126,7 +122,7 @@
                         Cancel
                     </button>
                     <button type="submit" class="btn-migrate">
-                        <i class="bi bi-arrow-right-circle" style="margin-right: 0.5rem;"></i>Start Migration
+                        <i class="bi bi-arrow-right-circle" style="margin-right: 0.5rem;"></i>Copy Template
                     </button>
                 </div>
             </form>
@@ -885,20 +881,15 @@ function updateSourceTemplates() {
         return;
     }
     
-    // Get the selected cluster's host from the option's data attribute
-    const selectedOption = sourceClusterSelect.options[sourceClusterSelect.selectedIndex];
-    const selectedClusterHost = selectedOption.getAttribute('data-host');
-    
     console.log('=== Template Filtering Debug ===');
     console.log('Selected cluster ID:', selectedClusterId);
-    console.log('Selected cluster host:', selectedClusterHost);
     console.log('Total templates loaded:', allTemplates.length);
     console.log('All templates:', JSON.stringify(allTemplates, null, 2));
     
-    // Filter templates by matching cluster_ip to cluster host (instant from pre-loaded data)
+    // Filter templates by matching cluster_id (database-first approach)
     const clusterTemplates = allTemplates.filter(t => {
-        const matches = t.cluster_ip === selectedClusterHost;
-        console.log(`Template "${t.name}" (VMID ${t.proxmox_vmid}): cluster_ip="${t.cluster_ip}" vs host="${selectedClusterHost}" => ${matches ? 'MATCH' : 'NO MATCH'}`);
+        const matches = t.cluster_id === selectedClusterId || t.cluster_ip === selectedClusterId;
+        console.log(`Template "${t.name}" (VMID ${t.proxmox_vmid}): cluster_id="${t.cluster_id}" cluster_ip="${t.cluster_ip}" vs "${selectedClusterId}" => ${matches ? 'MATCH' : 'NO MATCH'}`);
         return matches;
     });
     
@@ -929,8 +920,7 @@ async function submitMigration(event) {
     const sourceClusterId = document.getElementById('source-cluster').value;
     const sourceTemplateId = document.getElementById('source-template').value;
     const destinationClusterId = document.getElementById('destination-cluster').value;
-    const operation = document.getElementById('migration-operation').value;
-    const destinationStorage = 'TRUENAS-NFS';  // Default shared storage
+    const destinationStorage = 'TRUENAS';  // Hardcoded to TRUENAS storage
     
     if (!sourceClusterId || !sourceTemplateId || !destinationClusterId) {
         alert('Please fill in all required fields');
@@ -944,7 +934,7 @@ async function submitMigration(event) {
     
     const submitBtn = event.target.querySelector('button[type="submit"]');
     submitBtn.disabled = true;
-    submitBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Starting migration...';
+    submitBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Copying template...';
     
     try {
         const response = await fetch('/api/templates/migrate', {
@@ -955,48 +945,56 @@ async function submitMigration(event) {
                 source_cluster_id: sourceClusterId,
                 destination_cluster_id: destinationClusterId,
                 destination_storage: destinationStorage,
-                operation: operation
+                operation: 'copy'  // Always copy (never delete source)
             })
         });
         
         const data = await response.json();
         
         if (data.ok) {
-            alert(`${data.message}\\n\\nThe migration is running in the background. This may take several minutes depending on disk size.`);
+            alert(`Template copy started successfully!\\n\\n${data.message}\\n\\nThis may take several minutes depending on disk size. The template will appear in the list once the copy is complete.`);
             closeMigrateModal();
             
-            // Refresh templates after a delay
+            // Refresh templates after a delay to show the new template
             setTimeout(() => {
                 loadTemplates();
-            }, 5000);
+            }, 10000);  // 10 second delay
         } else {
-            alert('Migration failed: ' + (data.error || 'Unknown error'));
+            alert('Template copy failed: ' + (data.error || 'Unknown error'));
             submitBtn.disabled = false;
-            submitBtn.innerHTML = '<i class="bi bi-arrow-right-circle"></i> Start Migration';
+            submitBtn.innerHTML = '<i class="bi bi-arrow-right-circle"></i> Copy Template';
         }
     } catch (error) {
-        console.error('Migration failed:', error);
-        alert('Migration failed: ' + error.message);
+        console.error('Template copy failed:', error);
+        alert('Template copy failed: ' + error.message);
         submitBtn.disabled = false;
-        submitBtn.innerHTML = '<i class="bi bi-arrow-right-circle"></i> Start Migration';
+        submitBtn.innerHTML = '<i class="bi bi-arrow-right-circle"></i> Copy Template';
     }
 }
 
 // Build VM from Scratch functions
 async function loadBuildOptions() {
     try {
+        // Get current cluster_id from session (injected by Flask context processor)
+        const clusterId = '{{ current_cluster }}';
+        console.log('Loading ISOs for cluster:', clusterId);
+        
         // Load ISOs from all nodes (cached in background)
-        const isoResponse = await fetch('/api/vm-builder/isos');
+        const isoResponse = await fetch(`/api/vm-builder/isos?cluster_id=${clusterId}`);
         const isoData = await isoResponse.json();
+        
+        console.log('ISO response:', isoData);
         
         if (isoData.ok && isoData.isos.length > 0) {
             const isoSelect = document.getElementById('build-iso');
             isoSelect.innerHTML = isoData.isos.map(iso => 
                 `<option value="${iso.volid}">${iso.name} - ${iso.node}/${iso.storage} (${(iso.size / 1073741824).toFixed(2)}GB)</option>`
             ).join('');
+            console.log(`Loaded ${isoData.isos.length} ISOs`);
         } else {
             const isoSelect = document.getElementById('build-iso');
             isoSelect.innerHTML = '<option value="">No ISOs found - Please upload ISO files to TRUENAS storage</option>';
+            console.warn('No ISOs found:', isoData.error || 'No error message');
         }
     } catch (error) {
         console.error('Failed to load build options:', error);
@@ -1151,11 +1149,17 @@ async function submitUploadISO(event) {
     const storage = 'TRUENAS';
     
     const submitBtn = document.getElementById('upload-iso-btn');
+    const progressDiv = document.getElementById('upload-progress');
+    const progressBar = document.getElementById('upload-progress-bar');
+    const progressText = document.getElementById('upload-progress-text');
+    
     submitBtn.disabled = true;
     submitBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Uploading...';
     
     // Show progress bar
-    document.getElementById('upload-progress').style.display = 'block';
+    progressDiv.style.display = 'block';
+    progressBar.style.width = '0%';
+    progressText.textContent = 'Preparing upload...';
     
     try {
         // First, find a node with TRUENAS storage
@@ -1169,70 +1173,106 @@ async function submitUploadISO(event) {
         // Use first available node (TRUENAS is global storage, accessible from all nodes)
         const node = nodesData.nodes[0].node;
         
+        progressText.textContent = `Uploading to ${node}...`;
+        
         // Create FormData
         const formData = new FormData();
         formData.append('content', file);
         formData.append('node', node);
         formData.append('storage', storage);
         
-        // Upload with progress tracking
+        // Upload with progress tracking using fetch with ReadableStream
         const xhr = new XMLHttpRequest();
         
+        // Keep-alive mechanism to prevent connection timeout
+        let lastProgressTime = Date.now();
+        const keepAliveInterval = setInterval(() => {
+            const now = Date.now();
+            if (now - lastProgressTime > 30000) {
+                console.warn('No progress for 30 seconds, connection may have stalled');
+            }
+        }, 5000);
+        
         xhr.upload.addEventListener('progress', (e) => {
+            lastProgressTime = Date.now();
             if (e.lengthComputable) {
                 const percentComplete = (e.loaded / e.total) * 100;
-                document.getElementById('upload-progress-bar').style.width = percentComplete + '%';
-                document.getElementById('upload-progress-text').textContent = 
-                    `${Math.round(percentComplete)}% (${(e.loaded / 1048576).toFixed(1)}MB / ${(e.total / 1048576).toFixed(1)}MB)`;
+                const loadedMB = (e.loaded / 1048576).toFixed(1);
+                const totalMB = (e.total / 1048576).toFixed(1);
+                const elapsedSeconds = (Date.now() - uploadStartTime) / 1000;
+                const speedMBps = (e.loaded / 1048576) / elapsedSeconds;
+                
+                progressBar.style.width = percentComplete + '%';
+                progressText.textContent = 
+                    `${Math.round(percentComplete)}% (${loadedMB}MB / ${totalMB}MB) - ${speedMBps.toFixed(2)} MB/s`;
             }
         });
         
         xhr.addEventListener('load', async () => {
+            clearInterval(keepAliveInterval);
             if (xhr.status === 200) {
-                const data = JSON.parse(xhr.responseText);
-                if (data.ok) {
-                    alert('✓ ISO uploaded successfully to TRUENAS!');
-                    closeUploadISOModal();
-                    // Reload ISOs
-                    await loadBuildOptions();
-                } else {
-                    alert('Upload failed: ' + (data.error || 'Unknown error'));
+                try {
+                    const data = JSON.parse(xhr.responseText);
+                    if (data.ok) {
+                        alert('✓ ISO uploaded successfully to TRUENAS!');
+                        closeUploadISOModal();
+                        // Reload ISOs
+                        await loadBuildOptions();
+                    } else {
+                        alert('Upload failed: ' + (data.error || 'Unknown error'));
+                        submitBtn.disabled = false;
+                        submitBtn.innerHTML = '<i class="bi bi-upload"></i> Upload ISO';
+                        progressDiv.style.display = 'none';
+                    }
+                } catch (e) {
+                    console.error('Failed to parse response:', e);
+                    alert('Upload completed but response was invalid');
                     submitBtn.disabled = false;
                     submitBtn.innerHTML = '<i class="bi bi-upload"></i> Upload ISO';
+                    progressDiv.style.display = 'none';
                 }
             } else {
-                alert('Upload failed: HTTP ' + xhr.status);
+                console.error('Upload failed with status:', xhr.status, xhr.responseText);
+                alert(`Upload failed: HTTP ${xhr.status}. ${xhr.responseText || 'Check server logs for details.'}`);
                 submitBtn.disabled = false;
                 submitBtn.innerHTML = '<i class="bi bi-upload"></i> Upload ISO';
+                progressDiv.style.display = 'none';
             }
         });
         
         xhr.addEventListener('error', (e) => {
+            clearInterval(keepAliveInterval);
             console.error('Upload error:', e);
-            alert('Upload failed: Network error. Check server logs for details.');
+            console.error('XHR state:', xhr.readyState, 'Status:', xhr.status);
+            alert('Upload failed: Network error. The connection was interrupted. This may be due to:\n- Nginx/Apache proxy timeout\n- Network instability\n- Server resource limits\n\nCheck server logs for details.');
             submitBtn.disabled = false;
             submitBtn.innerHTML = '<i class="bi bi-upload"></i> Upload ISO';
-            document.getElementById('upload-progress').style.display = 'none';
+            progressDiv.style.display = 'none';
         });
         
         xhr.addEventListener('abort', () => {
+            clearInterval(keepAliveInterval);
             console.log('Upload aborted');
             alert('Upload was cancelled');
             submitBtn.disabled = false;
             submitBtn.innerHTML = '<i class="bi bi-upload"></i> Upload ISO';
-            document.getElementById('upload-progress').style.display = 'none';
+            progressDiv.style.display = 'none';
         });
         
         xhr.addEventListener('timeout', () => {
-            console.error('Upload timeout');
-            alert('Upload timed out. File may be too large or connection too slow.');
+            clearInterval(keepAliveInterval);
+            console.error('Upload timeout after 30 minutes');
+            alert('Upload timed out after 30 minutes. File may be too large or connection too slow.');
             submitBtn.disabled = false;
             submitBtn.innerHTML = '<i class="bi bi-upload"></i> Upload ISO';
-            document.getElementById('upload-progress').style.display = 'none';
+            progressDiv.style.display = 'none';
         });
         
+        const uploadStartTime = Date.now();
         xhr.open('POST', '/api/vm-builder/upload-iso');
         xhr.timeout = 1800000; // 30 minute timeout
+        
+        console.log('Starting upload:', file.name, 'Size:', (file.size / 1048576).toFixed(2), 'MB');
         xhr.send(formData);
         
     } catch (error) {
