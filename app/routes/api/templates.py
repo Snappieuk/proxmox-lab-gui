@@ -20,6 +20,7 @@ def list_templates():
     """Get all templates with optional filtering.
     
     Query params:
+    - id: Filter by template ID (database primary key)
     - cluster_ip: Filter by cluster IP
     - cluster_id: Filter by cluster ID (converted to IP)
     - node: Filter by node name
@@ -29,6 +30,14 @@ def list_templates():
     - class_id: Filter by class ID
     """
     query = Template.query
+    
+    # Filter by ID (database primary key)
+    template_id = request.args.get("id")
+    if template_id:
+        try:
+            query = query.filter_by(id=int(template_id))
+        except ValueError:
+            pass
     
     # Filter by cluster
     cluster_ip = request.args.get("cluster_ip")
