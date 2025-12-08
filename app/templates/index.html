@@ -409,31 +409,42 @@ function toggleSection(tableId) {
     const table = document.getElementById(tableId);
     const icon = document.getElementById(tableId + '-icon');
     
-    if (!table || !icon) {
-        console.error('Table or icon not found:', tableId);
+    if (!table) {
+        console.error('Table not found:', tableId);
         return;
     }
     
-    // Check if table is currently visible (handles empty string or 'table'/'block' values)
-    const isVisible = table.style.display !== 'none';
+    // Get the tbody to collapse/expand
+    const tbody = table.querySelector('tbody');
+    if (!tbody) {
+        console.error('Table tbody not found:', tableId);
+        return;
+    }
+    
+    // Check if tbody is currently visible
+    const isVisible = tbody.style.display !== 'none';
     
     if (isVisible) {
-        // Hide the table
-        table.style.display = 'none';
-        icon.className = 'bi bi-chevron-right';
+        // Hide the tbody
+        tbody.style.display = 'none';
+        if (icon) icon.className = 'bi bi-chevron-right';
     } else {
-        // Show the table
-        table.style.display = '';
-        icon.className = 'bi bi-chevron-down';
+        // Show the tbody
+        tbody.style.display = '';
+        if (icon) icon.className = 'bi bi-chevron-down';
     }
 }
 
 function applyFilters() {
     const searchInput = document.getElementById('search-input');
     const searchTerm = searchInput ? searchInput.value.toLowerCase() : '';
-    const categoryFilter = document.getElementById('category-filter').value;
-    const statusFilter = document.getElementById('status-filter').value;
-    const nodeFilter = document.getElementById('node-filter').value;
+    const categoryFilter = document.getElementById('category-filter') ? document.getElementById('category-filter').value : 'all';
+    const statusFilter = document.getElementById('status-filter') ? document.getElementById('status-filter').value : 'all';
+    const nodeFilter = document.getElementById('node-filter') ? document.getElementById('node-filter').value : 'all';
+    
+    console.log('Applying filters:', { searchTerm, categoryFilter, statusFilter, nodeFilter });
+    
+    let filteredCount = 0;
     
     document.querySelectorAll('.vm-table tbody tr').forEach(row => {
         const vmid = row.getAttribute('data-vmid');
@@ -446,12 +457,12 @@ function applyFilters() {
         let rowStatus = 'unknown';
         if (statusBadge) {
             const badgeText = statusBadge.textContent.toLowerCase().trim();
-            // Remove bullet point and extract status
-            if (badgeText.includes('running')) {
+            // Remove bullet point and whitespace, extract status
+            if (badgeText.indexOf('running') !== -1) {
                 rowStatus = 'running';
-            } else if (badgeText.includes('stopped')) {
+            } else if (badgeText.indexOf('stopped') !== -1) {
                 rowStatus = 'stopped';
-            } else if (badgeText.includes('starting')) {
+            } else if (badgeText.indexOf('starting') !== -1) {
                 rowStatus = 'running'; // Treat "starting" as running for filter purposes
             }
         }
@@ -461,8 +472,13 @@ function applyFilters() {
         const matchesStatus = statusFilter === 'all' || rowStatus === statusFilter;
         const matchesNode = nodeFilter === 'all' || node === nodeFilter;
         
-        row.style.display = (matchesSearch && matchesCategory && matchesStatus && matchesNode) ? '' : 'none';
+        const shouldShow = matchesSearch && matchesCategory && matchesStatus && matchesNode;
+        row.style.display = shouldShow ? '' : 'none';
+        
+        if (shouldShow) filteredCount++;
     });
+    
+    console.log('Filtered rows visible:', filteredCount);
     
     // Hide empty tables
     document.querySelectorAll('.vm-table').forEach(table => {
@@ -606,7 +622,16 @@ function populateTables(vms) {
         
         const header = document.createElement('h4');
         header.className = 'section-header';
-        header.textContent = data.title;
+        header.style.cursor = 'pointer';
+        header.style.userSelect = 'none';
+        header.onclick = () => toggleSection(`${cat}-table`);
+        
+        const icon = document.createElement('i');
+        icon.className = 'bi bi-chevron-down';
+        icon.id = `${cat}-table-icon`;
+        
+        header.appendChild(icon);
+        header.appendChild(document.createTextNode(' ' + data.title));
         container.appendChild(header);
         
         const table = document.createElement('table');
@@ -679,8 +704,11 @@ function createVMRow(vm, category) {
     const isLinux = category === 'linux' || category === 'lxc';
     const hasRdp = isWindows || vm.rdp_available === true;  // Show RDP for all Windows VMs or if port 3389 is open
     
+    // Add RDP icon if IP is available
+    const rdpIcon = vm.ip && vm.ip !== 'N/A' && vm.ip !== 'Fetching...' ? '<i class="bi bi-display" style="margin-left: 0.5rem; color: #0078d4;" title="RDP Available"></i>' : '';
+    
     row.innerHTML = `
-        <td><strong>${vm.name}</strong></td>
+        <td><strong>${vm.name}</strong>${rdpIcon}</td>
         <td>${vm.vmid}</td>
         <td>${vm.node}</td>
         <td><span class="vm-cluster-badge" title="${vm.cluster_name || 'Unknown'}">${vm.cluster_name || 'N/A'}</span></td>
