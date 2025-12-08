@@ -235,7 +235,7 @@
 </div>
 
 <!-- Console Modal -->
-<div id="console-modal" class="modal" style="display: none;">
+<div id="console-modal" class="modal" style="display: none; visibility: hidden;">
     <div class="modal-content" style="max-width: 1400px; width: 95%; max-height: 95vh;">
         <div class="modal-header">
             <h2 style="font-size: 1.25rem; font-weight: 600; margin: 0;">
@@ -250,7 +250,7 @@
 </div>
 
 <!-- Build Success Modal -->
-<div id="build-success-modal" class="modal" style="display: none;">
+<div id="build-success-modal" class="modal" style="display: none; visibility: hidden;">
     <div class="modal-content" style="max-width: 500px;">
         <div class="modal-header">
             <h2 style="font-size: 1.25rem; font-weight: 600; margin: 0; color: #22c55e;">
@@ -915,9 +915,11 @@ async function submitBuildVM(event) {
             // Show success modal with console option
             document.getElementById('build-success-message').textContent = data.message;
             document.getElementById('build-success-vmid').textContent = data.vmid;
-            document.getElementById('build-success-modal').setAttribute('data-vmid', data.vmid);
-            document.getElementById('build-success-modal').setAttribute('data-vm-name', formData.vm_name);
-            document.getElementById('build-success-modal').style.display = 'flex';
+            const successModal = document.getElementById('build-success-modal');
+            successModal.setAttribute('data-vmid', data.vmid);
+            successModal.setAttribute('data-vm-name', formData.vm_name);
+            successModal.style.display = 'flex';
+            successModal.style.visibility = 'visible';
             
             // Refresh templates after a delay
             setTimeout(() => {
@@ -937,7 +939,9 @@ async function submitBuildVM(event) {
 }
 
 function closeBuildSuccessModal() {
-    document.getElementById('build-success-modal').style.display = 'none';
+    const modal = document.getElementById('build-success-modal');
+    modal.style.display = 'none';
+    modal.style.visibility = 'hidden';
 }
 
 async function openConsoleFromSuccess() {
@@ -961,7 +965,9 @@ async function openConsole(vmid, vmName) {
             document.getElementById('console-frame').src = data.console_url;
             
             // Show console modal
-            document.getElementById('console-modal').style.display = 'flex';
+            const consoleModal = document.getElementById('console-modal');
+            consoleModal.style.display = 'flex';
+            consoleModal.style.visibility = 'visible';
         } else {
             alert('Failed to open console: ' + (data.error || 'Unknown error'));
         }
@@ -972,7 +978,9 @@ async function openConsole(vmid, vmName) {
 }
 
 function closeConsoleModal() {
-    document.getElementById('console-modal').style.display = 'none';
+    const modal = document.getElementById('console-modal');
+    modal.style.display = 'none';
+    modal.style.visibility = 'hidden';
     document.getElementById('console-frame').src = '';
 }
 }
