@@ -34,10 +34,10 @@
                     <p style="color: #666; font-size: 0.9rem;">Turn an existing VM into a reusable template</p>
                 </div>
                 
-                <div class="option-card" onclick="showImportTemplate()">
-                    <i class="bi bi-cloud-download" style="font-size: 2rem; color: #5c2d91; margin-bottom: 0.5rem;"></i>
-                    <h3 style="font-size: 1.1rem; margin-bottom: 0.5rem;">Import Template</h3>
-                    <p style="color: #666; font-size: 0.9rem;">Import a template from another cluster or backup</p>
+                <div class="option-card" onclick="showMigrateTemplate()">
+                    <i class="bi bi-arrow-left-right" style="font-size: 2rem; color: #5c2d91; margin-bottom: 0.5rem;"></i>
+                    <h3 style="font-size: 1.1rem; margin-bottom: 0.5rem;">Migrate Template</h3>
+                    <p style="color: #666; font-size: 0.9rem;">Move or copy a template between clusters</p>
                 </div>
             </div>
         </div>
@@ -61,7 +61,141 @@
     </div>
 </div>
 
+<!-- Migration Modal -->
+<div id="migrate-modal" class="modal" style="display: none;">
+    <div class="modal-content" style="max-width: 600px;">
+        <div class="modal-header">
+            <h2><i class="bi bi-arrow-left-right"></i> Migrate Template</h2>
+            <button class="btn-close" onclick="closeMigrateModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <form id="migrate-form" onsubmit="submitMigration(event)">
+                <div class="form-group">
+                    <label for="source-template">Source Template</label>
+                    <select id="source-template" class="form-control" required>
+                        <option value="">Select a template to migrate...</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label for="destination-cluster">Destination Cluster</label>
+                    <select id="destination-cluster" class="form-control" onchange="updateStorageOptions()" required>
+                        <option value="">Select destination cluster...</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label for="destination-storage">Destination Storage</label>
+                    <select id="destination-storage" class="form-control" required>
+                        <option value="">Select destination storage...</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label for="migration-operation">Operation</label>
+                    <select id="migration-operation" class="form-control" required>
+                        <option value="copy">Copy (keep original)</option>
+                        <option value="move">Move (delete original)</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label for="new-template-name">New Name (optional)</label>
+                    <input type="text" id="new-template-name" class="form-control" 
+                           placeholder="Leave empty to keep same name">
+                </div>
+                
+                <div class="form-actions" style="display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 1.5rem;">
+                    <button type="button" onclick="closeMigrateModal()" class="btn-icon btn-secondary">
+                        Cancel
+                    </button>
+                    <button type="submit" class="btn-icon">
+                        <i class="bi bi-arrow-left-right"></i> Start Migration
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
 <style>
+.modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10000;
+}
+
+.modal-content {
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+    max-height: 90vh;
+    overflow-y: auto;
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1.5rem;
+    border-bottom: 1px solid #e1e4e8;
+}
+
+.modal-header h2 {
+    margin: 0;
+    font-size: 1.5rem;
+}
+
+.btn-close {
+    background: none;
+    border: none;
+    font-size: 1.5rem;
+    cursor: pointer;
+    color: #666;
+    padding: 0;
+    width: 2rem;
+    height: 2rem;
+}
+
+.btn-close:hover {
+    color: #000;
+}
+
+.modal-body {
+    padding: 1.5rem;
+}
+
+.form-group {
+    margin-bottom: 1rem;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 0.5rem;
+    font-weight: 600;
+}
+
+.form-control {
+    width: 100%;
+    padding: 0.5rem;
+    border: 1px solid #e1e4e8;
+    border-radius: 4px;
+    font-size: 1rem;
+}
+
+.form-control:focus {
+    outline: none;
+    border-color: #0078d4;
+    box-shadow: 0 0 0 2px rgba(0, 120, 212, 0.1);
+}
+
 .option-card {
     padding: 1.5rem;
     border: 2px solid #e1e4e8;
@@ -162,8 +296,24 @@ function showConvertExisting() {
     alert('Convert Existing VM - Feature coming soon!\n\nThis will let you select an existing VM and convert it to a template.');
 }
 
-function showImportTemplate() {
-    alert('Import Template - Feature coming soon!\n\nThis will allow you to import templates from other clusters or backups.');
+async function showMigrateTemplate() {
+    // Show migration modal
+    document.getElementById('migrate-modal').style.display = 'flex';
+    
+    // Load migration options (clusters and storages)
+    try {
+        const response = await fetch('/api/templates/migration-options');
+        const data = await response.json();
+        
+        if (data.ok) {
+            populateMigrationOptions(data.clusters);
+        } else {
+            alert('Failed to load migration options: ' + (data.error || 'Unknown error'));
+        }
+    } catch (error) {
+        console.error('Failed to load migration options:', error);
+        alert('Failed to load migration options: ' + error.message);
+    }
 }
 
 // Load user's templates
@@ -238,6 +388,118 @@ function deleteTemplate(templateId) {
 document.addEventListener('DOMContentLoaded', function() {
     loadTemplates();
 });
+
+// Migration modal functions
+let migrationClusters = [];
+
+function populateMigrationOptions(clusters) {
+    migrationClusters = clusters;
+    
+    // Populate source templates from already loaded templates
+    const sourceSelect = document.getElementById('source-template');
+    const templatesDiv = document.getElementById('templates-list');
+    
+    // Get templates from the page
+    fetch('/api/templates').then(r => r.json()).then(data => {
+        if (data.ok && data.templates) {
+            sourceSelect.innerHTML = '<option value="">Select a template to migrate...</option>';
+            data.templates.forEach(template => {
+                sourceSelect.innerHTML += `<option value="${template.id}" data-cluster="${template.cluster_ip}">
+                    ${template.name || 'VM ' + template.proxmox_vmid} (VMID ${template.proxmox_vmid})
+                </option>`;
+            });
+        }
+    });
+    
+    // Populate destination clusters
+    const clusterSelect = document.getElementById('destination-cluster');
+    clusterSelect.innerHTML = '<option value="">Select destination cluster...</option>';
+    
+    clusters.forEach(cluster => {
+        clusterSelect.innerHTML += `<option value="${cluster.id}" data-storages='${JSON.stringify(cluster.storages)}'>
+            ${cluster.name} (${cluster.host})
+        </option>`;
+    });
+}
+
+function updateStorageOptions() {
+    const clusterSelect = document.getElementById('destination-cluster');
+    const storageSelect = document.getElementById('destination-storage');
+    
+    const selectedOption = clusterSelect.options[clusterSelect.selectedIndex];
+    if (!selectedOption || !selectedOption.value) {
+        storageSelect.innerHTML = '<option value="">Select destination storage...</option>';
+        return;
+    }
+    
+    const storages = JSON.parse(selectedOption.dataset.storages || '[]');
+    
+    storageSelect.innerHTML = '<option value="">Select destination storage...</option>';
+    storages.forEach(storage => {
+        storageSelect.innerHTML += `<option value="${storage.id}">
+            ${storage.id} (${storage.type})
+        </option>`;
+    });
+}
+
+function closeMigrateModal() {
+    document.getElementById('migrate-modal').style.display = 'none';
+    document.getElementById('migrate-form').reset();
+}
+
+async function submitMigration(event) {
+    event.preventDefault();
+    
+    const sourceTemplateId = document.getElementById('source-template').value;
+    const destinationClusterId = document.getElementById('destination-cluster').value;
+    const destinationStorage = document.getElementById('destination-storage').value;
+    const operation = document.getElementById('migration-operation').value;
+    const newName = document.getElementById('new-template-name').value;
+    
+    if (!sourceTemplateId || !destinationClusterId || !destinationStorage) {
+        alert('Please fill in all required fields');
+        return;
+    }
+    
+    const submitBtn = event.target.querySelector('button[type="submit"]');
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Starting migration...';
+    
+    try {
+        const response = await fetch('/api/templates/migrate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                source_template_id: parseInt(sourceTemplateId),
+                destination_cluster_id: destinationClusterId,
+                destination_storage: destinationStorage,
+                operation: operation,
+                new_name: newName || undefined
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (data.ok) {
+            alert(`${data.message}\\n\\nThe migration is running in the background. This may take several minutes depending on disk size.`);
+            closeMigrateModal();
+            
+            // Refresh templates after a delay
+            setTimeout(() => {
+                loadTemplates();
+            }, 5000);
+        } else {
+            alert('Migration failed: ' + (data.error || 'Unknown error'));
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = '<i class="bi bi-arrow-left-right"></i> Start Migration';
+        }
+    } catch (error) {
+        console.error('Migration failed:', error);
+        alert('Migration failed: ' + error.message);
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = '<i class="bi bi-arrow-left-right"></i> Start Migration';
+    }
+}
 </script>
 
 {% endblock %}

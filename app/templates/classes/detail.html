@@ -793,8 +793,12 @@
     border: 1px solid #e1dfdd;
     border-radius: 6px;
     display: flex;
-    align-items: center;
-    justify-content: space-between;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.student-card > div:first-child {
+    flex: 1;
 }
 
 .student-card-name {
@@ -805,6 +809,7 @@
 .student-card-vm {
     font-size: 0.85rem;
     color: #605e5c;
+    margin-top: 0.25rem;
 }
 
 /* Toggle Switch */
@@ -1172,15 +1177,16 @@ function updateTemplateDisplay() {
     // Always update toggle to reflect actual VM status
     powerToggle.checked = isRunning;
     
-    // Always show RDP button for templates
+    // RDP button: enable if VM has IP address
     const rdpBtn = document.getElementById('btn-rdp-template');
-    if (currentTemplateInfo.rdp_available) {
+    if (currentTemplateInfo.ip) {
         rdpBtn.style.display = 'inline-flex';
         rdpBtn.disabled = false;
+        rdpBtn.title = 'Download RDP File';
     } else {
         rdpBtn.style.display = 'inline-flex';
         rdpBtn.disabled = true;
-        rdpBtn.title = 'RDP unavailable (no IP or port closed)';
+        rdpBtn.title = 'RDP unavailable (no IP address)';
     }
 }
 
@@ -1778,6 +1784,13 @@ async function loadStudentsList() {
                                     <div class="student-card-name">${s.username}</div>
                                     <div class="student-card-vm">${s.vmid ? `VM: ${s.vmid}` : 'No VM assigned'}</div>
                                 </div>
+                                <div>
+                                    <button onclick="showAssignVMModal('${s.username}', ${s.id})" 
+                                            class="btn-secondary" 
+                                            style="font-size: 0.85rem; padding: 0.4rem 0.8rem;">
+                                        <i class="bi bi-hdd-network"></i> ${s.vmid ? 'Change VM' : 'Assign VM'}
+                                    </button>
+                                </div>
                             </div>
                         `).join('')}
                     </div>
@@ -1795,6 +1808,77 @@ async function loadStudentsList() {
         }
     } catch (e) {
         console.error('Failed to load students:', e);
+    }
+}
+
+let currentAssignStudent = null;
+let currentAssignUserId = null;
+
+async function showAssignVMModal(username, userId) {
+    currentAssignStudent = username;
+    currentAssignUserId = userId;
+    
+    // Fetch available VMs for this class
+    try {
+        const resp = await fetch(`/api/classes/${classId}/available-vms`);
+        const data = await resp.json();
+        
+        if (!data.ok) {
+            showAlert(data.error || 'Failed to load available VMs', 'error');
+            return;
+        }
+        
+        const modal = document.getElementById('assign-vm-modal');
+        const vmSelect = document.getElementById('assign-vm-select');
+        
+        // Populate VM dropdown
+        vmSelect.innerHTML = '<option value="">-- Select VM --</option>' + 
+            data.vms.map(vm => `
+                <option value="${vm.vmid}">${vm.name} (${vm.vmid}) - ${vm.assigned_to || 'Unassigned'}</option>
+            `).join('');
+        
+        document.getElementById('assign-student-name').textContent = username;
+        modal.style.display = 'flex';
+    } catch (e) {
+        showAlert('Failed to load available VMs', 'error');
+    }
+}
+
+function closeAssignVMModal() {
+    document.getElementById('assign-vm-modal').style.display = 'none';
+    currentAssignStudent = null;
+    currentAssignUserId = null;
+}
+
+async function confirmAssignVM() {
+    const vmid = document.getElementById('assign-vm-select').value;
+    
+    if (!vmid) {
+        showAlert('Please select a VM', 'error');
+        return;
+    }
+    
+    try {
+        const resp = await fetch(`/api/classes/${classId}/assign-vm`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                user_id: currentAssignUserId,
+                vmid: parseInt(vmid)
+            })
+        });
+        
+        const data = await resp.json();
+        
+        if (data.ok) {
+            showAlert(`VM ${vmid} assigned to ${currentAssignStudent}`, 'success');
+            closeAssignVMModal();
+            loadStudentsList(); // Refresh the list
+        } else {
+            showAlert(data.error || 'Failed to assign VM', 'error');
+        }
+    } catch (e) {
+        showAlert('Failed to assign VM', 'error');
     }
 }
 
@@ -2150,6 +2234,33 @@ showSection = function(section) {
 
 {% endif %}
 </script>
+
+<!-- Assign VM Modal -->
+<div id="assign-vm-modal" class="modal" style="display: none;">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>Assign VM to Student</h3>
+            <button class="modal-close" onclick="closeAssignVMModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <p style="margin-bottom: 1rem;">
+                Assigning VM for: <strong id="assign-student-name"></strong>
+            </p>
+            <div class="form-group">
+                <label>Select VM</label>
+                <select id="assign-vm-select" class="form-control">
+                    <option value="">-- Select VM --</option>
+                </select>
+            </div>
+            <div class="form-actions">
+                <button class="btn-secondary" onclick="closeAssignVMModal()">Cancel</button>
+                <button class="btn-primary" onclick="confirmAssignVM()">
+                    <i class="bi bi-check-circle"></i> Assign VM
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
 
 </body>
 </html>

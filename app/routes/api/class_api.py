@@ -1393,3 +1393,124 @@ def save_and_deploy(class_id: int):
         "message": f"Save and deploy started - will update {student_count} student VMs",
         "task_id": task_id
     })
+
+
+# ---------------------------------------------------------------------------
+# Student VM Assignment
+# ---------------------------------------------------------------------------
+
+@api_classes_bp.route("/<int:class_id>/available-vms", methods=["GET"])
+@login_required
+def get_available_vms(class_id):
+    """Get list of VMs available for assignment in this class.
+    
+    Returns all VMs in the class pool with their current assignment status.
+    Only accessible by class owner or admins.
+    """
+    user = get_current_user()
+    if not user:
+        return jsonify({"ok": False, "error": "Not authenticated"}), 401
+    
+    # Get the class
+    class_obj = get_class_by_id(class_id)
+    if not class_obj:
+        return jsonify({"ok": False, "error": "Class not found"}), 404
+    
+    # Check permissions (must be class owner/co-owner or admin)
+    if not class_obj.is_owner(user) and not user.is_adminer:
+        return jsonify({"ok": False, "error": "Not authorized to manage this class"}), 403
+    
+    # Get all VM assignments for this class
+    assignments = get_vm_assignments_for_class(class_id)
+    
+    vms = []
+    for assignment in assignments:
+        vm_info = {
+            "vmid": assignment.proxmox_vmid,
+            "name": assignment.vm_name or f"VM-{assignment.proxmox_vmid}",
+            "assigned_to": None
+        }
+        
+        if assignment.assigned_user_id:
+            from app.models import User
+            assigned_user = User.query.get(assignment.assigned_user_id)
+            if assigned_user:
+                vm_info["assigned_to"] = assigned_user.username
+        
+        vms.append(vm_info)
+    
+    return jsonify({
+        "ok": True,
+        "vms": vms
+    })
+
+
+@api_classes_bp.route("/<int:class_id>/assign-vm", methods=["POST"])
+@login_required
+def assign_vm_to_student(class_id):
+    """Assign a VM to a specific student in this class.
+    
+    Body: {
+        "user_id": int,
+        "vmid": int
+    }
+    
+    Only accessible by class owner or admins.
+    """
+    user = get_current_user()
+    if not user:
+        return jsonify({"ok": False, "error": "Not authenticated"}), 401
+    
+    # Get the class
+    class_obj = get_class_by_id(class_id)
+    if not class_obj:
+        return jsonify({"ok": False, "error": "Class not found"}), 404
+    
+    # Check permissions (must be class owner/co-owner or admin)
+    if not class_obj.is_owner(user) and not user.is_adminer:
+        return jsonify({"ok": False, "error": "Not authorized to manage this class"}), 403
+    
+    data = request.get_json()
+    user_id = data.get("user_id")
+    vmid = data.get("vmid")
+    
+    if not user_id or not vmid:
+        return jsonify({"ok": False, "error": "user_id and vmid are required"}), 400
+    
+    # Verify the VM is in this class
+    from app.models import db
+    assignment = VMAssignment.query.filter_by(
+        class_id=class_id,
+        proxmox_vmid=vmid
+    ).first()
+    
+    if not assignment:
+        return jsonify({"ok": False, "error": "VM not found in this class"}), 404
+    
+    # Verify the user exists
+    from app.models import User
+    target_user = User.query.get(user_id)
+    if not target_user:
+        return jsonify({"ok": False, "error": "User not found"}), 404
+    
+    # Check if this VM is already assigned to someone else
+    if assignment.assigned_user_id and assignment.assigned_user_id != user_id:
+        old_user = User.query.get(assignment.assigned_user_id)
+        logger.info(f"Reassigning VM {vmid} from {old_user.username if old_user else 'unknown'} to {target_user.username}")
+    
+    # Update the assignment
+    assignment.assigned_user_id = user_id
+    assignment.status = 'assigned'
+    
+    try:
+        db.session.commit()
+        logger.info(f"VM {vmid} assigned to user {target_user.username} (ID: {user_id}) in class {class_id}")
+        
+        return jsonify({
+            "ok": True,
+            "message": f"VM {vmid} assigned to {target_user.username}"
+        })
+    except Exception as e:
+        db.session.rollback()
+        logger.exception(f"Failed to assign VM {vmid} to user {user_id}: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500

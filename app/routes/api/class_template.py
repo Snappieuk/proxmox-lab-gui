@@ -242,12 +242,9 @@ def get_template_info(class_id: int):
                     db.session.commit()
                     logger.info(f"Cached IP {ip_address} for VM {vmid}")
                 
-                # RDP availability: true if we have an IP (teacher VMs are Windows with RDP)
-                if ip_address:
-                    rdp_available = True
-                    # Optional: verify port is open
-                    try:
-                        rdp_available = pc.has_rdp_port_open(ip_address)
+                # RDP availability: always true if we have an IP (teacher VMs need RDP access)
+                rdp_available = bool(ip_address)
+                logger.info(f"RDP available for teacher VM {vmid}: {rdp_available} (IP: {ip_address})")
                     except Exception as e:
                         logger.debug(f"RDP port check failed for {ip_address}: {e}")
                         # Assume RDP is available anyway for teacher VMs
