@@ -1167,10 +1167,12 @@ function updateTemplateDisplay() {
     
     // Update power toggle based on current status
     const powerToggle = document.getElementById('power-toggle');
-    const isRunning = currentTemplateInfo.status === 'running';
-    
-    // Always update toggle to reflect actual VM status
-    powerToggle.checked = isRunning;
+    if (powerToggle) {
+        const isRunning = currentTemplateInfo.status === 'running';
+        // Always update toggle to reflect actual VM status
+        powerToggle.checked = isRunning;
+        console.log('Updated power toggle: status=' + currentTemplateInfo.status + ', checked=' + isRunning);
+    }
     
     // RDP button: enable if VM has IP address
     const rdpBtn = document.getElementById('btn-rdp-template');
@@ -1199,12 +1201,10 @@ async function togglePower() {
             await stopTemplate();
         }
     } finally {
-        // Re-enable toggle after a short delay to allow status refresh
-        setTimeout(() => {
-            powerToggle.disabled = false;
-            // Refresh template info to get latest status
-            loadTemplateInfo();
-        }, 2000);
+        // Re-enable toggle and refresh status immediately
+        powerToggle.disabled = false;
+        // Refresh template info to get latest status (will update toggle)
+        setTimeout(() => loadTemplateInfo(), 1000);
     }
 }
 

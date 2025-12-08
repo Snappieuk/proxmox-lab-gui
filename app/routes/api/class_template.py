@@ -245,10 +245,6 @@ def get_template_info(class_id: int):
                 # RDP availability: always true if we have an IP (teacher VMs need RDP access)
                 rdp_available = bool(ip_address)
                 logger.info(f"RDP available for teacher VM {vmid}: {rdp_available} (IP: {ip_address})")
-                    except Exception as e:
-                        logger.debug(f"RDP port check failed for {ip_address}: {e}")
-                        # Assume RDP is available anyway for teacher VMs
-                        rdp_available = True
         except Exception as ip_err:
             logger.warning(f"Teacher VM IP discovery failed: {ip_err}")
 
