@@ -88,6 +88,17 @@ body {
     text-decoration: underline;
 }
 
+.topbar-link i.bi-person-circle {
+    font-size: 1.5rem;
+    vertical-align: middle;
+    margin-right: 0.5rem;
+    transition: transform 0.2s ease;
+}
+
+.topbar-link:hover i.bi-person-circle {
+    transform: scale(1.1);
+}
+
 /* Shell */
 .app-shell {
     display: flex;

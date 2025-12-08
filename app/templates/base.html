@@ -17,6 +17,9 @@
     </div>
     <div class="topbar-right">
         {% if session.get("user") %}
+            <a href="{{ url_for('portal.profile') }}" class="topbar-link" title="Profile Settings">
+                <i class="bi bi-person-circle"></i>
+            </a>
             <span class="topbar-user">
                 {{ session.get("user") }}
                 {% if local_user_role %}
@@ -54,10 +57,6 @@
             <a class="sidebar-link {% if request.endpoint and 'classes' in request.endpoint %}sidebar-link-active{% endif %}"
                href="{{ url_for('classes.classes_list') }}">
                 <i class="bi bi-mortarboard"></i> Classes
-            </a>
-            <a class="sidebar-link {% if request.endpoint == 'portal.profile' %}sidebar-link-active{% endif %}"
-               href="{{ url_for('portal.profile') }}">
-                <i class="bi bi-person-circle"></i> Profile
             </a>
             {% if is_admin or (local_user and local_user.role in ['teacher', 'adminer']) %}
                 <a class="sidebar-link {% if request.endpoint == 'template_builder.template_builder_page' %}sidebar-link-active{% endif %}"

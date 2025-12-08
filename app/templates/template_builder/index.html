@@ -71,6 +71,13 @@
         <div class="modal-body">
             <form id="migrate-form" onsubmit="submitMigration(event)">
                 <div class="form-group">
+                    <label for="source-cluster">Source Cluster</label>
+                    <select id="source-cluster" class="form-control" onchange="updateSourceTemplates()" required>
+                        <option value="">Select source cluster...</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
                     <label for="source-template">Source Template</label>
                     <select id="source-template" class="form-control" required>
                         <option value="">Select a template to migrate...</option>
@@ -79,15 +86,8 @@
                 
                 <div class="form-group">
                     <label for="destination-cluster">Destination Cluster</label>
-                    <select id="destination-cluster" class="form-control" onchange="updateStorageOptions()" required>
+                    <select id="destination-cluster" class="form-control" required>
                         <option value="">Select destination cluster...</option>
-                    </select>
-                </div>
-                
-                <div class="form-group">
-                    <label for="destination-storage">Destination Storage</label>
-                    <select id="destination-storage" class="form-control" required>
-                        <option value="">Select destination storage...</option>
                     </select>
                 </div>
                 
@@ -99,18 +99,12 @@
                     </select>
                 </div>
                 
-                <div class="form-group">
-                    <label for="new-template-name">New Name (optional)</label>
-                    <input type="text" id="new-template-name" class="form-control" 
-                           placeholder="Leave empty to keep same name">
-                </div>
-                
-                <div class="form-actions" style="display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 1.5rem;">
-                    <button type="button" onclick="closeMigrateModal()" class="btn-icon btn-secondary">
+                <div class="form-actions" style="display: flex; gap: 1rem; justify-content: flex-end; margin-top: 1.5rem;">
+                    <button type="button" onclick="closeMigrateModal()" class="btn btn-secondary" style="padding: 0.75rem 1.5rem; font-size: 1rem; font-weight: 600;">
                         Cancel
                     </button>
-                    <button type="submit" class="btn-icon">
-                        <i class="bi bi-arrow-left-right"></i> Start Migration
+                    <button type="submit" class="btn btn-primary" style="padding: 0.75rem 1.5rem; font-size: 1rem; font-weight: 600; background: #0969da; border-color: #0969da;">
+                        <i class="bi bi-arrow-right-circle"></i> Start Migration
                     </button>
                 </div>
             </form>
@@ -391,53 +385,63 @@ document.addEventListener('DOMContentLoaded', function() {
 
 // Migration modal functions
 let migrationClusters = [];
+let allTemplates = [];
 
 function populateMigrationOptions(clusters) {
     migrationClusters = clusters;
     
-    // Populate source templates from already loaded templates
-    const sourceSelect = document.getElementById('source-template');
-    const templatesDiv = document.getElementById('templates-list');
-    
-    // Get templates from the page
+    // Load all templates first
     fetch('/api/templates').then(r => r.json()).then(data => {
         if (data.ok && data.templates) {
-            sourceSelect.innerHTML = '<option value="">Select a template to migrate...</option>';
-            data.templates.forEach(template => {
-                sourceSelect.innerHTML += `<option value="${template.id}" data-cluster="${template.cluster_ip}">
-                    ${template.name || 'VM ' + template.proxmox_vmid} (VMID ${template.proxmox_vmid})
-                </option>`;
-            });
+            allTemplates = data.templates;
         }
     });
     
-    // Populate destination clusters
-    const clusterSelect = document.getElementById('destination-cluster');
-    clusterSelect.innerHTML = '<option value="">Select destination cluster...</option>';
+    // Populate source clusters
+    const sourceClusterSelect = document.getElementById('source-cluster');
+    sourceClusterSelect.innerHTML = '<option value="">Select source cluster...</option>';
     
     clusters.forEach(cluster => {
-        clusterSelect.innerHTML += `<option value="${cluster.id}" data-storages='${JSON.stringify(cluster.storages)}'>
+        sourceClusterSelect.innerHTML += `<option value="${cluster.id}">
+            ${cluster.name} (${cluster.host})
+        </option>`;
+    });
+    
+    // Populate destination clusters
+    const destClusterSelect = document.getElementById('destination-cluster');
+    destClusterSelect.innerHTML = '<option value="">Select destination cluster...</option>';
+    
+    clusters.forEach(cluster => {
+        destClusterSelect.innerHTML += `<option value="${cluster.id}">
             ${cluster.name} (${cluster.host})
         </option>`;
     });
 }
 
-function updateStorageOptions() {
-    const clusterSelect = document.getElementById('destination-cluster');
-    const storageSelect = document.getElementById('destination-storage');
+function updateSourceTemplates() {
+    const sourceClusterSelect = document.getElementById('source-cluster');
+    const sourceTemplateSelect = document.getElementById('source-template');
     
-    const selectedOption = clusterSelect.options[clusterSelect.selectedIndex];
-    if (!selectedOption || !selectedOption.value) {
-        storageSelect.innerHTML = '<option value="">Select destination storage...</option>';
+    const selectedClusterId = sourceClusterSelect.value;
+    
+    if (!selectedClusterId) {
+        sourceTemplateSelect.innerHTML = '<option value="">Select a template to migrate...</option>';
         return;
     }
     
-    const storages = JSON.parse(selectedOption.dataset.storages || '[]');
+    // Find cluster info to match templates
+    const selectedCluster = migrationClusters.find(c => c.id == selectedClusterId);
     
-    storageSelect.innerHTML = '<option value="">Select destination storage...</option>';
-    storages.forEach(storage => {
-        storageSelect.innerHTML += `<option value="${storage.id}">
-            ${storage.id} (${storage.type})
+    // Filter templates by cluster
+    const clusterTemplates = allTemplates.filter(t => 
+        t.cluster_ip === selectedCluster.host || 
+        t.cluster_id == selectedClusterId
+    );
+    
+    sourceTemplateSelect.innerHTML = '<option value="">Select a template to migrate...</option>';
+    clusterTemplates.forEach(template => {
+        sourceTemplateSelect.innerHTML += `<option value="${template.id}">
+            ${template.name || 'VM ' + template.proxmox_vmid} (VMID ${template.proxmox_vmid})
         </option>`;
     });
 }
@@ -450,14 +454,19 @@ function closeMigrateModal() {
 async function submitMigration(event) {
     event.preventDefault();
     
+    const sourceClusterId = document.getElementById('source-cluster').value;
     const sourceTemplateId = document.getElementById('source-template').value;
     const destinationClusterId = document.getElementById('destination-cluster').value;
-    const destinationStorage = document.getElementById('destination-storage').value;
     const operation = document.getElementById('migration-operation').value;
-    const newName = document.getElementById('new-template-name').value;
+    const destinationStorage = 'TRUENAS-NFS';  // Default shared storage
     
-    if (!sourceTemplateId || !destinationClusterId || !destinationStorage) {
+    if (!sourceClusterId || !sourceTemplateId || !destinationClusterId) {
         alert('Please fill in all required fields');
+        return;
+    }
+    
+    if (sourceClusterId === destinationClusterId) {
+        alert('Source and destination clusters must be different');
         return;
     }
     
@@ -471,10 +480,10 @@ async function submitMigration(event) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 source_template_id: parseInt(sourceTemplateId),
+                source_cluster_id: sourceClusterId,
                 destination_cluster_id: destinationClusterId,
                 destination_storage: destinationStorage,
-                operation: operation,
-                new_name: newName || undefined
+                operation: operation
             })
         });
         
@@ -491,13 +500,13 @@ async function submitMigration(event) {
         } else {
             alert('Migration failed: ' + (data.error || 'Unknown error'));
             submitBtn.disabled = false;
-            submitBtn.innerHTML = '<i class="bi bi-arrow-left-right"></i> Start Migration';
+            submitBtn.innerHTML = '<i class="bi bi-arrow-right-circle"></i> Start Migration';
         }
     } catch (error) {
         console.error('Migration failed:', error);
         alert('Migration failed: ' + error.message);
         submitBtn.disabled = false;
-        submitBtn.innerHTML = '<i class="bi bi-arrow-left-right"></i> Start Migration';
+        submitBtn.innerHTML = '<i class="bi bi-arrow-right-circle"></i> Start Migration';
     }
 }
 </script>
