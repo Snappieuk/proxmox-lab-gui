@@ -161,6 +161,18 @@ class Class(db.Model):
     clone_task_id = db.Column(db.String(64), nullable=True)  # Track ongoing class creation
     deployment_node = db.Column(db.String(80), nullable=True)  # Override: deploy all VMs to this specific node
     deployment_cluster = db.Column(db.String(50), nullable=True)  # Cluster ID where VMs are deployed
+    
+    # Auto-shutdown settings
+    auto_shutdown_enabled = db.Column(db.Boolean, default=False)  # Enable auto-shutdown
+    auto_shutdown_cpu_threshold = db.Column(db.Integer, default=20)  # CPU % threshold (default 20%)
+    auto_shutdown_idle_minutes = db.Column(db.Integer, default=30)  # Minutes of idle time before shutdown (default 30)
+    
+    # Available hours settings
+    restrict_hours = db.Column(db.Boolean, default=False)  # Enable hour restrictions
+    hours_start = db.Column(db.Integer, default=0)  # Start hour (0-23)
+    hours_end = db.Column(db.Integer, default=23)  # End hour (0-23)
+    max_session_minutes = db.Column(db.Integer, default=0)  # Max session duration in minutes (0=unlimited)
+    
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     

@@ -149,6 +149,11 @@ def create_app(config=None):
     start_background_sync(app)
     logger.info("Background VM inventory sync started")
     
+    # Start auto-shutdown daemon
+    from app.services.auto_shutdown_service import start_auto_shutdown_daemon
+    start_auto_shutdown_daemon(app)
+    logger.info("Auto-shutdown daemon started")
+    
     # Register cleanup handler for SSH connection pool
     import atexit
     from app.services.ssh_executor import _connection_pool

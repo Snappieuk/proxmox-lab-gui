@@ -8,6 +8,7 @@ from app.routes.admin.users import admin_users_bp
 from app.routes.admin.vm_class_mappings import admin_vm_mappings_bp
 from app.routes.api.class_api import api_classes_bp
 from app.routes.api.class_owners import api_class_owners_bp
+from app.routes.api.class_settings import bp as api_class_settings_bp
 from app.routes.api.class_template import api_class_template_bp
 from app.routes.api.class_ip_refresh import class_ip_refresh_bp
 from app.routes.api.clusters import api_clusters_bp
@@ -47,6 +48,7 @@ def register_blueprints(app):
     app.register_blueprint(api_ssh_bp)
     app.register_blueprint(api_classes_bp)
     app.register_blueprint(api_class_template_bp)
+    app.register_blueprint(api_class_settings_bp)
     app.register_blueprint(class_ip_refresh_bp)
     app.register_blueprint(api_templates_bp)
     app.register_blueprint(api_template_migrate_bp)

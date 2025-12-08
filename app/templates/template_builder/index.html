@@ -546,22 +546,25 @@ let migrationClusters = [];
 let allTemplates = [];
 let templatesLoaded = false;
 
-function populateMigrationOptions(clusters) {
+async function populateMigrationOptions(clusters) {
     migrationClusters = clusters;
     
-    // Templates are already pre-loaded, so this is instant
-    console.log('Using pre-loaded templates:', allTemplates.length);
+    // Ensure templates are loaded before populating
     if (!templatesLoaded) {
-        // Fallback: load now if pre-load failed
-        fetch('/api/templates').then(r => r.json()).then(data => {
+        console.log('Templates not loaded yet, loading now...');
+        try {
+            const response = await fetch('/api/templates');
+            const data = await response.json();
             if (data.ok && data.templates) {
                 allTemplates = data.templates;
                 templatesLoaded = true;
-                console.log('Loaded templates (fallback):', allTemplates);
+                console.log('Loaded', allTemplates.length, 'templates');
             }
-        }).catch(err => {
+        } catch (err) {
             console.error('Failed to load templates:', err);
-        });
+        }
+    } else {
+        console.log('Using pre-loaded templates:', allTemplates.length);
     }
     
     // Populate source clusters
@@ -609,9 +612,11 @@ function updateSourceTemplates() {
     const selectedClusterHost = selectedOption.getAttribute('data-host');
     
     console.log('Filtering templates for cluster:', selectedClusterHost);
+    console.log('All templates:', allTemplates);
     
     // Filter templates by matching cluster_ip to cluster host (instant from pre-loaded data)
     const clusterTemplates = allTemplates.filter(t => {
+        console.log(`Template ${t.name}: cluster_ip="${t.cluster_ip}" vs host="${selectedClusterHost}"`, t.cluster_ip === selectedClusterHost);
         return t.cluster_ip === selectedClusterHost;
     });
     

@@ -22,6 +22,13 @@ CRITICAL_MIGRATIONS = [
     ('classes', 'vmid_prefix', 'INTEGER', 'NULL'),  # 3-digit prefix for VMID allocation (200-999)
     ('classes', 'deployment_node', 'TEXT', 'NULL'),  # Optional: deploy all VMs to specific node
     ('classes', 'deployment_cluster', 'TEXT', 'NULL'),  # Optional: target cluster for deployment
+    ('classes', 'auto_shutdown_enabled', 'BOOLEAN', '0'),  # Enable auto-shutdown for idle VMs
+    ('classes', 'auto_shutdown_cpu_threshold', 'INTEGER', '20'),  # CPU % threshold for idle detection
+    ('classes', 'auto_shutdown_idle_minutes', 'INTEGER', '30'),  # Minutes of idle time before shutdown
+    ('classes', 'restrict_hours', 'BOOLEAN', '0'),  # Enable hour restrictions
+    ('classes', 'hours_start', 'INTEGER', '0'),  # Start hour (0-23)
+    ('classes', 'hours_end', 'INTEGER', '23'),  # End hour (0-23)
+    ('classes', 'max_session_minutes', 'INTEGER', '0'),  # Max session duration (0=unlimited)
     ('vm_assignments', 'manually_added', 'BOOLEAN', '0'),
     ('vm_assignments', 'is_teacher_vm', 'BOOLEAN', '0'),
     ('vm_assignments', 'vm_name', 'TEXT', 'NULL'),

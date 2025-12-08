@@ -183,6 +183,9 @@
             <a class="sidebar-link" href="#owners" onclick="showSection('owners'); return false;">
                 <i class="bi bi-person-badge"></i> Co-Owners
             </a>
+            <a class="sidebar-link" href="#settings" onclick="showSection('settings'); return false;">
+                <i class="bi bi-gear"></i> Settings
+            </a>
         {% else %}
             <!-- Student View -->
             <a class="sidebar-link sidebar-link-active" href="#my-vm" onclick="showSection('my-vm'); return false;">
@@ -481,6 +484,201 @@
                 </div>
             </div>
         </div>
+        
+        <!-- Settings Section (Teacher/Admin) -->
+        <div id="settings-section" class="content-section" style="display: none;">
+            <div class="page-header">
+                <div>
+                    <h1><i class="bi bi-gear"></i> Class Settings</h1>
+                    <p class="page-subtitle">Configure automation and behavior for this class</p>
+                </div>
+            </div>
+            
+            <div class="content-card">
+                <h3 style="margin: 0 0 1.5rem 0;">Auto-Shutdown Configuration</h3>
+                <p style="color: #666; margin-bottom: 2rem;">
+                    Automatically shut down VMs in this class when they're idle to save resources. VMs will be monitored for CPU activity, and shut down if they stay below the threshold for the specified duration.
+                </p>
+                
+                <form id="settings-form" style="max-width: 600px;">
+                    <!-- Enable Auto-Shutdown -->
+                    <div style="margin-bottom: 2rem;">
+                        <label style="display: flex; align-items: center; gap: 0.75rem; cursor: pointer;">
+                            <input type="checkbox" id="auto-shutdown-enabled" style="width: 20px; height: 20px; cursor: pointer;">
+                            <div>
+                                <div style="font-weight: 600; font-size: 1.05rem;">Enable Auto-Shutdown</div>
+                                <div style="color: #666; font-size: 0.9rem; margin-top: 0.25rem;">
+                                    Automatically turn off idle VMs in this class
+                                </div>
+                            </div>
+                        </label>
+                    </div>
+                    
+                    <!-- CPU Threshold -->
+                    <div style="margin-bottom: 2rem;">
+                        <label style="display: block; font-weight: 600; margin-bottom: 0.5rem;">
+                            CPU Threshold
+                        </label>
+                        <div style="display: flex; align-items: center; gap: 1rem;">
+                            <input 
+                                type="range" 
+                                id="cpu-threshold" 
+                                min="5" 
+                                max="50" 
+                                value="20" 
+                                style="flex: 1;"
+                                oninput="document.getElementById('cpu-threshold-value').textContent = this.value"
+                            >
+                            <span id="cpu-threshold-value" style="font-weight: 600; min-width: 40px; text-align: right;">20</span>
+                            <span style="color: #666;">%</span>
+                        </div>
+                        <p style="color: #666; font-size: 0.85rem; margin: 0.5rem 0 0 0;">
+                            VMs will be shut down if CPU usage stays below this percentage
+                        </p>
+                    </div>
+                    
+                    <!-- Idle Duration -->
+                    <div style="margin-bottom: 2rem;">
+                        <label style="display: block; font-weight: 600; margin-bottom: 0.5rem;">
+                            Idle Duration
+                        </label>
+                        <div style="display: flex; align-items: center; gap: 1rem;">
+                            <input 
+                                type="number" 
+                                id="idle-minutes" 
+                                min="5" 
+                                max="240" 
+                                value="30" 
+                                style="padding: 0.5rem; border: 1px solid #8a8886; border-radius: 4px; width: 100px;"
+                            >
+                            <span style="color: #666;">minutes</span>
+                        </div>
+                        <p style="color: #666; font-size: 0.85rem; margin: 0.5rem 0 0 0;">
+                            How long VMs must stay idle before being shut down (5-240 minutes)
+                        </p>
+                    </div>
+                    
+                    <!-- Info Box -->
+                    <div style="background: #e6f4ff; border: 1px solid #91d5ff; border-radius: 6px; padding: 1rem; margin-bottom: 2rem;">
+                        <div style="display: flex; gap: 0.75rem;">
+                            <i class="bi bi-info-circle" style="color: #0078d4; font-size: 1.25rem;"></i>
+                            <div style="flex: 1;">
+                                <div style="font-weight: 600; color: #003d7a; margin-bottom: 0.5rem;">How Auto-Shutdown Works</div>
+                                <ul style="margin: 0; padding-left: 1.25rem; color: #003d7a; font-size: 0.9rem;">
+                                    <li>VMs are checked every 5 minutes for activity</li>
+                                    <li>If CPU usage is below the threshold for the specified duration, the VM is shut down</li>
+                                    <li>Students can restart their VMs at any time</li>
+                                    <li>Teacher VMs are excluded from auto-shutdown</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                </form>
+                
+                <hr style="margin: 3rem 0; border: 0; border-top: 1px solid #e0e0e0;">
+                
+                <h3 style="margin: 0 0 1.5rem 0;">Available Hours & Session Limits</h3>
+                <p style="color: #666; margin-bottom: 2rem;">
+                    Control when students can start VMs and limit how long they can run. VMs started outside allowed hours or exceeding session limits will be automatically shut down.
+                </p>
+                
+                <form id="hours-form" style="max-width: 600px;">
+                    <!-- Enable Hour Restrictions -->
+                    <div style="margin-bottom: 2rem;">
+                        <label style="display: flex; align-items: center; gap: 0.75rem; cursor: pointer;">
+                            <input type="checkbox" id="restrict-hours" style="width: 20px; height: 20px; cursor: pointer;">
+                            <div>
+                                <div style="font-weight: 600; font-size: 1.05rem;">Restrict Available Hours</div>
+                                <div style="color: #666; font-size: 0.9rem; margin-top: 0.25rem;">
+                                    Limit when students can start and use VMs
+                                </div>
+                            </div>
+                        </label>
+                    </div>
+                    
+                    <!-- Time Range -->
+                    <div id="time-range-settings" style="margin-bottom: 2rem; opacity: 0.5; pointer-events: none;">
+                        <label style="display: block; font-weight: 600; margin-bottom: 0.5rem;">
+                            Allowed Time Window
+                        </label>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 0.5rem;">
+                            <div>
+                                <label style="display: block; color: #666; font-size: 0.85rem; margin-bottom: 0.25rem;">Start Time</label>
+                                <input type="time" id="hours-start" value="00:00" style="width: 100%; padding: 0.5rem; border: 1px solid #8a8886; border-radius: 4px;">
+                            </div>
+                            <div>
+                                <label style="display: block; color: #666; font-size: 0.85rem; margin-bottom: 0.25rem;">End Time</label>
+                                <input type="time" id="hours-end" value="23:00" style="width: 100%; padding: 0.5rem; border: 1px solid #8a8886; border-radius: 4px;">
+                            </div>
+                        </div>
+                        <p style="color: #666; font-size: 0.85rem; margin: 0.5rem 0 0 0;">
+                            Students can only start VMs during this time window (server timezone)
+                        </p>
+                    </div>
+                    
+                    <!-- Max Session Duration -->
+                    <div style="margin-bottom: 2rem;">
+                        <label style="display: block; font-weight: 600; margin-bottom: 0.5rem;">
+                            Maximum Session Duration
+                        </label>
+                        <div style="display: flex; align-items: center; gap: 1rem;">
+                            <input 
+                                type="number" 
+                                id="max-session-minutes" 
+                                min="0" 
+                                max="1440" 
+                                value="0" 
+                                placeholder="0"
+                                style="padding: 0.5rem; border: 1px solid #8a8886; border-radius: 4px; width: 100px;"
+                            >
+                            <span style="color: #666;">minutes (0 = unlimited)</span>
+                        </div>
+                        <p style="color: #666; font-size: 0.85rem; margin: 0.5rem 0 0 0;">
+                            Automatically shut down VMs after running for this duration (0-1440 minutes)
+                        </p>
+                    </div>
+                    
+                    <!-- Info Box -->
+                    <div style="background: #fff3cd; border: 1px solid #ffc107; border-radius: 6px; padding: 1rem; margin-bottom: 2rem;">
+                        <div style="display: flex; gap: 0.75rem;">
+                            <i class="bi bi-clock-history" style="color: #856404; font-size: 1.25rem;"></i>
+                            <div style="flex: 1;">
+                                <div style="font-weight: 600; color: #856404; margin-bottom: 0.5rem;">How Time Restrictions Work</div>
+                                <ul style="margin: 0; padding-left: 1.25rem; color: #856404; font-size: 0.9rem;">
+                                    <li>VMs can only be started during the allowed time window</li>
+                                    <li>Running VMs outside allowed hours will be automatically shut down</li>
+                                    <li>Session duration limits apply regardless of allowed hours</li>
+                                    <li>Students receive clear error messages when restrictions apply</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Save Button -->
+                    <div style="display: flex; gap: 1rem;">
+                        <button type="submit" class="btn-primary">
+                            <i class="bi bi-check-circle"></i> Save Schedule
+                        </button>
+                        <button type="button" class="btn-secondary" onclick="loadSettings()">
+                            <i class="bi bi-arrow-clockwise"></i> Reset
+                        </button>
+                    </div>
+                    
+                    <!-- Save Button -->
+                    <div style="display: flex; gap: 1rem;">
+                        <button type="submit" class="btn-primary">
+                            <i class="bi bi-check-circle"></i> Save Settings
+                        </button>
+                        <button type="button" class="btn-secondary" onclick="loadSettings()">
+                            <i class="bi bi-arrow-clockwise"></i> Reset
+                        </button>
+                    </div>
+                </form>
+                
+                <!-- Settings Status -->
+                <div id="settings-status" style="margin-top: 2rem; padding: 1rem; border-radius: 6px; display: none;"></div>
+            </div>
+        </div>
         {% endif %}
         
         <!-- My VM Section (Student) -->
@@ -496,6 +694,23 @@
             <div class="content-card">
                 {% if vm_assignments and vm_assignments|length > 0 %}
                 {% set vm = vm_assignments[0] %}
+                
+                <!-- Session Progress (if restrictions enabled) -->
+                <div id="student-session-progress" style="display: none; margin-bottom: 2rem;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                        <span style="font-weight: 600; font-size: 0.9rem;">Session Time</span>
+                        <span id="student-session-time" style="font-size: 0.9rem; color: #666;">--:-- / --:--</span>
+                    </div>
+                    <div style="width: 100%; height: 8px; background: #e0e0e0; border-radius: 4px; overflow: hidden;">
+                        <div id="student-session-bar" style="height: 100%; background: linear-gradient(90deg, #107c10 0%, #ffc107 70%, #dc3545 100%); width: 0%; transition: width 0.3s ease;"></div>
+                    </div>
+                    <div id="student-session-warning" style="display: none; margin-top: 0.5rem; padding: 0.5rem; background: #fff3cd; border-left: 3px solid #ffc107; border-radius: 4px;">
+                        <i class="bi bi-exclamation-triangle" style="color: #856404;"></i>
+                        <span id="student-session-warning-text" style="color: #856404; font-size: 0.85rem; margin-left: 0.5rem;"></span>
+                    </div>
+                    <div id="student-hours-info" style="margin-top: 0.75rem; padding: 0.75rem; background: #e6f4ff; border-radius: 4px; font-size: 0.85rem; color: #003d7a;"></div>
+                </div>
+                
                 <div class="info-grid">
                     <div class="info-item">
                         <span class="info-label">VMID:</span>
@@ -1034,6 +1249,7 @@ function showSection(section) {
 let templateLoadAttempts = 0;
 const TEMPLATE_MAX_ATTEMPTS = 12; // ~60s if interval 5s
 let templatePollingActive = false;
+let templateStatusInterval = null; // For continuous status updates
 
 function startTemplatePolling() {
     if (templatePollingActive) return;
@@ -1041,6 +1257,45 @@ function startTemplatePolling() {
     templateLoadAttempts = 0;
     document.getElementById('template-status-text').textContent = 'Initializing template...';
     pollTemplateInfo();
+}
+
+function startContinuousStatusUpdates() {
+    // Start polling every 10 seconds to keep status in sync
+    if (templateStatusInterval) {
+        clearInterval(templateStatusInterval);
+    }
+    templateStatusInterval = setInterval(async () => {
+        // Don't update toggle if user is actively performing an action
+        if (window.vmActionInProgress) {
+            return;
+        }
+        
+        try {
+            const resp = await fetch(`/api/classes/${classId}/template/info?v=${Date.now()}`);
+            const data = await resp.json();
+            
+            if (data.ok && data.template) {
+                currentTemplateInfo = data.template;
+                // Update power toggle to reflect current status
+                const powerToggle = document.getElementById('power-toggle');
+                if (powerToggle && !powerToggle.disabled) {
+                    const isRunning = currentTemplateInfo.status === 'running';
+                    powerToggle.checked = isRunning;
+                }
+                // Update IP if changed
+                const ipEl = document.getElementById('template-ip');
+                if (ipEl && currentTemplateInfo.ip) {
+                    ipEl.textContent = currentTemplateInfo.ip;
+                    ipEl.style.color = '#0b6a0b';
+                } else if (ipEl && !currentTemplateInfo.ip) {
+                    ipEl.textContent = '(no IP)';
+                    ipEl.style.color = '#a80000';
+                }
+            }
+        } catch (e) {
+            console.error('Failed to update template status:', e);
+        }
+    }, 10000); // Update every 10 seconds
 }
 
 async function pollTemplateInfo() {
@@ -1068,6 +1323,8 @@ async function pollTemplateInfo() {
             currentTemplateInfo = data.template;
             updateTemplateDisplay();
             templatePollingActive = false;
+            // Start continuous status updates now that template is loaded
+            startContinuousStatusUpdates();
             return;
         }
         // Not ready yet, keep polling
@@ -1201,6 +1458,9 @@ async function togglePower() {
     // Disable toggle during operation
     powerToggle.disabled = true;
     
+    // Store the action to prevent status polling from interfering
+    window.vmActionInProgress = true;
+    
     try {
         if (shouldStart) {
             await startTemplate();
@@ -1210,8 +1470,20 @@ async function togglePower() {
     } finally {
         // Re-enable toggle and refresh status immediately
         powerToggle.disabled = false;
+        window.vmActionInProgress = false;
         // Refresh template info to get latest status (will update toggle)
-        setTimeout(() => loadTemplateInfo(), 1000);
+        setTimeout(async () => {
+            try {
+                const resp = await fetch(`/api/classes/${classId}/template/info?v=${Date.now()}`);
+                const data = await resp.json();
+                if (data.ok && data.template) {
+                    currentTemplateInfo = data.template;
+                    updateTemplateDisplay();
+                }
+            } catch (e) {
+                console.error('Failed to refresh template status:', e);
+            }
+        }, 2000); // Wait 2 seconds for VM state to settle
     }
 }
 
@@ -2221,11 +2493,278 @@ showSection = function(section) {
     if (section === 'owners') {
         loadCoOwners();
         loadAvailableTeachers();
+    } else if (section === 'settings') {
+        loadSettings();
     }
 };
 
+// Settings Management
+async function loadSettings() {
+    try {
+        const resp = await fetch(`/api/classes/{{ class_.id }}/settings`);
+        const data = await resp.json();
+        
+        if (data.ok) {
+            // Auto-shutdown settings
+            document.getElementById('auto-shutdown-enabled').checked = data.settings.auto_shutdown_enabled || false;
+            document.getElementById('cpu-threshold').value = data.settings.auto_shutdown_cpu_threshold || 20;
+            document.getElementById('cpu-threshold-value').textContent = data.settings.auto_shutdown_cpu_threshold || 20;
+            document.getElementById('idle-minutes').value = data.settings.auto_shutdown_idle_minutes || 30;
+            
+            // Hour restriction settings
+            const restrictHours = data.settings.restrict_hours || false;
+            document.getElementById('restrict-hours').checked = restrictHours;
+            
+            // Convert hours to time format (HH:MM)
+            const startHour = data.settings.hours_start || 0;
+            const endHour = data.settings.hours_end || 23;
+            document.getElementById('hours-start').value = `${String(startHour).padStart(2, '0')}:00`;
+            document.getElementById('hours-end').value = `${String(endHour).padStart(2, '0')}:00`;
+            
+            document.getElementById('max-session-minutes').value = data.settings.max_session_minutes || 0;
+            
+            // Update time range UI state
+            updateTimeRangeState();
+        }
+    } catch (e) {
+        console.error('Failed to load settings:', e);
+        showAlert('Failed to load settings', 'error');
+    }
+}
+
+// Toggle time range settings based on restrict hours checkbox
+function updateTimeRangeState() {
+    const restrictHours = document.getElementById('restrict-hours').checked;
+    const timeRangeDiv = document.getElementById('time-range-settings');
+    
+    if (restrictHours) {
+        timeRangeDiv.style.opacity = '1';
+        timeRangeDiv.style.pointerEvents = 'auto';
+    } else {
+        timeRangeDiv.style.opacity = '0.5';
+        timeRangeDiv.style.pointerEvents = 'none';
+    }
+}
+
+// Attach event listener to restrict hours checkbox
+document.getElementById('restrict-hours').addEventListener('change', updateTimeRangeState);
+
+// Handle settings form submission
+document.getElementById('settings-form').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    
+    const enabled = document.getElementById('auto-shutdown-enabled').checked;
+    const cpuThreshold = parseInt(document.getElementById('cpu-threshold').value);
+    const idleMinutes = parseInt(document.getElementById('idle-minutes').value);
+    
+    // Validation
+    if (cpuThreshold < 5 || cpuThreshold > 50) {
+        showAlert('CPU threshold must be between 5% and 50%', 'error');
+        return;
+    }
+    
+    if (idleMinutes < 5 || idleMinutes > 240) {
+        showAlert('Idle duration must be between 5 and 240 minutes', 'error');
+        return;
+    }
+    
+    try {
+        const resp = await fetch(`/api/classes/{{ class_.id }}/settings`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                auto_shutdown_enabled: enabled,
+                auto_shutdown_cpu_threshold: cpuThreshold,
+                auto_shutdown_idle_minutes: idleMinutes
+            })
+        });
+        
+        const data = await resp.json();
+        
+        if (data.ok) {
+            showAlert('Auto-shutdown settings saved successfully', 'success');
+        } else {
+            showAlert(data.error || 'Failed to save settings', 'error');
+        }
+    } catch (e) {
+        console.error('Failed to save settings:', e);
+        showAlert('Failed to save settings', 'error');
+    }
+});
+
+// Handle hours form submission
+document.getElementById('hours-form').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    
+    const restrictHours = document.getElementById('restrict-hours').checked;
+    const hoursStart = document.getElementById('hours-start').value;
+    const hoursEnd = document.getElementById('hours-end').value;
+    const maxSessionMinutes = parseInt(document.getElementById('max-session-minutes').value);
+    
+    // Parse time strings to hours (HH:MM -> HH)
+    const startHour = parseInt(hoursStart.split(':')[0]);
+    const endHour = parseInt(hoursEnd.split(':')[0]);
+    
+    // Validation
+    if (restrictHours && startHour === endHour) {
+        showAlert('Start and end times cannot be the same', 'error');
+        return;
+    }
+    
+    if (maxSessionMinutes < 0 || maxSessionMinutes > 1440) {
+        showAlert('Session duration must be between 0 and 1440 minutes', 'error');
+        return;
+    }
+    
+    try {
+        const resp = await fetch(`/api/classes/{{ class_.id }}/settings`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                restrict_hours: restrictHours,
+                hours_start: startHour,
+                hours_end: endHour,
+                max_session_minutes: maxSessionMinutes
+            })
+        });
+        
+        const data = await resp.json();
+        
+        if (data.ok) {
+            showAlert('Schedule settings saved successfully', 'success');
+        } else {
+            showAlert(data.error || 'Failed to save settings', 'error');
+        }
+    } catch (e) {
+        console.error('Failed to save settings:', e);
+        showAlert('Failed to save settings', 'error');
+    }
+});
+
+{% if is_student %}
+// Student session progress monitoring
+let studentProgressInterval = null;
+
+async function loadStudentSessionProgress() {
+    try {
+        const vmid = {{ vm_assignments[0].proxmox_vmid if vm_assignments and vm_assignments|length > 0 else 'null' }};
+        if (!vmid) return;
+        
+        const resp = await fetch(`/api/classes/{{ class_.id }}/vm/${vmid}/session-progress`);
+        const data = await resp.json();
+        
+        if (data.ok) {
+            updateStudentProgressUI(data);
+        }
+    } catch (e) {
+        console.error('Failed to load session progress:', e);
+    }
+}
+
+function updateStudentProgressUI(data) {
+    const progressDiv = document.getElementById('student-session-progress');
+    const timeSpan = document.getElementById('student-session-time');
+    const bar = document.getElementById('student-session-bar');
+    const warningDiv = document.getElementById('student-session-warning');
+    const warningText = document.getElementById('student-session-warning-text');
+    const hoursInfo = document.getElementById('student-hours-info');
+    
+    // Only show if there are restrictions
+    if (!data.has_restrictions) {
+        progressDiv.style.display = 'none';
+        return;
+    }
+    
+    progressDiv.style.display = 'block';
+    
+    // Update time display
+    if (data.status === 'running' && data.uptime_minutes > 0) {
+        const current = formatMinutes(data.uptime_minutes);
+        const max = data.max_session_minutes > 0 ? formatMinutes(data.max_session_minutes) : '∞';
+        timeSpan.textContent = `${current} / ${max}`;
+        
+        // Update progress bar
+        if (data.max_session_minutes > 0) {
+            const percent = Math.min((data.uptime_minutes / data.max_session_minutes) * 100, 100);
+            bar.style.width = percent + '%';
+            
+            // Show warning if > 80%
+            if (percent > 80) {
+                warningDiv.style.display = 'block';
+                const remaining = data.max_session_minutes - data.uptime_minutes;
+                warningText.textContent = `Your session will end in ${Math.max(0, Math.ceil(remaining))} minutes`;
+            } else {
+                warningDiv.style.display = 'none';
+            }
+        } else {
+            bar.style.width = '0%';
+            warningDiv.style.display = 'none';
+        }
+    } else {
+        timeSpan.textContent = 'VM is stopped';
+        bar.style.width = '0%';
+        warningDiv.style.display = 'none';
+    }
+    
+    // Update hours info
+    if (data.restrict_hours) {
+        const start = formatHour(data.hours_start);
+        const end = formatHour(data.hours_end);
+        
+        if (data.within_hours) {
+            hoursInfo.innerHTML = `<i class="bi bi-clock"></i> Available hours: ${start} - ${end} (currently allowed)`;
+            hoursInfo.style.background = '#e6f4ff';
+            hoursInfo.style.borderLeft = '3px solid #0078d4';
+        } else {
+            hoursInfo.innerHTML = `<i class="bi bi-clock-history"></i> VMs can only run ${start} - ${end} (outside hours now)`;
+            hoursInfo.style.background = '#fff3cd';
+            hoursInfo.style.borderLeft = '3px solid #ffc107';
+        }
+    } else if (data.max_session_minutes > 0) {
+        hoursInfo.innerHTML = `<i class="bi bi-hourglass-split"></i> Maximum session: ${formatMinutes(data.max_session_minutes)}`;
+    } else {
+        hoursInfo.style.display = 'none';
+    }
+}
+
+function formatMinutes(minutes) {
+    const h = Math.floor(minutes / 60);
+    const m = Math.floor(minutes % 60);
+    if (h > 0) {
+        return `${h}h ${m}m`;
+    }
+    return `${m}m`;
+}
+
+function formatHour(hour) {
+    const suffix = hour >= 12 ? 'PM' : 'AM';
+    const display = hour === 0 ? 12 : (hour > 12 ? hour - 12 : hour);
+    return `${display}:00 ${suffix}`;
+}
+
+// Start monitoring when section is shown
+const originalShowSection2 = showSection;
+showSection = function(section) {
+    if (typeof originalShowSection2 === 'function') {
+        originalShowSection2(section);
+    }
+    
+    if (section === 'my-vm') {
+        loadStudentSessionProgress();
+        if (studentProgressInterval) clearInterval(studentProgressInterval);
+        studentProgressInterval = setInterval(loadStudentSessionProgress, 30000); // Update every 30s
+    } else {
+        if (studentProgressInterval) {
+            clearInterval(studentProgressInterval);
+            studentProgressInterval = null;
+        }
+    }
+};
+
+// Initial load
+loadStudentSessionProgress();
+studentProgressInterval = setInterval(loadStudentSessionProgress, 30000);
 {% endif %}
-</script>
 
 <!-- Assign VM Modal -->
 <div id="assign-vm-modal" class="modal" style="display: none;">
