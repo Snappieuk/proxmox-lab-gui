@@ -60,7 +60,13 @@
                 </div>
                 <div class="class-card-footer">
                     {% if user_role == 'teacher' and class.teacher_id != user.id %}
-                        {% if class.co_owners and user.id in [co.id for co in class.co_owners] %}
+                        {% set is_co_owner = namespace(value=False) %}
+                        {% for co in class.co_owners %}
+                            {% if co.id == user.id %}
+                                {% set is_co_owner.value = True %}
+                            {% endif %}
+                        {% endfor %}
+                        {% if is_co_owner.value %}
                         <span class="badge badge-co-owner">
                             <i class="bi bi-people"></i> Co-Owner
                         </span>
