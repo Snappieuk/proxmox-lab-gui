@@ -55,6 +55,12 @@
                href="{{ url_for('classes.classes_list') }}">
                 <i class="bi bi-mortarboard"></i> Classes
             </a>
+            {% if is_admin or (local_user and local_user.role in ['teacher', 'adminer']) %}
+                <a class="sidebar-link {% if request.endpoint == 'template_builder.template_builder_page' %}sidebar-link-active{% endif %}"
+                   href="{{ url_for('template_builder.template_builder_page') }}">
+                    <i class="bi bi-tools"></i> Template Builder
+                </a>
+            {% endif %}
             {% if is_admin %}
                 <div class="sidebar-section-title" style="margin-top: 1rem;">Management</div>
             {% endif %}

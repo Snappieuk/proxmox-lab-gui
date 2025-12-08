@@ -1165,13 +1165,12 @@ function updateTemplateDisplay() {
         }
     }
     
-    // Update power toggle (only if not currently being changed by user)
+    // Update power toggle based on current status
     const powerToggle = document.getElementById('power-toggle');
     const isRunning = currentTemplateInfo.status === 'running';
-    // Don't override toggle state if it's disabled (operation in progress)
-    if (!powerToggle.disabled) {
-        powerToggle.checked = isRunning;
-    }
+    
+    // Always update toggle to reflect actual VM status
+    powerToggle.checked = isRunning;
     
     // Always show RDP button for templates
     const rdpBtn = document.getElementById('btn-rdp-template');
@@ -1199,11 +1198,12 @@ async function togglePower() {
             await stopTemplate();
         }
     } finally {
-        // Keep toggle disabled until status refresh completes
-        // It will be re-enabled when updateTemplateDisplay runs
+        // Re-enable toggle after a short delay to allow status refresh
         setTimeout(() => {
             powerToggle.disabled = false;
-        }, 4000); // Re-enable after status should be refreshed
+            // Refresh template info to get latest status
+            loadTemplateInfo();
+        }, 2000);
     }
 }
 
@@ -1213,7 +1213,13 @@ function sshToTemplate() {
 }
 
 async function startTemplate() {
-    if (!confirm('Start the template VM?')) return;
+    if (!confirm('Start the template VM?')) {
+        // User cancelled - revert toggle
+        const powerToggle = document.getElementById('power-toggle');
+        powerToggle.checked = false;
+        powerToggle.disabled = false;
+        return;
+    }
     
     try {
         const resp = await fetch(`/api/classes/${classId}/template/start`, { method: 'POST' });
@@ -1221,17 +1227,28 @@ async function startTemplate() {
         
         if (data.ok) {
             showAlert(data.message, 'success');
-            setTimeout(() => loadTemplateInfo(), 3000);
         } else {
             showAlert(data.error || 'Failed to start template', 'error');
+            // Revert toggle on error
+            const powerToggle = document.getElementById('power-toggle');
+            powerToggle.checked = false;
         }
     } catch (e) {
         showAlert('Failed to start template', 'error');
+        // Revert toggle on error
+        const powerToggle = document.getElementById('power-toggle');
+        powerToggle.checked = false;
     }
 }
 
 async function stopTemplate() {
-    if (!confirm('Stop the template VM?')) return;
+    if (!confirm('Stop the template VM?')) {
+        // User cancelled - revert toggle
+        const powerToggle = document.getElementById('power-toggle');
+        powerToggle.checked = true;
+        powerToggle.disabled = false;
+        return;
+    }
     
     try {
         const resp = await fetch(`/api/classes/${classId}/template/stop`, { method: 'POST' });
@@ -1239,12 +1256,17 @@ async function stopTemplate() {
         
         if (data.ok) {
             showAlert(data.message, 'success');
-            setTimeout(() => loadTemplateInfo(), 3000);
         } else {
             showAlert(data.error || 'Failed to stop template', 'error');
+            // Revert toggle on error
+            const powerToggle = document.getElementById('power-toggle');
+            powerToggle.checked = true;
         }
     } catch (e) {
         showAlert('Failed to stop template', 'error');
+        // Revert toggle on error
+        const powerToggle = document.getElementById('power-toggle');
+        powerToggle.checked = true;
     }
 }
 
@@ -1329,8 +1351,42 @@ async function pushTemplate() {
     }
 }
 
-function refreshVMs() {
-    location.reload();
+async function refreshVMs() {
+    const refreshBtn = event?.target?.closest('button');
+    
+    if (refreshBtn) {
+        refreshBtn.disabled = true;
+        refreshBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Discovering IPs...';
+    }
+    
+    try {
+        // Trigger force IP discovery for this class
+        const response = await fetch(`/api/classes/{{ class_.id }}/refresh-ips`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        
+        const data = await response.json();
+        
+        if (data.ok) {
+            showAlert(`${data.message}. Refreshing page...`, 'success');
+            // Wait a bit for database to update, then reload
+            setTimeout(() => location.reload(), 1500);
+        } else {
+            showAlert(data.error || 'Failed to refresh IPs', 'error');
+            if (refreshBtn) {
+                refreshBtn.disabled = false;
+                refreshBtn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> Refresh';
+            }
+        }
+    } catch (e) {
+        console.error('Refresh failed:', e);
+        showAlert('Failed to refresh: ' + e.message, 'error');
+        if (refreshBtn) {
+            refreshBtn.disabled = false;
+            refreshBtn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> Refresh';
+        }
+    }
 }
 
 function viewVM(vmid) {

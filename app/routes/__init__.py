@@ -9,6 +9,7 @@ from app.routes.admin.vm_class_mappings import admin_vm_mappings_bp
 from app.routes.api.class_api import api_classes_bp
 from app.routes.api.class_owners import api_class_owners_bp
 from app.routes.api.class_template import api_class_template_bp
+from app.routes.api.class_ip_refresh import class_ip_refresh_bp
 from app.routes.api.clusters import api_clusters_bp
 from app.routes.api.mappings import api_mappings_bp
 from app.routes.api.publish_template import api_publish_template_bp
@@ -22,6 +23,7 @@ from app.routes.api.vms import api_vms_bp
 from app.routes.auth import auth_bp
 from app.routes.classes import classes_bp
 from app.routes.portal import portal_bp
+from app.routes.template_builder import template_builder_bp
 
 
 def register_blueprints(app):
@@ -29,6 +31,7 @@ def register_blueprints(app):
     app.register_blueprint(auth_bp)
     app.register_blueprint(portal_bp)
     app.register_blueprint(classes_bp)
+    app.register_blueprint(template_builder_bp)
     app.register_blueprint(admin_mappings_bp)
     app.register_blueprint(admin_clusters_bp)
     app.register_blueprint(admin_diagnostics_bp)
@@ -41,6 +44,7 @@ def register_blueprints(app):
     app.register_blueprint(api_ssh_bp)
     app.register_blueprint(api_classes_bp)
     app.register_blueprint(api_class_template_bp)
+    app.register_blueprint(api_class_ip_refresh_bp)
     app.register_blueprint(api_templates_bp)
     app.register_blueprint(api_sync_bp)
     app.register_blueprint(api_vm_class_mappings_bp)
