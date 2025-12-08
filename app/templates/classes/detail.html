@@ -419,11 +419,6 @@
                     <h1><i class="bi bi-people"></i> Students</h1>
                     <p class="page-subtitle">Manage student enrollment via invite links</p>
                 </div>
-                <div>
-                    <button onclick="generateInviteLink()" class="btn-primary">
-                        <i class="bi bi-link-45deg"></i> Generate Invite Link
-                    </button>
-                </div>
             </div>
             
             <div class="content-card">
@@ -1746,9 +1741,6 @@ function displayInviteLink(url) {
             <button onclick="copyInviteLink('${url}')" style="background: #0078d4;">
                 <i class="bi bi-clipboard"></i> Copy
             </button>
-            <button onclick="deleteInviteLink()" style="background: #dc3545; border-color: #dc3545;">
-                <i class="bi bi-trash"></i> Delete
-            </button>
         </div>
         <div style="margin-top: 0.75rem; font-size: 0.85rem; color: #605e5c;">
             <i class="bi bi-info-circle"></i> This link never expires and can be used by multiple students.
@@ -1783,13 +1775,6 @@ async function loadStudentsList() {
                                 <div>
                                     <div class="student-card-name">${s.username}</div>
                                     <div class="student-card-vm">${s.vmid ? `VM: ${s.vmid}` : 'No VM assigned'}</div>
-                                </div>
-                                <div>
-                                    <button onclick="showAssignVMModal('${s.username}', ${s.id})" 
-                                            class="btn-secondary" 
-                                            style="font-size: 0.85rem; padding: 0.4rem 0.8rem;">
-                                        <i class="bi bi-hdd-network"></i> ${s.vmid ? 'Change VM' : 'Assign VM'}
-                                    </button>
                                 </div>
                             </div>
                         `).join('')}

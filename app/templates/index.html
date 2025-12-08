@@ -42,6 +42,11 @@
         <option value="linux">Linux Only</option>
         <option value="lxc">LXC Only</option>
     </select>
+    <select id="status-filter" class="filter-select">
+        <option value="all">All Statuses</option>
+        <option value="running">Running Only</option>
+        <option value="stopped">Stopped Only</option>
+    </select>
     <select id="node-filter" class="filter-select">
         <option value="all">All Nodes</option>
     </select>
@@ -70,7 +75,9 @@
 
 <!-- Windows VMs Table -->
 {% if windows_vms %}
-<h4 class="section-header">Windows VMs</h4>
+<h4 class="section-header" style="cursor: pointer; user-select: none;" onclick="toggleSection('windows-table')">
+    <i class="bi bi-chevron-down" id="windows-table-icon"></i> Windows VMs
+</h4>
 <table class="vm-table" id="windows-table">
     <thead>
         <tr>
@@ -85,7 +92,10 @@
     <tbody>
         {% for vm in windows_vms %}
         <tr data-vmid="{{ vm.vmid }}" data-category="windows" data-node="{{ vm.node }}">
-            <td><strong>{{ vm.name }}</strong></td>
+            <td>
+                <strong>{{ vm.name }}</strong>
+                {% if vm.ip %}<i class="bi bi-display" style="margin-left: 0.5rem; color: #0078d4;" title="RDP Available"></i>{% endif %}
+            </td>
             <td>{{ vm.vmid }}</td>
             <td>{{ vm.node }}</td>
             <td>
@@ -125,7 +135,9 @@
 
 <!-- Linux VMs Table -->
 {% if linux_vms %}
-<h4 class="section-header">Linux VMs</h4>
+<h4 class="section-header" style="cursor: pointer; user-select: none;" onclick="toggleSection('linux-table')">
+    <i class="bi bi-chevron-down" id="linux-table-icon"></i> Linux VMs
+</h4>
 <table class="vm-table" id="linux-table">
     <thead>
         <tr>
@@ -190,7 +202,9 @@
 
 <!-- LXC Containers Table -->
 {% if lxc_containers %}
-<h4 class="section-header">LXC Containers</h4>
+<h4 class="section-header" style="cursor: pointer; user-select: none;" onclick="toggleSection('lxc-table')">
+    <i class="bi bi-chevron-down" id="lxc-table-icon"></i> LXC Containers
+</h4>
 <table class="vm-table" id="lxc-table">
     <thead>
         <tr>
@@ -254,7 +268,9 @@
 {% endif %}
 
 {% if other_vms %}
-<h4 class="section-header">Other / Unknown</h4>
+<h4 class="section-header" style="cursor: pointer; user-select: none;" onclick="toggleSection('other-table')">
+    <i class="bi bi-chevron-down" id="other-table-icon"></i> Other / Unknown
+</h4>
 <table class="vm-table" id="other-table">
     <thead>
         <tr>
@@ -385,12 +401,28 @@ function applyFiltersDebounced() {
 
 document.getElementById('search-input').addEventListener('input', applyFiltersDebounced);
 document.getElementById('category-filter').addEventListener('change', applyFiltersDebounced);
+document.getElementById('status-filter').addEventListener('change', applyFiltersDebounced);
 document.getElementById('node-filter').addEventListener('change', applyFiltersDebounced);
+
+// Toggle section visibility (collapse/expand tables)
+function toggleSection(tableId) {
+    const table = document.getElementById(tableId);
+    const icon = document.getElementById(tableId + '-icon');
+    
+    if (table.style.display === 'none') {
+        table.style.display = '';
+        icon.className = 'bi bi-chevron-down';
+    } else {
+        table.style.display = 'none';
+        icon.className = 'bi bi-chevron-right';
+    }
+}
 
 function applyFilters() {
     const searchInput = document.getElementById('search-input');
     const searchTerm = searchInput ? searchInput.value.toLowerCase() : '';
     const categoryFilter = document.getElementById('category-filter').value;
+    const statusFilter = document.getElementById('status-filter').value;
     const nodeFilter = document.getElementById('node-filter').value;
     
     document.querySelectorAll('.vm-table tbody tr').forEach(row => {
@@ -399,11 +431,21 @@ function applyFilters() {
         const node = row.getAttribute('data-node');
         const text = row.textContent.toLowerCase();
         
+        // Get status from badge text
+        const statusBadge = row.querySelector('.badge');
+        let rowStatus = 'unknown';
+        if (statusBadge) {
+            const badgeText = statusBadge.textContent.toLowerCase();
+            if (badgeText.includes('running')) rowStatus = 'running';
+            else if (badgeText.includes('stopped')) rowStatus = 'stopped';
+        }
+        
         const matchesSearch = !searchTerm || text.includes(searchTerm);
         const matchesCategory = categoryFilter === 'all' || category === categoryFilter;
+        const matchesStatus = statusFilter === 'all' || rowStatus === statusFilter;
         const matchesNode = nodeFilter === 'all' || node === nodeFilter;
         
-        row.style.display = (matchesSearch && matchesCategory && matchesNode) ? '' : 'none';
+        row.style.display = (matchesSearch && matchesCategory && matchesStatus && matchesNode) ? '' : 'none';
     });
     
     // Hide empty tables

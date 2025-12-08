@@ -2049,11 +2049,11 @@ def get_vms_for_user(user: str, search: Optional[str] = None, skip_ips: bool = F
         accessible_vmids.update(vm["vmid"] for vm in mappings_vms)
         logger.debug("get_vms_for_user: user=%s has %d VMs from mappings.json", user, len(mappings_vms))
         
-        # Source 2: VMAssignment table (class-based VMs)
+        # Source 2: VMAssignment table (class-based VMs + co-owned class VMs)
         try:
             from flask import has_app_context
             if has_app_context():
-                from app.models import User, VMAssignment
+                from app.models import User, VMAssignment, Class
 
                 # Normalize username variants (with/without realm)
                 user_variants = {user}
@@ -2069,10 +2069,20 @@ def get_vms_for_user(user: str, search: Optional[str] = None, skip_ips: bool = F
                 # Find user record
                 local_user = User.query.filter(User.username.in_(user_variants)).first()
                 if local_user:
+                    # VMs assigned directly to user
                     assignments = VMAssignment.query.filter_by(assigned_user_id=local_user.id).all()
                     class_vmids = {a.proxmox_vmid for a in assignments}
                     accessible_vmids.update(class_vmids)
-                    logger.debug("get_vms_for_user: user=%s has %d VMs from class assignments", user, len(class_vmids))
+                    logger.debug("get_vms_for_user: user=%s has %d VMs from direct assignments", user, len(class_vmids))
+                    
+                    # VMs from classes they co-own (teacher VMs + all student VMs in those classes)
+                    co_owned_classes = local_user.co_owned_classes
+                    for cls in co_owned_classes:
+                        class_vm_assignments = VMAssignment.query.filter_by(class_id=cls.id).all()
+                        co_owned_vmids = {a.proxmox_vmid for a in class_vm_assignments}
+                        accessible_vmids.update(co_owned_vmids)
+                        logger.debug("get_vms_for_user: user=%s has %d VMs from co-owned class '%s'", 
+                                   user, len(co_owned_vmids), cls.name)
         except Exception as e:
             logger.warning("get_vms_for_user: failed to check VMAssignment for user %s: %s", user, e)
         
