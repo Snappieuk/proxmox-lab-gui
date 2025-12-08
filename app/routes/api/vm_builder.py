@@ -366,15 +366,56 @@ def api_upload_iso():
         
         logger.info(f"Uploading ISO {file.filename} to {node}:{storage}")
         
-        # Upload file to Proxmox
-        # Proxmox API expects multipart/form-data with 'content' field
+        # Upload file to Proxmox storage
+        # Note: The ProxmoxAPI library's upload method can be unreliable for large files
+        # We need to use the storage content upload endpoint properly
         try:
-            response = proxmox.nodes(node).storage(storage).upload.post(
-                content=file.stream.read(),
-                filename=file.filename
+            # Proxmox expects the file upload via the storage content endpoint
+            # Format: POST /nodes/{node}/storage/{storage}/upload
+            # with multipart form data containing 'content' and 'filename'
+            
+            import requests
+            from app.models import Cluster
+            
+            # Find cluster config from database
+            cluster = Cluster.query.filter_by(id=cluster_id).first()
+            
+            if not cluster:
+                raise Exception("Cluster configuration not found")
+            
+            # Build Proxmox API URL
+            api_url = f"https://{cluster.host}:{cluster.port}/api2/json/nodes/{node}/storage/{storage}/upload"
+            
+            # Prepare the file for upload
+            file.stream.seek(0)  # Reset stream position
+            files = {
+                'content': (file.filename, file.stream, 'application/octet-stream')
+            }
+            
+            # Prepare form data
+            data = {
+                'filename': file.filename,
+                'content': 'iso'
+            }
+            
+            # Make request with authentication
+            auth = (cluster.user, cluster.password)
+            verify_ssl = cluster.verify_ssl
+            
+            response = requests.post(
+                api_url,
+                auth=auth,
+                files=files,
+                data=data,
+                verify=verify_ssl,
+                timeout=600  # 10 minute timeout for large files
             )
             
-            logger.info(f"ISO uploaded successfully: {response}")
+            if response.status_code != 200:
+                raise Exception(f"Proxmox API returned status {response.status_code}: {response.text}")
+            
+            result = response.json()
+            logger.info(f"ISO uploaded successfully: {result}")
             
             # Cache the uploaded ISO in database immediately
             try:

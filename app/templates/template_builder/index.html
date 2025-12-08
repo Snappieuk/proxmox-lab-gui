@@ -166,22 +166,16 @@
                         </div>
                     </div>
                     <div class="form-row">
-                        <div class="form-col">
-                            <label for="build-storage" class="compact-label">Storage (for VM disk)</label>
-                            <select id="build-storage" class="form-control compact-input" required>
-                                <option value="">Select storage...</option>
-                            </select>
-                        </div>
-                        <div class="form-col">
+                        <div class="form-col" style="grid-column: 1 / -1;">
                             <label for="build-iso" class="compact-label">ISO Image</label>
                             <select id="build-iso" class="form-control compact-input" required>
                                 <option value="">Loading ISOs...</option>
                             </select>
                             <div style="display: flex; align-items: center; gap: 0.5rem; margin-top: 0.5rem;">
                                 <small style="color: #666; flex: 1;">
-                                    VM will be created on the node where this ISO is located.
+                                    VM will be created on TRUENAS storage. ISO location determines node.
                                 </small>
-                                <button type="button" onclick="openUploadISOModal()" class="btn-action" style="padding: 0.4rem 0.75rem; font-size: 0.875rem; white-space: nowrap;">
+                                <button type="button" onclick="openUploadISOModal()" class="btn-action">
                                     <i class="bi bi-upload" style="margin-right: 0.35rem;"></i>Upload ISO
                                 </button>
                             </div>
@@ -504,6 +498,38 @@
 
 .btn-migrate:active {
     transform: translateY(0);
+}
+
+.btn-action {
+    padding: 0.5rem 0.875rem;
+    background: #0078d4;
+    border: none;
+    border-radius: 4px;
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: white;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 1px 3px rgba(0, 120, 212, 0.2);
+}
+
+.btn-action:hover {
+    background: #106ebe;
+    box-shadow: 0 2px 6px rgba(0, 120, 212, 0.3);
+    transform: translateY(-1px);
+}
+
+.btn-action:active {
+    transform: translateY(0);
+}
+
+.btn-action:disabled {
+    background: #d1d1d1;
+    cursor: not-allowed;
+    box-shadow: none;
 }
 
 /* Remove old styles */
@@ -921,26 +947,6 @@ async function submitMigration(event) {
 // Build VM from Scratch functions
 async function loadBuildOptions() {
     try {
-        // Load storages from all nodes
-        const storagesResponse = await fetch('/api/vm-builder/storages?node=pve1');
-        const storagesData = await storagesResponse.json();
-        
-        if (storagesData.ok) {
-            const storageSelect = document.getElementById('build-storage');
-            const storageOptions = storagesData.storages
-                .filter(s => s.content.includes('images'))
-                .map(storage => {
-                    const available = storage.avail ? ` (${(storage.avail / 1073741824).toFixed(1)}GB free)` : '';
-                    return `<option value="${storage.storage}">${storage.storage}${available}</option>`;
-                });
-            
-            if (storageOptions.length > 0) {
-                storageSelect.innerHTML = storageOptions.join('');
-            } else {
-                storageSelect.innerHTML = '<option value="local-lvm">local-lvm</option>';
-            }
-        }
-        
         // Load ISOs from all nodes (cached in background)
         const isoResponse = await fetch('/api/vm-builder/isos');
         const isoData = await isoResponse.json();
@@ -952,12 +958,11 @@ async function loadBuildOptions() {
             ).join('');
         } else {
             const isoSelect = document.getElementById('build-iso');
-            isoSelect.innerHTML = '<option value="">No ISOs found - Please upload ISO files to Proxmox storage</option>';
+            isoSelect.innerHTML = '<option value="">No ISOs found - Please upload ISO files to TRUENAS storage</option>';
         }
     } catch (error) {
         console.error('Failed to load build options:', error);
         document.getElementById('build-iso').innerHTML = '<option value="">Error loading ISOs</option>';
-        document.getElementById('build-storage').innerHTML = '<option value="local-lvm">local-lvm</option>';
     }
 }
 
@@ -986,7 +991,7 @@ async function submitBuildVM(event) {
             vm_name: document.getElementById('build-vm-name').value,
             os_type: document.getElementById('build-os-type').value,
             iso_file: isoFile,
-            storage: document.getElementById('build-storage').value,
+            storage: 'TRUENAS',
             cpu_cores: parseInt(document.getElementById('build-cpu-cores').value),
             memory_mb: parseInt(document.getElementById('build-memory').value),
             disk_size_gb: parseInt(document.getElementById('build-disk-size').value),
