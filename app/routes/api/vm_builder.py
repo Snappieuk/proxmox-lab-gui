@@ -296,3 +296,102 @@ def api_list_storages():
             "ok": False,
             "error": str(e)
         }), 500
+
+
+@vm_builder_bp.route("/upload-iso", methods=["POST"])
+@login_required
+def api_upload_iso():
+    """Upload an ISO file to Proxmox storage."""
+    try:
+        user = require_user()
+        
+        # Check if user is teacher or admin
+        is_admin = is_admin_user(user)
+        username = user.split('@')[0] if '@' in user else user
+        local_user = get_user_by_username(username)
+        
+        if not is_admin and (not local_user or local_user.role not in ['teacher', 'adminer']):
+            return jsonify({
+                "ok": False,
+                "error": "Access denied. Only teachers and administrators can upload ISOs."
+            }), 403
+        
+        # Get parameters
+        node = request.form.get('node')
+        storage = request.form.get('storage', 'local')
+        
+        if not node:
+            return jsonify({
+                "ok": False,
+                "error": "Missing node parameter"
+            }), 400
+        
+        # Get uploaded file
+        if 'content' not in request.files:
+            return jsonify({
+                "ok": False,
+                "error": "No file uploaded"
+            }), 400
+        
+        file = request.files['content']
+        
+        if file.filename == '':
+            return jsonify({
+                "ok": False,
+                "error": "No file selected"
+            }), 400
+        
+        if not file.filename.lower().endswith('.iso'):
+            return jsonify({
+                "ok": False,
+                "error": "File must be an ISO image (.iso extension)"
+            }), 400
+        
+        from app.services.proxmox_service import get_proxmox_admin_for_cluster
+        
+        cluster_id = request.form.get('cluster_id') or session.get('cluster_id')
+        
+        if not cluster_id:
+            return jsonify({
+                "ok": False,
+                "error": "No cluster selected"
+            }), 400
+        
+        proxmox = get_proxmox_admin_for_cluster(cluster_id)
+        if not proxmox:
+            return jsonify({
+                "ok": False,
+                "error": "Failed to connect to cluster"
+            }), 500
+        
+        logger.info(f"Uploading ISO {file.filename} to {node}:{storage}")
+        
+        # Upload file to Proxmox
+        # Proxmox API expects multipart/form-data with 'content' field
+        try:
+            response = proxmox.nodes(node).storage(storage).upload.post(
+                content=file.stream.read(),
+                filename=file.filename
+            )
+            
+            logger.info(f"ISO uploaded successfully: {response}")
+            
+            return jsonify({
+                "ok": True,
+                "message": f"ISO {file.filename} uploaded successfully to {node}:{storage}",
+                "filename": file.filename
+            })
+            
+        except Exception as upload_error:
+            logger.error(f"Proxmox upload failed: {upload_error}")
+            return jsonify({
+                "ok": False,
+                "error": f"Upload to Proxmox failed: {str(upload_error)}"
+            }), 500
+        
+    except Exception as e:
+        logger.error(f"Failed to upload ISO: {e}", exc_info=True)
+        return jsonify({
+            "ok": False,
+            "error": str(e)
+        }), 500

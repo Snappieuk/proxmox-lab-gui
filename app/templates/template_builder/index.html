@@ -167,9 +167,9 @@
                     </div>
                     <div class="form-row">
                         <div class="form-col">
-                            <label for="build-storage" class="compact-label">Storage</label>
+                            <label for="build-storage" class="compact-label">Storage (for VM disk)</label>
                             <select id="build-storage" class="form-control compact-input" required>
-                                <option value="local-lvm">local-lvm</option>
+                                <option value="">Loading storages...</option>
                             </select>
                         </div>
                         <div class="form-col">
@@ -177,7 +177,10 @@
                             <select id="build-iso" class="form-control compact-input" required>
                                 <option value="">Loading ISOs...</option>
                             </select>
-                            <small style="color: #666; margin-top: 0.25rem; display: block;">VM will be created on the node where this ISO is located</small>
+                            <small style="color: #666; margin-top: 0.25rem; display: block;">
+                                VM will be created on the node where this ISO is located. 
+                                <a href="#" onclick="openUploadISOModal(); return false;" style="color: #3b82f6; text-decoration: underline;">Upload new ISO</a>
+                            </small>
                         </div>
                     </div>
                 </div>
@@ -275,6 +278,66 @@
             <button type="button" onclick="openConsoleFromSuccess()" class="btn-migrate">
                 <i class="bi bi-terminal" style="margin-right: 0.5rem;"></i>Open Console
             </button>
+        </div>
+    </div>
+</div>
+
+<!-- Upload ISO Modal -->
+<div id="upload-iso-modal" class="modal" style="display: none; visibility: hidden;">
+    <div class="modal-content" style="max-width: 600px;">
+        <div class="modal-header">
+            <h2 style="font-size: 1.25rem; font-weight: 600; margin: 0;">
+                <i class="bi bi-upload" style="margin-right: 0.5rem;"></i>Upload ISO Image
+            </h2>
+            <button class="btn-close" onclick="closeUploadISOModal()">&times;</button>
+        </div>
+        <div class="modal-body" style="padding: 1.5rem;">
+            <form id="upload-iso-form" onsubmit="submitUploadISO(event)">
+                <div class="form-section">
+                    <div class="form-row">
+                        <div class="form-col" style="grid-column: 1 / -1;">
+                            <label for="upload-node" class="compact-label">Target Node</label>
+                            <select id="upload-node" class="form-control compact-input" required>
+                                <option value="">Loading nodes...</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-col" style="grid-column: 1 / -1;">
+                            <label for="upload-storage" class="compact-label">Target Storage</label>
+                            <select id="upload-storage" class="form-control compact-input" required>
+                                <option value="local">local</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-col" style="grid-column: 1 / -1;">
+                            <label for="upload-iso-file" class="compact-label">ISO File</label>
+                            <input type="file" id="upload-iso-file" class="form-control compact-input" accept=".iso" required>
+                            <small style="color: #666; margin-top: 0.5rem; display: block;">
+                                Select an ISO file from your computer. Large files may take several minutes to upload.
+                            </small>
+                        </div>
+                    </div>
+                    <div id="upload-progress" style="display: none; margin-top: 1rem;">
+                        <div style="background: #f3f4f6; padding: 1rem; border-radius: 0.5rem;">
+                            <div style="font-size: 0.875rem; color: #6b7280; margin-bottom: 0.5rem;">Upload Progress:</div>
+                            <div style="background: #e5e7eb; height: 8px; border-radius: 4px; overflow: hidden;">
+                                <div id="upload-progress-bar" style="background: #3b82f6; height: 100%; width: 0%; transition: width 0.3s;"></div>
+                            </div>
+                            <div id="upload-progress-text" style="font-size: 0.875rem; color: #6b7280; margin-top: 0.5rem;">0%</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" onclick="closeUploadISOModal()" class="btn-cancel">
+                        Cancel
+                    </button>
+                    <button type="submit" class="btn-migrate" id="upload-iso-btn">
+                        <i class="bi bi-upload" style="margin-right: 0.5rem;"></i>Upload ISO
+                    </button>
+                </div>
+            </form>
         </div>
     </div>
 </div>
@@ -859,18 +922,43 @@ async function submitMigration(event) {
 // Build VM from Scratch functions
 async function loadBuildOptions() {
     try {
-        // Load ISOs from all nodes
-        const response = await fetch('/api/vm-builder/isos');
-        const data = await response.json();
+        // Load storages from all nodes
+        const storagesResponse = await fetch('/api/vm-builder/storages?node=pve1');
+        const storagesData = await storagesResponse.json();
         
-        if (data.ok) {
+        if (storagesData.ok) {
+            const storageSelect = document.getElementById('build-storage');
+            const storageOptions = storagesData.storages
+                .filter(s => s.content.includes('images'))
+                .map(storage => {
+                    const available = storage.avail ? ` (${(storage.avail / 1073741824).toFixed(1)}GB free)` : '';
+                    return `<option value="${storage.storage}">${storage.storage}${available}</option>`;
+                });
+            
+            if (storageOptions.length > 0) {
+                storageSelect.innerHTML = storageOptions.join('');
+            } else {
+                storageSelect.innerHTML = '<option value="local-lvm">local-lvm</option>';
+            }
+        }
+        
+        // Load ISOs from all nodes (cached in background)
+        const isoResponse = await fetch('/api/vm-builder/isos');
+        const isoData = await isoResponse.json();
+        
+        if (isoData.ok && isoData.isos.length > 0) {
             const isoSelect = document.getElementById('build-iso');
-            isoSelect.innerHTML = data.isos.map(iso => 
+            isoSelect.innerHTML = isoData.isos.map(iso => 
                 `<option value="${iso.volid}">${iso.name} - ${iso.node}/${iso.storage} (${(iso.size / 1073741824).toFixed(2)}GB)</option>`
             ).join('');
+        } else {
+            const isoSelect = document.getElementById('build-iso');
+            isoSelect.innerHTML = '<option value="">No ISOs found - Please upload ISO files to Proxmox storage</option>';
         }
     } catch (error) {
-        console.error('Failed to load ISOs:', error);
+        console.error('Failed to load build options:', error);
+        document.getElementById('build-iso').innerHTML = '<option value="">Error loading ISOs</option>';
+        document.getElementById('build-storage').innerHTML = '<option value="local-lvm">local-lvm</option>';
     }
 }
 
@@ -988,6 +1076,113 @@ function closeConsoleModal() {
     modal.style.display = 'none';
     modal.style.visibility = 'hidden';
     document.getElementById('console-frame').src = '';
+}
+
+// Upload ISO functions
+async function openUploadISOModal() {
+    // Load nodes
+    try {
+        const response = await fetch('/api/vm-builder/nodes');
+        const data = await response.json();
+        
+        if (data.ok) {
+            const nodeSelect = document.getElementById('upload-node');
+            nodeSelect.innerHTML = data.nodes.map(node => 
+                `<option value="${node.node}">${node.node}</option>`
+            ).join('');
+        }
+    } catch (error) {
+        console.error('Failed to load nodes:', error);
+    }
+    
+    const modal = document.getElementById('upload-iso-modal');
+    modal.style.display = 'flex';
+    modal.style.visibility = 'visible';
+}
+
+function closeUploadISOModal() {
+    const modal = document.getElementById('upload-iso-modal');
+    modal.style.display = 'none';
+    modal.style.visibility = 'hidden';
+    document.getElementById('upload-iso-form').reset();
+    document.getElementById('upload-progress').style.display = 'none';
+}
+
+async function submitUploadISO(event) {
+    event.preventDefault();
+    
+    const fileInput = document.getElementById('upload-iso-file');
+    const file = fileInput.files[0];
+    
+    if (!file) {
+        alert('Please select an ISO file');
+        return;
+    }
+    
+    const node = document.getElementById('upload-node').value;
+    const storage = document.getElementById('upload-storage').value;
+    
+    const submitBtn = document.getElementById('upload-iso-btn');
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Uploading...';
+    
+    // Show progress bar
+    document.getElementById('upload-progress').style.display = 'block';
+    
+    try {
+        // Create FormData
+        const formData = new FormData();
+        formData.append('content', file);
+        formData.append('node', node);
+        formData.append('storage', storage);
+        
+        // Upload with progress tracking
+        const xhr = new XMLHttpRequest();
+        
+        xhr.upload.addEventListener('progress', (e) => {
+            if (e.lengthComputable) {
+                const percentComplete = (e.loaded / e.total) * 100;
+                document.getElementById('upload-progress-bar').style.width = percentComplete + '%';
+                document.getElementById('upload-progress-text').textContent = 
+                    `${Math.round(percentComplete)}% (${(e.loaded / 1048576).toFixed(1)}MB / ${(e.total / 1048576).toFixed(1)}MB)`;
+            }
+        });
+        
+        xhr.addEventListener('load', async () => {
+            if (xhr.status === 200) {
+                const data = JSON.parse(xhr.responseText);
+                if (data.ok) {
+                    alert('✓ ISO uploaded successfully!');
+                    closeUploadISOModal();
+                    // Reload ISOs
+                    await loadBuildOptions();
+                } else {
+                    alert('Upload failed: ' + (data.error || 'Unknown error'));
+                    submitBtn.disabled = false;
+                    submitBtn.innerHTML = '<i class="bi bi-upload"></i> Upload ISO';
+                }
+            } else {
+                alert('Upload failed: HTTP ' + xhr.status);
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = '<i class="bi bi-upload"></i> Upload ISO';
+            }
+        });
+        
+        xhr.addEventListener('error', () => {
+            alert('Upload failed: Network error');
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = '<i class="bi bi-upload"></i> Upload ISO';
+        });
+        
+        xhr.open('POST', '/api/vm-builder/upload-iso');
+        xhr.send(formData);
+        
+    } catch (error) {
+        console.error('Upload failed:', error);
+        alert('Upload failed: ' + error.message);
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = '<i class="bi bi-upload"></i> Upload ISO';
+    }
 }
 </script>
 
