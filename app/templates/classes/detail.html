@@ -1449,12 +1449,19 @@ async function bulkStartVMs() {
     
     if (!confirm(`Start ${checkboxes.length} VM(s)?`)) return;
     
-    showAlert(`Starting ${checkboxes.length} VM(s)...`, 'info');
-    
     const vmids = [];
+    const vmNames = [];
+    
     for (const cb of checkboxes) {
         const vmid = parseInt(cb.value);
         vmids.push(vmid);
+        
+        // Get VM name from the table
+        const nameEl = document.getElementById(`name-${vmid}`);
+        if (nameEl) {
+            vmNames.push(nameEl.textContent);
+        }
+        
         try {
             await fetch(`/api/vm/${vmid}/start`, { method: 'POST' });
         } catch (e) {
@@ -1462,7 +1469,9 @@ async function bulkStartVMs() {
         }
     }
     
-    showAlert('VMs starting... IPs will appear shortly', 'success');
+    // Show single alert with list of VMs
+    const vmList = vmNames.join(', ');
+    showAlert(`Starting ${checkboxes.length} VM(s): ${vmList}`, 'success');
     
     // Uncheck all
     document.getElementById('select-all-vms').checked = false;
@@ -1482,10 +1491,17 @@ async function bulkStopVMs() {
     
     if (!confirm(`Stop ${checkboxes.length} VM(s)?`)) return;
     
-    showAlert(`Stopping ${checkboxes.length} VM(s)...`, 'info');
+    const vmNames = [];
     
     for (const cb of checkboxes) {
         const vmid = parseInt(cb.value);
+        
+        // Get VM name from the table
+        const nameEl = document.getElementById(`name-${vmid}`);
+        if (nameEl) {
+            vmNames.push(nameEl.textContent);
+        }
+        
         try {
             await fetch(`/api/vm/${vmid}/stop`, { method: 'POST' });
         } catch (e) {
@@ -1493,7 +1509,9 @@ async function bulkStopVMs() {
         }
     }
     
-    showAlert('VMs stopped', 'success');
+    // Show single alert with list of VMs
+    const vmList = vmNames.join(', ');
+    showAlert(`Stopping ${checkboxes.length} VM(s): ${vmList}`, 'success');
     
     // Uncheck all
     document.getElementById('select-all-vms').checked = false;

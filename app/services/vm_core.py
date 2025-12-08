@@ -129,7 +129,16 @@ def create_vm_shell(
         if exit_code == 0:
             logger.info(f"Enabled QEMU guest agent for VM {vmid}")
         else:
-            logger.warning(f"Failed to enable QEMU guest agent for VM {vmid}: {stderr}")
+            logger.error(f"Failed to enable QEMU guest agent for VM {vmid}: {stderr}")
+            # Don't fail the VM creation, but log prominently
+        
+        # Verify guest agent was actually enabled by reading config
+        verify_cmd = f"qm config {vmid} | grep agent"
+        exit_code, stdout, stderr = ssh_executor.execute(verify_cmd, timeout=10, check=False)
+        if exit_code == 0 and 'enabled=1' in stdout:
+            logger.info(f"Verified QEMU guest agent is enabled for VM {vmid}")
+        else:
+            logger.warning(f"Could not verify guest agent for VM {vmid}, output: {stdout}")
         
         return True, ""
         

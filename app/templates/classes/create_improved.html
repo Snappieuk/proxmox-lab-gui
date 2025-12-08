@@ -645,9 +645,9 @@ document.getElementById('create-class-form').addEventListener('submit', async fu
                             </div>
                         </div>
                     </div>
-                    <p style="color: #a19f9d; font-size: 13px; margin: 0;">
+                    <p id="progress-timer" style="color: #a19f9d; font-size: 13px; margin: 0;">
                         ⏱ This process may take 2-5 minutes<br>
-                        You'll be redirected when complete
+                        <span id="progress-status-text">Waiting for teacher VM...</span>
                     </p>
                 </div>
                 <style>
@@ -659,10 +659,66 @@ document.getElementById('create-class-form').addEventListener('submit', async fu
             
             document.body.appendChild(progressModal);
             
-            // Redirect after a short delay
-            setTimeout(() => {
-                window.location.href = '/classes/' + data.class.id + '?deployment=inprogress';
-            }, 5000);
+            const classId = data.class.id;
+            
+            // Poll for teacher VM availability
+            let pollAttempts = 0;
+            const maxPollAttempts = 60; // Poll for up to 5 minutes (5s intervals)
+            
+            async function pollTeacherVM() {
+                pollAttempts++;
+                
+                try {
+                    const resp = await fetch(`/api/classes/${classId}/template/info?v=${Date.now()}`);
+                    const data = await resp.json();
+                    
+                    // Update progress text
+                    const statusEl = document.getElementById('progress-status-text');
+                    if (statusEl) {
+                        statusEl.textContent = `Checking teacher VM... (${pollAttempts}/${maxPollAttempts})`;
+                    }
+                    
+                    // Check if teacher VM is ready
+                    if (data.ok && data.template && data.template.proxmox_vmid) {
+                        // Teacher VM is ready!
+                        if (statusEl) {
+                            statusEl.textContent = 'Teacher VM ready! Redirecting...';
+                            statusEl.style.color = '#107c10';
+                        }
+                        
+                        // Redirect to class page
+                        setTimeout(() => {
+                            window.location.href = '/classes/' + classId;
+                        }, 1000);
+                        return;
+                    }
+                    
+                    // Not ready yet, keep polling
+                    if (pollAttempts < maxPollAttempts) {
+                        setTimeout(pollTeacherVM, 5000); // Poll every 5 seconds
+                    } else {
+                        // Timeout - redirect anyway
+                        if (statusEl) {
+                            statusEl.textContent = 'Taking longer than expected, redirecting...';
+                            statusEl.style.color = '#d13438';
+                        }
+                        setTimeout(() => {
+                            window.location.href = '/classes/' + classId + '?deployment=inprogress';
+                        }, 2000);
+                    }
+                } catch (e) {
+                    console.error('Error polling teacher VM:', e);
+                    // Continue polling on error
+                    if (pollAttempts < maxPollAttempts) {
+                        setTimeout(pollTeacherVM, 5000);
+                    } else {
+                        window.location.href = '/classes/' + classId + '?deployment=inprogress';
+                    }
+                }
+            }
+            
+            // Start polling after initial delay
+            setTimeout(pollTeacherVM, 3000);
         } else {
             alert('Failed to create class: ' + (data.error || 'Unknown error'));
             submitBtn.disabled = false;

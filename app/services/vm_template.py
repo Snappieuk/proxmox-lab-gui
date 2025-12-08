@@ -152,7 +152,11 @@ def export_template_to_qcow2(
         efi_disk = efi_config  # Will be used to create EFI disk on clones
         tpm_state = tpm_config  # Will be used to create TPM on clones
         
-        logger.info(f"Template hardware config - ostype: {ostype}, bios: {bios}, machine: {machine}, cpu: {cpu}, scsihw: {scsihw}")
+        logger.info(f"Template hardware config extracted:")
+        logger.info(f"  ostype: {ostype}, bios: {bios}, machine: {machine}")
+        logger.info(f"  cpu: {cpu}, scsihw: {scsihw}")
+        logger.info(f"  memory: {memory}MB, cores: {cores}, sockets: {sockets}")
+        logger.info(f"  EFI disk: {bool(efi_disk)}, TPM: {bool(tpm_state)}")
         logger.info(f"Template resources - memory: {memory}MB, cores: {cores}, sockets: {sockets}")
         logger.info(f"Template boot config - EFI: {efi_disk}, TPM: {tpm_state}")
         

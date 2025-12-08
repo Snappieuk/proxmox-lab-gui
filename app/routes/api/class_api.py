@@ -466,16 +466,27 @@ def delete_class_route(class_id: int):
                             logger.info(f"Stopping VM {vmid} on node {node}...")
                             proxmox.nodes(node).qemu(vmid).status.stop.post()
                             
-                            # Wait for VM to stop (poll until stopped or timeout)
-                            from app.services.vm_core import wait_for_vm_stopped
-                            from app.services.ssh_executor import get_ssh_executor_from_config
+                            # Wait for VM to stop (poll until stopped or timeout) using Proxmox API
+                            import time
+                            max_wait = 60
+                            poll_interval = 2
+                            elapsed = 0
                             
-                            ssh_executor = get_ssh_executor_from_config()
-                            stopped = wait_for_vm_stopped(ssh_executor, vmid, timeout=60, poll_interval=2)
-                            if stopped:
-                                logger.info(f"VM {vmid} stopped successfully")
+                            while elapsed < max_wait:
+                                time.sleep(poll_interval)
+                                elapsed += poll_interval
+                                
+                                try:
+                                    current_status = proxmox.nodes(node).qemu(vmid).status.current.get()
+                                    if current_status.get('status') == 'stopped':
+                                        logger.info(f"VM {vmid} stopped successfully")
+                                        break
+                                except Exception as check_error:
+                                    # VM might have been deleted or is stopping
+                                    logger.debug(f"Error checking VM {vmid} status: {check_error}")
+                                    break
                             else:
-                                logger.warning(f"VM {vmid} did not stop within timeout, proceeding with deletion anyway")
+                                logger.warning(f"VM {vmid} did not stop within {max_wait}s, proceeding with deletion anyway")
                         else:
                             logger.info(f"VM {vmid} already stopped (status: {status.get('status')})")
                     except Exception as e:

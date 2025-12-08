@@ -1096,21 +1096,62 @@ def create_class_vms(
                 disk_slot = f"{disk_controller_type if base_qcow2_path else 'scsi'}0"
                 
                 try:
-                    # Create VM shell (will be on the connected node) with proper ostype
-                    # Let Proxmox use default scsihw (omit --scsihw to avoid parameter validation errors)
-                    vm_ostype = ostype if base_qcow2_path else 'l26'  # Use template ostype or default to Linux
-                    exit_code, stdout, stderr = ssh_executor.execute(
-                        f"qm create {vmid} --name {student_name} "
-                        f"--memory {memory} --cores {cores} "
-                        f"--net0 virtio,bridge=vmbr0 "
-                        f"--ostype {vm_ostype}",
-                        timeout=60
-                    )
-                    
-                    if exit_code != 0:
-                        logger.error(f"Failed to create VM shell {vmid}: {stderr}")
-                        result.failed += 1
-                        continue
+                    # Create VM shell with complete hardware config from template
+                    if base_qcow2_path:
+                        # Use create_vm_shell to get proper hardware config
+                        from app.services.vm_core import create_vm_shell
+                        success, error = create_vm_shell(
+                            ssh_executor=ssh_executor,
+                            vmid=vmid,
+                            name=student_name,
+                            memory=memory,
+                            cores=cores,
+                            ostype=ostype,
+                            bios=bios,
+                            machine=machine,
+                            cpu=cpu,
+                            scsihw=scsihw,
+                            storage=PROXMOX_STORAGE_NAME,
+                        )
+                        
+                        if not success:
+                            logger.error(f"Failed to create VM shell {vmid}: {error}")
+                            result.failed += 1
+                            continue
+                        
+                        # Add EFI disk if template had one
+                        if efi_disk:
+                            logger.info(f"Adding EFI disk to student VM {vmid}")
+                            efi_cmd = f"qm set {vmid} --efidisk0 {PROXMOX_STORAGE_NAME}:1,efitype=4m,pre-enrolled-keys=1"
+                            exit_code, stdout, stderr = ssh_executor.execute(efi_cmd, timeout=30, check=False)
+                            if exit_code != 0:
+                                logger.warning(f"Failed to add EFI disk to VM {vmid}: {stderr}")
+                        
+                        # Add TPM if template had one
+                        if tpm_state:
+                            logger.info(f"Adding TPM to student VM {vmid}")
+                            tpm_cmd = f"qm set {vmid} --tpmstate0 {PROXMOX_STORAGE_NAME}:1,version=v2.0"
+                            exit_code, stdout, stderr = ssh_executor.execute(tpm_cmd, timeout=30, check=False)
+                            if exit_code != 0:
+                                logger.warning(f"Failed to add TPM to VM {vmid}: {stderr}")
+                    else:
+                        # Template-less: create basic VM shell
+                        exit_code, stdout, stderr = ssh_executor.execute(
+                            f"qm create {vmid} --name {student_name} "
+                            f"--memory {memory} --cores {cores} "
+                            f"--net0 virtio,bridge=vmbr0 "
+                            f"--ostype l26",
+                            timeout=60
+                        )
+                        
+                        if exit_code != 0:
+                            logger.error(f"Failed to create VM shell {vmid}: {stderr}")
+                            result.failed += 1
+                            continue
+                        
+                        # Enable guest agent for template-less VMs too
+                        agent_cmd = f"qm set {vmid} --agent enabled=1,fstrim_cloned_disks=1"
+                        ssh_executor.execute(agent_cmd, timeout=30, check=False)
                     
                     # Migrate to optimal node BEFORE attaching storage
                     logger.info(f"Migrating student VM {vmid} to {student_optimal_node}...")

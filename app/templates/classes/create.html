@@ -464,8 +464,11 @@ document.getElementById('create-class-form').addEventListener('submit', async fu
         const data = await resp.json();
         
         if (data.ok) {
+            const classId = data.class.id;
+            
             // Show progress message
             const progressDiv = document.createElement('div');
+            progressDiv.id = 'class-creation-progress';
             progressDiv.style.cssText = 'position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 30px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 1000; text-align: center; min-width: 400px;';
             progressDiv.innerHTML = `
                 <div style="margin-bottom: 20px;">
@@ -473,7 +476,8 @@ document.getElementById('create-class-form').addEventListener('submit', async fu
                 </div>
                 <h3 style="margin: 0 0 10px 0;">Creating Class VMs</h3>
                 <p id="progress-status" style="margin: 0; color: #666;">Deploying ${poolSize > 0 ? poolSize + ' student VMs + ' : ''}teacher VM + template...</p>
-                <p style="margin-top: 15px; font-size: 0.9em; color: #999;">This may take several minutes depending on VM count</p>
+                <p id="progress-detail" style="margin-top: 10px; font-size: 0.9em; color: #999;">Waiting for teacher VM...</p>
+                <p style="margin-top: 5px; font-size: 0.85em; color: #bbb;">This may take several minutes</p>
             `;
             document.body.appendChild(progressDiv);
             
@@ -482,10 +486,64 @@ document.getElementById('create-class-form').addEventListener('submit', async fu
             style.textContent = '@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }';
             document.head.appendChild(style);
             
-            // Redirect after a brief delay to allow background process to start
-            setTimeout(() => {
-                window.location.href = '/classes/' + data.class.id + '?deployment=inprogress';
-            }, 5000);
+            // Poll for teacher VM availability
+            let pollAttempts = 0;
+            const maxPollAttempts = 60; // Poll for up to 5 minutes (5s intervals)
+            
+            async function pollTeacherVM() {
+                pollAttempts++;
+                
+                try {
+                    const resp = await fetch(`/api/classes/${classId}/template/info?v=${Date.now()}`);
+                    const data = await resp.json();
+                    
+                    // Update progress text
+                    const detailEl = document.getElementById('progress-detail');
+                    if (detailEl) {
+                        detailEl.textContent = `Checking teacher VM... (attempt ${pollAttempts}/${maxPollAttempts})`;
+                    }
+                    
+                    // Check if teacher VM is ready
+                    if (data.ok && data.template && data.template.proxmox_vmid) {
+                        // Teacher VM is ready!
+                        if (detailEl) {
+                            detailEl.textContent = 'Teacher VM ready! Redirecting...';
+                            detailEl.style.color = '#0b6a0b';
+                        }
+                        
+                        // Redirect to class page
+                        setTimeout(() => {
+                            window.location.href = '/classes/' + classId;
+                        }, 1000);
+                        return;
+                    }
+                    
+                    // Not ready yet, keep polling
+                    if (pollAttempts < maxPollAttempts) {
+                        setTimeout(pollTeacherVM, 5000); // Poll every 5 seconds
+                    } else {
+                        // Timeout - redirect anyway
+                        if (detailEl) {
+                            detailEl.textContent = 'Taking longer than expected, redirecting...';
+                            detailEl.style.color = '#d13438';
+                        }
+                        setTimeout(() => {
+                            window.location.href = '/classes/' + classId + '?deployment=inprogress';
+                        }, 2000);
+                    }
+                } catch (e) {
+                    console.error('Error polling teacher VM:', e);
+                    // Continue polling on error
+                    if (pollAttempts < maxPollAttempts) {
+                        setTimeout(pollTeacherVM, 5000);
+                    } else {
+                        window.location.href = '/classes/' + classId + '?deployment=inprogress';
+                    }
+                }
+            }
+            
+            // Start polling after initial delay
+            setTimeout(pollTeacherVM, 3000);
         } else {
             alert('Failed to create class: ' + (data.error || 'Unknown error'));
             submitBtn.disabled = false;

@@ -174,8 +174,8 @@ def get_template_info(class_id: int):
                     break
             if cluster_id:
                 inventory = VMInventory.query.filter_by(cluster_id=cluster_id, vmid=vmid).first()
-                if inventory and inventory.ip_address:
-                    ip_address = inventory.ip_address
+                if inventory and inventory.ip:
+                    ip_address = inventory.ip
                     logger.info(f"Using VMInventory cached IP for VM {vmid}: {ip_address}")
         
         try:
