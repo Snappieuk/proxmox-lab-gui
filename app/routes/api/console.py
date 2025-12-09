@@ -253,7 +253,13 @@ def view_console(vmid: int):
             if not ticket:
                 return "Failed to generate VNC ticket", 500
             
-            logger.info(f"Serving console for VM {vmid} (user: {user})")
+            logger.info(f"=== CONSOLE VIEW DEBUG ===")
+            logger.info(f"Rendering console_novnc.html for VM {vmid}")
+            logger.info(f"User: {user}")
+            logger.info(f"VM Type: {vm_type}")
+            logger.info(f"Node: {vm_node}")
+            logger.info(f"VNC Port: {vnc_port}")
+            logger.info(f"Ticket length: {len(ticket)}")
             
             proxmox_host = cluster_config['host']
             proxmox_port = cluster_config.get('port', 8006)
@@ -268,6 +274,9 @@ def view_console(vmid: int):
                 f"&node={vm_node}&resize=scale"
                 f"&vncticket={quote(ticket, safe='')}"
             )
+            
+            logger.info(f"Console URL (first 120 chars): {console_url[:120]}")
+            logger.info(f"Template: console_novnc.html")
             
             # Render iframe-based console that loads Proxmox's native console
             return render_template(
