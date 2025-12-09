@@ -184,11 +184,11 @@ def api_get_vnc_info(vmid: int):
 @console_bp.route("/<int:vmid>/view2", methods=["GET"])
 @login_required
 def view_console(vmid: int):
-    """Serve the custom noVNC console page with embedded authentication."""
+    """Serve the noVNC console page. Ticket generation happens in WebSocket handler."""
     try:
         user = require_user()
         
-        # Check permissions (allow students too for their assigned VMs)
+        # Get cluster info
         cluster_id = request.args.get('cluster_id') or session.get('cluster_id')
         if not cluster_id:
             cluster_id = CLUSTERS[0]['id'] if CLUSTERS else None
@@ -196,7 +196,7 @@ def view_console(vmid: int):
         if not cluster_id:
             return "No cluster configured", 500
         
-        # Find cluster config from list
+        # Find cluster config
         cluster_config = None
         for cluster in CLUSTERS:
             if cluster['id'] == cluster_id:
@@ -211,13 +211,12 @@ def view_console(vmid: int):
         if not proxmox:
             return "Failed to connect to cluster", 500
         
-        # Find the VM
+        # Find the VM across all nodes
         vm_node = None
         vm_type = None
         vm_name = f"VM-{vmid}"
         
         try:
-            # Get list of nodes
             nodes = proxmox.nodes.get()
             
             for node_info in nodes:
@@ -229,7 +228,7 @@ def view_console(vmid: int):
                     for vm in vms:
                         if vm['vmid'] == vmid:
                             vm_node = node
-                            vm_type = 'kvm'
+                            vm_type = 'qemu'
                             vm_name = vm.get('name', f"VM-{vmid}")
                             break
                 except Exception as e:
@@ -257,70 +256,30 @@ def view_console(vmid: int):
         if not vm_node:
             return f"VM {vmid} not found", 404
         
-        # Generate VNC ticket
-        try:
-            if vm_type == 'kvm':
-                ticket_data = proxmox.nodes(vm_node).qemu(vmid).vncproxy.post(websocket=1)
-            else:
-                ticket_data = proxmox.nodes(vm_node).lxc(vmid).vncproxy.post(websocket=1)
-            
-            ticket = ticket_data.get('ticket')
-            vnc_port = ticket_data.get('port')
-            
-            if not ticket:
-                return "Failed to generate VNC ticket", 500
-            
-            logger.info(f"=== CONSOLE VIEW DEBUG ===")
-            logger.info(f"Serving console.html with WebSocket for VM {vmid}")
-            logger.info(f"User: {user}")
-            logger.info(f"VM Type: {vm_type}")
-            logger.info(f"Node: {vm_node}")
-            logger.info(f"VNC Port: {vnc_port}")
-            logger.info(f"Ticket length: {len(ticket)}")
-            
-            proxmox_host = cluster_config['host']
-            proxmox_port = cluster_config.get('port', 8006)
-            
-            # Get Proxmox authentication ticket for WebSocket connection
-            # This is required in addition to the VNC ticket
-            auth_user = cluster_config['user']
-            auth_password = cluster_config['password']
-            
-            try:
-                # Get authentication ticket from Proxmox API
-                auth_result = proxmox.access.ticket.post(username=auth_user, password=auth_password)
-                pve_auth_cookie = auth_result['ticket']
-                csrf_token = auth_result['CSRFPreventionToken']
-                logger.info(f"Got Proxmox auth ticket for WebSocket")
-            except Exception as e:
-                logger.error(f"Failed to get auth ticket: {e}")
-                return f"Failed to authenticate with Proxmox: {str(e)}", 500
-            
-            # Store connection info in session for WebSocket proxy
-            # This data is used by the WebSocket proxy to authenticate with Proxmox
-            session[f'vnc_{vmid}_cluster_id'] = cluster_id
-            session[f'vnc_{vmid}_node'] = vm_node
-            session[f'vnc_{vmid}_type'] = vm_type
-            session[f'vnc_{vmid}_vnc_port'] = vnc_port
-            session[f'vnc_{vmid}_ticket'] = ticket
-            session[f'vnc_{vmid}_host'] = proxmox_host
-            session[f'vnc_{vmid}_proxmox_port'] = proxmox_port
-            session[f'vnc_{vmid}_auth_cookie'] = pve_auth_cookie
-            session[f'vnc_{vmid}_csrf'] = csrf_token
-            session[f'vnc_{vmid}_user'] = auth_user
-            session[f'vnc_{vmid}_password'] = auth_password
-            
-            logger.info(f"Stored VNC session data for VM {vmid}: node={vm_node}, type={vm_type}, cluster={cluster_id}")
-            
-            # Render console page - will connect to /ws/console/<vmid> WebSocket proxy
-            return render_template(
-                'console.html',
-                vmid=vmid,
-                vm_name=vm_name or f"VM {vmid}",
-                node=vm_node,
-                vm_type=vm_type,
-                websocket_available=WEBSOCKET_AVAILABLE
-            )
+        # Store connection info in session for WebSocket proxy to use
+        # Ticket generation happens just-in-time in the WebSocket handler
+        proxmox_host = cluster_config['host']
+        proxmox_port = cluster_config.get('port', 8006)
+        username = cluster_config['user']
+        password = cluster_config['password']
+        
+        session[f'vnc_{vmid}_cluster_id'] = cluster_id
+        session[f'vnc_{vmid}_node'] = vm_node
+        session[f'vnc_{vmid}_type'] = vm_type
+        session[f'vnc_{vmid}_host'] = proxmox_host
+        session[f'vnc_{vmid}_proxmox_port'] = proxmox_port
+        session[f'vnc_{vmid}_user'] = username
+        session[f'vnc_{vmid}_password'] = password
+        
+        logger.info(f"Session prepared for VM {vmid} console (node={vm_node}, type={vm_type}, cluster={cluster_id})")
+        
+        # Render console page - will connect to /ws/console/<vmid> WebSocket proxy
+        return render_template(
+            'console.html',
+            vmid=vmid,
+            vm_name=vm_name,
+            websocket_available=WEBSOCKET_AVAILABLE
+        )
             
         except Exception as e:
             logger.error(f"Failed to generate VNC ticket for VM {vmid}: {e}")
@@ -378,7 +337,13 @@ def init_websocket_proxy(app, sock_instance):
             if vm_type == 'qemu':
                 vnc_data = proxmox.nodes(node).qemu(vmid).vncproxy.post(websocket=1)
             elif vm_type == 'lxc':
-                vnc_data = proxmox.nodes(node).lxc(vmid).vncproxy.post(websocket=1)
+                # LXC containers don't support VNC - they use terminal/console instead
+                logger.error(f"LXC containers (vmid={vmid}) don't support VNC console. Use terminal/SSH instead.")
+                try:
+                    ws.close()
+                except Exception:
+                    pass
+                return
             else:
                 logger.error(f"Unsupported VM type: {vm_type}")
                 try:

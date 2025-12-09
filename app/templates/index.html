@@ -772,11 +772,13 @@ function createVMRow(vm, category) {
                     <i class="bi bi-clipboard-data"></i>
                 </button>
                 ` : ''}
+                ${vm.type === 'qemu' ? `
                 <button class="btn-icon btn-icon-info"
                         onclick="openVMConsole(${vm.vmid})"
-                        data-tooltip="Web Console">
+                        data-tooltip="Web Console (VNC)">
                     <i class="bi bi-window"></i>
                 </button>
+                ` : ''}
                 ${hasRdp ? `
                 <a class="btn-icon btn-icon-primary" 
                    href="/rdp/${vm.vmid}.rdp"
