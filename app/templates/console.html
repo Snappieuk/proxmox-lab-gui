@@ -186,25 +186,37 @@
             if (e.detail.clean) {
                 updateStatus('disconnected', 'Disconnected');
             } else {
-                const reason = e.detail.reason || 'Unknown error';
-                console.error('Disconnect reason:', reason);
+                const reason = e.detail.reason || '';
+                const code = e.detail.code || 0;
+                console.error('Disconnect code:', code, 'reason:', reason);
                 updateStatus('disconnected', 'Connection lost');
                 
-                // Provide helpful error messages
+                // Provide helpful error messages based on close code
                 let helpText = '';
-                if (reason.includes('401') || reason.includes('403')) {
-                    helpText = 'Authentication failed. The VNC ticket may have expired. Try closing this window and opening the console again.';
-                } else if (reason.includes('timeout') || reason.includes('ETIMEDOUT')) {
-                    helpText = 'Connection timed out. Check that the VM is running and the Proxmox server is reachable.';
-                } else if (reason.includes('1006')) {
-                    helpText = '<strong>SSL Certificate not accepted</strong><br><br>' +
+                let errorMsg = reason || 'Unknown error';
+                
+                // Code 1006 = connection closed abnormally (usually SSL cert issue)
+                if (code === 1006 || reason.includes('1006')) {
+                    errorMsg = 'SSL Certificate not accepted';
+                    helpText = '<strong>Certificate Issue Detected</strong><br><br>' +
                                '1. Open <a href="https://' + host + ':' + proxmoxPort + '" target="_blank" style="color: #4CAF50; font-weight: bold;">https://' + host + ':' + proxmoxPort + '</a> in a new tab<br>' +
                                '2. Accept the certificate warning (click Advanced → Accept Risk)<br>' +
                                '3. Close that tab and click the button below:<br><br>' +
-                               '<button onclick="location.reload()" style="background: #4CAF50; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: bold;">Reload Console</button>';
+                               '<button onclick="location.reload()" style="background: #4CAF50; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: bold;">✅ Reload Console</button>';
+                } else if (reason.includes('401') || reason.includes('403')) {
+                    helpText = 'Authentication failed. The VNC ticket may have expired. Try closing this window and opening the console again.';
+                } else if (reason.includes('timeout') || reason.includes('ETIMEDOUT')) {
+                    helpText = 'Connection timed out. Check that the VM is running and the Proxmox server is reachable.';
+                } else {
+                    // Default to certificate instructions for any unknown error
+                    helpText = '<strong>Connection Failed</strong><br><br>' +
+                               'This usually means the SSL certificate needs to be accepted:<br><br>' +
+                               '1. Open <a href="https://' + host + ':' + proxmoxPort + '" target="_blank" style="color: #4CAF50; font-weight: bold;">https://' + host + ':' + proxmoxPort + '</a><br>' +
+                               '2. Accept the security warning<br>' +
+                               '3. <button onclick="location.reload()" style="background: #4CAF50; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: bold; margin-top: 10px;">Reload Console</button>';
                 }
                 
-                showError('Connection failed: ' + reason, helpText);
+                showError('Connection failed: ' + errorMsg, helpText);
             }
         }
         
