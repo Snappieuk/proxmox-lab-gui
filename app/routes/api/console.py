@@ -1,5 +1,9 @@
 """
 Console API endpoints - noVNC console access for VMs
+
+This module provides VNC console access through a WebSocket proxy architecture.
+For a cleaner API abstraction, see app.services.proxmox_api module which provides
+get_vnc_ticket(), get_auth_ticket(), and find_vm_location() helper functions.
 """
 
 import logging
@@ -293,14 +297,20 @@ def view_console(vmid: int):
                 return f"Failed to authenticate with Proxmox: {str(e)}", 500
             
             # Store connection info in session for WebSocket proxy
+            # This data is used by the WebSocket proxy to authenticate with Proxmox
+            session[f'vnc_{vmid}_cluster_id'] = cluster_id
             session[f'vnc_{vmid}_node'] = vm_node
             session[f'vnc_{vmid}_type'] = vm_type
-            session[f'vnc_{vmid}_port'] = vnc_port
+            session[f'vnc_{vmid}_vnc_port'] = vnc_port
             session[f'vnc_{vmid}_ticket'] = ticket
             session[f'vnc_{vmid}_host'] = proxmox_host
             session[f'vnc_{vmid}_proxmox_port'] = proxmox_port
             session[f'vnc_{vmid}_auth_cookie'] = pve_auth_cookie
             session[f'vnc_{vmid}_csrf'] = csrf_token
+            session[f'vnc_{vmid}_user'] = auth_user
+            session[f'vnc_{vmid}_password'] = auth_password
+            
+            logger.info(f"Stored VNC session data for VM {vmid}: node={vm_node}, type={vm_type}, cluster={cluster_id}")
             
             # Render console page - will connect to /ws/console/<vmid> WebSocket proxy
             return render_template(
@@ -346,16 +356,16 @@ def init_websocket_proxy(app, sock_instance):
             node = session.get(f'vnc_{vmid}_node')
             vm_type = session.get(f'vnc_{vmid}_type')
             host = session.get(f'vnc_{vmid}_host')
-            proxmox_port = session.get(f'vnc_{vmid}_port')
+            proxmox_port = session.get(f'vnc_{vmid}_proxmox_port')  # Proxmox API port (8006)
             username = session.get(f'vnc_{vmid}_user')
             password = session.get(f'vnc_{vmid}_password')
             
-            if not all([node, vm_type, host, username, password]):
-                logger.error(f"Missing VNC session data for VM {vmid}")
+            if not all([node, vm_type, host, username, password, proxmox_port]):
+                logger.error(f"Missing VNC session data for VM {vmid}. Keys found: {[k for k in session.keys() if f'vnc_{vmid}' in k]}")
                 ws.close(reason="Session expired - please reload console page")
                 return
             
-            logger.info(f"WebSocket opened for VM {vmid} console (node={node}, type={vm_type})")
+            logger.info(f"WebSocket opened for VM {vmid} console (node={node}, type={vm_type}, cluster={cluster_id})")
             
             # Get Proxmox client
             proxmox = get_proxmox_admin_for_cluster(cluster_id) if cluster_id else get_proxmox_admin_for_cluster(None)
@@ -374,9 +384,16 @@ def init_websocket_proxy(app, sock_instance):
             vnc_port = vnc_data['port']
             logger.info(f"VNC ticket generated: port={vnc_port}")
             
-            # Generate PVEAuthCookie
-            auth_result = proxmox.access.ticket.post(username=username, password=password)
-            pve_auth_cookie = auth_result['ticket']
+            # Generate PVEAuthCookie - this authenticates the WebSocket connection
+            logger.info(f"Generating PVEAuthCookie for user {username}...")
+            try:
+                auth_result = proxmox.access.ticket.post(username=username, password=password)
+                pve_auth_cookie = auth_result['ticket']
+                logger.info(f"✓ PVEAuthCookie generated successfully (length={len(pve_auth_cookie)})")
+            except Exception as auth_error:
+                logger.error(f"❌ Failed to generate PVEAuthCookie: {auth_error}")
+                ws.close(reason=f"Authentication failed: {str(auth_error)}")
+                return
             
             # Build Proxmox WebSocket URL with properly encoded ticket
             from urllib.parse import quote_plus
@@ -386,17 +403,24 @@ def init_websocket_proxy(app, sock_instance):
                 f"{vm_type}/{vmid}/vncwebsocket?port={vnc_port}&vncticket={encoded_ticket}"
             )
             
-            logger.info(f"Connecting to Proxmox VNC: {proxmox_ws_url[:80]}...")
+            logger.info(f"Connecting to Proxmox VNC WebSocket...")
+            logger.info(f"  URL: {proxmox_ws_url[:80]}...")
+            logger.info(f"  Cookie: PVEAuthCookie={pve_auth_cookie[:20]}...")
             
             # Connect to Proxmox with authentication (disable SSL verification for self-signed certs)
             proxmox_ws = websocket.WebSocket(sslopt={"cert_reqs": ssl.CERT_NONE})
-            proxmox_ws.connect(
-                proxmox_ws_url,
-                cookie=f"PVEAuthCookie={pve_auth_cookie}",
-                suppress_origin=True
-            )
             
-            logger.info(f"✓ Connected to Proxmox VNC for VM {vmid}")
+            try:
+                proxmox_ws.connect(
+                    proxmox_ws_url,
+                    cookie=f"PVEAuthCookie={pve_auth_cookie}",
+                    suppress_origin=True
+                )
+                logger.info(f"✓ Connected to Proxmox VNC for VM {vmid}")
+            except Exception as conn_error:
+                logger.error(f"❌ Failed to connect to Proxmox WebSocket: {conn_error}")
+                ws.close(reason=f"Connection to Proxmox failed: {str(conn_error)}")
+                return
             
             # Bidirectional forwarding with proper error handling
             stop_forwarding = threading.Event()

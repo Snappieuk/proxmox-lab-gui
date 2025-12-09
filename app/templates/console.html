@@ -5,8 +5,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     
-    <!-- noVNC dependencies -->
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@novnc/novnc@1.4.0/app/styles/base.css">
+    <!-- noVNC dependencies (local) -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='novnc/app/styles/base.css') }}">
     
     <style>
         body {
@@ -134,9 +134,9 @@
         <div id="screen"></div>
     </div>
     
-    <!-- noVNC library -->
+    <!-- noVNC library (local) -->
     <script type="module">
-        import RFB from 'https://cdn.jsdelivr.net/npm/@novnc/novnc@1.4.0/core/rfb.js';
+        import RFB from '{{ url_for('static', filename='novnc/core/rfb.js') }}';
         
         const vmid = {{ vmid }};
         

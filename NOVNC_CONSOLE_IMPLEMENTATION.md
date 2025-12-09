@@ -199,9 +199,54 @@ websocket-client  # WebSocket client for connecting to Proxmox
 ```
 
 ### Frontend Libraries
+
+**Local Assets (Self-Contained)**
 ```
-@novnc/novnc@1.4.0  # CDN-hosted noVNC VNC client
+app/static/novnc/
+├── core/
+│   ├── rfb.js              # Main RFB protocol client (~120KB)
+│   ├── websock.js          # WebSocket wrapper
+│   ├── display.js          # Canvas display handler
+│   ├── input/              # Keyboard/mouse input handlers
+│   │   ├── keysym.js       # Key symbol mappings
+│   │   ├── domkeytable.js  # DOM key table
+│   │   └── util.js         # Input utilities
+│   ├── decoders/           # VNC encoding decoders
+│   │   ├── raw.js          # Raw encoding
+│   │   ├── copyrect.js     # CopyRect encoding
+│   │   ├── rre.js          # RRE encoding
+│   │   ├── hextile.js      # Hextile encoding
+│   │   ├── tight.js        # Tight encoding
+│   │   ├── tightpng.js     # Tight PNG encoding
+│   │   ├── jpeg.js         # JPEG encoding
+│   │   └── zrle.js         # ZRLE encoding
+│   └── util/               # Utility functions
+├── app/styles/
+│   └── base.css            # noVNC styling (~19KB)
+└── vendor/
+    └── pako/               # Compression library
+
+Total size: ~700KB (production minimal distribution)
 ```
+
+**Benefits of Local Hosting:**
+- ✅ Works in air-gapped/offline environments
+- ✅ No external CDN dependencies
+- ✅ Faster loading over local network
+- ✅ Version control and stability
+- ✅ No internet connectivity required
+
+**Template Usage:**
+```html
+<!-- Local noVNC assets -->
+<link rel="stylesheet" href="{{ url_for('static', filename='novnc/app/styles/base.css') }}">
+<script type="module">
+    import RFB from '{{ url_for('static', filename='novnc/core/rfb.js') }}';
+    // ... noVNC initialization
+</script>
+```
+
+**Version:** noVNC v1.4.0 (January 2023)
 
 ## Configuration
 
