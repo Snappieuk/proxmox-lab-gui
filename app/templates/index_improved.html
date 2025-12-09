@@ -640,6 +640,9 @@ function createVMRow(vm, category) {
     let dropdownItems = '';
     if (category === 'windows') {
         dropdownItems = `
+            <button class="dropdown-item" onclick="openVMConsole(${vm.vmid})">
+                <i class="bi bi-window"></i> Web Console
+            </button>
             <button class="dropdown-item btn-rdp" 
                     data-vmid="${vm.vmid}"
                     data-ip="${vm.ip || ''}"
@@ -656,6 +659,9 @@ function createVMRow(vm, category) {
         `;
     } else {
         dropdownItems = `
+            <button class="dropdown-item" onclick="openVMConsole(${vm.vmid})">
+                <i class="bi bi-window"></i> Web Console
+            </button>
             <button class="dropdown-item btn-ssh" 
                     data-vmid="${vm.vmid}"
                     data-ip="${vm.ip || ''}"
@@ -694,14 +700,14 @@ function createVMRow(vm, category) {
                             data-action="start"
                             title="Start VM"
                             ${isRunning ? 'disabled' : ''}>
-                        <i class="bi bi-power"></i>
+                        <i class="bi bi-play-fill"></i>
                     </button>
                     <button class="btn-action btn-stop btn-power" 
                             data-vmid="${vm.vmid}" 
                             data-action="stop"
                             title="Stop VM"
                             ${isStopped ? 'disabled' : ''}>
-                        <i class="bi bi-power"></i>
+                        <i class="bi bi-stop-fill"></i>
                     </button>
                     <div class="dropdown-action">
                         <button class="btn-action btn-more" title="More actions">

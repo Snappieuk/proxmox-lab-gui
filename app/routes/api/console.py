@@ -108,19 +108,25 @@ def api_get_vnc_info(vmid: int):
         try:
             if vm_type == 'kvm':
                 # For QEMU VMs
+                logger.info(f"Generating VNC ticket for QEMU VM {vmid} on node {vm_node}")
                 ticket_data = proxmox.nodes(vm_node).qemu(vmid).vncproxy.post(websocket=1)
             else:
                 # For LXC containers
+                logger.info(f"Generating VNC ticket for LXC container {vmid} on node {vm_node}")
                 ticket_data = proxmox.nodes(vm_node).lxc(vmid).vncproxy.post(websocket=1)
+            
+            logger.info(f"Ticket data received: {ticket_data}")
             
             ticket = ticket_data.get('ticket')
             vnc_port = ticket_data.get('port')
             
             if not ticket:
                 raise Exception("Failed to generate VNC ticket")
+            
+            logger.info(f"VNC ticket generated successfully: port={vnc_port}, ticket_length={len(ticket)}")
                 
         except Exception as e:
-            logger.error(f"Failed to generate VNC ticket for VM {vmid}: {e}")
+            logger.error(f"Failed to generate VNC ticket for VM {vmid}: {e}", exc_info=True)
             return jsonify({
                 "ok": False,
                 "error": f"Failed to generate console ticket: {str(e)}"
@@ -136,6 +142,8 @@ def api_get_vnc_info(vmid: int):
         import urllib.parse
         encoded_ticket = urllib.parse.quote(ticket, safe='')
         console_url = f"https://{host}:{port}/?console={vm_type}&novnc=1&node={vm_node}&resize=scale&vmid={vmid}&path=api2/json/nodes/{vm_node}/{vm_type}/{vmid}/vncwebsocket?port={vnc_port}&vncticket={encoded_ticket}"
+        
+        logger.info(f"Console URL generated: {console_url[:100]}... (truncated)")
         
         return jsonify({
             "ok": True,
