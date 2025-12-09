@@ -273,17 +273,13 @@ def view_console(vmid: int):
         
         logger.info(f"Session prepared for VM {vmid} console (node={vm_node}, type={vm_type}, cluster={cluster_id})")
         
-        # Render console page - will connect to /ws/console/<vmid> WebSocket proxy
+        # Render console page - will connect to /ws/vnc/<vmid> WebSocket proxy
         return render_template(
             'console.html',
             vmid=vmid,
             vm_name=vm_name,
             websocket_available=WEBSOCKET_AVAILABLE
         )
-            
-        except Exception as e:
-            logger.error(f"Failed to generate VNC ticket for VM {vmid}: {e}")
-            return f"Failed to generate console ticket: {str(e)}", 500
         
     except Exception as e:
         logger.error(f"Failed to serve console for VM {vmid}: {e}", exc_info=True)
