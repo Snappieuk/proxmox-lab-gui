@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Console - {{ vm_name }}</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    
+    <!-- noVNC dependencies -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@novnc/novnc@1.4.0/app/styles/base.css">
+    
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #1a1a1a;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+        }
+        
+        #header {
+            background: #2d2d30;
+            color: #fff;
+            padding: 12px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #3e3e42;
+            z-index: 1000;
+            position: relative;
+        }
+        
+        #header h3 {
+            margin: 0;
+            font-size: 15px;
+            font-weight: 600;
+        }
+        
+        #status {
+            font-size: 12px;
+            color: #cccccc;
+        }
+        
+        .status-dot {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 6px;
+            background: #28a745;
+        }
+        
+        .status-dot.connecting {
+            background: #ffc107;
+        }
+        
+        .status-dot.disconnected {
+            background: #dc3545;
+        }
+        
+        #console-container {
+            position: absolute;
+            top: 48px;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #000;
+        }
+        
+        #screen {
+            flex: 1;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        #loading {
+            color: #fff;
+            font-size: 16px;
+            text-align: center;
+        }
+        
+        #loading .spinner {
+            border: 4px solid rgba(255,255,255,0.1);
+            border-left-color: #007bff;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 16px;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        #error {
+            display: none;
+            color: #dc3545;
+            background: #2d2d30;
+            padding: 20px;
+            border-radius: 8px;
+            max-width: 500px;
+            margin: 20px;
+        }
+        
+        #error h3 {
+            margin: 0 0 10px;
+            color: #ff6b6b;
+        }
+    </style>
+</head>
+<body>
+    <div id="header">
+        <h3>🖥️ {{ vm_name }} (VMID: {{ vmid }})</h3>
+        <div id="status">
+            <span class="status-dot connecting" id="status-dot"></span>
+            <span id="status-text">Connecting...</span>
+        </div>
+    </div>
+    
+    <div id="console-container">
+        <div id="loading">
+            <div class="spinner"></div>
+            <p>Connecting to VM console...</p>
+        </div>
+        <div id="error">
+            <h3>Connection Failed</h3>
+            <p id="error-message"></p>
+        </div>
+        <div id="screen"></div>
+    </div>
+    
+    <!-- noVNC library -->
+    <script type="module">
+        import RFB from 'https://cdn.jsdelivr.net/npm/@novnc/novnc@1.4.0/core/rfb.js';
+        
+        const vmid = {{ vmid }};
+        const node = "{{ node }}";
+        const vmType = "{{ vm_type }}";
+        const host = "{{ host }}";
+        const port = {{ vnc_port }};
+        const ticket = "{{ ticket }}";
+        
+        // Build WebSocket URL
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const path = `/api2/json/nodes/${node}/${vmType}/${vmid}/vncwebsocket?port=${port}&vncticket=${encodeURIComponent(ticket)}`;
+        const wsUrl = `${protocol}//${host}:8006${path}`;
+        
+        console.log('Connecting to:', wsUrl.substring(0, 100) + '...');
+        
+        let rfb;
+        
+        function updateStatus(state, msg) {
+            const statusDot = document.getElementById('status-dot');
+            const statusText = document.getElementById('status-text');
+            
+            statusDot.className = 'status-dot ' + state;
+            statusText.textContent = msg;
+        }
+        
+        function showError(message) {
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('error').style.display = 'block';
+            document.getElementById('error-message').textContent = message;
+            updateStatus('disconnected', 'Connection failed');
+        }
+        
+        function connectedToServer(e) {
+            updateStatus('', 'Connected');
+            document.getElementById('loading').style.display = 'none';
+        }
+        
+        function disconnectedFromServer(e) {
+            if (e.detail.clean) {
+                updateStatus('disconnected', 'Disconnected');
+            } else {
+                updateStatus('disconnected', 'Connection lost');
+                showError('Connection to VM console lost: ' + e.detail.reason);
+            }
+        }
+        
+        function credentialsAreRequired(e) {
+            // VNC password prompt if needed
+            const password = prompt("VNC Password Required:");
+            if (password) {
+                rfb.sendCredentials({ password: password });
+            }
+        }
+        
+        try {
+            // Create RFB connection
+            rfb = new RFB(document.getElementById('screen'), wsUrl, {
+                credentials: { password: ticket },
+                shared: true,
+                repeaterID: '',
+                wsProtocols: ['binary']
+            });
+            
+            // Set event handlers
+            rfb.addEventListener("connect", connectedToServer);
+            rfb.addEventListener("disconnect", disconnectedFromServer);
+            rfb.addEventListener("credentialsrequired", credentialsAreRequired);
+            
+            // Configure display
+            rfb.scaleViewport = true;
+            rfb.resizeSession = true;
+            
+        } catch (err) {
+            console.error('Failed to create RFB connection:', err);
+            showError('Failed to initialize console: ' + err.message);
+        }
+        
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            if (rfb) {
+                rfb.scaleViewport = true;
+            }
+        });
+        
+    </script>
+</body>
+</html>

@@ -2143,29 +2143,17 @@ async function studentStopVM() {
 async function studentOpenConsole() {
     const vmid = document.getElementById('student-vm-vmid').textContent;
     
-    try {
-        const response = await fetch(`/api/console/${vmid}/vnc`);
-        const data = await response.json();
-        
-        if (!data.ok) {
-            showAlert('Failed to open console: ' + (data.error || 'Unknown error'), 'error');
-            return;
-        }
-        
-        // Open console in new window
-        const width = 1280;
-        const height = 800;
-        const left = (screen.width - width) / 2;
-        const top = (screen.height - height) / 2;
-        window.open(
-            data.console_url,
-            `console-${vmid}`,
-            `width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=yes,status=no,toolbar=no,menubar=no`
-        );
-    } catch (error) {
-        console.error('Failed to open console:', error);
-        showAlert('Failed to open console: ' + error.message, 'error');
-    }
+    // Open custom console page with embedded noVNC
+    const width = 1280;
+    const height = 800;
+    const left = (screen.width - width) / 2;
+    const top = (screen.height - height) / 2;
+    
+    window.open(
+        `/api/console/${vmid}/view`,
+        `console-${vmid}`,
+        `width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=yes,status=no,toolbar=no,menubar=no`
+    );
 }
 
 function studentDownloadRDP() {

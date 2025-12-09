@@ -853,32 +853,17 @@ function attachVMEventHandlers() {
 
 // Open VM console in new window
 function openVMConsole(vmid) {
-    fetch(`/api/console/${vmid}/vnc`)
-        .then(resp => {
-            if (!resp.ok) {
-                throw new Error(`HTTP ${resp.status}`);
-            }
-            return resp.json();
-        })
-        .then(data => {
-            if (data.ok && data.console_url) {
-                const width = 1024;
-                const height = 768;
-                const left = (screen.width - width) / 2;
-                const top = (screen.height - height) / 2;
-                window.open(
-                    data.console_url,
-                    `console-${vmid}`,
-                    `width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=yes,toolbar=no,menubar=no`
-                );
-            } else {
-                alert('Failed to open console: ' + (data.error || 'Unknown error'));
-            }
-        })
-        .catch(err => {
-            console.error('Console error:', err);
-            alert('Error opening console: ' + err.message);
-        });
+    const width = 1280;
+    const height = 800;
+    const left = (screen.width - width) / 2;
+    const top = (screen.height - height) / 2;
+    
+    // Open custom console page with embedded noVNC
+    window.open(
+        `/api/console/${vmid}/view`,
+        `console-${vmid}`,
+        `width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=yes,status=no,toolbar=no,menubar=no`
+    );
 }
 
 if (document.getElementById('loading-indicator')) {

@@ -3,7 +3,8 @@ Console API endpoints - noVNC console access for VMs
 """
 
 import logging
-from flask import Blueprint, jsonify, request, session
+import urllib.parse
+from flask import Blueprint, jsonify, request, session, render_template
 
 from app.utils.decorators import login_required
 from app.services.user_manager import require_user, is_admin_user
@@ -136,23 +137,11 @@ def api_get_vnc_info(vmid: int):
         host = cluster_config['host']
         port = cluster_config.get('port', 8006)
         
-        # Proxmox noVNC console URL format
-        # The path parameter contains the websocket endpoint WITH ticket and port as query params
-        # Format from PHP: &path=api2/json/nodes/{node}/{type}/{vmid}/vncwebsocket?port={port}&vncticket={ticket}
-        import urllib.parse
+        # Standard Proxmox noVNC console URL (requires user to be logged into Proxmox)
+        # This is the simplest approach - just link to Proxmox's built-in console
+        console_url = f"https://{host}:{port}/?console={vm_type}&novnc=1&node={vm_node}&resize=scale&vmid={vmid}&vmname={urllib.parse.quote(vm_name, safe='')}"
         
-        # Build the websocket path with embedded query parameters
-        websocket_path = f"api2/json/nodes/{vm_node}/{vm_type}/{vmid}/vncwebsocket?port={vnc_port}&vncticket={urllib.parse.quote(ticket, safe='')}"
-        
-        # URL encode the entire path parameter
-        encoded_path = urllib.parse.quote(websocket_path, safe='')
-        
-        # Build the final console URL
-        console_url = f"https://{host}:{port}/?console={vm_type}&novnc=1&node={vm_node}&resize=scale&vmid={vmid}&vmname={urllib.parse.quote(vm_name, safe='')}&path={encoded_path}"
-        
-        logger.info(f"Console URL generated for VM {vmid}")
-        logger.info(f"  Websocket path: {websocket_path}")
-        logger.info(f"  Final URL: {console_url[:150]}...")
+        logger.info(f"Console URL generated for VM {vmid}: {console_url}")
         
         return jsonify({
             "ok": True,
@@ -173,3 +162,105 @@ def api_get_vnc_info(vmid: int):
             "ok": False,
             "error": str(e)
         }), 500
+
+
+@console_bp.route("/<int:vmid>/view", methods=["GET"])
+@login_required
+def view_console(vmid: int):
+    """Serve the custom noVNC console page with embedded authentication."""
+    try:
+        user = require_user()
+        
+        # Check permissions (allow students too for their assigned VMs)
+        cluster_id = request.args.get('cluster_id') or session.get('cluster_id')
+        if not cluster_id:
+            cluster_id = list(CLUSTERS.keys())[0] if CLUSTERS else None
+        
+        if not cluster_id:
+            return "No cluster configured", 500
+        
+        cluster_config = CLUSTERS.get(cluster_id)
+        if not cluster_config:
+            return "Cluster not found", 404
+        
+        # Get Proxmox connection
+        proxmox = get_proxmox_admin_for_cluster(cluster_id)
+        if not proxmox:
+            return "Failed to connect to cluster", 500
+        
+        # Find the VM
+        vm_node = None
+        vm_type = None
+        vm_name = f"VM-{vmid}"
+        
+        try:
+            for node_name in proxmox.nodes.get():
+                node = node_name['node']
+                
+                # Check QEMU VMs
+                try:
+                    for vm in proxmox.nodes(node).qemu.get():
+                        if vm['vmid'] == vmid:
+                            vm_node = node
+                            vm_type = 'kvm'
+                            vm_name = vm.get('name', f"VM-{vmid}")
+                            break
+                except:
+                    pass
+                
+                # Check LXC containers if not found
+                if not vm_node:
+                    try:
+                        for vm in proxmox.nodes(node).lxc.get():
+                            if vm['vmid'] == vmid:
+                                vm_node = node
+                                vm_type = 'lxc'
+                                vm_name = vm.get('name', f"CT-{vmid}")
+                                break
+                    except:
+                        pass
+                
+                if vm_node:
+                    break
+        except Exception as e:
+            logger.error(f"Error finding VM {vmid}: {e}")
+            return f"VM {vmid} not found", 404
+        
+        if not vm_node:
+            return f"VM {vmid} not found", 404
+        
+        # Generate VNC ticket
+        try:
+            if vm_type == 'kvm':
+                ticket_data = proxmox.nodes(vm_node).qemu(vmid).vncproxy.post(websocket=1)
+            else:
+                ticket_data = proxmox.nodes(vm_node).lxc(vmid).vncproxy.post(websocket=1)
+            
+            ticket = ticket_data.get('ticket')
+            vnc_port = ticket_data.get('port')
+            
+            if not ticket:
+                return "Failed to generate VNC ticket", 500
+            
+            logger.info(f"Serving console page for VM {vmid} (user: {user})")
+            
+            # Render the console template with all needed data
+            return render_template(
+                'console.html',
+                vmid=vmid,
+                vm_name=vm_name,
+                node=vm_node,
+                vm_type=vm_type,
+                host=cluster_config['host'],
+                port=cluster_config.get('port', 8006),
+                vnc_port=vnc_port,
+                ticket=ticket
+            )
+            
+        except Exception as e:
+            logger.error(f"Failed to generate VNC ticket for VM {vmid}: {e}")
+            return f"Failed to generate console ticket: {str(e)}", 500
+        
+    except Exception as e:
+        logger.error(f"Failed to serve console for VM {vmid}: {e}", exc_info=True)
+        return f"Error: {str(e)}", 500
