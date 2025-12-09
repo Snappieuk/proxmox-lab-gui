@@ -214,8 +214,11 @@
         }
         
         function credentialsAreRequired(e) {
-            console.warn('⚠️ VNC credentials required (unexpected)');
-            showError('VNC authentication failed', 'The VNC ticket authentication failed. This should not happen - the ticket should authenticate automatically.');
+            console.log('🔑 VNC requesting credentials - this is normal for Proxmox');
+            console.log('ℹ️  Proxmox VNC uses an empty password (ticket auth happens at WebSocket level)');
+            // For Proxmox with ticket authentication, send empty password
+            // The ticket in the WebSocket URL handles the actual authentication
+            rfb.sendCredentials({ password: '' });
         }
         
         function securityFailure(e) {
