@@ -1139,7 +1139,7 @@ async function loadBuildOptions() {
             console.log(`Loaded ${isoData.isos.length} ISOs`);
         } else {
             const isoSelect = document.getElementById('build-iso');
-            isoSelect.innerHTML = '<option value="">No ISOs found - Upload ISO to TRUENAS storage first</option>';
+            isoSelect.innerHTML = '<option value="">No ISOs found - Upload ISO to TRUENAS-NFS storage first</option>';
             console.warn('No ISOs found in response');
         }
     } catch (error) {
@@ -1173,7 +1173,7 @@ async function submitBuildVM(event) {
             vm_name: document.getElementById('build-vm-name').value,
             os_type: document.getElementById('build-os-type').value,
             iso_file: isoFile,
-            storage: 'TRUENAS',
+            storage: 'TRUENAS-NFS',
             cpu_cores: parseInt(document.getElementById('build-cpu-cores').value),
             memory_mb: parseInt(document.getElementById('build-memory').value),
             disk_size_gb: parseInt(document.getElementById('build-disk-size').value),
@@ -1267,7 +1267,7 @@ function closeConsoleModal() {
 
 // Upload ISO functions
 async function openUploadISOModal() {
-    // No need to load nodes - we'll auto-detect first available node with TRUENAS
+    // No need to load nodes - we'll auto-detect first available node with TRUENAS-NFS
     const modal = document.getElementById('upload-iso-modal');
     modal.style.display = 'flex';
     modal.style.visibility = 'visible';
@@ -1292,7 +1292,7 @@ async function submitUploadISO(event) {
         return;
     }
     
-    const storage = 'TRUENAS';
+    const storage = 'TRUENAS-NFS';
     
     const submitBtn = document.getElementById('upload-iso-btn');
     const progressDiv = document.getElementById('upload-progress');
@@ -1308,7 +1308,7 @@ async function submitUploadISO(event) {
     progressText.textContent = 'Preparing upload...';
     
     try {
-        // First, find a node with TRUENAS storage
+        // First, find a node with TRUENAS-NFS storage
         const nodesResp = await fetch('/api/vm-builder/nodes');
         const nodesData = await nodesResp.json();
         
@@ -1316,7 +1316,7 @@ async function submitUploadISO(event) {
             throw new Error('No nodes available');
         }
         
-        // Use first available node (TRUENAS is global storage, accessible from all nodes)
+        // Use first available node (TRUENAS-NFS is global storage, accessible from all nodes)
         const node = nodesData.nodes[0].node;
         
         progressText.textContent = `Uploading to ${node}...`;
@@ -1367,7 +1367,7 @@ async function submitUploadISO(event) {
                     if (data.ok) {
                         progressText.textContent = 'Upload complete! Processing...';
                         progressBar.style.width = '100%';
-                        alert('✓ ISO uploaded successfully to TRUENAS!');
+                        alert('✓ ISO uploaded successfully to TRUENAS-NFS!');
                         closeUploadISOModal();
                         // Reload ISOs
                         await loadBuildOptions();
