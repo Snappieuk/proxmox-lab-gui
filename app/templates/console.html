@@ -145,9 +145,14 @@
         const proxmoxPort = {{ port }};
         const vncPort = {{ vnc_port }};
         const ticket = `{{ ticket | safe }}`;
+        const pveAuthCookie = `{{ pve_auth_cookie | safe }}`;
         
-        // Connect through Nginx proxy at /vnc/ with ticket in query string
-        // This goes through your existing Nginx WebSocket proxy configuration
+        // Set the PVEAuthCookie that Proxmox requires for WebSocket authentication
+        // This must be set before making the WebSocket connection
+        document.cookie = `PVEAuthCookie=${pveAuthCookie}; path=/; secure; samesite=strict`;
+        console.log('Set PVEAuthCookie for Proxmox authentication');
+        
+        // Connect through Nginx proxy at /vnc/ with VNC ticket in query string
         const encodedTicket = encodeURIComponent(ticket);
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const proxyHost = window.location.host; // labs.netlab
@@ -158,7 +163,8 @@
         console.log('Node:', node);
         console.log('VM Type:', vmType);
         console.log('VNC Port:', vncPort);
-        console.log('Ticket length:', ticket.length);
+        console.log('VNC Ticket length:', ticket.length);
+        console.log('Auth cookie set:', pveAuthCookie ? 'YES' : 'NO');
         console.log('WebSocket URL (first 100 chars):', wsUrl.substring(0, 100) + '...');
         console.log('Connecting through Nginx proxy at:', window.location.host + '/vnc/');
         

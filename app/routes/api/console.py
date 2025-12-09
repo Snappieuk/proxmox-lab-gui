@@ -264,9 +264,24 @@ def view_console(vmid: int):
             proxmox_host = cluster_config['host']
             proxmox_port = cluster_config.get('port', 8006)
             
-            # Render console page with direct WebSocket connection to Proxmox
-            # The VNC ticket in the URL should be sufficient for authentication
-            return render_template(
+            # Get Proxmox authentication ticket for WebSocket connection
+            # This is required in addition to the VNC ticket
+            auth_user = cluster_config['user']
+            auth_password = cluster_config['password']
+            
+            try:
+                # Get authentication ticket from Proxmox API
+                auth_result = proxmox.access.ticket.post(username=auth_user, password=auth_password)
+                pve_auth_cookie = auth_result['ticket']
+                csrf_token = auth_result['CSRFPreventionToken']
+                logger.info(f"Got Proxmox auth ticket for WebSocket")
+            except Exception as e:
+                logger.error(f"Failed to get auth ticket: {e}")
+                return f"Failed to authenticate with Proxmox: {str(e)}", 500
+            
+            # Render console page and set authentication cookie
+            from flask import make_response
+            response = make_response(render_template(
                 'console.html',
                 vmid=vmid,
                 vm_name=vm_name or f"VM {vmid}",
@@ -275,8 +290,11 @@ def view_console(vmid: int):
                 host=proxmox_host,
                 port=proxmox_port,
                 vnc_port=vnc_port,
-                ticket=ticket
-            )
+                ticket=ticket,
+                pve_auth_cookie=pve_auth_cookie
+            ))
+            
+            return response
             
         except Exception as e:
             logger.error(f"Failed to generate VNC ticket for VM {vmid}: {e}")
