@@ -3,6 +3,7 @@ Console API endpoints - noVNC console access for VMs
 """
 
 import logging
+import ssl
 import urllib.parse
 from flask import Blueprint, jsonify, request, session, render_template
 
@@ -306,6 +307,8 @@ def view_console(vmid: int):
                 'console.html',
                 vmid=vmid,
                 vm_name=vm_name or f"VM {vmid}",
+                node=vm_node,
+                vm_type=vm_type,
                 websocket_available=WEBSOCKET_AVAILABLE
             )
             
@@ -357,8 +360,7 @@ def init_websocket_proxy(app, sock_instance):
             
             logger.info(f"Proxying VNC WebSocket for VM {vmid}: {proxmox_ws_url[:80]}...")
             
-            # Connect to Proxmox with authentication
-            import ssl
+            # Connect to Proxmox with authentication (disable SSL verification for self-signed certs)
             proxmox_ws = websocket.WebSocket(sslopt={"cert_reqs": ssl.CERT_NONE})
             
             # Set authentication cookie
