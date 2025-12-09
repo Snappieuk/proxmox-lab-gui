@@ -375,81 +375,81 @@ def _sync_isos_background(cluster_id: str, app=None):
             if not proxmox:
                 logger.error(f"[ISO Sync] Failed to connect to cluster {cluster_id}")
                 return
-        
-        seen_volids = set()  # Track unique ISOs to avoid duplicates from shared storage
-        iso_count = 0
-        nodes = proxmox.nodes.get()
-        
-        logger.info(f"[ISO Sync] Scanning {len(nodes)} nodes for ISOs")
-        
-        for node in nodes:
-            node_name = node['node']
-            try:
-                # Get storages available on THIS specific node (not cluster-wide)
-                storages = proxmox.nodes(node_name).storage.get()
-                
-                for storage in storages:
-                    storage_name = storage['storage']
+            
+            seen_volids = set()  # Track unique ISOs to avoid duplicates from shared storage
+            iso_count = 0
+            nodes = proxmox.nodes.get()
+            
+            logger.info(f"[ISO Sync] Scanning {len(nodes)} nodes for ISOs")
+            
+            for node in nodes:
+                node_name = node['node']
+                try:
+                    # Get storages available on THIS specific node (not cluster-wide)
+                        storages = proxmox.nodes(node_name).storage.get()
                     
-                    # Check if storage supports ISO content
-                    content_types = storage.get('content', '').split(',')
-                    if 'iso' not in content_types:
-                        continue
-                    
-                    # Skip if storage is explicitly disabled (but allow if status is missing)
-                    status = storage.get('status')
-                    if status and status == 'unavailable':
-                        logger.debug(f"Storage {storage_name} is unavailable on {node_name}, skipping")
-                        continue
-                    
-                    try:
-                        # List ISO files in this storage on this node
-                        content = proxmox.nodes(node_name).storage(storage_name).content.get(content='iso')
+                    for storage in storages:
+                        storage_name = storage['storage']
                         
-                        for item in content:
-                            volid = item['volid']
+                        # Check if storage supports ISO content
+                        content_types = storage.get('content', '').split(',')
+                        if 'iso' not in content_types:
+                            continue
+                        
+                        # Skip if storage is explicitly disabled (but allow if status is missing)
+                        status = storage.get('status')
+                        if status and status == 'unavailable':
+                            logger.debug(f"Storage {storage_name} is unavailable on {node_name}, skipping")
+                            continue
+                        
+                        try:
+                            # List ISO files in this storage on this node
+                            content = proxmox.nodes(node_name).storage(storage_name).content.get(content='iso')
                             
-                            # Skip if we've already seen this ISO (shared storage across nodes)
-                            if volid in seen_volids:
-                                continue
-                            
-                            seen_volids.add(volid)
-                            iso_count += 1
-                            
-                            # Update database cache
-                            try:
-                                existing = ISOImage.query.filter_by(volid=volid).first()
-                                if existing:
-                                    existing.last_seen = datetime.utcnow()
-                                    existing.node = node_name
-                                    existing.storage = storage_name
-                                    existing.size = item.get('size', 0)
-                                else:
-                                    new_iso = ISOImage(
-                                        volid=volid,
-                                        name=volid.split('/')[-1],
-                                        size=item.get('size', 0),
-                                        node=node_name,
-                                        storage=storage_name,
-                                        cluster_id=cluster_id
-                                    )
-                                    db.session.add(new_iso)
-                                    logger.debug(f"[ISO Sync] Added new ISO: {volid}")
-                            except Exception as db_error:
-                                logger.warning(f"[ISO Sync] Failed to cache ISO {volid}: {db_error}")
+                            for item in content:
+                                volid = item['volid']
                                 
-                    except Exception as e:
-                        # Don't spam warnings for unavailable storage on nodes
-                        if "is not available on node" in str(e):
-                            logger.debug(f"Storage {storage_name} not available on {node_name}, skipping")
-                        else:
-                            logger.warning(f"Could not list ISOs in {node_name}:{storage_name}: {e}")
-                        continue
-                        
-            except Exception as e:
-                logger.warning(f"Could not access node {node_name}: {e}")
-                continue
-        
+                                # Skip if we've already seen this ISO (shared storage across nodes)
+                                if volid in seen_volids:
+                                    continue
+                                
+                                seen_volids.add(volid)
+                                iso_count += 1
+                                
+                                # Update database cache
+                                try:
+                                    existing = ISOImage.query.filter_by(volid=volid).first()
+                                    if existing:
+                                        existing.last_seen = datetime.utcnow()
+                                        existing.node = node_name
+                                        existing.storage = storage_name
+                                        existing.size = item.get('size', 0)
+                                    else:
+                                        new_iso = ISOImage(
+                                            volid=volid,
+                                            name=volid.split('/')[-1],
+                                            size=item.get('size', 0),
+                                            node=node_name,
+                                            storage=storage_name,
+                                            cluster_id=cluster_id
+                                        )
+                                        db.session.add(new_iso)
+                                        logger.debug(f"[ISO Sync] Added new ISO: {volid}")
+                                except Exception as db_error:
+                                    logger.warning(f"[ISO Sync] Failed to cache ISO {volid}: {db_error}")
+                                    
+                        except Exception as e:
+                            # Don't spam warnings for unavailable storage on nodes
+                            if "is not available on node" in str(e):
+                                logger.debug(f"Storage {storage_name} not available on {node_name}, skipping")
+                            else:
+                                logger.warning(f"Could not list ISOs in {node_name}:{storage_name}: {e}")
+                            continue
+                            
+                except Exception as e:
+                    logger.warning(f"Could not access node {node_name}: {e}")
+                    continue
+            
             # Commit database changes
             try:
                 db.session.commit()
