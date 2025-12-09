@@ -367,10 +367,12 @@ def init_websocket_proxy(app, sock_instance):
                 return
             
             # Build Proxmox WebSocket URL
-            # Don't URL-encode the ticket - websocket-client handles it
+            # URL-encode the ticket properly - it contains colons and special chars that break URLs
+            import urllib.parse
+            encoded_ticket = urllib.parse.quote(ticket, safe='')
             proxmox_ws_url = (
                 f"wss://{host}:{proxmox_port}/api2/json/nodes/{node}/"
-                f"{vm_type}/{vmid}/vncwebsocket?port={vnc_port}&vncticket={ticket}"
+                f"{vm_type}/{vmid}/vncwebsocket?port={vnc_port}&vncticket={encoded_ticket}"
             )
             
             logger.info(f"Connecting to Proxmox VNC WebSocket...")
@@ -393,6 +395,11 @@ def init_websocket_proxy(app, sock_instance):
                 
             except Exception as conn_error:
                 logger.error(f"❌ Failed to connect to Proxmox WebSocket: {conn_error}")
+                logger.error(f"   Connection details: host={host}, port={proxmox_port}, vmid={vmid}")
+                logger.error(f"   VNC port: {vnc_port}")
+                logger.error(f"   Ticket (first 50 chars): {ticket[:50] if len(ticket) > 50 else ticket}")
+                import traceback
+                logger.error(f"   Full traceback: {traceback.format_exc()}")
                 try:
                     ws.close()
                 except Exception:
