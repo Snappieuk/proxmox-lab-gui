@@ -309,12 +309,12 @@ def list_available_isos(cluster_id: str) -> Tuple[bool, list, str]:
         
         if not fresh_isos and all_cached_isos:
             logger.info(f"ISO cache is stale for cluster {cluster_id}, triggering background refresh")
-            # Trigger background sync but still return stale data
-            threading.Thread(target=_sync_isos_background, args=(cluster_id,), daemon=True).start()
+            # Trigger background sync but still return stale data (app context available from request)
+            threading.Thread(target=_sync_isos_background, args=(cluster_id, None), daemon=True).start()
         elif not all_cached_isos:
             logger.info(f"No cached ISOs for cluster {cluster_id}, triggering immediate sync in background")
-            # No ISOs at all - trigger background sync
-            threading.Thread(target=_sync_isos_background, args=(cluster_id,), daemon=True).start()
+            # No ISOs at all - trigger background sync (app context available from request)
+            threading.Thread(target=_sync_isos_background, args=(cluster_id, None), daemon=True).start()
         
         # Return whatever we have in database (even if empty or stale)
         iso_list = [iso.to_dict() for iso in all_cached_isos]
@@ -329,32 +329,52 @@ def list_available_isos(cluster_id: str) -> Tuple[bool, list, str]:
 def trigger_iso_sync_all_clusters():
     """Trigger ISO sync for all active clusters on app startup."""
     from app.models import Cluster
+    from flask import current_app
     import threading
     
     try:
         clusters = Cluster.query.filter_by(is_active=True).all()
         logger.info(f"Triggering ISO sync for {len(clusters)} active clusters")
         
+        # Get app instance to pass to threads
+        app = current_app._get_current_object()
+        
         for cluster in clusters:
-            threading.Thread(target=_sync_isos_background, args=(cluster.id,), daemon=True).start()
+            threading.Thread(target=_sync_isos_background, args=(cluster.id, app), daemon=True).start()
             logger.info(f"Started ISO sync thread for cluster {cluster.name} (ID: {cluster.id})")
     except Exception as e:
         logger.error(f"Failed to trigger ISO sync on startup: {e}")
 
 
-def _sync_isos_background(cluster_id: str):
-    """Background thread to sync ISOs from Proxmox to database."""
+def _sync_isos_background(cluster_id: str, app=None):
+    """Background thread to sync ISOs from Proxmox to database.
+    
+    Args:
+        cluster_id: Cluster identifier
+        app: Flask app instance for application context (required for database access)
+    """
     from app.models import ISOImage, db
     from app.services.proxmox_service import get_proxmox_admin_for_cluster
     from datetime import datetime
     
-    try:
-        logger.info(f"[ISO Sync] Starting background sync for cluster {cluster_id}")
-        
-        proxmox = get_proxmox_admin_for_cluster(cluster_id)
-        if not proxmox:
-            logger.error(f"[ISO Sync] Failed to connect to cluster {cluster_id}")
+    # If no app provided, try to get current app (for on-demand sync)
+    if app is None:
+        from flask import current_app
+        try:
+            app = current_app._get_current_object()
+        except RuntimeError:
+            logger.error(f"[ISO Sync] No Flask app context available for cluster {cluster_id}")
             return
+    
+    # Run within application context
+    with app.app_context():
+        try:
+            logger.info(f"[ISO Sync] Starting background sync for cluster {cluster_id}")
+            
+            proxmox = get_proxmox_admin_for_cluster(cluster_id)
+            if not proxmox:
+                logger.error(f"[ISO Sync] Failed to connect to cluster {cluster_id}")
+                return
         
         seen_volids = set()  # Track unique ISOs to avoid duplicates from shared storage
         iso_count = 0
@@ -430,16 +450,16 @@ def _sync_isos_background(cluster_id: str):
                 logger.warning(f"Could not access node {node_name}: {e}")
                 continue
         
-        # Commit database changes
-        try:
-            db.session.commit()
-            logger.info(f"[ISO Sync] Successfully synced {iso_count} ISOs for cluster {cluster_id}")
+            # Commit database changes
+            try:
+                db.session.commit()
+                logger.info(f"[ISO Sync] Successfully synced {iso_count} ISOs for cluster {cluster_id}")
+            except Exception as e:
+                logger.error(f"[ISO Sync] Failed to commit ISO cache: {e}")
+                db.session.rollback()
+            
         except Exception as e:
-            logger.error(f"[ISO Sync] Failed to commit ISO cache: {e}")
-            db.session.rollback()
-        
-    except Exception as e:
-        logger.error(f"[ISO Sync] Failed to sync ISOs: {e}", exc_info=True)
+            logger.error(f"[ISO Sync] Failed to sync ISOs: {e}", exc_info=True)
 
 
 def _ensure_virtio_iso(
