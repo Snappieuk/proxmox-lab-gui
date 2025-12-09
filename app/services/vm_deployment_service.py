@@ -457,7 +457,7 @@ def _sync_isos_background(cluster_id: str, app=None):
             except Exception as e:
                 logger.error(f"[ISO Sync] Failed to commit ISO cache: {e}")
                 db.session.rollback()
-            
+                
         except Exception as e:
             logger.error(f"[ISO Sync] Failed to sync ISOs: {e}", exc_info=True)
 
