@@ -695,31 +695,46 @@
 </style>
 
 <script>
-console.log('=== SCRIPT TAG EXECUTING - VERSION 2024-12-08-v4 ===');
+console.log('=== SCRIPT TAG EXECUTING - VERSION 2024-12-09-v5 ===');
 console.log('Window object:', typeof window);
 console.log('Document ready state:', document.readyState);
 
 // Global variables from Flask context
-const CURRENT_CLUSTER_ID = '{{ current_cluster }}';
+const CURRENT_CLUSTER_ID = '{{ current_cluster if current_cluster else "" }}';
 console.log('Template Builder initialized with cluster:', CURRENT_CLUSTER_ID);
 
 // Define functions in global scope IMMEDIATELY
-function showCreateFromScratch() {
-    console.log('✅ showCreateFromScratch called - VERSION v3');
-    document.getElementById('build-modal').style.display = 'flex';
-    loadBuildOptions();
-}
-
-function showConvertExisting() {
-    console.log('✅ showConvertExisting called - VERSION v3');
-    alert('Convert Existing VM - Feature coming soon!\n\nThis will let you select an existing VM and convert it to a template.');
-}
-
-async function showMigrateTemplate() {
-    console.log('✅ showMigrateTemplate called - VERSION v3');
-    document.getElementById('migrate-modal').style.display = 'flex';
-    
+window.showCreateFromScratch = function() {
+    console.log('✅ showCreateFromScratch called - VERSION v5');
     try {
+        const modal = document.getElementById('build-modal');
+        if (modal) {
+            modal.style.display = 'flex';
+            loadBuildOptions();
+        } else {
+            console.error('build-modal element not found');
+        }
+    } catch (e) {
+        console.error('Error in showCreateFromScratch:', e);
+    }
+};
+
+window.showConvertExisting = function() {
+    console.log('✅ showConvertExisting called - VERSION v5');
+    alert('Convert Existing VM - Feature coming soon!\n\nThis will let you select an existing VM and convert it to a template.');
+};
+
+window.showMigrateTemplate = async function() {
+    console.log('✅ showMigrateTemplate called - VERSION v5');
+    try {
+        const modal = document.getElementById('migrate-modal');
+        if (modal) {
+            modal.style.display = 'flex';
+        } else {
+            console.error('migrate-modal element not found');
+            return;
+        }
+        
         const response = await fetch('/api/templates/migration-options');
         const data = await response.json();
         
@@ -732,22 +747,10 @@ async function showMigrateTemplate() {
         console.error('Failed to load migration options:', error);
         alert('Failed to load migration options: ' + error.message);
     }
-}
+};
 
-// Also attach to window for redundancy
-window.showCreateFromScratch = showCreateFromScratch;
-window.showConvertExisting = showConvertExisting;
-window.showMigrateTemplate = showMigrateTemplate;
-
-console.log('✅ Functions defined VERSION v3 - types:', typeof showCreateFromScratch, typeof showConvertExisting, typeof showMigrateTemplate);
-console.log('✅ Window functions VERSION v3:', typeof window.showCreateFromScratch, typeof window.showConvertExisting, typeof window.showMigrateTemplate);
-console.log('✅ Testing direct call...');
-try {
-    console.log('Can call showCreateFromScratch?', typeof showCreateFromScratch === 'function');
-    console.log('Can call window.showCreateFromScratch?', typeof window.showCreateFromScratch === 'function');
-} catch (e) {
-    console.error('❌ Error testing functions:', e);
-}
+console.log('✅ Functions defined VERSION v5 - attached to window');
+console.log('✅ Window functions:', typeof window.showCreateFromScratch, typeof window.showConvertExisting, typeof window.showMigrateTemplate);
 
 // Load user's templates
 async function loadTemplates() {
@@ -1049,7 +1052,9 @@ async function submitMigration(event) {
     const sourceClusterId = document.getElementById('source-cluster').value;
     const sourceTemplateId = document.getElementById('source-template').value;
     const destinationClusterId = document.getElementById('destination-cluster').value;
-        const destinationStorage = 'TRUENAS-NFS';  // Hardcoded to TRUENAS-NFS storage    if (!sourceClusterId || !sourceTemplateId || !destinationClusterId) {
+    const destinationStorage = 'TRUENAS-NFS';  // Hardcoded to TRUENAS-NFS storage
+    
+    if (!sourceClusterId || !sourceTemplateId || !destinationClusterId) {
         alert('Please fill in all required fields');
         return;
     }
