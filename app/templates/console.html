@@ -142,15 +142,18 @@
         const node = "{{ node }}";
         const vmType = "{{ vm_type }}";
         const host = "{{ host }}";
-        const port = {{ vnc_port }};
-        const ticket = "{{ ticket }}";
+        const proxmoxPort = {{ port }};
+        const vncPort = {{ vnc_port }};
+        const ticket = `{{ ticket }}`;
         
-        // Build WebSocket URL
-        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const path = `/api2/json/nodes/${node}/${vmType}/${vmid}/vncwebsocket?port=${port}&vncticket=${encodeURIComponent(ticket)}`;
-        const wsUrl = `${protocol}//${host}:8006${path}`;
+        // Build WebSocket URL - connect directly to Proxmox WebSocket endpoint
+        // Use wss:// for secure connection
+        const path = `api2/json/nodes/${node}/${vmType}/${vmid}/vncwebsocket?port=${vncPort}&vncticket=${encodeURIComponent(ticket)}`;
+        const wsUrl = `wss://${host}:${proxmoxPort}/${path}`;
         
-        console.log('Connecting to:', wsUrl.substring(0, 100) + '...');
+        console.log('noVNC WebSocket URL:', wsUrl.substring(0, 100) + '...');
+        console.log('VNC Port:', vncPort);
+        console.log('Ticket length:', ticket.length);
         
         let rfb;
         
@@ -172,29 +175,35 @@
         function connectedToServer(e) {
             updateStatus('', 'Connected');
             document.getElementById('loading').style.display = 'none';
+            console.log('✅ Connected to VM console');
         }
         
         function disconnectedFromServer(e) {
+            console.log('Disconnected:', e.detail);
             if (e.detail.clean) {
                 updateStatus('disconnected', 'Disconnected');
             } else {
                 updateStatus('disconnected', 'Connection lost');
-                showError('Connection to VM console lost: ' + e.detail.reason);
+                showError('Connection failed: ' + (e.detail.reason || 'Unknown error'));
             }
         }
         
         function credentialsAreRequired(e) {
-            // VNC password prompt if needed
-            const password = prompt("VNC Password Required:");
-            if (password) {
-                rfb.sendCredentials({ password: password });
-            }
+            console.log('Credentials required');
+            // VNC shouldn't require password if ticket is valid
+            showError('VNC authentication failed. The ticket may have expired.');
+        }
+        
+        function securityFailure(e) {
+            console.error('Security failure:', e.detail);
+            showError('Security error: ' + (e.detail.reason || 'SSL/TLS verification failed. This is expected with self-signed certificates.'));
         }
         
         try {
+            console.log('Initializing RFB connection...');
+            
             // Create RFB connection
             rfb = new RFB(document.getElementById('screen'), wsUrl, {
-                credentials: { password: ticket },
                 shared: true,
                 repeaterID: '',
                 wsProtocols: ['binary']
@@ -204,10 +213,15 @@
             rfb.addEventListener("connect", connectedToServer);
             rfb.addEventListener("disconnect", disconnectedFromServer);
             rfb.addEventListener("credentialsrequired", credentialsAreRequired);
+            rfb.addEventListener("securityfailure", securityFailure);
             
             // Configure display
             rfb.scaleViewport = true;
             rfb.resizeSession = true;
+            rfb.viewOnly = false;
+            rfb.focusOnClick = true;
+            
+            console.log('RFB connection initialized');
             
         } catch (err) {
             console.error('Failed to create RFB connection:', err);
@@ -218,6 +232,13 @@
         window.addEventListener('resize', () => {
             if (rfb) {
                 rfb.scaleViewport = true;
+            }
+        });
+        
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', () => {
+            if (rfb) {
+                rfb.disconnect();
             }
         });
         
