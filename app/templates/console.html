@@ -148,17 +148,18 @@
         
         // Build WebSocket URL - connect through Nginx proxy instead of directly to Proxmox
         // This avoids firewall issues and uses the same domain as the web app
-        const encodedTicket = encodeURIComponent(ticket);
+        // NOTE: Do NOT encodeURIComponent the ticket - it's already properly formatted
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const proxyHost = window.location.host; // labs.netlab
-        const wsUrl = `${protocol}//${proxyHost}/vnc/nodes/${node}/${vmType}/${vmid}/vncwebsocket?port=${vncPort}&vncticket=${encodedTicket}`;
+        const wsUrl = `${protocol}//${proxyHost}/vnc/nodes/${node}/${vmType}/${vmid}/vncwebsocket?port=${vncPort}&vncticket=${ticket}`;
         
         console.log('=== noVNC Console Debug Info ===');
         console.log('VMID:', vmid);
         console.log('Node:', node);
         console.log('VM Type:', vmType);
         console.log('VNC Port:', vncPort);
-        console.log('WebSocket URL (via proxy):', wsUrl.replace(/vncticket=[^&]+/, 'vncticket=<REDACTED>'));
+        console.log('Ticket length:', ticket.length);
+        console.log('WebSocket URL (via proxy):', wsUrl.substring(0, 100) + '...');
         
         let rfb;
         
