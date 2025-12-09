@@ -200,37 +200,42 @@ def view_console(vmid: int):
         vm_name = f"VM-{vmid}"
         
         try:
-            for node_name in proxmox.nodes.get():
-                node = node_name['node']
+            # Get list of nodes
+            nodes = proxmox.nodes.get()
+            
+            for node_info in nodes:
+                node = node_info['node']
                 
                 # Check QEMU VMs
                 try:
-                    for vm in proxmox.nodes(node).qemu.get():
+                    vms = proxmox.nodes(node).qemu.get()
+                    for vm in vms:
                         if vm['vmid'] == vmid:
                             vm_node = node
                             vm_type = 'kvm'
                             vm_name = vm.get('name', f"VM-{vmid}")
                             break
-                except:
-                    pass
+                except Exception as e:
+                    logger.debug(f"Error checking QEMU VMs on node {node}: {e}")
                 
                 # Check LXC containers if not found
                 if not vm_node:
                     try:
-                        for vm in proxmox.nodes(node).lxc.get():
+                        containers = proxmox.nodes(node).lxc.get()
+                        for vm in containers:
                             if vm['vmid'] == vmid:
                                 vm_node = node
                                 vm_type = 'lxc'
                                 vm_name = vm.get('name', f"CT-{vmid}")
                                 break
-                    except:
-                        pass
+                    except Exception as e:
+                        logger.debug(f"Error checking LXC containers on node {node}: {e}")
                 
                 if vm_node:
                     break
         except Exception as e:
-            logger.error(f"Error finding VM {vmid}: {e}")
-            return f"VM {vmid} not found", 404
+            logger.error(f"Error finding VM {vmid}: {e}", exc_info=True)
+            return f"VM {vmid} not found: {str(e)}", 404
         
         if not vm_node:
             return f"VM {vmid} not found", 404
