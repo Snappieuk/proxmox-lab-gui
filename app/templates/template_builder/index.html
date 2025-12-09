@@ -22,7 +22,7 @@
             </p>
             
             <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.25rem;">
-                <div class="option-card" id="btn-create-from-scratch" style="cursor: pointer;" onclick="showCreateFromScratch()">
+                <div class="option-card" id="btn-create-from-scratch" style="cursor: pointer;">
                     <div class="option-card-icon" style="background: #e6f2ff;">
                         <i class="bi bi-file-earmark-plus" style="font-size: 2.5rem; color: #0078d4;"></i>
                     </div>
@@ -30,7 +30,7 @@
                     <p style="color: #666; font-size: 0.9rem; margin: 0;">Create a new VM and configure it as a template</p>
                 </div>
                 
-                <div class="option-card" id="btn-convert-existing" style="cursor: pointer;" onclick="showConvertExisting()">
+                <div class="option-card" id="btn-convert-existing" style="cursor: pointer;">
                     <div class="option-card-icon" style="background: #e6f4ea;">
                         <i class="bi bi-arrow-repeat" style="font-size: 2.5rem; color: #107c10;"></i>
                     </div>
@@ -38,7 +38,7 @@
                     <p style="color: #666; font-size: 0.9rem; margin: 0;">Turn an existing VM into a reusable template</p>
                 </div>
                 
-                <div class="option-card" id="btn-migrate-template" style="cursor: pointer;" onclick="showMigrateTemplate()">
+                <div class="option-card" id="btn-migrate-template" style="cursor: pointer;">
                     <div class="option-card-icon" style="background: #f3e5f5;">
                         <i class="bi bi-arrow-left-right" style="font-size: 2.5rem; color: #5c2d91;"></i>
                     </div>
@@ -874,7 +874,7 @@ function deleteTemplate(templateId) {
 
 // Load templates on page load
 document.addEventListener('DOMContentLoaded', function() {
-    console.log('🔧 DOM loaded - attaching event listeners');
+    console.log('🎬 DOMContentLoaded event fired');
     console.log('🔧 Template builder page initialized');
     
     // Attach click event listeners to buttons
@@ -882,25 +882,43 @@ document.addEventListener('DOMContentLoaded', function() {
     const btnConvertExisting = document.getElementById('btn-convert-existing');
     const btnMigrateTemplate = document.getElementById('btn-migrate-template');
     
+    console.log('🔍 Button elements:', {
+        btnCreateFromScratch: btnCreateFromScratch,
+        btnConvertExisting: btnConvertExisting,
+        btnMigrateTemplate: btnMigrateTemplate
+    });
+    
     if (btnCreateFromScratch) {
-        btnCreateFromScratch.addEventListener('click', showCreateFromScratch);
+        btnCreateFromScratch.addEventListener('click', function(e) {
+            console.log('🖱️ Create from scratch clicked');
+            e.preventDefault();
+            showCreateFromScratch();
+        });
         console.log('✅ Attached listener to btn-create-from-scratch');
     } else {
-        console.error('❌ btn-create-from-scratch not found');
+        console.error('❌ btn-create-from-scratch not found in DOM');
     }
     
     if (btnConvertExisting) {
-        btnConvertExisting.addEventListener('click', showConvertExisting);
+        btnConvertExisting.addEventListener('click', function(e) {
+            console.log('🖱️ Convert existing clicked');
+            e.preventDefault();
+            showConvertExisting();
+        });
         console.log('✅ Attached listener to btn-convert-existing');
     } else {
-        console.error('❌ btn-convert-existing not found');
+        console.error('❌ btn-convert-existing not found in DOM');
     }
     
     if (btnMigrateTemplate) {
-        btnMigrateTemplate.addEventListener('click', showMigrateTemplate);
+        btnMigrateTemplate.addEventListener('click', function(e) {
+            console.log('🖱️ Migrate template clicked');
+            e.preventDefault();
+            showMigrateTemplate();
+        });
         console.log('✅ Attached listener to btn-migrate-template');
     } else {
-        console.error('❌ btn-migrate-template not found');
+        console.error('❌ btn-migrate-template not found in DOM');
     }
     
     console.log('📋 Starting template load...');
