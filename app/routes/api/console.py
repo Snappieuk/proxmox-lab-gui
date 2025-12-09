@@ -174,12 +174,18 @@ def view_console(vmid: int):
         # Check permissions (allow students too for their assigned VMs)
         cluster_id = request.args.get('cluster_id') or session.get('cluster_id')
         if not cluster_id:
-            cluster_id = list(CLUSTERS.keys())[0] if CLUSTERS else None
+            cluster_id = CLUSTERS[0]['id'] if CLUSTERS else None
         
         if not cluster_id:
             return "No cluster configured", 500
         
-        cluster_config = CLUSTERS.get(cluster_id)
+        # Find cluster config from list
+        cluster_config = None
+        for cluster in CLUSTERS:
+            if cluster['id'] == cluster_id:
+                cluster_config = cluster
+                break
+        
         if not cluster_config:
             return "Cluster not found", 404
         
