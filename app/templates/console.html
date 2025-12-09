@@ -144,16 +144,23 @@
         const host = "{{ host }}";
         const proxmoxPort = {{ port }};
         const vncPort = {{ vnc_port }};
-        const ticket = `{{ ticket }}`;
+        const ticket = `{{ ticket | safe }}`;
         
         // Build WebSocket URL - connect directly to Proxmox WebSocket endpoint
-        // Use wss:// for secure connection
-        const path = `api2/json/nodes/${node}/${vmType}/${vmid}/vncwebsocket?port=${vncPort}&vncticket=${encodeURIComponent(ticket)}`;
+        // Encode the ticket properly for URL
+        const encodedTicket = encodeURIComponent(ticket);
+        const path = `api2/json/nodes/${node}/${vmType}/${vmid}/vncwebsocket?port=${vncPort}&vncticket=${encodedTicket}`;
         const wsUrl = `wss://${host}:${proxmoxPort}/${path}`;
         
-        console.log('noVNC WebSocket URL:', wsUrl.substring(0, 100) + '...');
+        console.log('=== noVNC Console Debug Info ===');
+        console.log('VMID:', vmid);
+        console.log('Node:', node);
+        console.log('VM Type:', vmType);
+        console.log('Proxmox Host:', host);
+        console.log('Proxmox Port:', proxmoxPort);
         console.log('VNC Port:', vncPort);
         console.log('Ticket length:', ticket.length);
+        console.log('WebSocket URL (first 120 chars):', wsUrl.substring(0, 120) + '...');
         
         let rfb;
         
@@ -165,42 +172,60 @@
             statusText.textContent = msg;
         }
         
-        function showError(message) {
+        function showError(message, details = '') {
+            console.error('Console error:', message, details);
             document.getElementById('loading').style.display = 'none';
             document.getElementById('error').style.display = 'block';
-            document.getElementById('error-message').textContent = message;
+            document.getElementById('error-message').innerHTML = message + (details ? '<br><br><small>' + details + '</small>' : '');
             updateStatus('disconnected', 'Connection failed');
         }
         
         function connectedToServer(e) {
+            console.log('✅ Connected to VM console successfully!');
             updateStatus('', 'Connected');
             document.getElementById('loading').style.display = 'none';
-            console.log('✅ Connected to VM console');
         }
         
         function disconnectedFromServer(e) {
-            console.log('Disconnected:', e.detail);
+            console.log('❌ Disconnected from server:', e.detail);
             if (e.detail.clean) {
                 updateStatus('disconnected', 'Disconnected');
             } else {
+                const reason = e.detail.reason || 'Unknown error';
+                console.error('Disconnect reason:', reason);
                 updateStatus('disconnected', 'Connection lost');
-                showError('Connection failed: ' + (e.detail.reason || 'Unknown error'));
+                
+                // Provide helpful error messages
+                let helpText = '';
+                if (reason.includes('SSL') || reason.includes('certificate') || reason.includes('1006')) {
+                    helpText = 'This is likely due to self-signed SSL certificates. The browser blocked the WebSocket connection.<br><br>' +
+                               '<strong>To fix:</strong> Open <a href="https://' + host + ':' + proxmoxPort + '" target="_blank">https://' + host + ':' + proxmoxPort + '</a> ' +
+                               'in a new tab, accept the certificate warning, then try the console again.';
+                } else if (reason.includes('timeout') || reason.includes('ETIMEDOUT')) {
+                    helpText = 'Connection timed out. Check that the Proxmox server is reachable and port ' + proxmoxPort + ' is accessible.';
+                } else if (reason.includes('401') || reason.includes('403')) {
+                    helpText = 'Authentication failed. The VNC ticket may have expired. Try closing this window and opening the console again.';
+                }
+                
+                showError('Connection failed: ' + reason, helpText);
             }
         }
         
         function credentialsAreRequired(e) {
-            console.log('Credentials required');
-            // VNC shouldn't require password if ticket is valid
-            showError('VNC authentication failed. The ticket may have expired.');
+            console.warn('⚠️ VNC credentials required (unexpected)');
+            showError('VNC authentication failed', 'The VNC ticket authentication failed. This should not happen - the ticket should authenticate automatically.');
         }
         
         function securityFailure(e) {
-            console.error('Security failure:', e.detail);
-            showError('Security error: ' + (e.detail.reason || 'SSL/TLS verification failed. This is expected with self-signed certificates.'));
+            console.error('🔒 Security failure:', e.detail);
+            const reason = e.detail.reason || 'SSL/TLS verification failed';
+            showError('Security error: ' + reason, 
+                     'This is expected with self-signed certificates. Open <a href="https://' + host + ':' + proxmoxPort + '" target="_blank">https://' + host + ':' + proxmoxPort + '</a> ' +
+                     'in a new tab and accept the certificate, then try again.');
         }
         
         try {
-            console.log('Initializing RFB connection...');
+            console.log('🔌 Initializing noVNC connection...');
             
             // Create RFB connection
             rfb = new RFB(document.getElementById('screen'), wsUrl, {
@@ -221,11 +246,11 @@
             rfb.viewOnly = false;
             rfb.focusOnClick = true;
             
-            console.log('RFB connection initialized');
+            console.log('✅ noVNC RFB connection initialized, attempting to connect...');
             
         } catch (err) {
-            console.error('Failed to create RFB connection:', err);
-            showError('Failed to initialize console: ' + err.message);
+            console.error('❌ Failed to create RFB connection:', err);
+            showError('Failed to initialize console: ' + err.message, 'Check browser console (F12) for more details.');
         }
         
         // Handle window resize
