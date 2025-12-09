@@ -273,6 +273,23 @@ def view_console(vmid: int):
         username = cluster_config['user']
         password = cluster_config['password']
         
+        # Generate a temporary VNC ticket NOW for the frontend to use
+        # This ticket will be regenerated in the WebSocket handler (which is fine - both are valid)
+        try:
+            proxmox = get_proxmox_admin_for_cluster(cluster_id)
+            if vm_type == 'qemu':
+                vnc_data = proxmox.nodes(vm_node).qemu(vmid).vncproxy.post(websocket=1)
+            else:
+                # LXC doesn't support VNC
+                vnc_data = None
+            
+            if vnc_data:
+                temp_ticket = vnc_data['ticket']
+                session[f'vnc_{vmid}_ticket_for_auth'] = temp_ticket
+                logger.info(f"Generated temp VNC ticket for frontend auth")
+        except Exception as e:
+            logger.warning(f"Could not generate temp ticket: {e}")
+        
         session[f'vnc_{vmid}_cluster_id'] = cluster_id
         session[f'vnc_{vmid}_node'] = vm_node
         session[f'vnc_{vmid}_type'] = vm_type
