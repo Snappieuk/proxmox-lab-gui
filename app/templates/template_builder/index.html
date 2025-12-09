@@ -1313,11 +1313,24 @@ async function submitUploadISO(event) {
         try {
             const testResp = await fetch('/api/vm-builder/test');
             const testData = await testResp.json();
-            console.log('Server test response:', testData);
+            console.log('✅ Server test response:', testData);
         } catch (testError) {
-            console.error('Server test failed:', testError);
+            console.error('❌ Server test failed:', testError);
             alert('Cannot reach server. Please check if Flask is running.');
             throw new Error('Server unreachable');
+        }
+        
+        // Test upload endpoint specifically
+        console.log('Testing upload endpoint accessibility...');
+        try {
+            const uploadTestResp = await fetch('/api/vm-builder/upload-iso', {
+                method: 'OPTIONS'
+            });
+            console.log('✅ Upload endpoint test - Status:', uploadTestResp.status);
+            console.log('✅ Upload endpoint headers:', uploadTestResp.headers);
+        } catch (uploadTestError) {
+            console.error('❌ Upload endpoint test failed:', uploadTestError);
+            alert('Upload endpoint is not accessible. Check server logs.');
         }
         
         // First, find a node with TRUENAS-NFS storage
@@ -1454,19 +1467,27 @@ async function submitUploadISO(event) {
         
         const uploadStartTime = Date.now();
         const uploadUrl = '/api/vm-builder/upload-iso';
-        console.log('Opening XHR connection to:', uploadUrl);
+        
+        console.log('📡 Opening XHR connection to:', uploadUrl);
+        console.log('📡 Current page URL:', window.location.href);
+        console.log('📡 Resolved upload URL:', new URL(uploadUrl, window.location.href).href);
+        
         xhr.open('POST', uploadUrl);
         xhr.timeout = 1800000; // 30 minute timeout
         
-        console.log('Starting upload:', file.name, 'Size:', (file.size / 1048576).toFixed(2), 'MB');
-        console.log('FormData contents:', {
+        console.log('📤 Starting upload:', file.name, 'Size:', (file.size / 1048576).toFixed(2), 'MB');
+        console.log('📤 FormData contents:', {
             node: formData.get('node'),
             storage: formData.get('storage'),
             cluster_id: formData.get('cluster_id'),
             fileSize: file.size
         });
+        console.log('📤 XHR state before send:', xhr.readyState);
+        console.log('📤 Calling xhr.send() now...');
         
         xhr.send(formData);
+        
+        console.log('📤 XHR state after send:', xhr.readyState);
         
     } catch (error) {
         console.error('Upload failed:', error);
