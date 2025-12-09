@@ -299,7 +299,7 @@ def init_websocket_proxy(app, sock_instance):
         logger.warning("WebSocket proxy not available - install flask-sock and websocket-client")
         return
     
-    @sock.route('/ws/console/<int:vmid>')
+    @sock.route('/ws/vnc/<int:vmid>')
     def vnc_websocket_proxy(ws, vmid):
         """
         WebSocket proxy: Browser ← Flask ← Proxmox
