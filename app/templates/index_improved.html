@@ -154,6 +154,9 @@
                                     <i class="bi bi-three-dots-vertical"></i>
                                 </button>
                                 <div class="dropdown-menu">
+                                    <button class="dropdown-item" onclick="openVMConsole({{ vm.vmid }})">
+                                        <i class="bi bi-window"></i> Web Console
+                                    </button>
                                     <a class="dropdown-item" href="/rdp/{{ vm.vmid }}.rdp">
                                         <i class="bi bi-download"></i> Download RDP
                                     </a>
@@ -238,6 +241,9 @@
                                     <i class="bi bi-three-dots-vertical"></i>
                                 </button>
                                 <div class="dropdown-menu">
+                                    <button class="dropdown-item" onclick="openVMConsole({{ vm.vmid }})">
+                                        <i class="bi bi-window"></i> Web Console
+                                    </button>
                                     <button class="dropdown-item btn-ssh-web" 
                                             data-vmid="{{ vm.vmid }}"
                                             data-ip="{{ vm.ip or '' }}"
@@ -251,6 +257,11 @@
                                             {% if not vm.ip %}disabled{% endif %}>
                                         <i class="bi bi-clipboard"></i> Copy SSH Command
                                     </button>
+                                    {% if vm.rdp_available %}
+                                    <a class="dropdown-item" href="/rdp/{{ vm.vmid }}.rdp">
+                                        <i class="bi bi-download"></i> Download RDP
+                                    </a>
+                                    {% endif %}
                                 </div>
                             </div>
                         </div>
@@ -332,6 +343,9 @@
                                     <i class="bi bi-three-dots-vertical"></i>
                                 </button>
                                 <div class="dropdown-menu">
+                                    <button class="dropdown-item" onclick="openVMConsole({{ vm.vmid }})">
+                                        <i class="bi bi-window"></i> Web Console
+                                    </button>
                                     <button class="dropdown-item btn-ssh-web" 
                                             data-vmid="{{ vm.vmid }}"
                                             data-ip="{{ vm.ip or '' }}"
@@ -732,20 +746,32 @@ function populateNodeFilter(vms) {
 
 function attachVMEventHandlers() {
     // Power buttons
-    document.querySelectorAll('.btn-power').forEach(btn => {
-        btn.addEventListener('click', async function() {
+    const powerButtons = document.querySelectorAll('.btn-power');
+    console.log(`Attaching handlers to ${powerButtons.length} power buttons`);
+    
+    powerButtons.forEach(btn => {
+        btn.addEventListener('click', async function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            
             const vmid = this.dataset.vmid;
             const action = this.dataset.action;
+            
+            console.log(`Power button clicked: VMID=${vmid}, Action=${action}`);
             
             this.disabled = true;
             const originalText = this.innerHTML;
             this.innerHTML = '<i class="bi bi-hourglass-split"></i>';
             
             try {
+                console.log(`Sending ${action} request to /api/vm/${vmid}/${action}`);
                 const resp = await fetch(`/api/vm/${vmid}/${action}`, { method: 'POST' });
                 const result = await resp.json();
                 
+                console.log(`${action} response:`, result);
+                
                 if (result.ok) {
+                    console.log(`VM ${vmid} ${action} successful, reloading in 2s`);
                     setTimeout(() => loadVMs(), 2000);
                 } else {
                     alert(`Failed to ${action} VM: ${result.error || 'Unknown error'}`);
@@ -817,6 +843,36 @@ function attachVMEventHandlers() {
             );
         });
     });
+}
+
+// Open VM console in new window
+function openVMConsole(vmid) {
+    fetch(`/api/console/${vmid}/vnc`)
+        .then(resp => {
+            if (!resp.ok) {
+                throw new Error(`HTTP ${resp.status}`);
+            }
+            return resp.json();
+        })
+        .then(data => {
+            if (data.ok && data.console_url) {
+                const width = 1024;
+                const height = 768;
+                const left = (screen.width - width) / 2;
+                const top = (screen.height - height) / 2;
+                window.open(
+                    data.console_url,
+                    `console-${vmid}`,
+                    `width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=yes,toolbar=no,menubar=no`
+                );
+            } else {
+                alert('Failed to open console: ' + (data.error || 'Unknown error'));
+            }
+        })
+        .catch(err => {
+            console.error('Console error:', err);
+            alert('Error opening console: ' + err.message);
+        });
 }
 
 if (document.getElementById('loading-indicator')) {

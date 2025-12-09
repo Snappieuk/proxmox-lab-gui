@@ -126,15 +126,16 @@ def api_get_vnc_info(vmid: int):
                 "error": f"Failed to generate console ticket: {str(e)}"
             }), 500
         
-        # Build noVNC URL with ticket
+        # Build noVNC URL
         host = cluster_config['host']
         port = cluster_config.get('port', 8006)
         
-        # The noVNC console URL format for Proxmox with authentication
-        # Important: The ticket must be URL-encoded and included in the URL
+        # Proxmox noVNC console URL format with VNC ticket
+        # The ticket must be passed INSIDE the path parameter as a query string
+        # Format: &path=api2/json/nodes/{node}/{type}/{vmid}/vncwebsocket?port={port}&vncticket={ticket}
         import urllib.parse
-        encoded_ticket = urllib.parse.quote(ticket)
-        console_url = f"https://{host}:{port}/?console={vm_type}&novnc=1&vmid={vmid}&vmname={vm_name}&node={vm_node}&resize=scale&port={vnc_port}&path=api2/json/nodes/{vm_node}/{vm_type}/{vmid}/vncwebsocket&vncticket={encoded_ticket}"
+        encoded_ticket = urllib.parse.quote(ticket, safe='')
+        console_url = f"https://{host}:{port}/?console={vm_type}&novnc=1&node={vm_node}&resize=scale&vmid={vmid}&path=api2/json/nodes/{vm_node}/{vm_type}/{vmid}/vncwebsocket?port={vnc_port}&vncticket={encoded_ticket}"
         
         return jsonify({
             "ok": True,

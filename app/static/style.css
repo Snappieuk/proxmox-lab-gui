@@ -1094,7 +1094,7 @@ body {
     border-collapse: collapse;
     background: white;
     border-radius: 6px;
-    overflow: hidden;
+    overflow: visible;
     box-shadow: 0 1px 3px rgba(0,0,0,0.08);
 }
 
@@ -1205,6 +1205,7 @@ body {
 /* Dropdown Menu */
 .dropdown-action {
     position: relative;
+    overflow: visible;
 }
 
 .dropdown-menu {
@@ -1715,7 +1716,7 @@ body {
     border-collapse: collapse;
     background: white;
     border-radius: 6px;
-    overflow: hidden;
+    overflow: visible;
     box-shadow: 0 1px 3px rgba(0,0,0,0.08);
 }
 
@@ -1826,6 +1827,7 @@ body {
 /* Dropdown Menu */
 .dropdown-action {
     position: relative;
+    overflow: visible;
 }
 
 .dropdown-menu {
@@ -2139,3 +2141,5 @@ body {
 .btn-stop i {
     color: #d13438 !important;
 }
+
+
