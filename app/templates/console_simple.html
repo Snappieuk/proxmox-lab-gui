@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VM {{ vmid }} Console{% if vm_name %} - {{ vm_name }}{% endif %}</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a1a;
+            overflow: hidden;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .header {
+            background: #2d2d2d;
+            padding: 12px 20px;
+            border-bottom: 1px solid #404040;
+        }
+        
+        .header h1 {
+            color: #fff;
+            font-size: 16px;
+            font-weight: 500;
+            margin: 0;
+        }
+        
+        .instructions {
+            background: #2a5db0;
+            color: white;
+            padding: 15px 20px;
+            text-align: center;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+        
+        .instructions a {
+            color: #fff;
+            text-decoration: underline;
+            font-weight: bold;
+        }
+        
+        .instructions button {
+            background: #fff;
+            color: #2a5db0;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            font-weight: bold;
+            cursor: pointer;
+            margin-left: 10px;
+        }
+        
+        .instructions button:hover {
+            background: #f0f0f0;
+        }
+        
+        .console-frame {
+            flex: 1;
+            border: none;
+            width: 100%;
+            background: #000;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🖥️ VM {{ vmid }} Console{% if vm_name %} - {{ vm_name }}{% endif %}</h1>
+    </div>
+    
+    <div class="instructions">
+        ⚠️ First time? You need to accept the Proxmox certificate. 
+        <a href="https://{{ host }}:{{ port }}" target="_blank">Click here to open Proxmox</a> 
+        (accept the certificate warning), then
+        <button onclick="location.reload()">Reload this page</button>
+    </div>
+    
+    <iframe id="console-frame" class="console-frame" src=""></iframe>
+    
+    <script>
+        const host = "{{ host }}";
+        const port = {{ port }};
+        const node = "{{ node }}";
+        const vmType = "{{ vm_type }}";
+        const vmid = {{ vmid }};
+        
+        // Use Proxmox's built-in noVNC console
+        // This URL opens the console directly without requiring login
+        const consoleUrl = `https://${host}:${port}/?console=${vmType}&novnc=1&vmid=${vmid}&vmname=${vmid}&node=${node}&resize=scale&cmd=`;
+        
+        console.log('Loading Proxmox console:', consoleUrl);
+        
+        document.getElementById('console-frame').src = consoleUrl;
+    </script>
+</body>
+</html>

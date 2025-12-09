@@ -267,17 +267,15 @@ def view_console(vmid: int):
             
             logger.info(f"Serving console page for VM {vmid} (user: {user})")
             
-            # Render the console template with all needed data
+            # Render the simple console template
             return render_template(
-                'console.html',
+                'console_simple.html',
                 vmid=vmid,
                 vm_name=vm_name,
                 node=vm_node,
                 vm_type=vm_type,
                 host=cluster_config['host'],
-                port=cluster_config.get('port', 8006),
-                vnc_port=vnc_port,
-                ticket=ticket
+                port=cluster_config.get('port', 8006)
             )
             
         except Exception as e:
