@@ -330,84 +330,128 @@ def init_websocket_proxy(app, sock_instance):
         logger.warning("WebSocket proxy not available - install flask-sock and websocket-client")
         return
     
-    @sock.route('/ws/console/<int:vmid>')
+    @sock.route('/api/console/ws/console/<int:vmid>')
     def vnc_websocket_proxy(ws, vmid):
         """
         WebSocket proxy: Browser ← Flask ← Proxmox
         This handles all Proxmox authentication so the browser doesn't need to.
+        Generates VNC ticket just-in-time to avoid timeout issues.
         """
+        proxmox_ws = None
+        forward_thread = None
+        
         try:
-            # Get VNC connection info from session
+            # Get connection info from session
+            cluster_id = session.get(f'vnc_{vmid}_cluster_id')
             node = session.get(f'vnc_{vmid}_node')
             vm_type = session.get(f'vnc_{vmid}_type')
-            vnc_port = session.get(f'vnc_{vmid}_port')
-            ticket = session.get(f'vnc_{vmid}_ticket')
             host = session.get(f'vnc_{vmid}_host')
-            proxmox_port = session.get(f'vnc_{vmid}_proxmox_port')
-            auth_cookie = session.get(f'vnc_{vmid}_auth_cookie')
+            proxmox_port = session.get(f'vnc_{vmid}_port')
+            username = session.get(f'vnc_{vmid}_user')
+            password = session.get(f'vnc_{vmid}_password')
             
-            if not all([node, vm_type, vnc_port, ticket, host]):
+            if not all([node, vm_type, host, username, password]):
                 logger.error(f"Missing VNC session data for VM {vmid}")
-                ws.close(reason="Session expired - please reload")
+                ws.close(reason="Session expired - please reload console page")
                 return
             
-            # Build Proxmox WebSocket URL
-            encoded_ticket = urllib.parse.quote(ticket, safe='')
+            logger.info(f"WebSocket opened for VM {vmid} console (node={node}, type={vm_type})")
+            
+            # Get Proxmox client
+            proxmox = get_proxmox_admin_for_cluster(cluster_id) if cluster_id else get_proxmox_admin_for_cluster(None)
+            
+            # Generate VNC ticket NOW (just-in-time) to avoid timeout
+            logger.info(f"Generating VNC ticket for VM {vmid}...")
+            if vm_type == 'qemu':
+                vnc_data = proxmox.nodes(node).qemu(vmid).vncproxy.post(websocket=1)
+            elif vm_type == 'lxc':
+                vnc_data = proxmox.nodes(node).lxc(vmid).vncproxy.post(websocket=1)
+            else:
+                ws.close(reason=f"Unsupported VM type: {vm_type}")
+                return
+            
+            ticket = vnc_data['ticket']
+            vnc_port = vnc_data['port']
+            logger.info(f"VNC ticket generated: port={vnc_port}")
+            
+            # Generate PVEAuthCookie
+            auth_result = proxmox.access.ticket.post(username=username, password=password)
+            pve_auth_cookie = auth_result['ticket']
+            
+            # Build Proxmox WebSocket URL with properly encoded ticket
+            from urllib.parse import quote_plus
+            encoded_ticket = quote_plus(ticket)
             proxmox_ws_url = (
                 f"wss://{host}:{proxmox_port}/api2/json/nodes/{node}/"
                 f"{vm_type}/{vmid}/vncwebsocket?port={vnc_port}&vncticket={encoded_ticket}"
             )
             
-            logger.info(f"Proxying VNC WebSocket for VM {vmid}: {proxmox_ws_url[:80]}...")
+            logger.info(f"Connecting to Proxmox VNC: {proxmox_ws_url[:80]}...")
             
             # Connect to Proxmox with authentication (disable SSL verification for self-signed certs)
             proxmox_ws = websocket.WebSocket(sslopt={"cert_reqs": ssl.CERT_NONE})
-            
-            # Set authentication cookie
             proxmox_ws.connect(
                 proxmox_ws_url,
-                cookie=f"PVEAuthCookie={auth_cookie}",
+                cookie=f"PVEAuthCookie={pve_auth_cookie}",
                 suppress_origin=True
             )
             
-            logger.info(f"Connected to Proxmox VNC for VM {vmid}")
+            logger.info(f"✓ Connected to Proxmox VNC for VM {vmid}")
             
-            # Proxy data bidirectionally
+            # Bidirectional forwarding with proper error handling
+            stop_forwarding = threading.Event()
+            
             def forward_to_browser():
-                while True:
-                    try:
-                        data = proxmox_ws.recv()
-                        if not data:
+                """Forward Proxmox → Browser"""
+                try:
+                    while not stop_forwarding.is_set():
+                        try:
+                            data = proxmox_ws.recv()
+                            if not data:
+                                break
+                            ws.send(data)
+                        except Exception as e:
+                            if not stop_forwarding.is_set():
+                                logger.error(f"Error forwarding to browser: {e}")
                             break
-                        ws.send(data)
-                    except Exception as e:
-                        logger.error(f"Error forwarding to browser: {e}")
-                        break
+                except Exception as e:
+                    logger.error(f"Forward thread error: {e}")
+                finally:
+                    stop_forwarding.set()
             
             # Start forwarding thread
             forward_thread = threading.Thread(target=forward_to_browser, daemon=True)
             forward_thread.start()
             
-            # Forward browser → Proxmox
-            while True:
-                try:
-                    data = ws.receive()
-                    if data is None:
+            # Forward browser → Proxmox (main loop)
+            try:
+                while not stop_forwarding.is_set():
+                    try:
+                        data = ws.receive()
+                        if data is None:
+                            break
+                        proxmox_ws.send(data, opcode=websocket.ABNF.OPCODE_BINARY)
+                    except Exception as e:
+                        if not stop_forwarding.is_set():
+                            logger.error(f"Error forwarding to Proxmox: {e}")
                         break
-                    proxmox_ws.send(data, opcode=websocket.ABNF.OPCODE_BINARY)
-                except Exception as e:
-                    logger.error(f"Error forwarding to Proxmox: {e}")
-                    break
+            finally:
+                stop_forwarding.set()
             
-            # Cleanup
-            proxmox_ws.close()
             logger.info(f"VNC proxy closed for VM {vmid}")
             
         except Exception as e:
-            logger.error(f"VNC WebSocket proxy error: {e}", exc_info=True)
+            logger.error(f"VNC WebSocket proxy error for VM {vmid}: {e}", exc_info=True)
+        finally:
+            # Cleanup
+            if proxmox_ws:
+                try:
+                    proxmox_ws.close()
+                except Exception:
+                    pass
             try:
-                ws.close(reason=str(e))
-            except:
+                ws.close()
+            except Exception:
                 pass
 
 

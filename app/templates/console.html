@@ -139,9 +139,7 @@
         import RFB from 'https://cdn.jsdelivr.net/npm/@novnc/novnc@1.4.0/core/rfb.js';
         
         const vmid = {{ vmid }};
-        const node = "{{ node }}";
-        const vmType = "{{ vm_type }}";
-        const host = "{{ host }}";
+        
         // Connect through Flask backend WebSocket proxy instead of directly to Proxmox
         // Flask backend handles all Proxmox authentication using session data
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -149,8 +147,6 @@
         
         console.log('=== noVNC Console Debug Info ===');
         console.log('VMID:', vmid);
-        console.log('Node:', node);
-        console.log('VM Type:', vmType);
         console.log('Connecting through Flask WebSocket proxy:', wsUrl);
         console.log('Backend will authenticate to Proxmox with stored session data');
         
