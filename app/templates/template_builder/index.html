@@ -1292,14 +1292,6 @@ async function submitUploadISO(event) {
         return;
     }
     
-    // Warn about large files
-    const fileSizeMB = file.size / (1024 * 1024);
-    if (fileSizeMB > 1000) {
-        if (!confirm(`This ISO is ${fileSizeMB.toFixed(0)}MB. Large uploads may fail with Flask's built-in server.\n\nFor production, use gunicorn or nginx.\n\nContinue anyway?`)) {
-            return;
-        }
-    }
-    
     const storage = 'TRUENAS-NFS';
     
     const submitBtn = document.getElementById('upload-iso-btn');
@@ -1343,10 +1335,18 @@ async function submitUploadISO(event) {
         
         // Create FormData
         const formData = new FormData();
-        formData.append('content', file);
+        formData.append('content', file);  // The actual file
         formData.append('node', node);
         formData.append('storage', storage);
         formData.append('cluster_id', CURRENT_CLUSTER_ID || '');
+        
+        console.log('📤 Upload parameters:', {
+            filename: file.name,
+            size: (file.size / 1048576).toFixed(2) + ' MB',
+            node: node,
+            storage: storage,
+            cluster_id: CURRENT_CLUSTER_ID
+        });
         
         // Upload with progress tracking using fetch with ReadableStream
         const xhr = new XMLHttpRequest();
@@ -1377,9 +1377,10 @@ async function submitUploadISO(event) {
         
         xhr.addEventListener('load', async () => {
             clearInterval(keepAliveInterval);
-            console.log('Upload completed. Status:', xhr.status);
-            console.log('Response text length:', xhr.responseText?.length);
-            console.log('Response preview:', xhr.responseText?.substring(0, 200));
+            console.log('📥 Upload completed. Status:', xhr.status);
+            console.log('📥 Response headers:', xhr.getAllResponseHeaders());
+            console.log('📥 Response text length:', xhr.responseText?.length);
+            console.log('📥 Response preview:', xhr.responseText?.substring(0, 500));
             
             if (xhr.status === 200) {
                 try {
@@ -1424,8 +1425,9 @@ async function submitUploadISO(event) {
         
         xhr.addEventListener('error', (e) => {
             clearInterval(keepAliveInterval);
-            console.error('Upload error:', e);
-            console.error('XHR state:', xhr.readyState, 'Status:', xhr.status);
+            console.error('❌ Upload error event:', e);
+            console.error('❌ XHR state:', xhr.readyState, 'Status:', xhr.status);
+            console.error('❌ Response text:', xhr.responseText);
             alert('Upload failed: Network error. The connection was interrupted. This may be due to:\n- Nginx/Apache proxy timeout\n- Network instability\n- Server resource limits\n\nCheck server logs for details.');
             submitBtn.disabled = false;
             submitBtn.innerHTML = '<i class="bi bi-upload"></i> Upload ISO';
@@ -1463,9 +1465,6 @@ async function submitUploadISO(event) {
             cluster_id: formData.get('cluster_id'),
             fileSize: file.size
         });
-        
-        // Add content type for ISO
-        formData.append('content', 'iso');
         
         xhr.send(formData);
         
