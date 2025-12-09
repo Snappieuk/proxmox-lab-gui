@@ -258,19 +258,25 @@ def view_console(vmid: int):
             proxmox_host = cluster_config['host']
             proxmox_port = cluster_config.get('port', 8006)
             
-            # Render console page with WebSocket connection directly to vncwebsocket endpoint
-            # This approach connects to /api2/json/nodes/{node}/{type}/{vmid}/vncwebsocket
-            # with the ticket as a query parameter, similar to Stack Overflow solution
+            # Build Proxmox native console URL for iframe embedding
+            # Use the exact same format as Proxmox uses internally
+            from urllib.parse import quote
+            console_url = (
+                f"https://{proxmox_host}:{proxmox_port}/"
+                f"?console={vm_type}&novnc=1&vmid={vmid}"
+                f"&vmname={quote(vm_name or str(vmid))}"
+                f"&node={vm_node}&resize=scale"
+                f"&vncticket={quote(ticket, safe='')}"
+            )
+            
+            # Render iframe-based console that loads Proxmox's native console
             return render_template(
-                'console.html',
+                'console_novnc.html',
                 vmid=vmid,
                 vm_name=vm_name or f"VM {vmid}",
-                node=vm_node,
-                vm_type=vm_type,
-                host=proxmox_host,
-                port=proxmox_port,
-                vnc_port=vnc_port,
-                ticket=ticket
+                console_url=console_url,
+                proxmox_host=proxmox_host,
+                proxmox_port=proxmox_port
             )
             
         except Exception as e:

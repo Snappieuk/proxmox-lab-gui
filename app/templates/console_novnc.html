@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Console - {{ vm_name }}</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #1a1a1a;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+        }
+        
+        #header {
+            background: #2d2d30;
+            color: #fff;
+            padding: 12px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #3e3e42;
+        }
+        
+        #header h3 {
+            margin: 0;
+            font-size: 15px;
+            font-weight: 600;
+        }
+        
+        #status {
+            font-size: 12px;
+            color: #cccccc;
+        }
+        
+        iframe {
+            border: none;
+            width: 100%;
+            height: calc(100vh - 50px);
+            display: block;
+        }
+        
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            color: #fff;
+        }
+        
+        .spinner {
+            border: 3px solid #3e3e42;
+            border-top: 3px solid #007acc;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div id="header">
+        <h3>{{ vm_name }} ({{ vmid }})</h3>
+        <div id="status">Console</div>
+    </div>
+    
+    <div id="loading">
+        <div class="spinner"></div>
+        <p>Loading console...</p>
+    </div>
+    
+    <iframe id="console-frame" style="display:none;"></iframe>
+    
+    <script>
+        // Use Proxmox's native console in an iframe with authentication
+        const consoleUrl = '{{ console_url | safe }}';
+        
+        console.log('Loading Proxmox console:', consoleUrl.substring(0, 100) + '...');
+        
+        const iframe = document.getElementById('console-frame');
+        const loading = document.getElementById('loading');
+        
+        iframe.onload = function() {
+            loading.style.display = 'none';
+            iframe.style.display = 'block';
+        };
+        
+        iframe.onerror = function() {
+            loading.innerHTML = '<p style="color: #f44336;">Failed to load console. Please accept the Proxmox certificate at:</p>' +
+                               '<p><a href="https://{{ proxmox_host }}:{{ proxmox_port }}" target="_blank" style="color: #007acc;">https://{{ proxmox_host }}:{{ proxmox_port }}</a></p>' +
+                               '<p><button onclick="location.reload()">Retry</button></p>';
+        };
+        
+        // Set the iframe source
+        iframe.src = consoleUrl;
+    </script>
+</body>
+</html>
