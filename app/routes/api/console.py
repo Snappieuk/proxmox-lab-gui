@@ -136,14 +136,23 @@ def api_get_vnc_info(vmid: int):
         host = cluster_config['host']
         port = cluster_config.get('port', 8006)
         
-        # Proxmox noVNC console URL format with VNC ticket
-        # The ticket must be passed INSIDE the path parameter as a query string
-        # Format: &path=api2/json/nodes/{node}/{type}/{vmid}/vncwebsocket?port={port}&vncticket={ticket}
+        # Proxmox noVNC console URL format
+        # The path parameter contains the websocket endpoint WITH ticket and port as query params
+        # Format from PHP: &path=api2/json/nodes/{node}/{type}/{vmid}/vncwebsocket?port={port}&vncticket={ticket}
         import urllib.parse
-        encoded_ticket = urllib.parse.quote(ticket, safe='')
-        console_url = f"https://{host}:{port}/?console={vm_type}&novnc=1&node={vm_node}&resize=scale&vmid={vmid}&path=api2/json/nodes/{vm_node}/{vm_type}/{vmid}/vncwebsocket?port={vnc_port}&vncticket={encoded_ticket}"
         
-        logger.info(f"Console URL generated: {console_url[:100]}... (truncated)")
+        # Build the websocket path with embedded query parameters
+        websocket_path = f"api2/json/nodes/{vm_node}/{vm_type}/{vmid}/vncwebsocket?port={vnc_port}&vncticket={urllib.parse.quote(ticket, safe='')}"
+        
+        # URL encode the entire path parameter
+        encoded_path = urllib.parse.quote(websocket_path, safe='')
+        
+        # Build the final console URL
+        console_url = f"https://{host}:{port}/?console={vm_type}&novnc=1&node={vm_node}&resize=scale&vmid={vmid}&vmname={urllib.parse.quote(vm_name, safe='')}&path={encoded_path}"
+        
+        logger.info(f"Console URL generated for VM {vmid}")
+        logger.info(f"  Websocket path: {websocket_path}")
+        logger.info(f"  Final URL: {console_url[:150]}...")
         
         return jsonify({
             "ok": True,

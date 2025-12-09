@@ -931,23 +931,51 @@
                 <div class="info-grid">
                     <div class="info-item">
                         <span class="info-label">VMID:</span>
-                        <span>{{ vm.proxmox_vmid }}</span>
+                        <span id="student-vm-vmid">{{ vm.proxmox_vmid }}</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">VM Name:</span>
+                        <span id="student-vm-name">{{ vm.vm_name or 'N/A' }}</span>
                     </div>
                     <div class="info-item">
                         <span class="info-label">Status:</span>
-                        <span class="status-badge">{{ vm.status }}</span>
+                        <span id="student-vm-status" class="status-badge status-{{ vm.status }}">{{ vm.status }}</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">IP Address:</span>
+                        <span id="student-vm-ip">{{ vm.ip_address or 'N/A' }}</span>
                     </div>
                 </div>
                 
-                <div style="margin-top: 1.5rem; display: flex; gap: 1rem;">
-                    <button class="btn-primary">
+                <div style="margin-top: 1.5rem; display: flex; flex-wrap: wrap; gap: 0.75rem;">
+                    <button class="btn-primary" 
+                            id="student-start-btn"
+                            onclick="studentStartVM()"
+                            {% if vm.status == 'running' %}disabled{% endif %}>
                         <i class="bi bi-play-fill"></i> Start
                     </button>
-                    <button class="btn-secondary">
+                    <button class="btn-secondary" 
+                            id="student-stop-btn"
+                            onclick="studentStopVM()"
+                            {% if vm.status == 'stopped' %}disabled{% endif %}>
                         <i class="bi bi-stop-fill"></i> Stop
                     </button>
-                    <button class="btn-primary">
-                        <i class="bi bi-display"></i> RDP
+                    <button class="btn-primary" 
+                            id="student-console-btn"
+                            onclick="studentOpenConsole()">
+                        <i class="bi bi-window"></i> Web Console
+                    </button>
+                    <button class="btn-primary" 
+                            id="student-rdp-btn"
+                            onclick="studentDownloadRDP()"
+                            {% if not vm.ip_address %}disabled{% endif %}>
+                        <i class="bi bi-download"></i> RDP
+                    </button>
+                    <button class="btn-secondary" 
+                            id="student-ssh-btn"
+                            onclick="studentOpenSSH()"
+                            {% if not vm.ip_address %}disabled{% endif %}>
+                        <i class="bi bi-terminal"></i> SSH
                     </button>
                 </div>
                 {% else %}
@@ -978,34 +1006,49 @@
     background: white;
     border: 1px solid #e1dfdd;
     border-radius: 8px;
-    padding: 1.5rem;
+    padding: 2rem;
     margin-top: 1.5rem;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
 }
 
 .info-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: 1rem;
+    gap: 1.25rem;
+    padding: 1.25rem;
+    background: #f9f9f9;
+    border-radius: 6px;
+    border: 1px solid #e8e8e8;
 }
 
 .info-item {
     display: flex;
     flex-direction: column;
-    gap: 0.25rem;
+    gap: 0.5rem;
 }
 
 .info-label {
     font-weight: 600;
     color: #605e5c;
-    font-size: 0.85rem;
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.info-item > span:not(.info-label) {
+    font-size: 1rem;
+    color: #323130;
+    font-weight: 500;
 }
 
 .status-badge {
     display: inline-block;
-    padding: 0.25rem 0.75rem;
-    border-radius: 12px;
-    font-size: 0.85rem;
-    font-weight: 500;
+    padding: 0.375rem 0.875rem;
+    border-radius: 16px;
+    font-size: 0.875rem;
+    font-weight: 600;
+    text-transform: capitalize;
+    width: fit-content;
 }
 
 .status-running {
@@ -2031,6 +2074,175 @@ async function consoleVm(vmid) {
     } catch (error) {
         console.error('Failed to open console:', error);
         alert('Failed to open console: ' + error.message);
+    }
+}
+
+// Student VM Functions (for simplified student view)
+async function studentStartVM() {
+    const vmid = document.getElementById('student-vm-vmid').textContent;
+    const startBtn = document.getElementById('student-start-btn');
+    const stopBtn = document.getElementById('student-stop-btn');
+    
+    startBtn.disabled = true;
+    startBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Starting...';
+    
+    try {
+        const resp = await fetch(`/api/vm/${vmid}/start`, { 
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        const data = await resp.json();
+        
+        if (data.ok) {
+            showAlert('VM is starting...', 'success');
+            setTimeout(() => updateStudentVM(), 3000);
+        } else {
+            showAlert('Failed to start VM: ' + (data.error || 'Unknown error'), 'error');
+            startBtn.disabled = false;
+            startBtn.innerHTML = '<i class="bi bi-play-fill"></i> Start';
+        }
+    } catch (e) {
+        showAlert('Error starting VM: ' + e.message, 'error');
+        startBtn.disabled = false;
+        startBtn.innerHTML = '<i class="bi bi-play-fill"></i> Start';
+    }
+}
+
+async function studentStopVM() {
+    const vmid = document.getElementById('student-vm-vmid').textContent;
+    const startBtn = document.getElementById('student-start-btn');
+    const stopBtn = document.getElementById('student-stop-btn');
+    
+    if (!confirm('Stop your VM? Any unsaved work will be lost.')) return;
+    
+    stopBtn.disabled = true;
+    stopBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Stopping...';
+    
+    try {
+        const resp = await fetch(`/api/vm/${vmid}/stop`, { 
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        const data = await resp.json();
+        
+        if (data.ok) {
+            showAlert('VM is stopping...', 'success');
+            setTimeout(() => updateStudentVM(), 3000);
+        } else {
+            showAlert('Failed to stop VM: ' + (data.error || 'Unknown error'), 'error');
+            stopBtn.disabled = false;
+            stopBtn.innerHTML = '<i class="bi bi-stop-fill"></i> Stop';
+        }
+    } catch (e) {
+        showAlert('Error stopping VM: ' + e.message, 'error');
+        stopBtn.disabled = false;
+        stopBtn.innerHTML = '<i class="bi bi-stop-fill"></i> Stop';
+    }
+}
+
+async function studentOpenConsole() {
+    const vmid = document.getElementById('student-vm-vmid').textContent;
+    
+    try {
+        const response = await fetch(`/api/console/${vmid}/vnc`);
+        const data = await response.json();
+        
+        if (!data.ok) {
+            showAlert('Failed to open console: ' + (data.error || 'Unknown error'), 'error');
+            return;
+        }
+        
+        // Open console in new window
+        const width = 1280;
+        const height = 800;
+        const left = (screen.width - width) / 2;
+        const top = (screen.height - height) / 2;
+        window.open(
+            data.console_url,
+            `console-${vmid}`,
+            `width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=yes,status=no,toolbar=no,menubar=no`
+        );
+    } catch (error) {
+        console.error('Failed to open console:', error);
+        showAlert('Failed to open console: ' + error.message, 'error');
+    }
+}
+
+function studentDownloadRDP() {
+    const vmid = document.getElementById('student-vm-vmid').textContent;
+    window.location.href = `/rdp/${vmid}.rdp`;
+}
+
+function studentOpenSSH() {
+    const vmid = document.getElementById('student-vm-vmid').textContent;
+    const ip = document.getElementById('student-vm-ip').textContent;
+    const name = document.getElementById('student-vm-name').textContent;
+    
+    // Build URL with query parameters
+    const params = new URLSearchParams();
+    if (ip && ip !== 'N/A') {
+        params.append('ip', ip);
+    }
+    if (name && name !== 'N/A') {
+        params.append('name', name);
+    }
+    
+    const url = `/ssh/${vmid}${params.toString() ? '?' + params.toString() : ''}`;
+    
+    // Open in popup window
+    const width = 1000;
+    const height = 600;
+    const left = (screen.width - width) / 2;
+    const top = (screen.height - height) / 2;
+    
+    window.open(
+        url,
+        `ssh-${vmid}`,
+        `width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=yes`
+    );
+}
+
+async function updateStudentVM() {
+    const vmid = document.getElementById('student-vm-vmid').textContent;
+    
+    try {
+        const resp = await fetch(`/api/vm/${vmid}/status`);
+        const data = await resp.json();
+        
+        if (data.ok) {
+            const statusEl = document.getElementById('student-vm-status');
+            const ipEl = document.getElementById('student-vm-ip');
+            const startBtn = document.getElementById('student-start-btn');
+            const stopBtn = document.getElementById('student-stop-btn');
+            const rdpBtn = document.getElementById('student-rdp-btn');
+            const sshBtn = document.getElementById('student-ssh-btn');
+            
+            // Update status
+            statusEl.textContent = data.status;
+            statusEl.className = `status-badge status-${data.status}`;
+            
+            // Update IP
+            if (data.ip) {
+                ipEl.textContent = data.ip;
+                rdpBtn.disabled = false;
+                sshBtn.disabled = false;
+            }
+            
+            // Update buttons
+            if (data.status === 'running') {
+                startBtn.disabled = true;
+                startBtn.innerHTML = '<i class="bi bi-play-fill"></i> Start';
+                stopBtn.disabled = false;
+                stopBtn.innerHTML = '<i class="bi bi-stop-fill"></i> Stop';
+            } else {
+                startBtn.disabled = false;
+                startBtn.innerHTML = '<i class="bi bi-play-fill"></i> Start';
+                stopBtn.disabled = true;
+                stopBtn.innerHTML = '<i class="bi bi-stop-fill"></i> Stop';
+            }
+        }
+    } catch (e) {
+        console.error('Failed to update student VM:', e);
     }
 }
 
