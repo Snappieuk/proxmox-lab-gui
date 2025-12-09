@@ -66,10 +66,9 @@ def create_app(config=None):
         init_websocket(app, sock)
         
         # Initialize console WebSocket proxy
-        from app.routes.api.console import sock as console_sock
-        if console_sock:
-            console_sock.init_app(app)
-            logger.info("Console WebSocket proxy ENABLED")
+        from app.routes.api.console import init_websocket_proxy
+        init_websocket_proxy(app, sock)
+        logger.info("Console VNC WebSocket proxy ENABLED")
         
         logger.info("WebSocket support ENABLED (flask-sock loaded)")
     except ImportError as e:

@@ -16,6 +16,18 @@ logger = logging.getLogger(__name__)
 
 console_bp = Blueprint('console', __name__, url_prefix='/api/console')
 
+# Try to import websocket support
+try:
+    from flask_sock import Sock
+    import websocket
+    import threading
+    WEBSOCKET_AVAILABLE = True
+    sock = None  # Will be initialized by app factory
+except ImportError:
+    WEBSOCKET_AVAILABLE = False
+    sock = None
+    logger.warning("flask-sock or websocket-client not available. WebSocket proxy disabled.")
+
 
 @console_bp.route("/<int:vmid>/vnc", methods=["GET"])
 @login_required
@@ -279,22 +291,23 @@ def view_console(vmid: int):
                 logger.error(f"Failed to get auth ticket: {e}")
                 return f"Failed to authenticate with Proxmox: {str(e)}", 500
             
-            # Render console page and set authentication cookie
-            from flask import make_response
-            response = make_response(render_template(
+            # Store connection info in session for WebSocket proxy
+            session[f'vnc_{vmid}_node'] = vm_node
+            session[f'vnc_{vmid}_type'] = vm_type
+            session[f'vnc_{vmid}_port'] = vnc_port
+            session[f'vnc_{vmid}_ticket'] = ticket
+            session[f'vnc_{vmid}_host'] = proxmox_host
+            session[f'vnc_{vmid}_proxmox_port'] = proxmox_port
+            session[f'vnc_{vmid}_auth_cookie'] = pve_auth_cookie
+            session[f'vnc_{vmid}_csrf'] = csrf_token
+            
+            # Render console page - will connect to /ws/console/<vmid> WebSocket proxy
+            return render_template(
                 'console.html',
                 vmid=vmid,
                 vm_name=vm_name or f"VM {vmid}",
-                node=vm_node,
-                vm_type=vm_type,
-                host=proxmox_host,
-                port=proxmox_port,
-                vnc_port=vnc_port,
-                ticket=ticket,
-                pve_auth_cookie=pve_auth_cookie
-            ))
-            
-            return response
+                websocket_available=WEBSOCKET_AVAILABLE
+            )
             
         except Exception as e:
             logger.error(f"Failed to generate VNC ticket for VM {vmid}: {e}")
@@ -303,5 +316,96 @@ def view_console(vmid: int):
     except Exception as e:
         logger.error(f"Failed to serve console for VM {vmid}: {e}", exc_info=True)
         return f"Error: {str(e)}", 500
+
+
+def init_websocket_proxy(app, sock_instance):
+    """Initialize WebSocket proxy for VNC connections."""
+    global sock
+    sock = sock_instance
+    
+    if not WEBSOCKET_AVAILABLE:
+        logger.warning("WebSocket proxy not available - install flask-sock and websocket-client")
+        return
+    
+    @sock.route('/ws/console/<int:vmid>')
+    def vnc_websocket_proxy(ws, vmid):
+        """
+        WebSocket proxy: Browser ← Flask ← Proxmox
+        This handles all Proxmox authentication so the browser doesn't need to.
+        """
+        try:
+            # Get VNC connection info from session
+            node = session.get(f'vnc_{vmid}_node')
+            vm_type = session.get(f'vnc_{vmid}_type')
+            vnc_port = session.get(f'vnc_{vmid}_port')
+            ticket = session.get(f'vnc_{vmid}_ticket')
+            host = session.get(f'vnc_{vmid}_host')
+            proxmox_port = session.get(f'vnc_{vmid}_proxmox_port')
+            auth_cookie = session.get(f'vnc_{vmid}_auth_cookie')
+            
+            if not all([node, vm_type, vnc_port, ticket, host]):
+                logger.error(f"Missing VNC session data for VM {vmid}")
+                ws.close(reason="Session expired - please reload")
+                return
+            
+            # Build Proxmox WebSocket URL
+            encoded_ticket = urllib.parse.quote(ticket, safe='')
+            proxmox_ws_url = (
+                f"wss://{host}:{proxmox_port}/api2/json/nodes/{node}/"
+                f"{vm_type}/{vmid}/vncwebsocket?port={vnc_port}&vncticket={encoded_ticket}"
+            )
+            
+            logger.info(f"Proxying VNC WebSocket for VM {vmid}: {proxmox_ws_url[:80]}...")
+            
+            # Connect to Proxmox with authentication
+            import ssl
+            proxmox_ws = websocket.WebSocket(sslopt={"cert_reqs": ssl.CERT_NONE})
+            
+            # Set authentication cookie
+            proxmox_ws.connect(
+                proxmox_ws_url,
+                cookie=f"PVEAuthCookie={auth_cookie}",
+                suppress_origin=True
+            )
+            
+            logger.info(f"Connected to Proxmox VNC for VM {vmid}")
+            
+            # Proxy data bidirectionally
+            def forward_to_browser():
+                while True:
+                    try:
+                        data = proxmox_ws.recv()
+                        if not data:
+                            break
+                        ws.send(data)
+                    except Exception as e:
+                        logger.error(f"Error forwarding to browser: {e}")
+                        break
+            
+            # Start forwarding thread
+            forward_thread = threading.Thread(target=forward_to_browser, daemon=True)
+            forward_thread.start()
+            
+            # Forward browser → Proxmox
+            while True:
+                try:
+                    data = ws.receive()
+                    if data is None:
+                        break
+                    proxmox_ws.send(data, opcode=websocket.ABNF.OPCODE_BINARY)
+                except Exception as e:
+                    logger.error(f"Error forwarding to Proxmox: {e}")
+                    break
+            
+            # Cleanup
+            proxmox_ws.close()
+            logger.info(f"VNC proxy closed for VM {vmid}")
+            
+        except Exception as e:
+            logger.error(f"VNC WebSocket proxy error: {e}", exc_info=True)
+            try:
+                ws.close(reason=str(e))
+            except:
+                pass
 
 
