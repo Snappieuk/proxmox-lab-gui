@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Opening Console - VM {{ vmid }}</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            max-width: 600px;
+            padding: 40px;
+            text-align: center;
+        }
+        
+        .icon {
+            font-size: 64px;
+            margin-bottom: 20px;
+        }
+        
+        h1 {
+            color: #333;
+            font-size: 28px;
+            margin-bottom: 10px;
+        }
+        
+        .vm-info {
+            color: #666;
+            font-size: 16px;
+            margin-bottom: 30px;
+        }
+        
+        .instructions {
+            background: #f8f9fa;
+            border-left: 4px solid #667eea;
+            padding: 20px;
+            text-align: left;
+            margin-bottom: 30px;
+            border-radius: 4px;
+        }
+        
+        .instructions h3 {
+            color: #667eea;
+            font-size: 18px;
+            margin-bottom: 15px;
+        }
+        
+        .instructions ol {
+            margin-left: 20px;
+            line-height: 1.8;
+            color: #555;
+        }
+        
+        .instructions li {
+            margin-bottom: 10px;
+        }
+        
+        .button {
+            display: inline-block;
+            background: #667eea;
+            color: white;
+            padding: 14px 32px;
+            border-radius: 6px;
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 16px;
+            transition: background 0.3s;
+            margin: 5px;
+        }
+        
+        .button:hover {
+            background: #5568d3;
+        }
+        
+        .button-secondary {
+            background: #6c757d;
+        }
+        
+        .button-secondary:hover {
+            background: #5a6268;
+        }
+        
+        .note {
+            color: #666;
+            font-size: 14px;
+            margin-top: 20px;
+            font-style: italic;
+        }
+        
+        .cert-link {
+            display: inline-block;
+            color: #667eea;
+            font-weight: bold;
+            text-decoration: underline;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="icon">🖥️</div>
+        <h1>VM Console</h1>
+        <div class="vm-info">
+            {% if vm_name %}{{ vm_name }} (VMID: {{ vmid }}){% else %}VMID: {{ vmid }}{% endif %}
+        </div>
+        
+        <div class="instructions">
+            <h3>⚠️ First Time Setup</h3>
+            <ol>
+                <li>Accept the Proxmox SSL certificate by clicking the link below</li>
+                <li>On the certificate warning page, click <strong>Advanced</strong> → <strong>Accept the Risk and Continue</strong></li>
+                <li>You'll see the Proxmox login page (you don't need to log in)</li>
+                <li>Come back here and click <strong>Open Console</strong></li>
+            </ol>
+        </div>
+        
+        <a href="https://{{ proxmox_host }}:{{ proxmox_port }}" target="_blank" class="cert-link">
+            📜 Accept Certificate: https://{{ proxmox_host }}:{{ proxmox_port }}
+        </a>
+        
+        <div style="margin-top: 30px;">
+            <a href="{{ console_url }}" target="_blank" class="button">
+                🚀 Open Console
+            </a>
+            <button onclick="window.close()" class="button button-secondary">
+                ❌ Close
+            </button>
+        </div>
+        
+        <div class="note">
+            💡 The console will open in Proxmox. You only need to accept the certificate once.
+        </div>
+    </div>
+    
+    <script>
+        // Auto-attempt to open console after 2 seconds if user might have already accepted cert
+        const hasAcceptedCert = localStorage.getItem('proxmox_cert_accepted');
+        if (hasAcceptedCert) {
+            setTimeout(() => {
+                window.location.href = '{{ console_url }}';
+            }, 1000);
+        }
+        
+        // Mark cert as accepted when user clicks the cert link
+        document.querySelector('.cert-link').addEventListener('click', () => {
+            localStorage.setItem('proxmox_cert_accepted', 'true');
+        });
+    </script>
+</body>
+</html>
