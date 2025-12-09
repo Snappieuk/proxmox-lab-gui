@@ -377,14 +377,15 @@ def init_websocket_proxy(app, sock_instance):
                     pass
                 return
             
-            # Build Proxmox WebSocket URL
-            # URL-encode the ticket properly - it contains colons and special chars that break URLs
+            # Build Proxmox WebSocket URL with properly formatted query string
             import urllib.parse
-            encoded_ticket = urllib.parse.quote(ticket, safe='')
-            proxmox_ws_url = (
-                f"wss://{host}:{proxmox_port}/api2/json/nodes/{node}/"
-                f"{vm_type}/{vmid}/vncwebsocket?port={vnc_port}&vncticket={encoded_ticket}"
-            )
+            base_url = f"wss://{host}:{proxmox_port}/api2/json/nodes/{node}/{vm_type}/{vmid}/vncwebsocket"
+            params = {
+                'port': str(vnc_port),
+                'vncticket': ticket
+            }
+            query_string = urllib.parse.urlencode(params)
+            proxmox_ws_url = f"{base_url}?{query_string}"
             
             logger.info(f"Connecting to Proxmox VNC WebSocket...")
             logger.info(f"  Node: {node}, Type: {vm_type}, VMID: {vmid}, VNC Port: {vnc_port}")
