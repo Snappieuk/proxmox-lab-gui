@@ -181,6 +181,16 @@ def api_get_vnc_info(vmid: int):
         }), 500
 
 
+@console_bp.route("/<int:vmid>/ticket", methods=["GET"])
+@login_required
+def get_vnc_ticket(vmid: int):
+    """Get VNC ticket from session for VNC authentication."""
+    ticket = session.get(f'vnc_{vmid}_ticket_for_auth')
+    if not ticket:
+        return jsonify({"ok": False, "error": "No ticket found"}), 404
+    return jsonify({"ok": True, "ticket": ticket})
+
+
 @console_bp.route("/<int:vmid>/view2", methods=["GET"])
 @login_required
 def view_console(vmid: int):
@@ -274,6 +284,7 @@ def view_console(vmid: int):
         logger.info(f"Session prepared for VM {vmid} console (node={vm_node}, type={vm_type}, cluster={cluster_id})")
         
         # Render console page - will connect to /ws/vnc/<vmid> WebSocket proxy
+        # Pass vmid so frontend can retrieve ticket from session via API if needed
         return render_template(
             'console.html',
             vmid=vmid,
@@ -378,14 +389,19 @@ def init_websocket_proxy(app, sock_instance):
             logger.info(f"Connecting to Proxmox VNC WebSocket...")
             logger.info(f"  Node: {node}, Type: {vm_type}, VMID: {vmid}, VNC Port: {vnc_port}")
             logger.info(f"  Ticket (first 30 chars): {ticket[:30]}...")
+            logger.info(f"  Auth Cookie (first 30 chars): {pve_auth_cookie[:30]}...")
+            
+            # Store ticket in session for frontend VNC authentication
+            session[f'vnc_{vmid}_ticket_for_auth'] = ticket
             
             # Connect to Proxmox with authentication (disable SSL verification for self-signed certs)
-            # IMPORTANT: Do NOT send PVEAuthCookie when using vncticket - the ticket IS the auth
+            # Need BOTH: PVEAuthCookie for WebSocket AND vncticket in URL for VNC protocol
             proxmox_ws = websocket.WebSocket(sslopt={"cert_reqs": ssl.CERT_NONE})
             
             try:
                 proxmox_ws.connect(
                     proxmox_ws_url,
+                    cookie=f"PVEAuthCookie={pve_auth_cookie}",
                     suppress_origin=True,
                     timeout=10
                 )

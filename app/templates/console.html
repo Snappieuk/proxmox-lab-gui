@@ -213,12 +213,22 @@
             }
         }
         
-        function credentialsAreRequired(e) {
-            console.log('🔑 VNC requesting credentials - this is normal for Proxmox');
-            console.log('ℹ️  Proxmox VNC uses an empty password (ticket auth happens at WebSocket level)');
-            // For Proxmox with ticket authentication, send empty password
-            // The ticket in the WebSocket URL handles the actual authentication
-            rfb.sendCredentials({ password: '' });
+        async function credentialsAreRequired(e) {
+            console.log('🔑 VNC requesting credentials - fetching ticket for authentication');
+            try {
+                const response = await fetch(`/api/console/${vmid}/ticket`);
+                const data = await response.json();
+                if (data.ok && data.ticket) {
+                    console.log('✓ Got VNC ticket, authenticating...');
+                    rfb.sendCredentials({ password: data.ticket });
+                } else {
+                    console.error('❌ Failed to get VNC ticket:', data.error);
+                    showError('Authentication failed', 'Could not retrieve VNC ticket from server');
+                }
+            } catch (error) {
+                console.error('❌ Error fetching VNC ticket:', error);
+                showError('Authentication failed', 'Error communicating with server');
+            }
         }
         
         function securityFailure(e) {
