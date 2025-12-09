@@ -131,7 +131,10 @@ def api_get_vnc_info(vmid: int):
         port = cluster_config.get('port', 8006)
         
         # The noVNC console URL format for Proxmox with authentication
-        console_url = f"https://{host}:{port}/?console={vm_type}&novnc=1&vmid={vmid}&vmname={vm_name}&node={vm_node}&resize=scale&port={vnc_port}&path=api2/json/nodes/{vm_node}/{vm_type}/{vmid}/vncwebsocket"
+        # Important: The ticket must be URL-encoded and included in the URL
+        import urllib.parse
+        encoded_ticket = urllib.parse.quote(ticket)
+        console_url = f"https://{host}:{port}/?console={vm_type}&novnc=1&vmid={vmid}&vmname={vm_name}&node={vm_node}&resize=scale&port={vnc_port}&path=api2/json/nodes/{vm_node}/{vm_type}/{vmid}/vncwebsocket&vncticket={encoded_ticket}"
         
         return jsonify({
             "ok": True,

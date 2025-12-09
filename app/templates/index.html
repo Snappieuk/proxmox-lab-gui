@@ -120,10 +120,15 @@
                             {% if vm.status == 'stopped' %}disabled{% endif %}>
                         <i class="bi bi-stop-fill"></i>
                     </button>
+                    <button class="btn-icon btn-icon-info"
+                            onclick="openVMConsole({{ vm.vmid }})"
+                            data-tooltip="Web Console">
+                        <i class="bi bi-window"></i>
+                    </button>
                     <a class="btn-icon btn-icon-primary" 
                        href="/rdp/{{ vm.vmid }}.rdp"
                        data-tooltip="Download RDP File">
-                        <i class="bi bi-download"></i>
+                        <i class="bi bi-file-earmark-arrow-down"></i>
                     </a>
                 </div>
             </td>
@@ -192,6 +197,18 @@
                             {% if not vm.ip %}disabled{% endif %}>
                         <i class="bi bi-clipboard"></i>
                     </button>
+                    <button class="btn-icon btn-icon-info"
+                            onclick="openVMConsole({{ vm.vmid }})"
+                            data-tooltip="Web Console">
+                        <i class="bi bi-window"></i>
+                    </button>
+                    {% if vm.rdp_available %}
+                    <a class="btn-icon btn-icon-primary" 
+                       href="/rdp/{{ vm.vmid }}.rdp"
+                       data-tooltip="RDP File">
+                        <i class="bi bi-file-earmark-arrow-down"></i>
+                    </a>
+                    {% endif %}
                 </div>
             </td>
         </tr>
@@ -258,6 +275,11 @@
                             data-tooltip="Copy SSH Command"
                             {% if not vm.ip %}disabled{% endif %}>
                         <i class="bi bi-clipboard"></i>
+                    </button>
+                    <button class="btn-icon btn-icon-info"
+                            onclick="openVMConsole({{ vm.vmid }})"
+                            data-tooltip="Web Console">
+                        <i class="bi bi-window"></i>
                     </button>
                 </div>
             </td>
