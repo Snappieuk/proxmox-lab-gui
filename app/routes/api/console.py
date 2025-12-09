@@ -340,7 +340,7 @@ def init_websocket_proxy(app, sock_instance):
         logger.warning("WebSocket proxy not available - install flask-sock and websocket-client")
         return
     
-    @sock.route('/api/console/ws/console/<int:vmid>')
+    @sock.route('/ws/console/<int:vmid>')
     def vnc_websocket_proxy(ws, vmid):
         """
         WebSocket proxy: Browser ← Flask ← Proxmox
@@ -362,7 +362,10 @@ def init_websocket_proxy(app, sock_instance):
             
             if not all([node, vm_type, host, username, password, proxmox_port]):
                 logger.error(f"Missing VNC session data for VM {vmid}. Keys found: {[k for k in session.keys() if f'vnc_{vmid}' in k]}")
-                ws.close(reason="Session expired - please reload console page")
+                try:
+                    ws.close()
+                except Exception:
+                    pass
                 return
             
             logger.info(f"WebSocket opened for VM {vmid} console (node={node}, type={vm_type}, cluster={cluster_id})")
@@ -377,7 +380,11 @@ def init_websocket_proxy(app, sock_instance):
             elif vm_type == 'lxc':
                 vnc_data = proxmox.nodes(node).lxc(vmid).vncproxy.post(websocket=1)
             else:
-                ws.close(reason=f"Unsupported VM type: {vm_type}")
+                logger.error(f"Unsupported VM type: {vm_type}")
+                try:
+                    ws.close()
+                except Exception:
+                    pass
                 return
             
             ticket = vnc_data['ticket']
@@ -392,7 +399,10 @@ def init_websocket_proxy(app, sock_instance):
                 logger.info(f"✓ PVEAuthCookie generated successfully (length={len(pve_auth_cookie)})")
             except Exception as auth_error:
                 logger.error(f"❌ Failed to generate PVEAuthCookie: {auth_error}")
-                ws.close(reason=f"Authentication failed: {str(auth_error)}")
+                try:
+                    ws.close()
+                except Exception:
+                    pass
                 return
             
             # Build Proxmox WebSocket URL with properly encoded ticket
@@ -419,7 +429,10 @@ def init_websocket_proxy(app, sock_instance):
                 logger.info(f"✓ Connected to Proxmox VNC for VM {vmid}")
             except Exception as conn_error:
                 logger.error(f"❌ Failed to connect to Proxmox WebSocket: {conn_error}")
-                ws.close(reason=f"Connection to Proxmox failed: {str(conn_error)}")
+                try:
+                    ws.close()
+                except Exception:
+                    pass
                 return
             
             # Bidirectional forwarding with proper error handling
