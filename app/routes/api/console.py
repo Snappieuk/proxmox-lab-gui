@@ -164,7 +164,7 @@ def api_get_vnc_info(vmid: int):
         }), 500
 
 
-@console_bp.route("/<int:vmid>/view", methods=["GET"])
+@console_bp.route("/<int:vmid>/view2", methods=["GET"])
 @login_required
 def view_console(vmid: int):
     """Serve the custom noVNC console page with embedded authentication."""
