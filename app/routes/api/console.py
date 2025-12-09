@@ -185,9 +185,15 @@ def api_get_vnc_info(vmid: int):
 @login_required
 def get_vnc_ticket(vmid: int):
     """Get VNC ticket from session for VNC authentication."""
+    session_keys = [k for k in session.keys() if 'vnc' in k.lower()]
+    logger.info(f"Ticket request for VM {vmid}, session keys: {session_keys}")
+    
     ticket = session.get(f'vnc_{vmid}_ticket_for_auth')
     if not ticket:
+        logger.error(f"No ticket found in session for VM {vmid}")
         return jsonify({"ok": False, "error": "No ticket found"}), 404
+    
+    logger.info(f"✓ Returning VNC ticket for VM {vmid} (length={len(ticket)})")
     return jsonify({"ok": True, "ticket": ticket})
 
 
