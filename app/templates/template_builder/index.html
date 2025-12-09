@@ -289,14 +289,28 @@
             <form id="upload-iso-form" onsubmit="submitUploadISO(event)">
                 <div class="form-section">
                     <div class="form-row">
+                        <div class="form-col">
+                            <label for="upload-cluster" class="compact-label">Target Cluster</label>
+                            <select id="upload-cluster" class="form-control compact-input" required onchange="loadUploadNodes()">
+                                <option value="">Select Cluster...</option>
+                            </select>
+                        </div>
+                        <div class="form-col">
+                            <label for="upload-node" class="compact-label">Target Node</label>
+                            <select id="upload-node" class="form-control compact-input" required onchange="verifyUploadStorage()">
+                                <option value="">Select Node...</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-row">
                         <div class="form-col" style="grid-column: 1 / -1;">
                             <label for="upload-storage" class="compact-label">Target Storage</label>
-                            <select id="upload-storage" class="form-control compact-input" disabled>
+                            <select id="upload-storage" class="form-control compact-input" required disabled>
                                 <option value="TRUENAS-NFS" selected>TRUENAS-NFS (Global Storage)</option>
                             </select>
-                            <small style="color: #666; margin-top: 0.5rem; display: block;">
-                                ISOs are automatically uploaded to TRUENAS-NFS storage, which is accessible from all nodes.
-                            </small>
+                            <div id="storage-verification" style="margin-top: 0.5rem; padding: 0.5rem; border-radius: 0.375rem; display: none;">
+                                <!-- Status will be inserted here -->
+                            </div>
                         </div>
                     </div>
                     <div class="form-row">
@@ -1267,10 +1281,140 @@ function closeConsoleModal() {
 
 // Upload ISO functions
 async function openUploadISOModal() {
-    // No need to load nodes - we'll auto-detect first available node with TRUENAS-NFS
     const modal = document.getElementById('upload-iso-modal');
     modal.style.display = 'flex';
     modal.style.visibility = 'visible';
+    
+    // Load available clusters
+    await loadUploadClusters();
+}
+
+async function loadUploadClusters() {
+    try {
+        const response = await fetch('/api/clusters');
+        const data = await response.json();
+        
+        const select = document.getElementById('upload-cluster');
+        select.innerHTML = '<option value="">Select Cluster...</option>';
+        
+        if (data.clusters && data.clusters.length > 0) {
+            data.clusters.forEach(cluster => {
+                const option = document.createElement('option');
+                option.value = cluster.id;
+                option.textContent = cluster.name || `Cluster ${cluster.id}`;
+                select.appendChild(option);
+            });
+            
+            // Auto-select current cluster if available
+            if (CURRENT_CLUSTER_ID) {
+                select.value = CURRENT_CLUSTER_ID;
+                await loadUploadNodes();
+            }
+        }
+    } catch (error) {
+        console.error('Failed to load clusters:', error);
+        alert('Failed to load clusters: ' + error.message);
+    }
+}
+
+async function loadUploadNodes() {
+    const clusterId = document.getElementById('upload-cluster').value;
+    const nodeSelect = document.getElementById('upload-node');
+    const storageVerification = document.getElementById('storage-verification');
+    
+    if (!clusterId) {
+        nodeSelect.innerHTML = '<option value="">Select cluster first...</option>';
+        storageVerification.style.display = 'none';
+        return;
+    }
+    
+    nodeSelect.innerHTML = '<option value="">Loading nodes...</option>';
+    
+    try {
+        const response = await fetch(`/api/vm-builder/nodes?cluster_id=${clusterId}`);
+        const data = await response.json();
+        
+        nodeSelect.innerHTML = '<option value="">Select Node...</option>';
+        
+        if (data.ok && data.nodes && data.nodes.length > 0) {
+            data.nodes.forEach(node => {
+                const option = document.createElement('option');
+                option.value = node.node;
+                option.textContent = `${node.node} (${node.status})`;
+                nodeSelect.appendChild(option);
+            });
+            
+            // Auto-select first online node
+            const firstOnline = data.nodes.find(n => n.status === 'online');
+            if (firstOnline) {
+                nodeSelect.value = firstOnline.node;
+                await verifyUploadStorage();
+            }
+        } else {
+            nodeSelect.innerHTML = '<option value="">No nodes available</option>';
+        }
+    } catch (error) {
+        console.error('Failed to load nodes:', error);
+        nodeSelect.innerHTML = '<option value="">Error loading nodes</option>';
+    }
+}
+
+async function verifyUploadStorage() {
+    const clusterId = document.getElementById('upload-cluster').value;
+    const node = document.getElementById('upload-node').value;
+    const storage = document.getElementById('upload-storage').value;
+    const verificationDiv = document.getElementById('storage-verification');
+    
+    if (!node || !storage) {
+        verificationDiv.style.display = 'none';
+        return;
+    }
+    
+    verificationDiv.style.display = 'block';
+    verificationDiv.innerHTML = '<div style="color: #666;">🔄 Verifying storage...</div>';
+    
+    try {
+        const response = await fetch(`/api/vm-builder/storages?cluster_id=${clusterId}`);
+        const data = await response.json();
+        
+        if (data.ok && data.storages) {
+            const storageInfo = data.storages.find(s => 
+                s.node === node && 
+                s.storage === storage
+            );
+            
+            if (storageInfo) {
+                const supportsISO = storageInfo.content && storageInfo.content.includes('iso');
+                if (supportsISO) {
+                    verificationDiv.innerHTML = `
+                        <div style="color: #0b6a0b; background: #d1f4d1; padding: 0.5rem; border-radius: 0.375rem;">
+                            ✅ Storage verified: ${storage} on ${node}
+                            <br><small>Available space: ${storageInfo.avail || 'Unknown'}</small>
+                        </div>
+                    `;
+                } else {
+                    verificationDiv.innerHTML = `
+                        <div style="color: #a80000; background: #ffe5e5; padding: 0.5rem; border-radius: 0.375rem;">
+                            ❌ Storage ${storage} does not support ISO content
+                        </div>
+                    `;
+                }
+            } else {
+                verificationDiv.innerHTML = `
+                    <div style="color: #856404; background: #fff3cd; padding: 0.5rem; border-radius: 0.375rem;">
+                        ⚠️ Storage ${storage} not found on ${node}
+                    </div>
+                `;
+            }
+        }
+    } catch (error) {
+        console.error('Failed to verify storage:', error);
+        verificationDiv.innerHTML = `
+            <div style="color: #a80000; background: #ffe5e5; padding: 0.5rem; border-radius: 0.375rem;">
+                ❌ Failed to verify storage: ${error.message}
+            </div>
+        `;
+    }
 }
 
 function closeUploadISOModal() {
@@ -1286,13 +1430,19 @@ async function submitUploadISO(event) {
     
     const fileInput = document.getElementById('upload-iso-file');
     const file = fileInput.files[0];
+    const clusterId = document.getElementById('upload-cluster').value;
+    const node = document.getElementById('upload-node').value;
+    const storage = document.getElementById('upload-storage').value;
     
     if (!file) {
         alert('Please select an ISO file');
         return;
     }
     
-    const storage = 'TRUENAS-NFS';
+    if (!clusterId || !node || !storage) {
+        alert('Please select cluster, node, and storage');
+        return;
+    }
     
     const submitBtn = document.getElementById('upload-iso-btn');
     const progressDiv = document.getElementById('upload-progress');
@@ -1333,36 +1483,36 @@ async function submitUploadISO(event) {
             alert('Upload endpoint is not accessible. Check server logs.');
         }
         
-        // First, find a node with TRUENAS-NFS storage
-        const nodesResp = await fetch('/api/vm-builder/nodes');
-        const nodesData = await nodesResp.json();
-        
-        if (!nodesData.ok || !nodesData.nodes || nodesData.nodes.length === 0) {
-            throw new Error('No nodes available');
-        }
-        
-        // Use first available node (TRUENAS-NFS is global storage, accessible from all nodes)
-        const node = nodesData.nodes[0].node;
-        
-        progressText.textContent = `Uploading to ${node}...`;
+        progressText.textContent = `Uploading to ${storage} on ${node} (Cluster ${clusterId})...`;
         
         // Create FormData
         const formData = new FormData();
         formData.append('content', file);  // The actual file
         formData.append('node', node);
         formData.append('storage', storage);
-        formData.append('cluster_id', CURRENT_CLUSTER_ID || '');
+        formData.append('cluster_id', clusterId);
         
         console.log('📤 Upload parameters:', {
             filename: file.name,
             size: (file.size / 1048576).toFixed(2) + ' MB',
+            cluster_id: clusterId,
             node: node,
-            storage: storage,
-            cluster_id: CURRENT_CLUSTER_ID
+            storage: storage
         });
         
         // Upload with progress tracking using fetch with ReadableStream
         const xhr = new XMLHttpRequest();
+        
+        // Track state changes
+        xhr.onreadystatechange = function() {
+            console.log('🔄 XHR readyState changed:', xhr.readyState, {
+                0: 'UNSENT',
+                1: 'OPENED', 
+                2: 'HEADERS_RECEIVED',
+                3: 'LOADING',
+                4: 'DONE'
+            }[xhr.readyState], 'Status:', xhr.status);
+        };
         
         // Keep-alive mechanism to prevent connection timeout
         let lastProgressTime = Date.now();
