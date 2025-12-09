@@ -5,7 +5,6 @@ Console API endpoints - noVNC console access for VMs
 import logging
 import urllib.parse
 import ssl
-import websocket
 from flask import Blueprint, jsonify, request, session, render_template
 
 from app.utils.decorators import login_required
@@ -21,10 +20,11 @@ console_bp = Blueprint('console', __name__, url_prefix='/api/console')
 # Try to import flask-sock for WebSocket proxy
 try:
     from flask_sock import Sock
+    import websocket as ws_client
     sock = Sock()
     WEBSOCKET_AVAILABLE = True
 except ImportError:
-    logger.warning("flask-sock not available, WebSocket proxy disabled")
+    logger.warning("flask-sock or websocket-client not available, WebSocket proxy disabled")
     WEBSOCKET_AVAILABLE = False
     sock = None
 
@@ -402,10 +402,10 @@ if WEBSOCKET_AVAILABLE and sock:
             ssl_context.check_hostname = False
             ssl_context.verify_mode = ssl.CERT_NONE
             
-            # Connect to Proxmox WebSocket
-            proxmox_ws = websocket.create_connection(
+            # Connect to Proxmox WebSocket using websocket-client
+            proxmox_ws = ws_client.WebSocket(sslopt={"cert_reqs": ssl.CERT_NONE})
+            proxmox_ws.connect(
                 proxmox_ws_url,
-                sslopt={"cert_reqs": ssl.CERT_NONE},
                 timeout=10,
                 subprotocols=['binary']
             )
@@ -413,7 +413,6 @@ if WEBSOCKET_AVAILABLE and sock:
             logger.info(f"Connected to Proxmox VNC WebSocket for VM {vmid}")
             
             # Proxy data bidirectionally
-            import select
             import threading
             
             def forward_to_proxmox():
@@ -423,17 +422,25 @@ if WEBSOCKET_AVAILABLE and sock:
                         data = ws.receive()
                         if data is None:
                             break
-                        proxmox_ws.send(data, opcode=websocket.ABNF.OPCODE_BINARY if isinstance(data, bytes) else websocket.ABNF.OPCODE_TEXT)
+                        # Send as binary
+                        if isinstance(data, bytes):
+                            proxmox_ws.send_binary(data)
+                        else:
+                            proxmox_ws.send(data)
                 except Exception as e:
                     logger.debug(f"Client->Proxmox forwarding ended: {e}")
                 finally:
-                    proxmox_ws.close()
+                    try:
+                        proxmox_ws.close()
+                    except:
+                        pass
             
             def forward_to_client():
                 """Forward data from Proxmox to client"""
                 try:
                     while True:
-                        data = proxmox_ws.recv()
+                        # Receive from Proxmox
+                        opcode, data = proxmox_ws.recv_data()
                         if not data:
                             break
                         ws.send(data)
