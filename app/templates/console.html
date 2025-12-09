@@ -146,10 +146,12 @@
         const vncPort = {{ vnc_port }};
         const ticket = `{{ ticket | safe }}`;
         
-        // Build WebSocket URL - VNC ticket should be sufficient for authentication
-        // Format: wss://host:8006/api2/json/nodes/{node}/{type}/{vmid}/vncwebsocket?port={port}&vncticket={ticket}
+        // Connect through Nginx proxy at /vnc/ with ticket in query string
+        // This goes through your existing Nginx WebSocket proxy configuration
         const encodedTicket = encodeURIComponent(ticket);
-        const wsUrl = `wss://${host}:${proxmoxPort}/api2/json/nodes/${node}/${vmType}/${vmid}/vncwebsocket?port=${vncPort}&vncticket=${encodedTicket}`;
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const proxyHost = window.location.host; // labs.netlab
+        const wsUrl = `${protocol}//${proxyHost}/vnc/nodes/${node}/${vmType}/${vmid}/vncwebsocket?port=${vncPort}&vncticket=${encodedTicket}`;
         
         console.log('=== noVNC Console Debug Info ===');
         console.log('VMID:', vmid);
@@ -157,8 +159,8 @@
         console.log('VM Type:', vmType);
         console.log('VNC Port:', vncPort);
         console.log('Ticket length:', ticket.length);
-        console.log('Encoded ticket length:', encodedTicket.length);
-        console.log('WebSocket URL (first 120 chars):', wsUrl.substring(0, 120) + '...');
+        console.log('WebSocket URL (first 100 chars):', wsUrl.substring(0, 100) + '...');
+        console.log('Connecting through Nginx proxy at:', window.location.host + '/vnc/');
         
         let rfb;
         
