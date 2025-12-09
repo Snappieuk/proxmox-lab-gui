@@ -68,3 +68,25 @@ def register_blueprints(app):
     logger = logging.getLogger(__name__)
     logger.info(f"Registered vm_builder_bp with URL prefix: {vm_builder_bp.url_prefix}")
     logger.info(f"VM Builder routes: {[rule.rule for rule in app.url_map.iter_rules() if 'vm-builder' in rule.rule]}")
+    
+    # Register 404 handler for undefined routes
+    @app.errorhandler(404)
+    def page_not_found(e):
+        """Handle 404 errors with styled page."""
+        from flask import render_template, request
+        logger.warning(f"404 - Page not found: {request.path}")
+        return render_template('error.html', 
+                             error_title="Page Not Found",
+                             error_message=f"The page '{request.path}' does not exist.",
+                             back_url="/portal"), 404
+    
+    # Register 405 handler for wrong HTTP methods
+    @app.errorhandler(405)
+    def method_not_allowed(e):
+        """Handle 405 errors (wrong HTTP method)."""
+        from flask import request
+        logger.warning(f"405 - Method not allowed: {request.method} {request.path}")
+        return render_template('error.html',
+                             error_title="Method Not Allowed",
+                             error_message=f"The {request.method} method is not allowed for '{request.path}'. Available methods: {e.valid_methods if hasattr(e, 'valid_methods') else 'Unknown'}",
+                             back_url="/portal"), 405
