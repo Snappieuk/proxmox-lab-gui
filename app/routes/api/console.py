@@ -253,27 +253,19 @@ def view_console(vmid: int):
             if not ticket:
                 return "Failed to generate VNC ticket", 500
             
-            logger.info(f"Serving console redirect for VM {vmid} (user: {user})")
+            logger.info(f"Serving console page for VM {vmid} (user: {user})")
             
-            # Build Proxmox console URL with embedded ticket
-            # This opens Proxmox's native noVNC console directly
-            from urllib.parse import quote
-            encoded_ticket = quote(ticket, safe='')
-            
-            proxmox_console_url = (
-                f"https://{cluster_config['host']}:{cluster_config.get('port', 8006)}"
-                f"/?console={vm_type}&novnc=1&vmid={vmid}&vmname={vm_name or vmid}"
-                f"&node={vm_node}&resize=scale"
-            )
-            
-            # Return a simple redirect page with instructions
+            # Render the console template with ticket
             return render_template(
-                'console_redirect.html',
+                'console.html',
                 vmid=vmid,
                 vm_name=vm_name,
-                console_url=proxmox_console_url,
-                proxmox_host=cluster_config['host'],
-                proxmox_port=cluster_config.get('port', 8006)
+                node=vm_node,
+                vm_type=vm_type,
+                host=cluster_config['host'],
+                port=cluster_config.get('port', 8006),
+                vnc_port=vnc_port,
+                ticket=ticket
             )
             
         except Exception as e:
