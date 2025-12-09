@@ -146,9 +146,8 @@
         const vncPort = {{ vnc_port }};
         const ticket = `{{ ticket | safe }}`;
         
-        // Build WebSocket URL - connect DIRECTLY to Proxmox (not through proxy)
-        // Proxmox expects the ticket in a very specific format
-        // Format: wss://proxmox-host:8006/api2/json/nodes/{node}/{type}/{vmid}/vncwebsocket?port={port}&vncticket={ticket}
+        // Build WebSocket URL - VNC ticket should be sufficient for authentication
+        // Format: wss://host:8006/api2/json/nodes/{node}/{type}/{vmid}/vncwebsocket?port={port}&vncticket={ticket}
         const encodedTicket = encodeURIComponent(ticket);
         const wsUrl = `wss://${host}:${proxmoxPort}/api2/json/nodes/${node}/${vmType}/${vmid}/vncwebsocket?port=${vncPort}&vncticket=${encodedTicket}`;
         
@@ -159,7 +158,7 @@
         console.log('VNC Port:', vncPort);
         console.log('Ticket length:', ticket.length);
         console.log('Encoded ticket length:', encodedTicket.length);
-        console.log('WebSocket URL (via proxy, first 120 chars):', wsUrl.substring(0, 120) + '...');
+        console.log('WebSocket URL (first 120 chars):', wsUrl.substring(0, 120) + '...');
         
         let rfb;
         

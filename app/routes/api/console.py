@@ -264,29 +264,9 @@ def view_console(vmid: int):
             proxmox_host = cluster_config['host']
             proxmox_port = cluster_config.get('port', 8006)
             
-            # Get the Proxmox authentication ticket/cookie from the API connection
-            # This allows the WebSocket to authenticate using the admin credentials
-            try:
-                # Get auth ticket for Proxmox admin user
-                auth_user = cluster_config['user']
-                auth_password = cluster_config['password']
-                
-                # Login to get cookie - same as proxmox library does
-                auth_response = proxmox.access.ticket.post(username=auth_user, password=auth_password)
-                auth_ticket = auth_response['ticket']
-                csrf_token = auth_response['CSRFPreventionToken']
-                
-                logger.info(f"Got Proxmox auth ticket for {auth_user}")
-                
-            except Exception as auth_e:
-                logger.warning(f"Failed to get Proxmox auth ticket: {auth_e}, will use VNC ticket only")
-                auth_ticket = None
-                csrf_token = None
-            
             # Render console page with direct WebSocket connection to Proxmox
-            # Pass both the VNC ticket AND the auth cookie for authentication
-            from flask import make_response
-            response = make_response(render_template(
+            # The VNC ticket in the URL should be sufficient for authentication
+            return render_template(
                 'console.html',
                 vmid=vmid,
                 vm_name=vm_name or f"VM {vmid}",
@@ -295,24 +275,8 @@ def view_console(vmid: int):
                 host=proxmox_host,
                 port=proxmox_port,
                 vnc_port=vnc_port,
-                ticket=ticket,
-                auth_ticket=auth_ticket,
-                csrf_token=csrf_token
-            ))
-            
-            # Set Proxmox authentication cookie if we got it
-            if auth_ticket:
-                # Set the PVEAuthCookie that Proxmox uses for authentication
-                response.set_cookie(
-                    'PVEAuthCookie',
-                    auth_ticket,
-                    domain=proxmox_host,
-                    secure=True,
-                    httponly=True,
-                    samesite='None'
-                )
-            
-            return response
+                ticket=ticket
+            )
             
         except Exception as e:
             logger.error(f"Failed to generate VNC ticket for VM {vmid}: {e}")
