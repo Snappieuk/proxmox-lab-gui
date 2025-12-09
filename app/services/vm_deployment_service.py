@@ -386,7 +386,7 @@ def _sync_isos_background(cluster_id: str, app=None):
                 node_name = node['node']
                 try:
                     # Get storages available on THIS specific node (not cluster-wide)
-                        storages = proxmox.nodes(node_name).storage.get()
+                    storages = proxmox.nodes(node_name).storage.get()
                     
                     for storage in storages:
                         storage_name = storage['storage']
