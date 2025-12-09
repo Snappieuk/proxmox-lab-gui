@@ -7,3 +7,4 @@ python-dotenv
 paramiko
 simple-websocket
 wsproto
+websocket-client

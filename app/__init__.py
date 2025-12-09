@@ -61,9 +61,16 @@ def create_app(config=None):
         from flask_sock import Sock
         sock = Sock(app)
         
-        # Initialize WebSocket routes
+        # Initialize SSH WebSocket routes
         from app.routes.api.ssh import init_websocket
         init_websocket(app, sock)
+        
+        # Initialize console WebSocket proxy
+        from app.routes.api.console import sock as console_sock
+        if console_sock:
+            console_sock.init_app(app)
+            logger.info("Console WebSocket proxy ENABLED")
+        
         logger.info("WebSocket support ENABLED (flask-sock loaded)")
     except ImportError as e:
         logger.warning(f"WebSocket support DISABLED (flask-sock not available): {e}")

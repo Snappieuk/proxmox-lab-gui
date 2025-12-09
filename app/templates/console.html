@@ -146,21 +146,19 @@
         const vncPort = {{ vnc_port }};
         const ticket = `{{ ticket | safe }}`;
         
-        // Build WebSocket URL - connect directly to Proxmox WebSocket endpoint
-        // Encode the ticket properly for URL
+        // Build WebSocket URL to Flask proxy (same origin, avoids SSL cert issues)
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const flaskHost = window.location.host;
         const encodedTicket = encodeURIComponent(ticket);
-        const path = `api2/json/nodes/${node}/${vmType}/${vmid}/vncwebsocket?port=${vncPort}&vncticket=${encodedTicket}`;
-        const wsUrl = `wss://${host}:${proxmoxPort}/${path}`;
+        const wsUrl = `${protocol}//${flaskHost}/api/console/${vmid}/ws?node=${node}&type=${vmType}&port=${vncPort}&ticket=${encodedTicket}`;
         
         console.log('=== noVNC Console Debug Info ===');
         console.log('VMID:', vmid);
         console.log('Node:', node);
         console.log('VM Type:', vmType);
-        console.log('Proxmox Host:', host);
-        console.log('Proxmox Port:', proxmoxPort);
         console.log('VNC Port:', vncPort);
         console.log('Ticket length:', ticket.length);
-        console.log('WebSocket URL (first 120 chars):', wsUrl.substring(0, 120) + '...');
+        console.log('Using Flask WebSocket proxy:', wsUrl.replace(/ticket=[^&]+/, 'ticket=<REDACTED>'));
         
         let rfb;
         
@@ -197,14 +195,12 @@
                 
                 // Provide helpful error messages
                 let helpText = '';
-                if (reason.includes('SSL') || reason.includes('certificate') || reason.includes('1006')) {
-                    helpText = 'This is likely due to self-signed SSL certificates. The browser blocked the WebSocket connection.<br><br>' +
-                               '<strong>To fix:</strong> Open <a href="https://' + host + ':' + proxmoxPort + '" target="_blank">https://' + host + ':' + proxmoxPort + '</a> ' +
-                               'in a new tab, accept the certificate warning, then try the console again.';
-                } else if (reason.includes('timeout') || reason.includes('ETIMEDOUT')) {
-                    helpText = 'Connection timed out. Check that the Proxmox server is reachable and port ' + proxmoxPort + ' is accessible.';
-                } else if (reason.includes('401') || reason.includes('403')) {
+                if (reason.includes('401') || reason.includes('403')) {
                     helpText = 'Authentication failed. The VNC ticket may have expired. Try closing this window and opening the console again.';
+                } else if (reason.includes('timeout') || reason.includes('ETIMEDOUT')) {
+                    helpText = 'Connection timed out. Check that the VM is running and the Proxmox server is reachable.';
+                } else if (reason.includes('1006')) {
+                    helpText = 'Connection was closed unexpectedly. The VM may have stopped or the VNC service is not responding.';
                 }
                 
                 showError('Connection failed: ' + reason, helpText);
@@ -218,16 +214,14 @@
         
         function securityFailure(e) {
             console.error('🔒 Security failure:', e.detail);
-            const reason = e.detail.reason || 'SSL/TLS verification failed';
-            showError('Security error: ' + reason, 
-                     'This is expected with self-signed certificates. Open <a href="https://' + host + ':' + proxmoxPort + '" target="_blank">https://' + host + ':' + proxmoxPort + '</a> ' +
-                     'in a new tab and accept the certificate, then try again.');
+            const reason = e.detail.reason || 'Security verification failed';
+            showError('Security error: ' + reason, 'This is unexpected when using the Flask proxy. Check server logs.');
         }
         
         try {
-            console.log('🔌 Initializing noVNC connection...');
+            console.log('🔌 Initializing noVNC connection via Flask proxy...');
             
-            // Create RFB connection
+            // Create RFB connection to Flask proxy
             rfb = new RFB(document.getElementById('screen'), wsUrl, {
                 shared: true,
                 repeaterID: '',
@@ -246,7 +240,7 @@
             rfb.viewOnly = false;
             rfb.focusOnClick = true;
             
-            console.log('✅ noVNC RFB connection initialized, attempting to connect...');
+            console.log('✅ noVNC RFB connection initialized, attempting to connect via proxy...');
             
         } catch (err) {
             console.error('❌ Failed to create RFB connection:', err);
