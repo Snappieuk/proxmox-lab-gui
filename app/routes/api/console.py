@@ -104,13 +104,34 @@ def api_get_vnc_info(vmid: int):
                 "error": "Cluster configuration not found"
             }), 500
         
-        # Build noVNC URL
+        # Generate VNC ticket from Proxmox API
+        try:
+            if vm_type == 'kvm':
+                # For QEMU VMs
+                ticket_data = proxmox.nodes(vm_node).qemu(vmid).vncproxy.post(websocket=1)
+            else:
+                # For LXC containers
+                ticket_data = proxmox.nodes(vm_node).lxc(vmid).vncproxy.post(websocket=1)
+            
+            ticket = ticket_data.get('ticket')
+            vnc_port = ticket_data.get('port')
+            
+            if not ticket:
+                raise Exception("Failed to generate VNC ticket")
+                
+        except Exception as e:
+            logger.error(f"Failed to generate VNC ticket for VM {vmid}: {e}")
+            return jsonify({
+                "ok": False,
+                "error": f"Failed to generate console ticket: {str(e)}"
+            }), 500
+        
+        # Build noVNC URL with ticket
         host = cluster_config['host']
         port = cluster_config.get('port', 8006)
         
-        # The noVNC console URL format for Proxmox
-        # Note: This requires authentication, so we'll use the Proxmox web UI console URL
-        console_url = f"https://{host}:{port}/?console={vm_type}&novnc=1&vmid={vmid}&vmname={vm_name}&node={vm_node}&resize=scale"
+        # The noVNC console URL format for Proxmox with authentication
+        console_url = f"https://{host}:{port}/?console={vm_type}&novnc=1&vmid={vmid}&vmname={vm_name}&node={vm_node}&resize=scale&port={vnc_port}&path=api2/json/nodes/{vm_node}/{vm_type}/{vmid}/vncwebsocket"
         
         return jsonify({
             "ok": True,
@@ -120,7 +141,9 @@ def api_get_vnc_info(vmid: int):
             "vm_name": vm_name,
             "vm_type": vm_type,
             "host": host,
-            "port": port
+            "port": port,
+            "ticket": ticket,
+            "vnc_port": vnc_port
         })
         
     except Exception as e:
