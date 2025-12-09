@@ -1292,6 +1292,14 @@ async function submitUploadISO(event) {
         return;
     }
     
+    // Warn about large files
+    const fileSizeMB = file.size / (1024 * 1024);
+    if (fileSizeMB > 1000) {
+        if (!confirm(`This ISO is ${fileSizeMB.toFixed(0)}MB. Large uploads may fail with Flask's built-in server.\n\nFor production, use gunicorn or nginx.\n\nContinue anyway?`)) {
+            return;
+        }
+    }
+    
     const storage = 'TRUENAS-NFS';
     
     const submitBtn = document.getElementById('upload-iso-btn');
@@ -1308,6 +1316,18 @@ async function submitUploadISO(event) {
     progressText.textContent = 'Preparing upload...';
     
     try {
+        // Test if server is reachable first
+        console.log('Testing server connectivity...');
+        try {
+            const testResp = await fetch('/api/vm-builder/test');
+            const testData = await testResp.json();
+            console.log('Server test response:', testData);
+        } catch (testError) {
+            console.error('Server test failed:', testError);
+            alert('Cannot reach server. Please check if Flask is running.');
+            throw new Error('Server unreachable');
+        }
+        
         // First, find a node with TRUENAS-NFS storage
         const nodesResp = await fetch('/api/vm-builder/nodes');
         const nodesData = await nodesResp.json();
@@ -1443,6 +1463,10 @@ async function submitUploadISO(event) {
             cluster_id: formData.get('cluster_id'),
             fileSize: file.size
         });
+        
+        // Add content type for ISO
+        formData.append('content', 'iso');
+        
         xhr.send(formData);
         
     } catch (error) {

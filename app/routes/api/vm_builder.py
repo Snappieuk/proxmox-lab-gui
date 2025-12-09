@@ -423,27 +423,42 @@ def api_upload_iso():
         
         logger.info(f"Uploading ISO {file.filename} to {node}:{storage}")
         
-        # Get file size for logging
-        file.stream.seek(0, 2)  # Seek to end
-        file_size = file.stream.tell()
-        file.stream.seek(0)  # Reset to beginning
-        logger.info(f"ISO file size: {file_size / (1024*1024):.2f} MB")
-        
-        # Use proxmoxer's native upload method
+        # Use streaming upload to avoid loading entire file into memory
         try:
-            logger.info(f"Using proxmoxer native upload to {node}:{storage}")
+            from app.models import Cluster
+            import requests
             
-            # Read file content
-            file_content = file.stream.read()
-            logger.info(f"Read {len(file_content)} bytes from file stream")
+            # Get cluster config for direct Proxmox upload
+            cluster = Cluster.query.filter_by(id=cluster_id).first()
+            if not cluster:
+                raise Exception("Cluster configuration not found")
             
-            # Use proxmoxer's built-in upload
-            result = proxmox.nodes(node).storage(storage).upload.post(
-                content=file_content,
-                filename=file.filename
+            # Build Proxmox upload URL
+            upload_url = f"https://{cluster.host}:{cluster.port}/api2/json/nodes/{node}/storage/{storage}/upload"
+            logger.info(f"Proxying upload directly to Proxmox: {upload_url}")
+            
+            # Stream the file directly to Proxmox without loading into memory
+            files = {'filename': (file.filename, file.stream, 'application/octet-stream')}
+            data = {'content': 'iso'}
+            
+            response = requests.post(
+                upload_url,
+                auth=(cluster.user, cluster.password),
+                files=files,
+                data=data,
+                verify=cluster.verify_ssl,
+                timeout=(30, 3600),  # 1 hour timeout for large ISOs
+                stream=False
             )
             
-            logger.info(f"Proxmoxer upload result: {result}")
+            if response.status_code != 200:
+                error_text = response.text[:500]
+                logger.error(f"Proxmox upload failed: {response.status_code} - {error_text}")
+                raise Exception(f"Proxmox API error {response.status_code}: {error_text}")
+            
+            result = response.json()
+            logger.info(f"Upload successful: {result}")
+            file_size = file.stream.tell()  # Get uploaded size
             
             # Cache the uploaded ISO in database immediately
             try:
