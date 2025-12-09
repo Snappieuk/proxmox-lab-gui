@@ -385,9 +385,20 @@ def init_websocket_proxy(app, sock_instance):
                 proxmox_ws.connect(
                     proxmox_ws_url,
                     cookie=f"PVEAuthCookie={pve_auth_cookie}",
-                    suppress_origin=True
+                    suppress_origin=True,
+                    timeout=10
                 )
                 logger.info(f"✓ Connected to Proxmox VNC for VM {vmid}")
+                
+                # Test: receive first few bytes to confirm VNC stream started
+                try:
+                    test_data = proxmox_ws.recv_data(timeout=2)
+                    logger.info(f"✓ Received initial VNC data: {len(test_data[1])} bytes, opcode={test_data[0]}")
+                    # Send this initial data to browser
+                    ws.send(test_data[1])
+                except Exception as test_error:
+                    logger.warning(f"No initial VNC data received (may be normal): {test_error}")
+                
             except Exception as conn_error:
                 logger.error(f"❌ Failed to connect to Proxmox WebSocket: {conn_error}")
                 try:
