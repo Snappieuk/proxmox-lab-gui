@@ -14,6 +14,16 @@ logger = logging.getLogger(__name__)
 
 vm_builder_bp = Blueprint('vm_builder', __name__, url_prefix='/api/vm-builder')
 
+# Log blueprint registration
+logger.info(f"VM Builder blueprint created with prefix: /api/vm-builder")
+
+
+@vm_builder_bp.before_request
+def log_request():
+    """Log all requests to this blueprint."""
+    logger.info(f"[VM Builder Blueprint] Request: {request.method} {request.path}")
+    logger.info(f"[VM Builder Blueprint] Full URL: {request.url}")
+
 
 @vm_builder_bp.route("/test", methods=["GET"])
 def test_endpoint():

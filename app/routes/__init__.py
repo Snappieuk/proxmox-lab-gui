@@ -63,3 +63,8 @@ def register_blueprints(app):
     app.register_blueprint(api_profile_bp)
     app.register_blueprint(api_publish_template_bp)
     app.register_blueprint(vm_builder_bp)
+    
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"Registered vm_builder_bp with URL prefix: {vm_builder_bp.url_prefix}")
+    logger.info(f"VM Builder routes: {[rule.rule for rule in app.url_map.iter_rules() if 'vm-builder' in rule.rule]}")
