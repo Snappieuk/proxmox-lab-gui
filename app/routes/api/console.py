@@ -254,7 +254,7 @@ def view_console(vmid: int):
                 return "Failed to generate VNC ticket", 500
             
             logger.info(f"=== CONSOLE VIEW DEBUG ===")
-            logger.info(f"Rendering console_novnc.html for VM {vmid}")
+            logger.info(f"Serving console.html with WebSocket for VM {vmid}")
             logger.info(f"User: {user}")
             logger.info(f"VM Type: {vm_type}")
             logger.info(f"Node: {vm_node}")
@@ -264,28 +264,18 @@ def view_console(vmid: int):
             proxmox_host = cluster_config['host']
             proxmox_port = cluster_config.get('port', 8006)
             
-            # Build Proxmox native console URL for iframe embedding
-            # Use the exact same format as Proxmox uses internally
-            from urllib.parse import quote
-            console_url = (
-                f"https://{proxmox_host}:{proxmox_port}/"
-                f"?console={vm_type}&novnc=1&vmid={vmid}"
-                f"&vmname={quote(vm_name or str(vmid))}"
-                f"&node={vm_node}&resize=scale"
-                f"&vncticket={quote(ticket, safe='')}"
-            )
-            
-            logger.info(f"Console URL (first 120 chars): {console_url[:120]}")
-            logger.info(f"Template: console_novnc.html")
-            
-            # Render iframe-based console that loads Proxmox's native console
+            # Render console page with direct WebSocket connection to Proxmox
+            # The ticket will be passed as a query parameter to the WebSocket endpoint
             return render_template(
-                'console_novnc.html',
+                'console.html',
                 vmid=vmid,
                 vm_name=vm_name or f"VM {vmid}",
-                console_url=console_url,
-                proxmox_host=proxmox_host,
-                proxmox_port=proxmox_port
+                node=vm_node,
+                vm_type=vm_type,
+                host=proxmox_host,
+                port=proxmox_port,
+                vnc_port=vnc_port,
+                ticket=ticket
             )
             
         except Exception as e:
