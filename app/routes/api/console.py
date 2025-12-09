@@ -257,13 +257,15 @@ def view_console(vmid: int):
             
             # Render the simple console template
             return render_template(
-                'console_simple.html',
+                'console.html',
                 vmid=vmid,
                 vm_name=vm_name,
                 node=vm_node,
                 vm_type=vm_type,
                 host=cluster_config['host'],
-                port=cluster_config.get('port', 8006)
+                port=cluster_config.get('port', 8006),
+                vnc_port=vnc_port,
+                ticket=ticket
             )
             
         except Exception as e:

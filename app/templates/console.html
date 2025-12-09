@@ -146,19 +146,16 @@
         const vncPort = {{ vnc_port }};
         const ticket = `{{ ticket | safe }}`;
         
-        // Build WebSocket URL to Flask proxy (same origin, avoids SSL cert issues)
-        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const flaskHost = window.location.host;
+        // Build WebSocket URL - connect directly to Proxmox
         const encodedTicket = encodeURIComponent(ticket);
-        const wsUrl = `${protocol}//${flaskHost}/api/console/${vmid}/ws?node=${node}&type=${vmType}&port=${vncPort}&ticket=${encodedTicket}`;
+        const wsUrl = `wss://${host}:${proxmoxPort}/api2/json/nodes/${node}/${vmType}/${vmid}/vncwebsocket?port=${vncPort}&vncticket=${encodedTicket}`;
         
         console.log('=== noVNC Console Debug Info ===');
         console.log('VMID:', vmid);
         console.log('Node:', node);
         console.log('VM Type:', vmType);
         console.log('VNC Port:', vncPort);
-        console.log('Ticket length:', ticket.length);
-        console.log('Using Flask WebSocket proxy:', wsUrl.replace(/ticket=[^&]+/, 'ticket=<REDACTED>'));
+        console.log('WebSocket URL (redacted):', wsUrl.substring(0, 80) + '...');
         
         let rfb;
         
@@ -200,7 +197,11 @@
                 } else if (reason.includes('timeout') || reason.includes('ETIMEDOUT')) {
                     helpText = 'Connection timed out. Check that the VM is running and the Proxmox server is reachable.';
                 } else if (reason.includes('1006')) {
-                    helpText = 'Connection was closed unexpectedly. The VM may have stopped or the VNC service is not responding.';
+                    helpText = '<strong>SSL Certificate not accepted</strong><br><br>' +
+                               '1. Open <a href="https://' + host + ':' + proxmoxPort + '" target="_blank" style="color: #4CAF50; font-weight: bold;">https://' + host + ':' + proxmoxPort + '</a> in a new tab<br>' +
+                               '2. Accept the certificate warning (click Advanced → Accept Risk)<br>' +
+                               '3. Close that tab and click the button below:<br><br>' +
+                               '<button onclick="location.reload()" style="background: #4CAF50; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: bold;">Reload Console</button>';
                 }
                 
                 showError('Connection failed: ' + reason, helpText);
@@ -215,11 +216,15 @@
         function securityFailure(e) {
             console.error('🔒 Security failure:', e.detail);
             const reason = e.detail.reason || 'Security verification failed';
-            showError('Security error: ' + reason, 'This is unexpected when using the Flask proxy. Check server logs.');
+            showError('Security error: ' + reason, 
+                     '<strong>SSL Certificate Issue</strong><br><br>' +
+                     '1. Open <a href="https://' + host + ':' + proxmoxPort + '" target="_blank" style="color: #4CAF50; font-weight: bold;">https://' + host + ':' + proxmoxPort + '</a><br>' +
+                     '2. Accept the certificate<br>' +
+                     '3. <button onclick="location.reload()" style="background: #4CAF50; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: bold; margin-top: 10px;">Reload Console</button>');
         }
         
         try {
-            console.log('🔌 Initializing noVNC connection via Flask proxy...');
+            console.log('🔌 Initializing noVNC connection to Proxmox...');
             
             // Create RFB connection to Flask proxy
             rfb = new RFB(document.getElementById('screen'), wsUrl, {
