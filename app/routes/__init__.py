@@ -34,6 +34,8 @@ from app.routes.template_builder import template_builder_bp
 
 def register_blueprints(app):
     """Register all blueprints with the Flask app."""
+    from flask import render_template, request
+    
     app.register_blueprint(auth_bp)
     app.register_blueprint(portal_bp)
     app.register_blueprint(classes_bp)
@@ -73,20 +75,29 @@ def register_blueprints(app):
     @app.errorhandler(404)
     def page_not_found(e):
         """Handle 404 errors with styled page."""
-        from flask import render_template, request
-        logger.warning(f"404 - Page not found: {request.path}")
-        return render_template('error.html', 
-                             error_title="Page Not Found",
-                             error_message=f"The page '{request.path}' does not exist.",
-                             back_url="/portal"), 404
+        try:
+            logger.warning(f"404 - Page not found: {request.path}")
+            return render_template('error.html', 
+                                 error_title="Page Not Found",
+                                 error_message=f"The page '{request.path}' does not exist.",
+                                 back_url="/portal"), 404
+        except Exception as ex:
+            logger.error(f"Error in 404 handler: {ex}")
+            # Fallback to simple response
+            return f"<h1>404 - Page Not Found</h1><p>The page '{request.path}' does not exist.</p><a href='/portal'>Return to Portal</a>", 404
     
     # Register 405 handler for wrong HTTP methods
     @app.errorhandler(405)
     def method_not_allowed(e):
         """Handle 405 errors (wrong HTTP method)."""
-        from flask import request
-        logger.warning(f"405 - Method not allowed: {request.method} {request.path}")
-        return render_template('error.html',
-                             error_title="Method Not Allowed",
-                             error_message=f"The {request.method} method is not allowed for '{request.path}'. Available methods: {e.valid_methods if hasattr(e, 'valid_methods') else 'Unknown'}",
-                             back_url="/portal"), 405
+        try:
+            logger.warning(f"405 - Method not allowed: {request.method} {request.path}")
+            valid_methods = ', '.join(e.valid_methods) if hasattr(e, 'valid_methods') else 'Unknown'
+            return render_template('error.html',
+                                 error_title="Method Not Allowed",
+                                 error_message=f"The {request.method} method is not allowed for '{request.path}'. Available methods: {valid_methods}",
+                                 back_url="/portal"), 405
+        except Exception as ex:
+            logger.error(f"Error in 405 handler: {ex}")
+            # Fallback to simple response
+            return f"<h1>405 - Method Not Allowed</h1><p>The {request.method} method is not allowed for '{request.path}'.</p><a href='/portal'>Return to Portal</a>", 405
