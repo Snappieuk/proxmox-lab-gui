@@ -366,17 +366,17 @@ def init_websocket_proxy(app, sock_instance):
                     pass
                 return
             
-            # Build Proxmox WebSocket URL with properly encoded ticket
-            from urllib.parse import quote_plus
-            encoded_ticket = quote_plus(ticket)
+            # Build Proxmox WebSocket URL
+            # Don't URL-encode the ticket - websocket-client handles it
             proxmox_ws_url = (
                 f"wss://{host}:{proxmox_port}/api2/json/nodes/{node}/"
-                f"{vm_type}/{vmid}/vncwebsocket?port={vnc_port}&vncticket={encoded_ticket}"
+                f"{vm_type}/{vmid}/vncwebsocket?port={vnc_port}&vncticket={ticket}"
             )
             
             logger.info(f"Connecting to Proxmox VNC WebSocket...")
-            logger.info(f"  URL: {proxmox_ws_url[:80]}...")
-            logger.info(f"  Cookie: PVEAuthCookie={pve_auth_cookie[:20]}...")
+            logger.info(f"  Node: {node}, Type: {vm_type}, VMID: {vmid}, VNC Port: {vnc_port}")
+            logger.info(f"  Ticket (first 30 chars): {ticket[:30]}...")
+            logger.info(f"  Auth Cookie (first 30 chars): {pve_auth_cookie[:30]}...")
             
             # Connect to Proxmox with authentication (disable SSL verification for self-signed certs)
             proxmox_ws = websocket.WebSocket(sslopt={"cert_reqs": ssl.CERT_NONE})
