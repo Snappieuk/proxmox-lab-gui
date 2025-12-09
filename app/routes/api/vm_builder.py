@@ -310,18 +310,15 @@ def api_list_storages():
         }), 500
 
 
-@vm_builder_bp.route("/upload-iso", methods=["POST", "OPTIONS"])
+@vm_builder_bp.route("/upload-iso", methods=["POST"])
 @login_required
 def api_upload_iso():
     """Upload an ISO file to Proxmox storage."""
-    logger.info(f"upload-iso endpoint called with method: {request.method}")
-    
-    # Handle OPTIONS preflight request
-    if request.method == "OPTIONS":
-        return jsonify({"ok": True}), 200
+    logger.info(f"=== ISO UPLOAD ENDPOINT HIT === Method: {request.method}")
     
     try:
         user = require_user()
+        logger.info(f"ISO upload request from user: {user}")
         
         # Check if user is teacher or admin
         is_admin = is_admin_user(user)
