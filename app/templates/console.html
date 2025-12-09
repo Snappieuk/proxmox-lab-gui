@@ -146,12 +146,11 @@
         const vncPort = {{ vnc_port }};
         const ticket = `{{ ticket | safe }}`;
         
-        // Build WebSocket URL - connect through Nginx proxy instead of directly to Proxmox
-        // URL encode the ticket properly for query parameter
+        // Build WebSocket URL - connect DIRECTLY to Proxmox (not through proxy)
+        // Proxmox expects the ticket in a very specific format
+        // Format: wss://proxmox-host:8006/api2/json/nodes/{node}/{type}/{vmid}/vncwebsocket?port={port}&vncticket={ticket}
         const encodedTicket = encodeURIComponent(ticket);
-        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const proxyHost = window.location.host; // labs.netlab
-        const wsUrl = `${protocol}//${proxyHost}/vnc/nodes/${node}/${vmType}/${vmid}/vncwebsocket?port=${vncPort}&vncticket=${encodedTicket}`;
+        const wsUrl = `wss://${host}:${proxmoxPort}/api2/json/nodes/${node}/${vmType}/${vmid}/vncwebsocket?port=${vncPort}&vncticket=${encodedTicket}`;
         
         console.log('=== noVNC Console Debug Info ===');
         console.log('VMID:', vmid);
