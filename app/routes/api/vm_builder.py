@@ -15,6 +15,12 @@ logger = logging.getLogger(__name__)
 vm_builder_bp = Blueprint('vm_builder', __name__, url_prefix='/api/vm-builder')
 
 
+@vm_builder_bp.route("/test", methods=["GET"])
+def test_endpoint():
+    """Test endpoint to verify blueprint is working."""
+    return jsonify({"ok": True, "message": "VM Builder blueprint is working"}), 200
+
+
 @vm_builder_bp.route("/build", methods=["POST"])
 @login_required
 def api_build_vm():
@@ -304,10 +310,16 @@ def api_list_storages():
         }), 500
 
 
-@vm_builder_bp.route("/upload-iso", methods=["POST"])
+@vm_builder_bp.route("/upload-iso", methods=["POST", "OPTIONS"])
 @login_required
 def api_upload_iso():
     """Upload an ISO file to Proxmox storage."""
+    logger.info(f"upload-iso endpoint called with method: {request.method}")
+    
+    # Handle OPTIONS preflight request
+    if request.method == "OPTIONS":
+        return jsonify({"ok": True}), 200
+    
     try:
         user = require_user()
         

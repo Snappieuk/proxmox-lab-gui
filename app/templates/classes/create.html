@@ -191,14 +191,16 @@ document.addEventListener('DOMContentLoaded', async function() {
     const urlParams = new URLSearchParams(window.location.search);
     const preselectedTemplateId = urlParams.get('template');
     
-    await loadClusters();
-    
-    // If template ID was provided, try to select it after templates load
     if (preselectedTemplateId) {
-        console.log('Preselecting template ID:', preselectedTemplateId);
+        console.log('🎯 Template ID from URL:', preselectedTemplateId);
+        console.log('Will pre-select this template after clusters and templates load...');
         // Store for later selection after templates are loaded
         window.preselectedTemplateId = preselectedTemplateId;
+    } else {
+        console.log('ℹ️ No template ID in URL, user will select manually');
     }
+    
+    await loadClusters();
     
     // Handle template selection and checkbox changes
     document.getElementById('template-select').addEventListener('change', function() {
@@ -263,8 +265,11 @@ async function loadTemplates(usePoll = false) {
             
             // Auto-select template if ID was provided in URL
             if (window.preselectedTemplateId) {
+                console.log('🎯 Attempting to pre-select template ID:', window.preselectedTemplateId);
                 await selectTemplateById(window.preselectedTemplateId);
                 delete window.preselectedTemplateId; // Clear after use
+            } else {
+                console.log('ℹ️ No template to pre-select');
             }
         }
         
@@ -280,17 +285,24 @@ async function loadTemplates(usePoll = false) {
 }
 
 async function selectTemplateById(templateId) {
+    console.log('🔍 selectTemplateById called with ID:', templateId);
     try {
         // Fetch template details from database by ID
-        const resp = await fetch(`/api/templates?id=${templateId}`);
+        const url = `/api/templates?id=${templateId}`;
+        console.log('Fetching template from:', url);
+        const resp = await fetch(url);
         const data = await resp.json();
         
+        console.log('Template API response:', data);
+        
         if (!data.ok || !data.templates || data.templates.length === 0) {
-            console.warn('Template not found:', templateId);
+            console.warn('❌ Template not found:', templateId);
             return;
         }
         
         const template = data.templates[0];
+        console.log('✅ Found template:', template.name, 'VMID:', template.proxmox_vmid);
+        
         const selectElement = document.getElementById('template-select');
         
         // Try to find and select the template by VMID
@@ -299,7 +311,7 @@ async function selectTemplateById(templateId) {
         
         if (option) {
             selectElement.value = vmid;
-            console.log('Auto-selected template:', template.name, 'VMID:', vmid);
+            console.log('✅ Auto-selected template:', template.name, 'VMID:', vmid);
             
             // Trigger change event to update UI
             selectElement.dispatchEvent(new Event('change'));
@@ -313,11 +325,11 @@ async function selectTemplateById(templateId) {
             // Remove message after 5 seconds
             setTimeout(() => messageDiv.remove(), 5000);
         } else {
-            console.warn('Template VMID not found in dropdown:', vmid);
+            console.warn('❌ Template VMID not found in dropdown:', vmid, 'Available options:', Array.from(selectElement.options).map(o => o.value));
         }
         
     } catch (e) {
-        console.error('Failed to select template:', e);
+        console.error('❌ Failed to select template:', e);
     }
 }
 

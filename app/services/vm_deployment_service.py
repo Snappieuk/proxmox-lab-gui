@@ -289,33 +289,78 @@ def _deploy_vm_with_iso(
 
 
 def list_available_isos(cluster_id: str) -> Tuple[bool, list, str]:
-    """List available ISO images across all nodes in the cluster (with database cache)."""
+    """List available ISO images across all nodes in the cluster (DATABASE-FIRST architecture).
+    
+    Returns cached ISOs from database immediately. If cache is empty or stale (>5min),
+    triggers background sync but still returns current database state.
+    """
     from app.models import ISOImage, db
     from app.services.proxmox_service import get_proxmox_admin_for_cluster
     from datetime import datetime, timedelta
+    import threading
     
     try:
-        # First, try to return cached ISOs (updated within last 5 minutes)
+        # ALWAYS return from database first (database-first architecture)
+        all_cached_isos = ISOImage.query.filter_by(cluster_id=cluster_id).all()
+        
+        # Check if cache is stale (>5 minutes old)
         five_minutes_ago = datetime.utcnow() - timedelta(minutes=5)
-        cached_isos = ISOImage.query.filter(
-            ISOImage.cluster_id == cluster_id,
-            ISOImage.last_seen >= five_minutes_ago
-        ).all()
+        fresh_isos = [iso for iso in all_cached_isos if iso.last_seen >= five_minutes_ago]
         
-        if cached_isos:
-            logger.info(f"Returning {len(cached_isos)} cached ISOs for cluster {cluster_id}")
-            return True, [iso.to_dict() for iso in cached_isos], f"Found {len(cached_isos)} ISO images (cached)"
+        if not fresh_isos and all_cached_isos:
+            logger.info(f"ISO cache is stale for cluster {cluster_id}, triggering background refresh")
+            # Trigger background sync but still return stale data
+            threading.Thread(target=_sync_isos_background, args=(cluster_id,), daemon=True).start()
+        elif not all_cached_isos:
+            logger.info(f"No cached ISOs for cluster {cluster_id}, triggering immediate sync in background")
+            # No ISOs at all - trigger background sync
+            threading.Thread(target=_sync_isos_background, args=(cluster_id,), daemon=True).start()
         
-        # Cache miss or stale - scan Proxmox and update database
-        logger.info(f"Scanning Proxmox for ISOs in cluster {cluster_id}")
+        # Return whatever we have in database (even if empty or stale)
+        iso_list = [iso.to_dict() for iso in all_cached_isos]
+        logger.info(f"Returning {len(iso_list)} ISOs from database for cluster {cluster_id}")
+        return True, iso_list, f"Found {len(iso_list)} ISO images"
+        
+    except Exception as e:
+        logger.error(f"Failed to list ISOs: {e}", exc_info=True)
+        return False, [], f"Failed to list ISOs: {str(e)}"
+
+
+def trigger_iso_sync_all_clusters():
+    """Trigger ISO sync for all active clusters on app startup."""
+    from app.models import Cluster
+    import threading
+    
+    try:
+        clusters = Cluster.query.filter_by(is_active=True).all()
+        logger.info(f"Triggering ISO sync for {len(clusters)} active clusters")
+        
+        for cluster in clusters:
+            threading.Thread(target=_sync_isos_background, args=(cluster.id,), daemon=True).start()
+            logger.info(f"Started ISO sync thread for cluster {cluster.name} (ID: {cluster.id})")
+    except Exception as e:
+        logger.error(f"Failed to trigger ISO sync on startup: {e}")
+
+
+def _sync_isos_background(cluster_id: str):
+    """Background thread to sync ISOs from Proxmox to database."""
+    from app.models import ISOImage, db
+    from app.services.proxmox_service import get_proxmox_admin_for_cluster
+    from datetime import datetime
+    
+    try:
+        logger.info(f"[ISO Sync] Starting background sync for cluster {cluster_id}")
         
         proxmox = get_proxmox_admin_for_cluster(cluster_id)
         if not proxmox:
-            return False, [], f"Failed to connect to cluster {cluster_id}"
+            logger.error(f"[ISO Sync] Failed to connect to cluster {cluster_id}")
+            return
         
-        isos = []
         seen_volids = set()  # Track unique ISOs to avoid duplicates from shared storage
+        iso_count = 0
         nodes = proxmox.nodes.get()
+        
+        logger.info(f"[ISO Sync] Scanning {len(nodes)} nodes for ISOs")
         
         for node in nodes:
             node_name = node['node']
@@ -349,15 +394,7 @@ def list_available_isos(cluster_id: str) -> Tuple[bool, list, str]:
                                 continue
                             
                             seen_volids.add(volid)
-                            
-                            iso_data = {
-                                'volid': volid,
-                                'name': volid.split('/')[-1],
-                                'size': item.get('size', 0),
-                                'node': node_name,
-                                'storage': storage_name
-                            }
-                            isos.append(iso_data)
+                            iso_count += 1
                             
                             # Update database cache
                             try:
@@ -370,15 +407,16 @@ def list_available_isos(cluster_id: str) -> Tuple[bool, list, str]:
                                 else:
                                     new_iso = ISOImage(
                                         volid=volid,
-                                        name=iso_data['name'],
+                                        name=volid.split('/')[-1],
                                         size=item.get('size', 0),
                                         node=node_name,
                                         storage=storage_name,
                                         cluster_id=cluster_id
                                     )
                                     db.session.add(new_iso)
+                                    logger.debug(f"[ISO Sync] Added new ISO: {volid}")
                             except Exception as db_error:
-                                logger.warning(f"Failed to cache ISO {volid}: {db_error}")
+                                logger.warning(f"[ISO Sync] Failed to cache ISO {volid}: {db_error}")
                                 
                     except Exception as e:
                         # Don't spam warnings for unavailable storage on nodes
@@ -395,16 +433,13 @@ def list_available_isos(cluster_id: str) -> Tuple[bool, list, str]:
         # Commit database changes
         try:
             db.session.commit()
+            logger.info(f"[ISO Sync] Successfully synced {iso_count} ISOs for cluster {cluster_id}")
         except Exception as e:
-            logger.error(f"Failed to commit ISO cache: {e}")
+            logger.error(f"[ISO Sync] Failed to commit ISO cache: {e}")
             db.session.rollback()
         
-        logger.info(f"Found {len(isos)} ISO images across all nodes")
-        return True, isos, f"Found {len(isos)} ISO images"
-        
     except Exception as e:
-        logger.error(f"Failed to list ISOs: {e}", exc_info=True)
-        return False, [], f"Failed to list ISOs: {str(e)}"
+        logger.error(f"[ISO Sync] Failed to sync ISOs: {e}", exc_info=True)
 
 
 def _ensure_virtio_iso(

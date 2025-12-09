@@ -859,6 +859,8 @@ async function loadTemplates() {
 }
 
 function useTemplate(templateId) {
+    console.log('🎯 useTemplate called with template ID:', templateId);
+    console.log('Redirecting to:', `/classes/create?template=${templateId}`);
     // Redirect to class creation with this template
     window.location.href = `/classes/create?template=${templateId}`;
 }
@@ -1324,6 +1326,7 @@ async function submitUploadISO(event) {
         formData.append('content', file);
         formData.append('node', node);
         formData.append('storage', storage);
+        formData.append('cluster_id', CURRENT_CLUSTER_ID || '');
         
         // Upload with progress tracking using fetch with ReadableStream
         const xhr = new XMLHttpRequest();
@@ -1354,15 +1357,22 @@ async function submitUploadISO(event) {
         
         xhr.addEventListener('load', async () => {
             clearInterval(keepAliveInterval);
+            console.log('Upload completed. Status:', xhr.status);
+            console.log('Response text length:', xhr.responseText?.length);
+            console.log('Response preview:', xhr.responseText?.substring(0, 200));
+            
             if (xhr.status === 200) {
                 try {
                     const data = JSON.parse(xhr.responseText);
                     if (data.ok) {
+                        progressText.textContent = 'Upload complete! Processing...';
+                        progressBar.style.width = '100%';
                         alert('✓ ISO uploaded successfully to TRUENAS!');
                         closeUploadISOModal();
                         // Reload ISOs
                         await loadBuildOptions();
                     } else {
+                        console.error('Server returned error:', data.error);
                         alert('Upload failed: ' + (data.error || 'Unknown error'));
                         submitBtn.disabled = false;
                         submitBtn.innerHTML = '<i class="bi bi-upload"></i> Upload ISO';
@@ -1370,14 +1380,22 @@ async function submitUploadISO(event) {
                     }
                 } catch (e) {
                     console.error('Failed to parse response:', e);
-                    alert('Upload completed but response was invalid');
+                    console.error('Response text:', xhr.responseText);
+                    alert('Upload completed but response was invalid. Check console for details.');
                     submitBtn.disabled = false;
                     submitBtn.innerHTML = '<i class="bi bi-upload"></i> Upload ISO';
                     progressDiv.style.display = 'none';
                 }
+            } else if (xhr.status === 0) {
+                // Status 0 typically means network error or CORS issue
+                console.error('XHR status is 0 - connection failed or was aborted');
+                alert('Upload failed: Connection lost.\n\nThis usually means:\n• Reverse proxy timeout (nginx/Apache)\n• Network interruption\n• Server crashed\n\nCheck that your reverse proxy has these settings:\n  client_max_body_size 10G;\n  proxy_read_timeout 1800s;\n  proxy_request_buffering off;');
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = '<i class="bi bi-upload"></i> Upload ISO';
+                progressDiv.style.display = 'none';
             } else {
                 console.error('Upload failed with status:', xhr.status, xhr.responseText);
-                alert(`Upload failed: HTTP ${xhr.status}. ${xhr.responseText || 'Check server logs for details.'}`);
+                alert(`Upload failed: HTTP ${xhr.status}\n\n${xhr.responseText || 'Check server logs for details.'}`);
                 submitBtn.disabled = false;
                 submitBtn.innerHTML = '<i class="bi bi-upload"></i> Upload ISO';
                 progressDiv.style.display = 'none';
@@ -1413,10 +1431,18 @@ async function submitUploadISO(event) {
         });
         
         const uploadStartTime = Date.now();
-        xhr.open('POST', '/api/vm-builder/upload-iso');
+        const uploadUrl = '/api/vm-builder/upload-iso';
+        console.log('Opening XHR connection to:', uploadUrl);
+        xhr.open('POST', uploadUrl);
         xhr.timeout = 1800000; // 30 minute timeout
         
         console.log('Starting upload:', file.name, 'Size:', (file.size / 1048576).toFixed(2), 'MB');
+        console.log('FormData contents:', {
+            node: formData.get('node'),
+            storage: formData.get('storage'),
+            cluster_id: formData.get('cluster_id'),
+            fileSize: file.size
+        });
         xhr.send(formData);
         
     } catch (error) {

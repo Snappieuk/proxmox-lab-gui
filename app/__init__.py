@@ -158,6 +158,11 @@ def create_app(config=None):
     start_auto_shutdown_daemon(app)
     logger.info("Auto-shutdown daemon started")
     
+    # Trigger initial ISO sync for all clusters on startup
+    from app.services.vm_deployment_service import trigger_iso_sync_all_clusters
+    trigger_iso_sync_all_clusters()
+    logger.info("Initial ISO sync triggered for all clusters")
+    
     # Register cleanup handler for SSH connection pool
     import atexit
     from app.services.ssh_executor import _connection_pool
