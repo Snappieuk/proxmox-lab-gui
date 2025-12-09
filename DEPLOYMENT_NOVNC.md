@@ -2,7 +2,18 @@
 
 ## Implementation Complete ✅
 
-The noVNC console feature has been fully implemented using a backend WebSocket proxy architecture. This guide covers deployment and verification.
+The noVNC console feature has been fully implemented using a backend WebSocket proxy architecture with **local noVNC assets** for offline operation.
+
+## Architecture Overview
+
+### Local vs CDN Assets
+- **Previous:** noVNC loaded from `cdn.jsdelivr.net` (required internet access)
+- **Current:** noVNC served from `app/static/novnc/` (fully self-contained)
+- **Benefits:** 
+  - Works in air-gapped/offline environments
+  - No external dependencies
+  - Faster loading (local network)
+  - Version control over noVNC library
 
 ## Changes Made
 
@@ -17,15 +28,34 @@ The noVNC console feature has been fully implemented using a backend WebSocket p
    - Updated WebSocket initialization to call `init_websocket_proxy()`
    - Logs "Console VNC WebSocket proxy ENABLED" on successful init
 
+3. **`app/services/proxmox_api.py`** *(NEW)*
+   - Clean API abstraction layer for Proxmox operations
+   - `get_vnc_ticket(node, vmid, vm_type)` - Generate VNC tickets
+   - `get_auth_ticket(username, password)` - Generate PVEAuthCookie
+   - `find_vm_location(vmid)` - Locate VM across nodes
+   - Well-documented with docstrings and examples
+
 ### Frontend Files Modified
-3. **`app/templates/console.html`**
-   - Changed WebSocket URL from direct Proxmox to Flask proxy
-   - Removed cross-domain cookie setting (no longer needed)
+4. **`app/templates/console.html`**
+   - Changed CSS from CDN to local: `{{ url_for('static', filename='novnc/app/styles/base.css') }}`
+   - Changed JS from CDN to local: `{{ url_for('static', filename='novnc/core/rfb.js') }}`
+   - WebSocket URL points to Flask proxy (not direct Proxmox)
    - Simplified connection logic (no auth handling in frontend)
 
+### Static Assets Added
+5. **`app/static/novnc/`** *(NEW)*
+   - `core/rfb.js` - Main noVNC RFB protocol client (~120KB)
+   - `core/websock.js` - WebSocket wrapper
+   - `core/display.js` - Canvas display handler
+   - `core/input/` - Keyboard/mouse input handlers
+   - `core/decoders/` - VNC encoding decoders (JPEG, PNG, Tight, etc.)
+   - `app/styles/base.css` - noVNC styling (~19KB)
+   - `vendor/` - Third-party dependencies (pako for compression)
+   - **Total size:** ~700KB (minimal production distribution)
+
 ### Documentation Added
-4. **`NOVNC_CONSOLE_IMPLEMENTATION.md`** - Complete architecture documentation
-5. **`DEPLOYMENT_NOVNC.md`** - This file
+6. **`NOVNC_CONSOLE_IMPLEMENTATION.md`** - Complete architecture documentation
+7. **`DEPLOYMENT_NOVNC.md`** - This file (updated)
 
 ## Deployment Steps
 
