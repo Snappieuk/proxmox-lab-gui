@@ -244,9 +244,9 @@
         try {
             console.log('🔌 Initializing noVNC connection to Proxmox...');
             
-            // Create RFB connection to Flask proxy
+            // Create RFB connection to Flask proxy with optimized settings
             rfb = new RFB(document.getElementById('screen'), wsUrl, {
-                shared: true,
+                shared: false,  // Exclusive connection for better performance
                 repeaterID: '',
                 wsProtocols: ['binary']
             });
@@ -257,10 +257,16 @@
             rfb.addEventListener("credentialsrequired", credentialsAreRequired);
             rfb.addEventListener("securityfailure", securityFailure);
             
-            // Configure display
-            rfb.scaleViewport = true;
-            rfb.resizeSession = true;
+            // Configure display for better performance
+            rfb.scaleViewport = true;  // Scale to fit viewport
+            rfb.resizeSession = false;  // Don't resize VM display (causes lag)
             rfb.viewOnly = false;
+            rfb.clipViewport = false;  // Show full screen
+            rfb.dragViewport = false;  // Disable drag (not needed when scaled)
+            
+            // Enable compression for better performance over network
+            rfb.compressionLevel = 2;  // 0-9, lower = faster but more bandwidth
+            rfb.qualityLevel = 6;  // 0-9, higher = better quality
             rfb.focusOnClick = true;
             
             console.log('✅ noVNC RFB connection initialized, attempting to connect via proxy...');

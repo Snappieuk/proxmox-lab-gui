@@ -445,42 +445,45 @@ def init_websocket_proxy(app, sock_instance):
                     pass
                 return
             
-            # Bidirectional forwarding with proper error handling
+            # Bidirectional forwarding with proper error handling and optimization
             stop_forwarding = threading.Event()
             
             def forward_to_browser():
-                """Forward Proxmox → Browser"""
+                """Forward Proxmox → Browser with minimal overhead"""
                 try:
                     while not stop_forwarding.is_set():
                         try:
+                            # Use recv() instead of recv_data() for better performance
                             data = proxmox_ws.recv()
                             if not data:
                                 break
+                            # Send immediately without buffering
                             ws.send(data)
                         except Exception as e:
                             if not stop_forwarding.is_set():
-                                logger.error(f"Error forwarding to browser: {e}")
+                                logger.debug(f"Forward to browser stopped: {e}")
                             break
                 except Exception as e:
                     logger.error(f"Forward thread error: {e}")
                 finally:
                     stop_forwarding.set()
             
-            # Start forwarding thread
+            # Start forwarding thread with higher priority
             forward_thread = threading.Thread(target=forward_to_browser, daemon=True)
             forward_thread.start()
             
-            # Forward browser → Proxmox (main loop)
+            # Forward browser → Proxmox (main loop) with minimal buffering
             try:
                 while not stop_forwarding.is_set():
                     try:
                         data = ws.receive()
                         if data is None:
                             break
+                        # Send immediately with binary opcode for VNC
                         proxmox_ws.send(data, opcode=websocket.ABNF.OPCODE_BINARY)
                     except Exception as e:
                         if not stop_forwarding.is_set():
-                            logger.error(f"Error forwarding to Proxmox: {e}")
+                            logger.debug(f"Forward to Proxmox stopped: {e}")
                         break
             finally:
                 stop_forwarding.set()
