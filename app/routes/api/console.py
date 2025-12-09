@@ -378,15 +378,14 @@ def init_websocket_proxy(app, sock_instance):
             logger.info(f"Connecting to Proxmox VNC WebSocket...")
             logger.info(f"  Node: {node}, Type: {vm_type}, VMID: {vmid}, VNC Port: {vnc_port}")
             logger.info(f"  Ticket (first 30 chars): {ticket[:30]}...")
-            logger.info(f"  Auth Cookie (first 30 chars): {pve_auth_cookie[:30]}...")
             
             # Connect to Proxmox with authentication (disable SSL verification for self-signed certs)
+            # IMPORTANT: Do NOT send PVEAuthCookie when using vncticket - the ticket IS the auth
             proxmox_ws = websocket.WebSocket(sslopt={"cert_reqs": ssl.CERT_NONE})
             
             try:
                 proxmox_ws.connect(
                     proxmox_ws_url,
-                    cookie=f"PVEAuthCookie={pve_auth_cookie}",
                     suppress_origin=True,
                     timeout=10
                 )
