@@ -225,8 +225,8 @@
                 console.log('🔄 VNC session ended (ticket expired) - reconnecting immediately...');
                 updateStatus('connecting', 'Reconnecting...');
                 
-                // Immediate reconnect (no delay)
-                location.reload();
+                // Force hard reload (bypass cache)
+                location.reload(true);
                 return;
             }
             
