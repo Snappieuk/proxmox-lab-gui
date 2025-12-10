@@ -291,7 +291,7 @@
             
             // Balance speed and bandwidth with minimal compression (optimized for LAN)
             rfb.compressionLevel = 1;  // 0-9, lower = faster (1 = minimal compression, good for LAN)
-            rfb.qualityLevel = 5;  // 0-9, higher = better quality (5 = good balance for responsive performance)
+            rfb.qualityLevel = 1;  // 0-9, higher = better quality (5 = good balance for responsive performance)
             rfb.focusOnClick = true;
             
             console.log('✅ noVNC RFB connection initialized, attempting to connect via proxy...');
