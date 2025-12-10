@@ -6,13 +6,13 @@ After=network.target
 Type=exec
 User=root
 Group=root
-WorkingDirectory=/root/proxmox-lab-gui
-Environment="PATH=/root/proxmox-lab-gui/venv/bin:/usr/local/bin:/usr/bin:/bin"
+WorkingDirectory=/root/rdp-gen
+Environment="PATH=/root/rdp-gen/venv/bin:/usr/local/bin:/usr/bin:/bin"
 Environment="PVE_VERIFY=False"
 Environment="PYTHONUNBUFFERED=1"
-EnvironmentFile=-/root/proxmox-lab-gui/.env
+EnvironmentFile=-/root/rdp-gen/.env
 # Run Flask using the new modular entry point
-ExecStart=/root/proxmox-lab-gui/venv/bin/python3 /root/proxmox-lab-gui/run.py
+ExecStart=/root/rdp-gen/venv/bin/python3 /root/rdp-gen/run.py
 ExecReload=/bin/kill -s HUP $MAINPID
 Restart=always
 RestartSec=3
