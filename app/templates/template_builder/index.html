@@ -49,6 +49,23 @@
         </div>
     </div>
 
+    <!-- My VMs Section (for in-progress VM builds) -->
+    <div class="card" style="margin-top: 1.5rem;">
+        <div class="card-header">
+            <h2 style="font-size: 1.3rem; margin: 0;">
+                <i class="bi bi-pc-display"></i> My VMs
+            </h2>
+        </div>
+        <div class="card-body">
+            <div id="vms-loading" style="text-align: center; padding: 2rem; color: #666;">
+                <i class="bi bi-hourglass-split"></i> Loading VMs...
+            </div>
+            <div id="vms-list" style="display: none;">
+                <!-- VMs will be loaded here via JavaScript -->
+            </div>
+        </div>
+    </div>
+
     <!-- Existing Templates Section -->
     <div class="card" style="margin-top: 1.5rem;">
         <div class="card-header">
@@ -706,6 +723,16 @@
 .btn-icon.btn-danger:hover {
     background: #c82333;
 }
+
+.status-running {
+    color: #4CAF50;
+    font-weight: 500;
+}
+
+.status-stopped {
+    color: #757575;
+    font-weight: 500;
+}
 </style>
 
 <script>
@@ -880,6 +907,142 @@ function editTemplate(templateId) {
     alert(`Edit Template ${templateId} - Feature coming soon!`);
 }
 
+// Load My VMs (non-template VMs created via builder)
+async function loadMyVMs() {
+    const loadingDiv = document.getElementById('vms-loading');
+    const listDiv = document.getElementById('vms-list');
+    
+    console.log('🔄 loadMyVMs() called');
+    
+    if (!loadingDiv) {
+        console.error('❌ vms-loading element not found!');
+        return;
+    }
+    
+    if (!listDiv) {
+        console.error('❌ vms-list element not found!');
+        return;
+    }
+    
+    try {
+        console.log('🔄 Fetching VMs from /api/vms...');
+        
+        const response = await fetch('/api/vms');
+        
+        if (!response.ok) {
+            console.error(`❌ HTTP error ${response.status}: ${response.statusText}`);
+            loadingDiv.innerHTML = `<p style="color: #d32f2f;">Failed to load VMs (HTTP ${response.status})</p>
+                                    <button onclick="loadMyVMs()" class="btn-secondary" style="margin-top: 1rem;">
+                                        <i class="bi bi-arrow-clockwise"></i> Retry
+                                    </button>`;
+            return;
+        }
+        
+        const data = await response.json();
+        console.log('📦 VMs API response:', data);
+        
+        if (!data.ok) {
+            console.error('❌ API returned error:', data.error);
+            loadingDiv.innerHTML = `<p style="color: #d32f2f;">Failed to load VMs: ${data.error || 'Unknown error'}</p>`;
+            return;
+        }
+        
+        if (!Array.isArray(data.data)) {
+            console.error('❌ API response does not contain valid VM array:', data);
+            loadingDiv.innerHTML = `<p style="color: #d32f2f;">Invalid response format</p>`;
+            return;
+        }
+        
+        // Filter to non-template VMs only
+        const vms = data.data.filter(vm => !vm.is_template);
+        
+        console.log(`✅ Successfully loaded ${vms.length} VMs (${data.data.length} total, ${data.data.length - vms.length} templates excluded)`);
+        loadingDiv.style.display = 'none';
+        listDiv.style.display = 'block';
+        
+        if (vms.length === 0) {
+            listDiv.innerHTML = '<p style="text-align: center; color: #666; padding: 2rem;">No VMs yet. Use "Build VM from Scratch" to create one.</p>';
+            return;
+        }
+        
+        listDiv.innerHTML = vms.map(vm => {
+            const statusClass = vm.status === 'running' ? 'status-running' : 'status-stopped';
+            const statusIcon = vm.status === 'running' ? 'play-circle-fill' : 'stop-circle';
+            const statusText = vm.status === 'running' ? 'Running' : 'Stopped';
+            
+            return `
+            <div class="template-item">
+                <div class="template-icon">
+                    <i class="bi bi-pc-display"></i>
+                </div>
+                <div class="template-info">
+                    <div class="template-name">${vm.name || 'VM ' + vm.vmid}</div>
+                    <div class="template-meta">
+                        <span class="${statusClass}">
+                            <i class="bi bi-${statusIcon}"></i> ${statusText}
+                        </span> | 
+                        VMID: ${vm.vmid} | 
+                        Node: ${vm.node || 'N/A'} | 
+                        ${vm.cores || 2} cores, ${vm.memory || 2048}MB RAM
+                        ${vm.ip && vm.ip !== 'N/A' ? ` | IP: ${vm.ip}` : ''}
+                    </div>
+                </div>
+                <div class="template-actions">
+                    <button class="btn-icon" onclick="openConsole(${vm.vmid}, '${vm.name}')">
+                        <i class="bi bi-terminal"></i> Console
+                    </button>
+                    ${vm.status !== 'running' ? `
+                    <button class="btn-icon btn-secondary" onclick="startVM(${vm.vmid})">
+                        <i class="bi bi-play-fill"></i> Start
+                    </button>
+                    ` : `
+                    <button class="btn-icon btn-secondary" onclick="stopVM(${vm.vmid})">
+                        <i class="bi bi-stop-fill"></i> Stop
+                    </button>
+                    `}
+                </div>
+            </div>
+        `}).join('');
+        
+    } catch (error) {
+        console.error('❌ Exception loading VMs:', error);
+        console.error('Stack trace:', error.stack);
+        if (loadingDiv) {
+            loadingDiv.innerHTML = '<p style="color: #d32f2f;">Failed to load VMs: ' + error.message + '</p>';
+        }
+    }
+}
+
+async function startVM(vmid) {
+    try {
+        const response = await fetch(`/api/vm/${vmid}/start`, { method: 'POST' });
+        const data = await response.json();
+        if (data.ok) {
+            alert(`VM ${vmid} is starting...`);
+            setTimeout(() => loadMyVMs(), 2000); // Refresh after 2 seconds
+        } else {
+            alert(`Failed to start VM: ${data.error}`);
+        }
+    } catch (error) {
+        alert(`Failed to start VM: ${error.message}`);
+    }
+}
+
+async function stopVM(vmid) {
+    try {
+        const response = await fetch(`/api/vm/${vmid}/stop`, { method: 'POST' });
+        const data = await response.json();
+        if (data.ok) {
+            alert(`VM ${vmid} is stopping...`);
+            setTimeout(() => loadMyVMs(), 2000); // Refresh after 2 seconds
+        } else {
+            alert(`Failed to stop VM: ${data.error}`);
+        }
+    } catch (error) {
+        alert(`Failed to stop VM: ${error.message}`);
+    }
+}
+
 // Load templates on page load
 document.addEventListener('DOMContentLoaded', function() {
     console.log('🎬 DOMContentLoaded event fired');
@@ -931,6 +1094,7 @@ document.addEventListener('DOMContentLoaded', function() {
     
     console.log('📋 Starting template load...');
     loadTemplates();
+    loadMyVMs();
     // Pre-load templates for migration modal
     loadTemplatesForMigration();
     console.log('🎉 Template builder initialization complete');

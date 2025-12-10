@@ -22,6 +22,10 @@ logger = logging.getLogger(__name__)
 
 console_bp = Blueprint('console', __name__, url_prefix='/api/console')
 
+# Server-side cache for VNC connection data (to avoid session cookie overflow)
+# Key: vmid, Value: dict with connection details
+_vnc_connection_cache = {}
+
 # Try to import websocket support
 try:
     from flask_sock import Sock
@@ -189,11 +193,13 @@ def get_vnc_ticket(vmid: int):
     session_keys = [k for k in session.keys() if 'vnc' in k.lower()]
     logger.info(f"Ticket request for VM {vmid}, session keys: {session_keys}")
     
-    ticket = session.get(f'vnc_{vmid}_ticket_for_auth')
-    if not ticket:
-        logger.error(f"No ticket found in session for VM {vmid}")
+    # Get ticket from server-side cache instead of session
+    conn_data = _vnc_connection_cache.get(vmid)
+    if not conn_data or 'ticket' not in conn_data:
+        logger.error(f"No ticket found in cache for VM {vmid}")
         return jsonify({"ok": False, "error": "No ticket found"}), 404
     
+    ticket = conn_data['ticket']
     logger.info(f"✓ Returning VNC ticket for VM {vmid} (length={len(ticket)})")
     return jsonify({"ok": True, "ticket": ticket})
 
@@ -282,28 +288,31 @@ def view_console(vmid: int):
         
         # Generate a temporary VNC ticket NOW for the frontend to use
         # This ticket will be regenerated in the WebSocket handler (which is fine - both are valid)
+        # Store connection details in server-side cache instead of session
+        # This avoids session cookie overflow when opening multiple consoles
+        _vnc_connection_cache[vmid] = {
+            'cluster_id': cluster_id,
+            'node': vm_node,
+            'vm_type': vm_type,
+            'host': proxmox_host,
+            'proxmox_port': proxmox_port,
+            'username': username,
+            'password': password
+        }
+        
+        # Only store a small reference in session
+        session[f'vnc_{vmid}_active'] = True
+        
         try:
             proxmox = get_proxmox_admin_for_cluster(cluster_id)
             if vm_type == 'qemu':
                 vnc_data = proxmox.nodes(vm_node).qemu(vmid).vncproxy.post(websocket=1)
-            else:
-                # LXC doesn't support VNC
-                vnc_data = None
-            
-            if vnc_data:
-                temp_ticket = vnc_data['ticket']
-                session[f'vnc_{vmid}_ticket_for_auth'] = temp_ticket
-                logger.info(f"Generated temp VNC ticket for frontend auth")
+                if vnc_data:
+                    temp_ticket = vnc_data['ticket']
+                    _vnc_connection_cache[vmid]['ticket'] = temp_ticket
+                    logger.info(f"Generated temp VNC ticket for frontend auth")
         except Exception as e:
             logger.warning(f"Could not generate temp ticket: {e}")
-        
-        session[f'vnc_{vmid}_cluster_id'] = cluster_id
-        session[f'vnc_{vmid}_node'] = vm_node
-        session[f'vnc_{vmid}_type'] = vm_type
-        session[f'vnc_{vmid}_host'] = proxmox_host
-        session[f'vnc_{vmid}_proxmox_port'] = proxmox_port
-        session[f'vnc_{vmid}_user'] = username
-        session[f'vnc_{vmid}_password'] = password
         
         logger.info(f"Session prepared for VM {vmid} console (node={vm_node}, type={vm_type}, cluster={cluster_id})")
         
@@ -341,22 +350,23 @@ def init_websocket_proxy(app, sock_instance):
         forward_thread = None
         
         try:
-            # Get connection info from session
-            cluster_id = session.get(f'vnc_{vmid}_cluster_id')
-            node = session.get(f'vnc_{vmid}_node')
-            vm_type = session.get(f'vnc_{vmid}_type')
-            host = session.get(f'vnc_{vmid}_host')
-            proxmox_port = session.get(f'vnc_{vmid}_proxmox_port')  # Proxmox API port (8006)
-            username = session.get(f'vnc_{vmid}_user')
-            password = session.get(f'vnc_{vmid}_password')
-            
-            if not all([node, vm_type, host, username, password, proxmox_port]):
-                logger.error(f"Missing VNC session data for VM {vmid}. Keys found: {[k for k in session.keys() if f'vnc_{vmid}' in k]}")
+            # Get connection info from server-side cache
+            conn_data = _vnc_connection_cache.get(vmid)
+            if not conn_data:
+                logger.error(f"No connection data found in cache for VM {vmid}")
                 try:
                     ws.close()
                 except Exception:
                     pass
                 return
+            
+            cluster_id = conn_data['cluster_id']
+            node = conn_data['node']
+            vm_type = conn_data['vm_type']
+            host = conn_data['host']
+            proxmox_port = conn_data['proxmox_port']
+            username = conn_data['username']
+            password = conn_data['password']
             
             logger.info(f"WebSocket opened for VM {vmid} console (node={node}, type={vm_type}, cluster={cluster_id})")
             

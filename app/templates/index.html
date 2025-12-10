@@ -91,7 +91,7 @@
     </thead>
     <tbody>
         {% for vm in windows_vms %}
-        <tr data-vmid="{{ vm.vmid }}" data-category="windows" data-node="{{ vm.node }}">
+        <tr data-vmid="{{ vm.vmid }}" data-category="windows" data-node="{{ vm.node }}" data-vm-name="{{ vm.name|lower }}" data-vm-ip="{{ vm.ip|lower if vm.ip else '' }}">
             <td>
                 <strong>{{ vm.name }}</strong>
                 {% if vm.ip %}<i class="bi bi-display" style="margin-left: 0.5rem; color: #0078d4;" title="RDP Available"></i>{% endif %}
@@ -156,8 +156,11 @@
     </thead>
     <tbody>
         {% for vm in linux_vms %}
-        <tr data-vmid="{{ vm.vmid }}" data-category="linux" data-node="{{ vm.node }}">
-            <td><strong>{{ vm.name }}</strong></td>
+        <tr data-vmid="{{ vm.vmid }}" data-category="linux" data-node="{{ vm.node }}" data-vm-name="{{ vm.name|lower }}" data-vm-ip="{{ vm.ip|lower if vm.ip else '' }}">
+            <td>
+                <strong>{{ vm.name }}</strong>
+                {% if vm.rdp_available %}<i class="bi bi-pc-display" style="margin-left: 0.5rem; color: #0078d4;" title="RDP Available"></i>{% endif %}
+            </td>
             <td>{{ vm.vmid }}</td>
             <td>{{ vm.node }}</td>
             <td>
@@ -235,7 +238,7 @@
     </thead>
     <tbody>
         {% for vm in lxc_containers %}
-        <tr data-vmid="{{ vm.vmid }}" data-category="lxc" data-node="{{ vm.node }}">
+        <tr data-vmid="{{ vm.vmid }}" data-category="lxc" data-node="{{ vm.node }}" data-vm-name="{{ vm.name|lower }}" data-vm-ip="{{ vm.ip|lower if vm.ip else '' }}">
             <td><strong>{{ vm.name }}</strong></td>
             <td>{{ vm.vmid }}</td>
             <td>{{ vm.node }}</td>
@@ -472,7 +475,8 @@ function applyFilters() {
         const vmid = row.getAttribute('data-vmid');
         const category = row.getAttribute('data-category');
         const node = row.getAttribute('data-node');
-        const text = row.textContent.toLowerCase();
+        const vmName = row.getAttribute('data-vm-name') || '';
+        const vmIp = row.getAttribute('data-vm-ip') || '';
         
         // Get status from badge text - normalize and extract status
         const statusBadge = row.querySelector('.badge');
@@ -489,7 +493,8 @@ function applyFilters() {
             }
         }
         
-        const matchesSearch = !searchTerm || text.includes(searchTerm);
+        // Search in name, VMID, and IP
+        const matchesSearch = !searchTerm || vmName.includes(searchTerm) || vmid.includes(searchTerm) || vmIp.includes(searchTerm);
         const matchesCategory = categoryFilter === 'all' || category === categoryFilter;
         const matchesStatus = statusFilter === 'all' || rowStatus === statusFilter;
         const matchesNode = nodeFilter === 'all' || node === nodeFilter;
@@ -584,6 +589,8 @@ async function loadVMs() {
             populateTables(vmsToDisplay);
             updateSummaryTiles(vmsToDisplay);
             populateNodeFilter(vmsToDisplay);
+            // Apply filters after initial load to respect any pre-filled search terms
+            setTimeout(() => applyFilters(), 100);
         }
         
         if (loadingIndicator) loadingIndicator.remove();
