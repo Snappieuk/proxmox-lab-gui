@@ -430,15 +430,6 @@ def init_websocket_proxy(app, sock_instance):
                     suppress_origin=True,
                     timeout=10
                 )
-                
-                # Apply socket options after connection for better performance
-                try:
-                    sock = proxmox_ws.sock
-                    sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)  # Disable Nagle's algorithm
-                    sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 65536)  # 64KB send buffer
-                    sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 65536)  # 64KB receive buffer
-                except Exception as sock_err:
-                    logger.debug(f"Could not set socket options (non-critical): {sock_err}")
                 logger.info(f"✓ Connected to Proxmox VNC for VM {vmid}")
                 logger.info(f"✓ VNC stream ready - forwarding will begin when browser connects")
                 
