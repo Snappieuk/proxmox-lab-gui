@@ -450,16 +450,16 @@ def init_websocket_proxy(app, sock_instance):
             stop_forwarding = threading.Event()
             
             def forward_to_browser():
-                """Forward Proxmox → Browser with minimal overhead and binary frames"""
+                """Forward Proxmox → Browser with minimal overhead"""
                 try:
                     while not stop_forwarding.is_set():
                         try:
-                            # Receive with explicit buffer size for better performance
+                            # Use recv() instead of recv_data() for better performance
                             data = proxmox_ws.recv()
                             if not data:
                                 break
-                            # Send as binary frame immediately (VNC is binary protocol)
-                            ws.send(data, type='bytes')
+                            # Send immediately without buffering
+                            ws.send(data)
                         except Exception as e:
                             if not stop_forwarding.is_set():
                                 logger.debug(f"Forward to browser stopped: {e}")
