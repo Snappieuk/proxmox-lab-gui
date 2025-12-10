@@ -118,7 +118,6 @@ function _setupManualCapture(target) {
     // happens to leave the viewport
     window.addEventListener('mousemove', _captureProxy);
     window.addEventListener('mouseup', _captureProxy);
-    }
 }
 
 export function releaseCapture() {
