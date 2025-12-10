@@ -32,17 +32,9 @@ function _captureProxy(e) {
 
     _captureRecursion = true;
     if (document.captureElement) {
-        try {
-            document.captureElement.dispatchEvent(newEv);
-        } catch (err) {
-            console.warn('Failed to dispatch captured event:', err);
-        }
-    } else if (_elementForUnflushedEvents) {
-        try {
-            _elementForUnflushedEvents.dispatchEvent(newEv);
-        } catch (err) {
-            console.warn('Failed to dispatch unflushed event:', err);
-        }
+        document.captureElement.dispatchEvent(newEv);
+    } else {
+        _elementForUnflushedEvents.dispatchEvent(newEv);
     }
     _captureRecursion = false;
 
@@ -63,88 +55,58 @@ function _captureProxy(e) {
 // Follow cursor style of target element
 function _capturedElemChanged() {
     const proxyElem = document.getElementById("noVNC_mouse_capture_elem");
-    if (proxyElem && document.captureElement) {
-        const computedStyle = window.getComputedStyle(document.captureElement);
-        if (computedStyle && computedStyle.cursor) {
-            proxyElem.style.cursor = computedStyle.cursor;
-        }
-    }
+    proxyElem.style.cursor = window.getComputedStyle(document.captureElement).cursor;
 }
 
 const _captureObserver = new MutationObserver(_capturedElemChanged);
 
 export function setCapture(target) {
-    if (target.setPointerCapture && window.PointerEvent) {
-        // Use modern setPointerCapture API (non-deprecated)
-        try {
-            target.setPointerCapture(1);
-            document.captureElement = target;
-        } catch (e) {
-            // Fallback to manual capture if pointer capture fails
-            _setupManualCapture(target);
-        }
-    } else if (target.setCapture) {
-        // Legacy setCapture for older browsers (deprecated but still works)
+    if (target.setCapture) {
         target.setCapture();
         document.captureElement = target;
     } else {
-        _setupManualCapture(target);
+        // Release any existing capture in case this method is
+        // called multiple times without coordination
+        releaseCapture();
+
+        let proxyElem = document.getElementById("noVNC_mouse_capture_elem");
+
+        if (proxyElem === null) {
+            proxyElem = document.createElement("div");
+            proxyElem.id = "noVNC_mouse_capture_elem";
+            proxyElem.style.position = "fixed";
+            proxyElem.style.top = "0px";
+            proxyElem.style.left = "0px";
+            proxyElem.style.width = "100%";
+            proxyElem.style.height = "100%";
+            proxyElem.style.zIndex = 10000;
+            proxyElem.style.display = "none";
+            document.body.appendChild(proxyElem);
+
+            // This is to make sure callers don't get confused by having
+            // our blocking element as the target
+            proxyElem.addEventListener('contextmenu', _captureProxy);
+
+            proxyElem.addEventListener('mousemove', _captureProxy);
+            proxyElem.addEventListener('mouseup', _captureProxy);
+        }
+
+        document.captureElement = target;
+
+        // Track cursor and get initial cursor
+        _captureObserver.observe(target, {attributes: true});
+        _capturedElemChanged();
+
+        proxyElem.style.display = "";
+
+        // We listen to events on window in order to keep tracking if it
+        // happens to leave the viewport
+        window.addEventListener('mousemove', _captureProxy);
+        window.addEventListener('mouseup', _captureProxy);
     }
-}
-
-function _setupManualCapture(target) {
-    // Release any existing capture in case this method is
-    // called multiple times without coordination
-    releaseCapture();
-
-    let proxyElem = document.getElementById("noVNC_mouse_capture_elem");
-
-    if (proxyElem === null) {
-        proxyElem = document.createElement("div");
-        proxyElem.id = "noVNC_mouse_capture_elem";
-        proxyElem.style.position = "fixed";
-        proxyElem.style.top = "0px";
-        proxyElem.style.left = "0px";
-        proxyElem.style.width = "100%";
-        proxyElem.style.height = "100%";
-        proxyElem.style.zIndex = 10000;
-        proxyElem.style.display = "none";
-        document.body.appendChild(proxyElem);
-
-        // This is to make sure callers don't get confused by having
-        // our blocking element as the target
-        proxyElem.addEventListener('contextmenu', _captureProxy);
-
-        proxyElem.addEventListener('mousemove', _captureProxy);
-        proxyElem.addEventListener('mouseup', _captureProxy);
-    }
-
-    document.captureElement = target;
-
-    // Track cursor and get initial cursor
-    _captureObserver.observe(target, {attributes: true});
-    _capturedElemChanged();
-
-    proxyElem.style.display = "";
-
-    // We listen to events on window in order to keep tracking if it
-    // happens to leave the viewport
-    window.addEventListener('mousemove', _captureProxy);
-    window.addEventListener('mouseup', _captureProxy);
 }
 
 export function releaseCapture() {
-    // Use modern releasePointerCapture if available
-    if (document.captureElement && document.captureElement.releasePointerCapture) {
-        try {
-            document.captureElement.releasePointerCapture(1);
-            document.captureElement = null;
-            return;
-        } catch (e) {
-            // Fall through to legacy methods
-        }
-    }
-    
     if (document.releaseCapture) {
         document.releaseCapture();
         document.captureElement = null;
