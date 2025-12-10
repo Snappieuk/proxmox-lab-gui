@@ -128,9 +128,9 @@ def api_build_vm():
         )
         
         if success:
-            # For non-admin teachers, create VM assignment so they can see the VM
-            # Admins don't need assignments (they see all VMs)
-            if not is_admin and local_user:
+            # Create VM assignment so the VM shows up in "My Template VMs"
+            # This applies to both teachers and admins
+            if local_user:
                 try:
                     from app.models import VMAssignment, db
                     
@@ -140,17 +140,18 @@ def api_build_vm():
                     mac_address = vm_record.mac_address if vm_record else None
                     
                     # Create assignment linking VM to the creator
+                    # class_id=NULL means this is a builder VM (not part of a class)
                     assignment = VMAssignment(
                         proxmox_vmid=vmid,
                         vm_name=vm_name,
                         assigned_user_id=local_user.id,
                         status='available',
                         mac_address=mac_address,
-                        class_id=None  # Direct assignment, not part of a class
+                        class_id=None  # Direct assignment = builder VM for "My Template VMs"
                     )
                     db.session.add(assignment)
                     db.session.commit()
-                    logger.info(f"Created VM assignment for teacher {local_user.username} -> VM {vmid}")
+                    logger.info(f"Created VM assignment for user {local_user.username} -> VM {vmid} (builder VM)")
                 except Exception as e:
                     logger.warning(f"Failed to create VM assignment: {e}")
                     # Don't fail the whole operation if assignment creation fails

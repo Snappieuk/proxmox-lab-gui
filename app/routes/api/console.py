@@ -127,16 +127,17 @@ def api_get_vnc_info(vmid: int):
                 "error": "Cluster configuration not found"
             }), 500
         
-        # Generate VNC ticket from Proxmox API
+        # Generate VNC ticket from Proxmox API with extended timeout
+        # Note: generate-password=1 extends ticket lifetime from 60s to 7200s (2 hours)
         try:
             if vm_type == 'kvm':
                 # For QEMU VMs
                 logger.info(f"Generating VNC ticket for QEMU VM {vmid} on node {vm_node}")
-                ticket_data = proxmox.nodes(vm_node).qemu(vmid).vncproxy.post(websocket=1)
+                ticket_data = proxmox.nodes(vm_node).qemu(vmid).vncproxy.post(websocket=1, **{'generate-password': 1})
             else:
                 # For LXC containers
                 logger.info(f"Generating VNC ticket for LXC container {vmid} on node {vm_node}")
-                ticket_data = proxmox.nodes(vm_node).lxc(vmid).vncproxy.post(websocket=1)
+                ticket_data = proxmox.nodes(vm_node).lxc(vmid).vncproxy.post(websocket=1, **{'generate-password': 1})
             
             logger.info(f"Ticket data received: {ticket_data}")
             

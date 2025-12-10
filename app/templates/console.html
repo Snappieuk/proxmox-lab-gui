@@ -151,6 +151,37 @@
         console.log('Backend will authenticate to Proxmox with stored session data');
         
         let rfb;
+        let reconnectTimer = null;
+        let ticketExpirationTimer = null;
+        
+        // Proxmox VNC tickets typically expire after 2 hours
+        // We'll auto-refresh 5 minutes before expiration to prevent interruption
+        const TICKET_LIFETIME_MS = 2 * 60 * 60 * 1000; // 2 hours
+        const REFRESH_BEFORE_EXPIRY_MS = 5 * 60 * 1000; // 5 minutes before expiry
+        
+        function scheduleTicketRefresh() {
+            // Clear any existing timer
+            if (ticketExpirationTimer) {
+                clearTimeout(ticketExpirationTimer);
+            }
+            
+            // Schedule refresh 5 minutes before ticket expires
+            const refreshDelay = TICKET_LIFETIME_MS - REFRESH_BEFORE_EXPIRY_MS;
+            console.log(`⏰ Scheduled ticket refresh in ${refreshDelay / 1000 / 60} minutes`);
+            
+            ticketExpirationTimer = setTimeout(() => {
+                console.log('🔄 VNC ticket nearing expiration, refreshing connection...');
+                updateStatus('connecting', 'Refreshing connection...');
+                location.reload();
+            }, refreshDelay);
+        }
+        
+        function cancelScheduledRefresh() {
+            if (ticketExpirationTimer) {
+                clearTimeout(ticketExpirationTimer);
+                ticketExpirationTimer = null;
+            }
+        }
         
         function updateStatus(state, msg) {
             const statusDot = document.getElementById('status-dot');
@@ -173,17 +204,20 @@
             updateStatus('', 'Connected');
             document.getElementById('loading').style.display = 'none';
             
-            // VNC tickets last ~2 hours in Proxmox
-            // Only reload if actually disconnected (handled by disconnectedFromServer event)
-            // Removed aggressive 60-second reload that was interrupting active sessions
+            // Schedule automatic refresh before ticket expires
+            scheduleTicketRefresh();
         }
         
         function disconnectedFromServer(e) {
             console.log('❌ Disconnected from server:', e.detail);
+            
+            // Cancel any scheduled refresh since we're disconnected
+            cancelScheduledRefresh();
+            
             if (e.detail.clean) {
                 updateStatus('disconnected', 'Disconnected (Session Ended)');
                 showError('Console session ended', 
-                    'The VNC session has closed. <strong>Proxmox VNC tickets have a hard timeout (typically 2-5 minutes) even during active use.</strong><br><br>' +
+                    'The VNC session has closed. <strong>VNC tickets are valid for 2 hours.</strong><br><br>' +
                     '<button onclick="location.reload()" style="background: #4CAF50; color: white; border: none; padding: 12px 24px; border-radius: 4px; cursor: pointer; font-size: 16px; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.2);">🔄 Reconnect (Get Fresh Ticket)</button>');
             } else {
                 const reason = e.detail.reason || '';
@@ -204,8 +238,15 @@
                                '3. Close that tab and click the button below:<br><br>' +
                                '<button onclick="location.reload()" style="background: #4CAF50; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: bold;">✅ Reload Console</button>';
                 } else if (reason.includes('401') || reason.includes('403')) {
-                    helpText = 'VNC ticket expired. These tickets only last 2 minutes for security.<br><br>' +
+                    helpText = 'VNC ticket expired. Auto-refreshing to get a new ticket...<br><br>' +
                                '<button onclick="location.reload()" style="background: #4CAF50; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: bold;">🔄 Get New Ticket & Reconnect</button>';
+                    
+                    // Auto-refresh after 2 seconds for ticket expiration
+                    console.log('⏰ VNC ticket expired, auto-refreshing in 2 seconds...');
+                    setTimeout(() => {
+                        console.log('🔄 Auto-refreshing to get new VNC ticket...');
+                        location.reload();
+                    }, 2000);
                 } else if (reason.includes('timeout') || reason.includes('ETIMEDOUT')) {
                     helpText = 'Connection timed out. Check that the VM is running and the Proxmox server is reachable.<br><br>' +
                                '<button onclick="location.reload()" style="background: #4CAF50; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: bold;">🔄 Retry Connection</button>';
@@ -264,7 +305,7 @@
             rfb.addEventListener("credentialsrequired", credentialsAreRequired);
             rfb.addEventListener("securityfailure", securityFailure);
             
-            // Configure display for accurate cursor positioning
+            // Configure display for maximum performance
             rfb.scaleViewport = false;  // Disable scaling - causes cursor misalignment
             rfb.resizeSession = false;  // Don't resize VM display (causes lag)
             rfb.viewOnly = false;
@@ -276,10 +317,15 @@
             screen.style.cursor = 'default';
             screen.title = ''
             
-            // Balance speed and bandwidth with minimal compression (optimized for LAN)
-            rfb.compressionLevel = 1;  // 0-9, lower = faster (1 = minimal compression, good for LAN)
-            rfb.qualityLevel = 5;  // 0-9, higher = better quality (5 = good balance for responsive performance)
+            // OPTIMIZED FOR INSTALLER PERFORMANCE (e.g., Debian installer)
+            // Use aggressive encoding for maximum speed over LAN
+            rfb.compressionLevel = 2;  // 0-9, use some compression for speed (2 = good balance)
+            rfb.qualityLevel = 0;  // 0-9, lower = faster rendering (0 = lowest quality, maximum speed)
             rfb.focusOnClick = true;
+            
+            // Use fast encoding methods for performance
+            // Lower quality with compression gives better frame rates in installers
+            console.log('🚀 VNC optimized for speed: compression=2, quality=0');
             
             console.log('✅ noVNC RFB connection initialized, attempting to connect via proxy...');
             
@@ -297,11 +343,11 @@
         
         // Cleanup on page unload
         window.addEventListener('beforeunload', () => {
+            cancelScheduledRefresh();
             if (rfb) {
                 rfb.disconnect();
             }
         });
-        
     </script>
 </body>
 </html>
