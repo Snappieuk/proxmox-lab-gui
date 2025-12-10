@@ -173,12 +173,9 @@
             updateStatus('', 'Connected');
             document.getElementById('loading').style.display = 'none';
             
-            // Auto-reconnect after 60 seconds to prevent ticket expiration
-            // Silent reload without any notification
-            setTimeout(() => {
-                console.log('⚠️ Proactive reconnect to refresh VNC ticket...');
-                location.reload();
-            }, 60000); // 60 seconds = 1 minute
+            // VNC tickets last ~2 hours in Proxmox
+            // Only reload if actually disconnected (handled by disconnectedFromServer event)
+            // Removed aggressive 60-second reload that was interrupting active sessions
         }
         
         function disconnectedFromServer(e) {
