@@ -1374,7 +1374,15 @@ async function verifyUploadStorage() {
     verificationDiv.innerHTML = '<div style="color: #666;">🔄 Verifying storage...</div>';
     
     try {
-        const response = await fetch(`/api/vm-builder/storages?cluster_id=${clusterId}`);
+        // Add timeout to verification request (5 seconds max)
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
+        
+        const response = await fetch(`/api/vm-builder/storages?cluster_id=${clusterId}&node=${node}`, {
+            signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+        
         const data = await response.json();
         
         if (data.ok && data.storages) {
@@ -1409,9 +1417,12 @@ async function verifyUploadStorage() {
         }
     } catch (error) {
         console.error('Failed to verify storage:', error);
+        // Don't block upload on verification failure - just show warning
+        const errorMsg = error.name === 'AbortError' ? 'Verification timed out' : error.message;
         verificationDiv.innerHTML = `
-            <div style="color: #a80000; background: #ffe5e5; padding: 0.5rem; border-radius: 0.375rem;">
-                ❌ Failed to verify storage: ${error.message}
+            <div style="color: #856404; background: #fff3cd; padding: 0.5rem; border-radius: 0.375rem;">
+                ⚠️ Could not verify storage (${errorMsg})
+                <br><small>You can still proceed with the upload</small>
             </div>
         `;
     }

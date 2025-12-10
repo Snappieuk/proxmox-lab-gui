@@ -173,12 +173,12 @@
             updateStatus('', 'Connected');
             document.getElementById('loading').style.display = 'none';
             
-            // Auto-reconnect after 90 seconds to prevent ticket expiration
+            // Auto-reconnect after 60 seconds to prevent ticket expiration
             // Silent reload without any notification
             setTimeout(() => {
                 console.log('⚠️ Proactive reconnect to refresh VNC ticket...');
                 location.reload();
-            }, 90000); // 90 seconds = 1.5 minutes
+            }, 60000); // 60 seconds = 1 minute
         }
         
         function disconnectedFromServer(e) {
@@ -267,12 +267,12 @@
             rfb.addEventListener("credentialsrequired", credentialsAreRequired);
             rfb.addEventListener("securityfailure", securityFailure);
             
-            // Configure display for better performance and edge cursor access
-            rfb.scaleViewport = true;  // Scale to fit viewport
+            // Configure display for accurate cursor positioning
+            rfb.scaleViewport = false;  // Disable scaling - causes cursor misalignment
             rfb.resizeSession = false;  // Don't resize VM display (causes lag)
             rfb.viewOnly = false;
-            rfb.clipViewport = true;  // Clip to viewport for better edge access
-            rfb.dragViewport = false;  // Disable drag (not needed when scaled)
+            rfb.clipViewport = false;  // Don't clip viewport
+            rfb.dragViewport = true;   // Enable drag to navigate if VM is larger than window
             
             // Remove visual indicator styling
             const screen = document.getElementById('screen');
@@ -281,7 +281,7 @@
             
             // Balance speed and bandwidth with minimal compression (optimized for LAN)
             rfb.compressionLevel = 1;  // 0-9, lower = faster (1 = minimal compression, good for LAN)
-            rfb.qualityLevel = 1;  // 0-9, higher = better quality (5 = good balance for responsive performance)
+            rfb.qualityLevel = 5;  // 0-9, higher = better quality (5 = good balance for responsive performance)
             rfb.focusOnClick = true;
             
             console.log('✅ noVNC RFB connection initialized, attempting to connect via proxy...');
