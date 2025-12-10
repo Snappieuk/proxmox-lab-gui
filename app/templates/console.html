@@ -172,6 +172,21 @@
             console.log('✅ Connected to VM console successfully!');
             updateStatus('', 'Connected');
             document.getElementById('loading').style.display = 'none';
+            
+            // Auto-reconnect after 90 seconds to prevent ticket expiration
+            // Show brief overlay during reconnect to minimize disruption
+            setTimeout(() => {
+                console.log('⚠️ Proactive reconnect to refresh VNC ticket...');
+                
+                // Show minimal refresh indicator
+                const refreshOverlay = document.createElement('div');
+                refreshOverlay.style.cssText = 'position: fixed; top: 10px; right: 10px; background: rgba(76, 175, 80, 0.9); color: white; padding: 8px 16px; border-radius: 4px; font-size: 12px; z-index: 10000; box-shadow: 0 2px 8px rgba(0,0,0,0.3);';
+                refreshOverlay.textContent = '🔄 Refreshing connection...';
+                document.body.appendChild(refreshOverlay);
+                
+                // Reload after brief delay so user sees the message
+                setTimeout(() => location.reload(), 500);
+            }, 90000); // 90 seconds = 1.5 minutes
         }
         
         function disconnectedFromServer(e) {
