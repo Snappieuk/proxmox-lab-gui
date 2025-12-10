@@ -34,6 +34,8 @@ CRITICAL_MIGRATIONS = [
     ('vm_assignments', 'vm_name', 'TEXT', 'NULL'),
     ('vm_assignments', 'usage_hours', 'REAL', '0.0'),  # Cumulative hours VM has been used
     ('vm_assignments', 'usage_last_reset', 'TIMESTAMP', 'NULL'),  # When usage was last reset by teacher
+    # Make class_id nullable for direct assignments (builder VMs)
+    ('vm_assignments', 'class_id_nullable', 'INTEGER', 'NULL'),  # Placeholder for nullable class_id migration
     # Template spec caching columns
     ('templates', 'cpu_cores', 'INTEGER', 'NULL'),
     ('templates', 'cpu_sockets', 'INTEGER', 'NULL'),
@@ -120,6 +122,92 @@ def create_iso_images_table(cursor):
     else:
         print("✓ ISO images table already exists")
         return False
+
+
+def make_class_id_nullable(cursor):
+    """Make VMAssignment.class_id nullable for builder VMs.
+    
+    SQLite doesn't support ALTER COLUMN, so we need to:
+    1. Create new table with nullable class_id
+    2. Copy data
+    3. Drop old table
+    4. Rename new table
+    """
+    print("\n📋 Checking VMAssignment.class_id nullable constraint...")
+    
+    # Check if class_id is already nullable
+    cursor.execute("PRAGMA table_info(vm_assignments)")
+    columns = cursor.fetchall()
+    
+    for col in columns:
+        # col format: (cid, name, type, notnull, dflt_value, pk)
+        if col[1] == 'class_id':
+            if col[3] == 0:  # notnull=0 means nullable
+                print("✓ VMAssignment.class_id is already nullable")
+                return False
+            else:
+                print("➕ Making VMAssignment.class_id nullable for builder VMs...")
+                break
+    else:
+        print("⚠ class_id column not found in vm_assignments table")
+        return False
+    
+    try:
+        # Get all column definitions
+        cursor.execute("PRAGMA table_info(vm_assignments)")
+        columns = cursor.fetchall()
+        
+        # Build new table schema with nullable class_id
+        col_defs = []
+        for col in columns:
+            col_name = col[1]
+            col_type = col[2]
+            is_pk = col[5] == 1
+            
+            if col_name == 'class_id':
+                # Make it nullable and add foreign key
+                col_defs.append(f"{col_name} {col_type}")
+            elif is_pk:
+                col_defs.append(f"{col_name} {col_type} PRIMARY KEY AUTOINCREMENT")
+            else:
+                not_null = col[3] == 1
+                default = col[4]
+                
+                col_def = f"{col_name} {col_type}"
+                if not_null:
+                    col_def += " NOT NULL"
+                if default:
+                    col_def += f" DEFAULT {default}"
+                col_defs.append(col_def)
+        
+        # Add foreign key constraints
+        col_defs.append("FOREIGN KEY (class_id) REFERENCES classes(id)")
+        col_defs.append("FOREIGN KEY (assigned_user_id) REFERENCES users(id)")
+        
+        # Create new table
+        new_table_sql = f"CREATE TABLE vm_assignments_new ({', '.join(col_defs)})"
+        cursor.execute(new_table_sql)
+        
+        # Copy data
+        cursor.execute("INSERT INTO vm_assignments_new SELECT * FROM vm_assignments")
+        
+        # Drop old table and rename
+        cursor.execute("DROP TABLE vm_assignments")
+        cursor.execute("ALTER TABLE vm_assignments_new RENAME TO vm_assignments")
+        
+        # Recreate indexes
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_vm_assignments_class ON vm_assignments(class_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_vm_assignments_vmid ON vm_assignments(proxmox_vmid)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_vm_assignments_user ON vm_assignments(assigned_user_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_vm_assignments_vm_name ON vm_assignments(vm_name)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_vm_assignments_mac ON vm_assignments(mac_address)")
+        
+        print("   ✅ Successfully made class_id nullable")
+        return True
+        
+    except Exception as e:
+        print(f"   ❌ Failed to make class_id nullable: {e}")
+        raise
 
 
 def migrate_clusters_from_json(cursor):
@@ -262,12 +350,17 @@ def migrate():
         else:
             print("   ✓ All join tokens already use simple format")
         
-        # Step 3: Migrate clusters from JSON to database
+        # Step 3: Make VMAssignment.class_id nullable (for builder VMs)
+        class_id_updated = make_class_id_nullable(cursor)
+        if class_id_updated:
+            total_changes += 1
+        
+        # Step 4: Migrate clusters from JSON to database
         clusters_migrated = migrate_clusters_from_json(cursor)
         if clusters_migrated > 0:
             total_changes += clusters_migrated
         
-        # Step 4: Create ISO images cache table
+        # Step 5: Create ISO images cache table
         iso_table_created = create_iso_images_table(cursor)
         if iso_table_created:
             total_changes += 1
