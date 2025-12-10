@@ -170,25 +170,8 @@
         
         function connectedToServer(e) {
             console.log('✅ Connected to VM console successfully!');
-            updateStatus('', 'Connected (Click to capture cursor)');
+            updateStatus('', 'Connected');
             document.getElementById('loading').style.display = 'none';
-            
-            // Enable pointer lock (cursor capture) on click
-            const screen = document.getElementById('screen');
-            screen.addEventListener('click', function() {
-                if (document.pointerLockElement !== screen) {
-                    screen.requestPointerLock();
-                }
-            });
-            
-            // Update status when cursor is captured/released
-            document.addEventListener('pointerlockchange', function() {
-                if (document.pointerLockElement === screen) {
-                    updateStatus('', 'Connected (Press ESC to release cursor)');
-                } else {
-                    updateStatus('', 'Connected (Click to capture cursor)');
-                }
-            });
         }
         
         function disconnectedFromServer(e) {
@@ -196,8 +179,8 @@
             if (e.detail.clean) {
                 updateStatus('disconnected', 'Disconnected (Session Ended)');
                 showError('Console session ended', 
-                    'The VNC session has been closed. VNC tickets expire after a few minutes of inactivity.<br><br>' +
-                    '<button onclick="location.reload()" style="background: #4CAF50; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: bold;">🔄 Reconnect to Console</button>');
+                    'The VNC session has closed. <strong>Proxmox VNC tickets have a hard timeout (typically 2-5 minutes) even during active use.</strong><br><br>' +
+                    '<button onclick="location.reload()" style="background: #4CAF50; color: white; border: none; padding: 12px 24px; border-radius: 4px; cursor: pointer; font-size: 16px; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.2);">🔄 Reconnect (Get Fresh Ticket)</button>');
             } else {
                 const reason = e.detail.reason || '';
                 const code = e.detail.code || 0;
@@ -277,17 +260,17 @@
             rfb.addEventListener("credentialsrequired", credentialsAreRequired);
             rfb.addEventListener("securityfailure", securityFailure);
             
-            // Configure display for better performance and cursor capture
+            // Configure display for better performance and edge cursor access
             rfb.scaleViewport = true;  // Scale to fit viewport
             rfb.resizeSession = false;  // Don't resize VM display (causes lag)
             rfb.viewOnly = false;
-            rfb.clipViewport = false;  // Show full screen
+            rfb.clipViewport = true;  // Clip to viewport for better edge access
             rfb.dragViewport = false;  // Disable drag (not needed when scaled)
             
-            // Add visual indicator for cursor capture
+            // Remove visual indicator styling
             const screen = document.getElementById('screen');
-            screen.style.cursor = 'pointer';
-            screen.title = 'Click to capture cursor (press ESC to release)'
+            screen.style.cursor = 'default';
+            screen.title = ''
             
             // Balance speed and bandwidth with minimal compression (optimized for LAN)
             rfb.compressionLevel = 1;  // 0-9, lower = faster (1 = minimal compression, good for LAN)

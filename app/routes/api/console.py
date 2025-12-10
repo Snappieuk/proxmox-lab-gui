@@ -367,8 +367,12 @@ def init_websocket_proxy(app, sock_instance):
             # Generate VNC ticket NOW (just-in-time) to avoid timeout
             logger.info(f"[{vmid}] Step 2: Generating VNC ticket for VM {vmid}...")
             if vm_type == 'qemu':
-                vnc_data = proxmox.nodes(node).qemu(vmid).vncproxy.post(websocket=1)
-                logger.info(f"[{vmid}] Step 2: VNC ticket generated successfully")
+                # Request VNC ticket with extended timeout (3600 seconds = 1 hour)
+                vnc_data = proxmox.nodes(node).qemu(vmid).vncproxy.post(
+                    websocket=1,
+                    **{'generate-timeout': 3600}  # Extended session timeout
+                )
+                logger.info(f"[{vmid}] Step 2: VNC ticket generated successfully (timeout: 1 hour)")
             elif vm_type == 'lxc':
                 # LXC containers don't support VNC - they use terminal/console instead
                 logger.error(f"LXC containers (vmid={vmid}) don't support VNC console. Use terminal/SSH instead.")
