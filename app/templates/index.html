@@ -309,7 +309,7 @@
     </thead>
     <tbody>
         {% for vm in other_vms %}
-        <tr data-vmid="{{ vm.vmid }}" data-category="other" data-node="{{ vm.node }}">
+        <tr data-vmid="{{ vm.vmid }}" data-category="other" data-node="{{ vm.node }}" data-vm-name="{{ vm.name|lower }}" data-vm-ip="{{ vm.ip|lower if vm.ip else '' }}">
             <td><strong>{{ vm.name }}</strong></td>
             <td>{{ vm.vmid }}</td>
             <td>{{ vm.node }}</td>
@@ -725,6 +725,8 @@ function createVMRow(vm, category) {
     row.setAttribute('data-vmid', vm.vmid);
     row.setAttribute('data-category', category);
     row.setAttribute('data-node', vm.node);
+    row.setAttribute('data-vm-name', (vm.name || '').toLowerCase());
+    row.setAttribute('data-vm-ip', (vm.ip || '').toLowerCase());
     
     const statusClass = vm.status === 'running' ? 'badge-success' : vm.status === 'stopped' ? 'badge-danger' : 'badge-secondary';
     const statusText = vm.status === 'running' ? '● Running' : vm.status === 'stopped' ? '● Stopped' : '● Unknown';
