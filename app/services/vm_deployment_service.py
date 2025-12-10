@@ -51,7 +51,9 @@ def build_vm_from_scratch(
     agent_enabled: bool = True,
     onboot: bool = False,
     # Template options
-    convert_to_template: bool = False
+    convert_to_template: bool = False,
+    # Optional node override (if we already know where ISO is)
+    target_node: Optional[str] = None
 ) -> Tuple[bool, Optional[int], str]:
     """
     Build a VM from scratch with ISO-based installation.
@@ -62,6 +64,7 @@ def build_vm_from_scratch(
         vm_name: Name for the VM
         os_type: OS type (ubuntu, debian, centos, rocky, alma, windows)
         iso_file: ISO file path (e.g., 'local:iso/ubuntu-22.04.iso')
+        target_node: Optional node name (if we already know where ISO is)
         ... (see parameters above)
         
     Returns:
@@ -75,11 +78,23 @@ def build_vm_from_scratch(
         if not proxmox:
             return False, None, f"Failed to connect to cluster {cluster_id}"
         
-        # Find which node has the ISO
-        logger.info(f"Detecting node for ISO {iso_file}...")
-        node = _find_node_with_iso(proxmox, iso_file)
-        if not node:
-            return False, None, f"Could not find ISO {iso_file} on any node"
+        # Use provided node or look up in database first, fallback to scanning
+        if target_node:
+            node = target_node
+            logger.info(f"Using provided target node: {node}")
+        else:
+            # Check database first (fast!)
+            from app.models import ISOImage
+            iso_record = ISOImage.query.filter_by(volid=iso_file, cluster_id=cluster_id).first()
+            if iso_record:
+                node = iso_record.node
+                logger.info(f"Found ISO node in database cache: {node}")
+            else:
+                # Fallback to scanning nodes (slow)
+                logger.info(f"ISO not in cache, scanning nodes for {iso_file}...")
+                node = _find_node_with_iso(proxmox, iso_file)
+                if not node:
+                    return False, None, f"Could not find ISO {iso_file} on any node"
         
         logger.info(f"Building VM on node {node}")
         

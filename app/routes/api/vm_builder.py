@@ -92,9 +92,14 @@ def api_build_vm():
         # Template options
         convert_to_template = data.get('convert_to_template', False)
         
-        logger.info(f"Building VM: {vm_name} on cluster {cluster_id} with ISO {iso_file}")
+        # Optional: node hint from frontend (if ISO data includes node)
+        target_node = data.get('target_node')
         
-        # Build the VM (node will be auto-detected from ISO location)
+        logger.info(f"Building VM: {vm_name} on cluster {cluster_id} with ISO {iso_file}")
+        if target_node:
+            logger.info(f"Frontend provided target node: {target_node}")
+        
+        # Build the VM (node will be auto-detected from ISO location or database)
         success, vmid, message = build_vm_from_scratch(
             cluster_id=cluster_id,
             vm_name=vm_name,
@@ -118,7 +123,8 @@ def api_build_vm():
             tablet=tablet,
             agent_enabled=agent_enabled,
             onboot=onboot,
-            convert_to_template=convert_to_template
+            convert_to_template=convert_to_template,
+            target_node=target_node  # Pass node hint if available
         )
         
         if success:

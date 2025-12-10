@@ -775,6 +775,11 @@ def create_class_vms(
                 result.error = "Failed to allocate teacher VM ID"
                 return result
             
+            # Initialize teacher VM variables (used in both new and existing VM paths)
+            teacher_name = f"{class_prefix}-teacher"
+            teacher_mac = None
+            teacher_actual_node = None
+            
             # Check if teacher VM exists in Proxmox (not just database)
             check_vm_cmd = f"qm status {teacher_vmid} 2>/dev/null"
             exit_code, _, _ = ssh_executor.execute(check_vm_cmd, check=False)
@@ -793,11 +798,15 @@ def create_class_vms(
                 else:
                     teacher_mac = None
                     logger.warning("Could not retrieve teacher VM MAC address")
+                
+                # Get teacher VM's actual node
+                teacher_actual_node = get_vm_current_node(ssh_executor, teacher_vmid)
+                if not teacher_actual_node:
+                    logger.warning(f"Could not determine node for teacher VM {teacher_vmid}, using template_node as fallback")
+                    teacher_actual_node = template_node
             else:
                 # Teacher VM doesn't exist in Proxmox - recreate it (even if DB record exists)
                 logger.info(f"Teacher VM {teacher_vmid} not found in Proxmox - creating/recreating")
-                result.details.append("Creating teacher VM as overlay...")
-            else:
                 result.details.append("Creating teacher VM as overlay...")
             
                 # Select optimal node for teacher VM (with simulated load balancing or override)
@@ -807,9 +816,6 @@ def create_class_vms(
                 else:
                     teacher_optimal_node = get_optimal_node(ssh_executor, proxmox, vm_memory_mb=memory, simulated_vms_per_node=simulated_vms_per_node)
                     logger.info(f"Selected optimal node for teacher VM: {teacher_optimal_node}")
-            
-                teacher_name = f"{class_prefix}-teacher"
-                teacher_mac = None
                 
                 logger.info(f"Creating teacher VM with VMID {teacher_vmid}")
                 
@@ -1119,7 +1125,7 @@ def create_class_vms(
                     'cluster_id': cluster_id,
                     'vmid': teacher_vmid,
                     'name': teacher_name,
-                    'node': teacher_optimal_node,
+                    'node': teacher_actual_node,
                     'status': 'stopped',  # VM just created, not started yet
                     'type': 'qemu',
                     'mac_address': teacher_mac,
@@ -1400,12 +1406,12 @@ def create_class_vms(
                 vms_to_sync = []
                 
                 # Add teacher VM
-                if result.teacher_vmid and 'teacher_mac' in locals():
+                if result.teacher_vmid and teacher_mac:
                     vms_to_sync.append({
                         'cluster_id': cluster_id,
                         'vmid': result.teacher_vmid,
-                        'name': f"{class_prefix}-teacher",
-                        'node': teacher_optimal_node if 'teacher_optimal_node' in locals() else template_node,
+                        'name': teacher_name,
+                        'node': teacher_actual_node if teacher_actual_node else template_node,
                         'status': 'stopped',
                         'type': 'qemu',
                         'mac_address': teacher_mac,
