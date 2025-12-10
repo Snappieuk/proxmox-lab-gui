@@ -250,7 +250,7 @@ def _deploy_vm_with_iso(
             "bios": bios_type,
             "machine": machine_type,
             "vga": vga_type,
-            "boot": f"order={boot_order}",
+            "boot": "order=ide2;scsi0;net0",  # Boot from CD (ISO) first, then disk, then network
             "onboot": 1 if onboot else 0,
             "agent": 1 if agent_enabled else 0,
             "tablet": 1 if tablet else 0

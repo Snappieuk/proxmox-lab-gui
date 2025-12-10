@@ -132,6 +132,7 @@ def _resolve_user_owned_vmids(username: str) -> set:
 
     Database-first architecture: Only uses VMAssignment table.
     Accepts realm-suffixed usernames (e.g., student1@pve) and normalizes variants.
+    Includes VMs from classes where user is owner or co-owner.
     """
     variants = {username}
     if '@' in username:
@@ -147,10 +148,32 @@ def _resolve_user_owned_vmids(username: str) -> set:
     try:
         user_row = User.query.filter(User.username.in_(variants)).first()
         if user_row:
+            # Direct VM assignments (assigned to this user)
             for assign in user_row.vm_assignments:
                 if assign.proxmox_vmid:
                     owned.add(assign.proxmox_vmid)
-            logger.debug("Found %d VMs for %s in database", len(user_row.vm_assignments.all()), username)
+            logger.debug("Found %d directly assigned VMs for %s", len(user_row.vm_assignments.all()), username)
+            
+            # VMs from classes where user is owner or co-owner
+            from app.models import Class
+            if user_row.is_teacher or user_row.is_adminer:
+                # Get classes owned by this teacher
+                owned_classes = Class.query.filter_by(teacher_id=user_row.id).all()
+                
+                # Get classes where this teacher is a co-owner
+                co_owned_classes = [c for c in Class.query.all() if c.is_owner(user_row) and c.teacher_id != user_row.id]
+                
+                all_managed_classes = owned_classes + co_owned_classes
+                
+                for class_ in all_managed_classes:
+                    for assign in class_.vm_assignments:
+                        if assign.proxmox_vmid:
+                            owned.add(assign.proxmox_vmid)
+                
+                logger.debug("Found %d VMs from %d managed classes for teacher %s", 
+                           len([a for c in all_managed_classes for a in c.vm_assignments]), 
+                           len(all_managed_classes), username)
+                
     except Exception:
         logger.exception("Failed to gather VM assignments for %s", username)
 
