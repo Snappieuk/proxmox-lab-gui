@@ -177,12 +177,15 @@
         function disconnectedFromServer(e) {
             console.log('❌ Disconnected from server:', e.detail);
             if (e.detail.clean) {
-                updateStatus('disconnected', 'Disconnected');
+                updateStatus('disconnected', 'Disconnected (Session Ended)');
+                showError('Console session ended', 
+                    'The VNC session has been closed. VNC tickets expire after a few minutes of inactivity.<br><br>' +
+                    '<button onclick="location.reload()" style="background: #4CAF50; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: bold;">🔄 Reconnect to Console</button>');
             } else {
                 const reason = e.detail.reason || '';
                 const code = e.detail.code || 0;
                 console.error('Disconnect code:', code, 'reason:', reason);
-                updateStatus('disconnected', 'Connection lost');
+                updateStatus('disconnected', 'Connection Lost');
                 
                 // Provide helpful error messages based on close code
                 let helpText = '';
@@ -197,16 +200,16 @@
                                '3. Close that tab and click the button below:<br><br>' +
                                '<button onclick="location.reload()" style="background: #4CAF50; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: bold;">✅ Reload Console</button>';
                 } else if (reason.includes('401') || reason.includes('403')) {
-                    helpText = 'Authentication failed. The VNC ticket may have expired. Try closing this window and opening the console again.';
+                    helpText = 'VNC ticket expired. These tickets only last 2 minutes for security.<br><br>' +
+                               '<button onclick="location.reload()" style="background: #4CAF50; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: bold;">🔄 Get New Ticket & Reconnect</button>';
                 } else if (reason.includes('timeout') || reason.includes('ETIMEDOUT')) {
-                    helpText = 'Connection timed out. Check that the VM is running and the Proxmox server is reachable.';
+                    helpText = 'Connection timed out. Check that the VM is running and the Proxmox server is reachable.<br><br>' +
+                               '<button onclick="location.reload()" style="background: #4CAF50; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: bold;">🔄 Retry Connection</button>';
                 } else {
-                    // Default to certificate instructions for any unknown error
-                    helpText = '<strong>Connection Failed</strong><br><br>' +
-                               'This usually means the SSL certificate needs to be accepted:<br><br>' +
-                               '1. Open <a href="https://' + host + ':' + proxmoxPort + '" target="_blank" style="color: #4CAF50; font-weight: bold;">https://' + host + ':' + proxmoxPort + '</a><br>' +
-                               '2. Accept the security warning<br>' +
-                               '3. <button onclick="location.reload()" style="background: #4CAF50; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: bold; margin-top: 10px;">Reload Console</button>';
+                    // Default reconnect button for any unknown error
+                    helpText = '<strong>Connection Lost</strong><br><br>' +
+                               'The console connection was interrupted. Click below to reconnect:<br><br>' +
+                               '<button onclick="location.reload()" style="background: #4CAF50; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: bold;">🔄 Reconnect to Console</button>';
                 }
                 
                 showError('Connection failed: ' + errorMsg, helpText);
@@ -264,9 +267,9 @@
             rfb.clipViewport = false;  // Show full screen
             rfb.dragViewport = false;  // Disable drag (not needed when scaled)
             
-            // Balance speed and bandwidth with light compression
-            rfb.compressionLevel = 2;  // 0-9, lower = faster (2 is good balance for LAN)
-            rfb.qualityLevel = 6;  // 0-9, higher = better quality
+            // Balance speed and bandwidth with minimal compression (optimized for LAN)
+            rfb.compressionLevel = 1;  // 0-9, lower = faster (1 = minimal compression, good for LAN)
+            rfb.qualityLevel = 7;  // 0-9, higher = better quality
             rfb.focusOnClick = true;
             
             console.log('✅ noVNC RFB connection initialized, attempting to connect via proxy...');
