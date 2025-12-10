@@ -153,6 +153,7 @@
         let rfb;
         let reconnectTimer = null;
         let ticketExpirationTimer = null;
+        let isReconnecting = false;
         
         // Proxmox VNC tickets typically expire after 2 hours
         // We'll auto-refresh 5 minutes before expiration to prevent interruption
@@ -171,8 +172,7 @@
             
             ticketExpirationTimer = setTimeout(() => {
                 console.log('🔄 VNC ticket nearing expiration, refreshing connection...');
-                updateStatus('connecting', 'Refreshing connection...');
-                location.reload();
+                reconnectVNC();
             }, refreshDelay);
         }
         
@@ -181,6 +181,34 @@
                 clearTimeout(ticketExpirationTimer);
                 ticketExpirationTimer = null;
             }
+        }
+        
+        async function reconnectVNC() {
+            if (isReconnecting) {
+                console.log('⏸️ Reconnect already in progress, skipping...');
+                return;
+            }
+            
+            isReconnecting = true;
+            console.log('🔄 Reconnecting VNC (seamless)...');
+            updateStatus('connecting', 'Reconnecting...');
+            
+            // Disconnect existing connection cleanly
+            if (rfb) {
+                try {
+                    rfb.disconnect();
+                } catch (e) {
+                    console.warn('Error disconnecting old RFB:', e);
+                }
+                rfb = null;
+            }
+            
+            // Brief pause to allow cleanup
+            await new Promise(resolve => setTimeout(resolve, 100));
+            
+            // Reconnect with fresh ticket
+            initializeVNC();
+            isReconnecting = false;
         }
         
         function updateStatus(state, msg) {
@@ -222,11 +250,10 @@
             // Clean disconnect = normal VNC session end (ticket expired)
             // Code 401/403 = authentication failure (expired ticket)
             if (e.detail.clean || reason.includes('401') || reason.includes('403')) {
-                console.log('🔄 VNC session ended (ticket expired) - reconnecting immediately...');
-                updateStatus('connecting', 'Reconnecting...');
+                console.log('🔄 VNC session ended (ticket expired) - reconnecting seamlessly...');
                 
-                // Force hard reload (bypass cache)
-                location.reload(true);
+                // Seamless reconnect without page reload
+                reconnectVNC();
                 return;
             }
             
@@ -286,50 +313,62 @@
                      '3. <button onclick="location.reload()" style="background: #4CAF50; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: bold; margin-top: 10px;">Reload Console</button>');
         }
         
-        try {
-            console.log('🔌 Initializing noVNC connection to Proxmox...');
-            
-            // Create RFB connection to Flask proxy with optimized settings
-            rfb = new RFB(document.getElementById('screen'), wsUrl, {
-                shared: false,  // Exclusive connection for better performance
-                repeaterID: '',
-                wsProtocols: ['binary']
-            });
-            
-            // Set event handlers
-            rfb.addEventListener("connect", connectedToServer);
-            rfb.addEventListener("disconnect", disconnectedFromServer);
-            rfb.addEventListener("credentialsrequired", credentialsAreRequired);
-            rfb.addEventListener("securityfailure", securityFailure);
-            
-            // Configure display for maximum performance
-            rfb.scaleViewport = false;  // Disable scaling - causes cursor misalignment
-            rfb.resizeSession = false;  // Don't resize VM display (causes lag)
-            rfb.viewOnly = false;
-            rfb.clipViewport = false;  // Don't clip viewport
-            rfb.dragViewport = true;   // Enable drag to navigate if VM is larger than window
-            
-            // Remove visual indicator styling
-            const screen = document.getElementById('screen');
-            screen.style.cursor = 'default';
-            screen.title = ''
-            
-            // OPTIMIZED FOR INSTALLER PERFORMANCE (e.g., Debian installer)
-            // Use aggressive encoding for maximum speed over LAN
-            rfb.compressionLevel = 2;  // 0-9, use some compression for speed (2 = good balance)
-            rfb.qualityLevel = 0;  // 0-9, lower = faster rendering (0 = lowest quality, maximum speed)
-            rfb.focusOnClick = true;
-            
-            // Use fast encoding methods for performance
-            // Lower quality with compression gives better frame rates in installers
-            console.log('🚀 VNC optimized for speed: compression=2, quality=0');
-            
-            console.log('✅ noVNC RFB connection initialized, attempting to connect via proxy...');
-            
-        } catch (err) {
-            console.error('❌ Failed to create RFB connection:', err);
-            showError('Failed to initialize console: ' + err.message, 'Check browser console (F12) for more details.');
+        function initializeVNC() {
+            try {
+                console.log('🔌 Initializing noVNC connection to Proxmox...');
+                
+                // Clear screen
+                const screenDiv = document.getElementById('screen');
+                screenDiv.innerHTML = '';
+                
+                // Hide error, show loading
+                document.getElementById('error').style.display = 'none';
+                document.getElementById('loading').style.display = 'block';
+                
+                // Create RFB connection to Flask proxy with optimized settings
+                rfb = new RFB(screenDiv, wsUrl, {
+                    shared: false,  // Exclusive connection for better performance
+                    repeaterID: '',
+                    wsProtocols: ['binary']
+                });
+                
+                // Set event handlers
+                rfb.addEventListener("connect", connectedToServer);
+                rfb.addEventListener("disconnect", disconnectedFromServer);
+                rfb.addEventListener("credentialsrequired", credentialsAreRequired);
+                rfb.addEventListener("securityfailure", securityFailure);
+                
+                // Configure display for maximum performance
+                rfb.scaleViewport = false;  // Disable scaling - causes cursor misalignment
+                rfb.resizeSession = false;  // Don't resize VM display (causes lag)
+                rfb.viewOnly = false;
+                rfb.clipViewport = false;  // Don't clip viewport
+                rfb.dragViewport = true;   // Enable drag to navigate if VM is larger than window
+                
+                // Remove visual indicator styling
+                screenDiv.style.cursor = 'default';
+                screenDiv.title = ''
+                
+                // OPTIMIZED FOR INSTALLER PERFORMANCE (e.g., Debian installer)
+                // Use aggressive encoding for maximum speed over LAN
+                rfb.compressionLevel = 2;  // 0-9, use some compression for speed (2 = good balance)
+                rfb.qualityLevel = 0;  // 0-9, lower = faster rendering (0 = lowest quality, maximum speed)
+                rfb.focusOnClick = true;
+                
+                // Use fast encoding methods for performance
+                // Lower quality with compression gives better frame rates in installers
+                console.log('🚀 VNC optimized for speed: compression=2, quality=0');
+                
+                console.log('✅ noVNC RFB connection initialized, attempting to connect via proxy...');
+                
+            } catch (err) {
+                console.error('❌ Failed to create RFB connection:', err);
+                showError('Failed to initialize console: ' + err.message, 'Check browser console (F12) for more details.');
+            }
         }
+        
+        // Initialize on page load
+        initializeVNC();
         
         // Handle window resize
         window.addEventListener('resize', () => {

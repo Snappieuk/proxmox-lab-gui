@@ -61,49 +61,63 @@ function _capturedElemChanged() {
 const _captureObserver = new MutationObserver(_capturedElemChanged);
 
 export function setCapture(target) {
-    if (target.setCapture) {
-
+    if (target.setPointerCapture && window.PointerEvent) {
+        // Use modern setPointerCapture API (non-deprecated)
+        try {
+            target.setPointerCapture(1);
+            document.captureElement = target;
+        } catch (e) {
+            // Fallback to manual capture if pointer capture fails
+            _setupManualCapture(target);
+        }
+    } else if (target.setCapture) {
+        // Legacy setCapture for older browsers (deprecated but still works)
         target.setCapture();
         document.captureElement = target;
     } else {
-        // Release any existing capture in case this method is
-        // called multiple times without coordination
-        releaseCapture();
+        _setupManualCapture(target);
+    }
+}
 
-        let proxyElem = document.getElementById("noVNC_mouse_capture_elem");
+function _setupManualCapture(target) {
+    // Release any existing capture in case this method is
+    // called multiple times without coordination
+    releaseCapture();
 
-        if (proxyElem === null) {
-            proxyElem = document.createElement("div");
-            proxyElem.id = "noVNC_mouse_capture_elem";
-            proxyElem.style.position = "fixed";
-            proxyElem.style.top = "0px";
-            proxyElem.style.left = "0px";
-            proxyElem.style.width = "100%";
-            proxyElem.style.height = "100%";
-            proxyElem.style.zIndex = 10000;
-            proxyElem.style.display = "none";
-            document.body.appendChild(proxyElem);
+    let proxyElem = document.getElementById("noVNC_mouse_capture_elem");
 
-            // This is to make sure callers don't get confused by having
-            // our blocking element as the target
-            proxyElem.addEventListener('contextmenu', _captureProxy);
+    if (proxyElem === null) {
+        proxyElem = document.createElement("div");
+        proxyElem.id = "noVNC_mouse_capture_elem";
+        proxyElem.style.position = "fixed";
+        proxyElem.style.top = "0px";
+        proxyElem.style.left = "0px";
+        proxyElem.style.width = "100%";
+        proxyElem.style.height = "100%";
+        proxyElem.style.zIndex = 10000;
+        proxyElem.style.display = "none";
+        document.body.appendChild(proxyElem);
 
-            proxyElem.addEventListener('mousemove', _captureProxy);
-            proxyElem.addEventListener('mouseup', _captureProxy);
-        }
+        // This is to make sure callers don't get confused by having
+        // our blocking element as the target
+        proxyElem.addEventListener('contextmenu', _captureProxy);
 
-        document.captureElement = target;
+        proxyElem.addEventListener('mousemove', _captureProxy);
+        proxyElem.addEventListener('mouseup', _captureProxy);
+    }
 
-        // Track cursor and get initial cursor
-        _captureObserver.observe(target, {attributes: true});
-        _capturedElemChanged();
+    document.captureElement = target;
 
-        proxyElem.style.display = "";
+    // Track cursor and get initial cursor
+    _captureObserver.observe(target, {attributes: true});
+    _capturedElemChanged();
 
-        // We listen to events on window in order to keep tracking if it
-        // happens to leave the viewport
-        window.addEventListener('mousemove', _captureProxy);
-        window.addEventListener('mouseup', _captureProxy);
+    proxyElem.style.display = "";
+
+    // We listen to events on window in order to keep tracking if it
+    // happens to leave the viewport
+    window.addEventListener('mousemove', _captureProxy);
+    window.addEventListener('mouseup', _captureProxy);
     }
 }
 
