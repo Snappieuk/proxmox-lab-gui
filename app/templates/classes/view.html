@@ -811,15 +811,18 @@ async function deleteVm(assignmentId, vmid) {
 }
 
 async function pushUpdates() {
-    if (!confirm('Push current template state to all VMs in this class? This will update the baseline snapshot.')) return;
+    if (!confirm('Push current teacher VM state to all student VMs? This will reset all students to the updated baseline.')) return;
     
     try {
-        const resp = await fetch(`/api/classes/${classId}/push-updates`, { method: 'POST' });
+        const resp = await fetch(`/api/classes/${classId}/save-and-deploy`, { method: 'POST' });
         const data = await resp.json();
-        if (data.ok) {
-            alert(`Updated ${data.success_count} of ${data.total} VMs.`);
+        if (data.ok && data.task_id) {
+            alert('Deploying updates to all student VMs. This may take several minutes...');
+            // Could add progress tracking here similar to createVms() if needed
+            // For now, just reload after a delay
+            setTimeout(() => location.reload(), 5000);
         } else {
-            alert('Failed to push updates: ' + data.error);
+            alert('Failed to push updates: ' + (data.error || 'Unknown error'));
         }
     } catch (e) {
         alert('Error: ' + e.message);

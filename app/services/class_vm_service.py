@@ -654,7 +654,7 @@ def create_class_vms(
         # Allow adding VMs to existing class (removed the check that prevented this)
         existing_vms = VMAssignment.query.filter_by(class_id=class_id).count()
         if existing_vms > 0:
-            logger.info(f"Adding {num_student_vms} additional VMs to class {class_id} (currently has {existing_vms} VMs)")
+            logger.info(f"Adding {pool_size} additional VMs to class {class_id} (currently has {existing_vms} VMs)")
         
         if not class_.vmid_prefix:
             vmid_prefix = allocate_vmid_prefix_for_class(ssh_executor)
@@ -687,35 +687,81 @@ def create_class_vms(
             # WITH TEMPLATE: Export template to class base QCOW2
             base_qcow2_path = f"{DEFAULT_TEMPLATE_STORAGE_PATH}/{class_prefix}-base.qcow2"
             
-            result.details.append(f"Exporting template {template_vmid} to class base (this may take several minutes for large disks)...")
-            logger.info(f"Starting template export: VMID {template_vmid}, node {template_node}, output {base_qcow2_path}")
-            logger.info(f"NOTE: Disk export is a blocking operation - no VMs can be created until export completes")
+            # Check if base QCOW2 already exists (when adding VMs to existing class)
+            check_cmd = f"test -f {base_qcow2_path} && echo 'exists' || echo 'not_found'"
+            exit_code, stdout, stderr = ssh_executor.execute(check_cmd, check=False)
+            base_exists = stdout.strip() == 'exists'
             
-            # Update progress: exporting template
-            if class_.clone_task_id:
-                update_clone_progress(
-                    class_.clone_task_id,
-                    message=f"Exporting template disk (this may take several minutes)...",
-                    progress_percent=5
+            if base_exists:
+                logger.info(f"Base QCOW2 already exists for class {class_id}: {base_qcow2_path}")
+                logger.info("Skipping template export - using existing base for new VMs")
+                result.details.append(f"Using existing class base: {base_qcow2_path}")
+                
+                # Get template metadata from existing base (for VM creation)
+                # Default values if we can't determine from existing VMs
+                disk_controller_type = 'scsi'
+                ostype = 'l26'
+                bios = 'seabios'
+                machine = 'pc'
+                cpu = 'host'
+                scsihw = 'virtio-scsi-single'
+                memory = 2048
+                cores = 2
+                sockets = 1
+                efi_disk = None
+                tpm_state = None
+                
+                # Try to get metadata from teacher VM if it exists
+                teacher_vmid = get_vmid_for_class_vm(class_id, 0)
+                teacher_config_cmd = f"qm config {teacher_vmid} 2>/dev/null"
+                exit_code, config_out, _ = ssh_executor.execute(teacher_config_cmd, check=False)
+                if exit_code == 0:
+                    # Parse config to extract metadata
+                    for line in config_out.split('\n'):
+                        if line.startswith('scsihw:'):
+                            scsihw = line.split(':', 1)[1].strip()
+                        elif line.startswith('memory:'):
+                            memory = int(line.split(':', 1)[1].strip())
+                        elif line.startswith('cores:'):
+                            cores = int(line.split(':', 1)[1].strip())
+                        elif line.startswith('ostype:'):
+                            ostype = line.split(':', 1)[1].strip()
+                        elif line.startswith('bios:'):
+                            bios = line.split(':', 1)[1].strip()
+                    logger.info(f"Retrieved metadata from teacher VM: {scsihw}, {memory}MB, {cores} cores, {ostype}, {bios}")
+            else:
+                # Base doesn't exist - export template (first time creating VMs for this class)
+                result.details.append(f"Exporting template {template_vmid} to class base (this may take several minutes for large disks)...")
+                logger.info(f"Starting template export: VMID {template_vmid}, node {template_node}, output {base_qcow2_path}")
+                logger.info(f"NOTE: Disk export is a blocking operation - no VMs can be created until export completes")
+                logger.info(f"Starting template export: VMID {template_vmid}, node {template_node}, output {base_qcow2_path}")
+                logger.info(f"NOTE: Disk export is a blocking operation - no VMs can be created until export completes")
+            
+                # Update progress: exporting template
+                if class_.clone_task_id:
+                    update_clone_progress(
+                        class_.clone_task_id,
+                        message=f"Exporting template disk (this may take several minutes)...",
+                        progress_percent=5
+                    )
+                
+                success, error, disk_controller_type, ostype, bios, machine, cpu, scsihw, memory, cores, sockets, efi_disk, tpm_state = export_template_to_qcow2(
+                    ssh_executor=ssh_executor,
+                    template_vmid=template_vmid,
+                    node=template_node,
+                    output_path=base_qcow2_path,
                 )
+                
+                if not success:
+                    error_msg = f"Failed to export template {template_vmid}: {error}"
+                    result.error = error_msg
+                    logger.error(error_msg)
+                    return result
+                
+                logger.info(f"Template export completed successfully: {base_qcow2_path} (controller: {disk_controller_type}, ostype: {ostype}, bios: {bios}, scsihw: {scsihw}, memory: {memory}MB, cores: {cores}, EFI: {bool(efi_disk)}, TPM: {bool(tpm_state)})")
+                result.details.append(f"Class base created: {base_qcow2_path} ({disk_controller_type} disk, {bios} firmware, {scsihw} controller, {memory}MB RAM, {cores} cores, {'UEFI' if efi_disk else 'BIOS'})")
             
-            success, error, disk_controller_type, ostype, bios, machine, cpu, scsihw, memory, cores, sockets, efi_disk, tpm_state = export_template_to_qcow2(
-                ssh_executor=ssh_executor,
-                template_vmid=template_vmid,
-                node=template_node,
-                output_path=base_qcow2_path,
-            )
-            
-            if not success:
-                error_msg = f"Failed to export template {template_vmid}: {error}"
-                result.error = error_msg
-                logger.error(error_msg)
-                return result
-            
-            logger.info(f"Template export completed successfully: {base_qcow2_path} (controller: {disk_controller_type}, ostype: {ostype}, bios: {bios}, scsihw: {scsihw}, memory: {memory}MB, cores: {cores}, EFI: {bool(efi_disk)}, TPM: {bool(tpm_state)})")
-            result.details.append(f"Class base created: {base_qcow2_path} ({disk_controller_type} disk, {bios} firmware, {scsihw} controller, {memory}MB RAM, {cores} cores, {'UEFI' if efi_disk else 'BIOS'})")
-            
-            # Update progress: template export complete
+            # Update progress: template export complete (or skipped)
             if class_.clone_task_id:
                 update_clone_progress(
                     class_.clone_task_id,
@@ -723,127 +769,162 @@ def create_class_vms(
                     progress_percent=15
                 )
             
-            # Step 2: Create teacher VM as overlay (NOT full clone)
-            result.details.append("Creating teacher VM as overlay...")
-            
-            # Select optimal node for teacher VM (with simulated load balancing or override)
-            if class_.deployment_node:
-                teacher_optimal_node = class_.deployment_node
-                logger.info(f"Using deployment override node for teacher VM: {teacher_optimal_node}")
-            else:
-                teacher_optimal_node = get_optimal_node(ssh_executor, proxmox, vm_memory_mb=memory, simulated_vms_per_node=simulated_vms_per_node)
-                logger.info(f"Selected optimal node for teacher VM: {teacher_optimal_node}")
-            
-            # Use allocated VMID from class prefix (index 0 = teacher)
+            # Step 2: Create teacher VM as overlay (NOT full clone) - skip if already exists
             teacher_vmid = get_vmid_for_class_vm(class_id, 0)
             if not teacher_vmid:
                 result.error = "Failed to allocate teacher VM ID"
                 return result
             
-            teacher_name = f"{class_prefix}-teacher"
-            teacher_mac = None
+            # Check if teacher VM exists in Proxmox (not just database)
+            check_vm_cmd = f"qm status {teacher_vmid} 2>/dev/null"
+            exit_code, _, _ = ssh_executor.execute(check_vm_cmd, check=False)
+            teacher_exists_in_proxmox = (exit_code == 0)
             
-            logger.info(f"Creating teacher VM with VMID {teacher_vmid}")
+            if teacher_exists_in_proxmox:
+                logger.info(f"Teacher VM {teacher_vmid} already exists in Proxmox - skipping creation")
+                result.details.append(f"Teacher VM already exists (VMID: {teacher_vmid})")
+                
+                # Get teacher MAC from existing VM
+                mac_cmd = f"qm config {teacher_vmid} | grep 'net0:' | grep -oP 'virtio=[0-9A-F:]+'"
+                exit_code, mac_out, _ = ssh_executor.execute(mac_cmd, check=False)
+                if exit_code == 0 and mac_out.strip():
+                    teacher_mac = mac_out.strip().replace('virtio=', '')
+                    logger.info(f"Retrieved teacher MAC: {teacher_mac}")
+                else:
+                    teacher_mac = None
+                    logger.warning("Could not retrieve teacher VM MAC address")
+            else:
+                # Teacher VM doesn't exist in Proxmox - recreate it (even if DB record exists)
+                logger.info(f"Teacher VM {teacher_vmid} not found in Proxmox - creating/recreating")
+                result.details.append("Creating teacher VM as overlay...")
+            else:
+                result.details.append("Creating teacher VM as overlay...")
             
-            # Import create_overlay_vm from vm_template module
-            from app.services.vm_template import create_overlay_vm
+                # Select optimal node for teacher VM (with simulated load balancing or override)
+                if class_.deployment_node:
+                    teacher_optimal_node = class_.deployment_node
+                    logger.info(f"Using deployment override node for teacher VM: {teacher_optimal_node}")
+                else:
+                    teacher_optimal_node = get_optimal_node(ssh_executor, proxmox, vm_memory_mb=memory, simulated_vms_per_node=simulated_vms_per_node)
+                    logger.info(f"Selected optimal node for teacher VM: {teacher_optimal_node}")
             
-            success, error, teacher_mac = create_overlay_vm(
-                ssh_executor=ssh_executor,
-                vmid=teacher_vmid,
-                name=teacher_name,
-                base_qcow2_path=base_qcow2_path,
-                node=template_node,
-                memory=memory,  # Use template's memory spec
-                cores=cores,  # Use template's CPU cores
-                disk_controller_type=disk_controller_type,  # Use template's disk controller type
-                ostype=ostype,  # Use template's OS type (important for Windows VMs)
-                bios=bios,  # Preserve template's BIOS (UEFI vs BIOS)
-                machine=machine,  # Preserve template's machine type
-                cpu=cpu,  # Preserve template's CPU type
-                scsihw=scsihw,  # Preserve template's SCSI controller
-                efi_disk=efi_disk,  # Preserve template's EFI disk (critical for Windows UEFI boot)
-                tpm_state=tpm_state,  # Preserve template's TPM (required for Windows 11)
-            )
+                teacher_name = f"{class_prefix}-teacher"
+                teacher_mac = None
+                
+                logger.info(f"Creating teacher VM with VMID {teacher_vmid}")
+                
+                # Import create_overlay_VM from vm_template module
+                from app.services.vm_template import create_overlay_vm
+                
+                success, error, teacher_mac = create_overlay_vm(
+                    ssh_executor=ssh_executor,
+                    vmid=teacher_vmid,
+                    name=teacher_name,
+                    base_qcow2_path=base_qcow2_path,
+                    node=template_node,
+                    memory=memory,  # Use template's memory spec
+                    cores=cores,  # Use template's CPU cores
+                    disk_controller_type=disk_controller_type,  # Use template's disk controller type
+                    ostype=ostype,  # Use template's OS type (important for Windows VMs)
+                    bios=bios,  # Preserve template's BIOS (UEFI vs BIOS)
+                    machine=machine,  # Preserve template's machine type
+                    cpu=cpu,  # Preserve template's CPU type
+                    scsihw=scsihw,  # Preserve template's SCSI controller
+                    efi_disk=efi_disk,  # Preserve template's EFI disk (critical for Windows UEFI boot)
+                    tpm_state=tpm_state,  # Preserve template's TPM (required for Windows 11)
+                )
+                
+                if not success:
+                    result.error = f"Failed to create teacher VM: {error}"
+                    logger.error(f"Teacher VM creation failed: {error}")
+                    return result
+                
+                logger.info(f"Teacher VM {teacher_vmid} created successfully")
+                
+                # Query Proxmox to find actual node where VM was created
+                # (SSH commands run on connected node, not necessarily template_node)
+                teacher_actual_node = get_vm_current_node(ssh_executor, teacher_vmid)
+                if not teacher_actual_node:
+                    logger.warning(f"Could not determine node for teacher VM {teacher_vmid}, using template_node as fallback")
+                    teacher_actual_node = template_node
+                
+                result.details.append(f"Teacher VM {teacher_vmid} created on {teacher_actual_node}")
+                logger.info(f"Teacher VM {teacher_vmid} confirmed on node {teacher_actual_node}")
             
-            if not success:
-                result.error = f"Failed to create teacher VM: {error}"
-                logger.error(f"Teacher VM creation failed: {error}")
-                return result
-            
-            logger.info(f"Teacher VM {teacher_vmid} created successfully")
-            
-            # Query Proxmox to find actual node where VM was created
-            # (SSH commands run on connected node, not necessarily template_node)
-            teacher_actual_node = get_vm_current_node(ssh_executor, teacher_vmid)
-            if not teacher_actual_node:
-                logger.warning(f"Could not determine node for teacher VM {teacher_vmid}, using template_node as fallback")
-                teacher_actual_node = template_node
-            
-            result.details.append(f"Teacher VM {teacher_vmid} created on {teacher_actual_node}")
-            logger.info(f"Teacher VM {teacher_vmid} confirmed on node {teacher_actual_node}")
-            
-            # Step 3: Create class-base VM (for consistency and to allow template updates)
-            # Use index 99 (last student slot) to keep it within allocated range
+            # Step 3: Create class-base VM (reserved for template management, never assigned to students)
+            # This VM is used when pushing template updates via save-and-deploy
             class_base_vmid = class_.vmid_prefix * 100 + 99  # e.g., 234 * 100 + 99 = 23499
             class_base_name = f"{class_prefix}-base"
             
-            result.details.append("Creating class-base VM as overlay...")
-            logger.info(f"Creating class-base VM with VMID {class_base_vmid}")
+            # Check if class-base VM already exists
+            check_base_cmd = f"qm status {class_base_vmid} 2>/dev/null"
+            exit_code, _, _ = ssh_executor.execute(check_base_cmd, check=False)
+            base_exists = (exit_code == 0)
             
-            success, error, base_mac = create_overlay_vm(
-                ssh_executor=ssh_executor,
-                vmid=class_base_vmid,
-                name=class_base_name,
-                base_qcow2_path=base_qcow2_path,
-                node=template_node,
-                memory=memory,  # Use template's memory spec
-                cores=cores,  # Use template's CPU cores
-                disk_controller_type=disk_controller_type,  # Use template's disk controller type
-                ostype=ostype,  # Use template's OS type (important for Windows VMs)
-                bios=bios,  # Preserve template's BIOS (UEFI vs BIOS)
-                machine=machine,  # Preserve template's machine type
-                cpu=cpu,  # Preserve template's CPU type
-                scsihw=scsihw,  # Preserve template's SCSI controller
-                efi_disk=efi_disk,  # Preserve template's EFI disk (critical for Windows UEFI boot)
-                tpm_state=tpm_state,  # Preserve template's TPM (required for Windows 11)
-            )
+            if base_exists:
+                logger.info(f"Class-base VM {class_base_vmid} already exists - skipping creation")
+                result.details.append(f"Class-base VM already exists (VMID: {class_base_vmid})")
+                result.class_base_vmid = class_base_vmid
+            else:
+                result.details.append("Creating class-base VM (reserved for template management)...")
+                logger.info(f"Creating class-base VM with VMID {class_base_vmid}")
+                
+                # Import create_overlay_vm from vm_template module
+                from app.services.vm_template import create_overlay_vm
+                
+                success, error, base_mac = create_overlay_vm(
+                    ssh_executor=ssh_executor,
+                    vmid=class_base_vmid,
+                    name=class_base_name,
+                    base_qcow2_path=base_qcow2_path,
+                    node=template_node,
+                    memory=memory,
+                    cores=cores,
+                    disk_controller_type=disk_controller_type,
+                    ostype=ostype,
+                    bios=bios,
+                    machine=machine,
+                    cpu=cpu,
+                    scsihw=scsihw,
+                    efi_disk=efi_disk,
+                    tpm_state=tpm_state,
+                )
+                
+                if not success:
+                    result.error = f"Failed to create class-base VM: {error}"
+                    logger.error(f"Class-base VM creation failed: {error}")
+                    return result
+                
+                result.class_base_vmid = class_base_vmid
+                result.details.append(f"Class-base VM created: {class_base_vmid} (reserved)")
+                
+                # Query actual node for class-base VM
+                class_base_actual_node = get_vm_current_node(ssh_executor, class_base_vmid)
+                if not class_base_actual_node:
+                    logger.warning(f"Could not determine node for class-base VM {class_base_vmid}, using template_node")
+                    class_base_actual_node = template_node
+                
+                # Create VMAssignment for class-base (marked as reserved, never assigned)
+                class_base_assignment = VMAssignment(
+                    class_id=class_id,
+                    proxmox_vmid=class_base_vmid,
+                    vm_name=class_base_name,
+                    mac_address=base_mac,
+                    node=class_base_actual_node,
+                    assigned_user_id=None,
+                    status='reserved',  # NEVER assigned to students
+                    is_template_vm=True,  # Hidden from student view
+                    is_teacher_vm=False,
+                )
+                db.session.add(class_base_assignment)
+                logger.info(f"Class-base VM {class_base_vmid} created on {class_base_actual_node} (status=reserved)")
             
-            if not success:
-                result.error = f"Failed to create class-base VM: {error}"
-                logger.error(f"Class-base VM creation failed: {error}")
-                return result
-            
-            result.class_base_vmid = class_base_vmid
-            result.details.append(f"Class-base VM created: {class_base_vmid} ({class_base_name})")
-            
-            # Query actual node for class-base VM
-            class_base_actual_node = get_vm_current_node(ssh_executor, class_base_vmid)
-            if not class_base_actual_node:
-                logger.warning(f"Could not determine node for class-base VM {class_base_vmid}, using template_node")
-                class_base_actual_node = template_node
-            
-            # Create VMAssignment for class-base (marked as template VM so it's hidden from students)
-            class_base_assignment = VMAssignment(
-                class_id=class_id,
-                proxmox_vmid=class_base_vmid,
-                vm_name=class_base_name,
-                mac_address=base_mac,
-                node=class_base_actual_node,  # Use actual node
-                assigned_user_id=None,
-                status='reserved',  # CRITICAL: Never assign to students (reserved for template updates)
-                is_template_vm=True,  # Mark as template so it's hidden from student view
-                is_teacher_vm=False,
-            )
-            db.session.add(class_base_assignment)
-            logger.info(f"Class-base VM {class_base_vmid} created successfully on {class_base_actual_node} (status=reserved, never assignable)")
-            
-            # Update progress: class-base VM complete
+            # Update progress: ready for student VMs
             if class_.clone_task_id:
                 update_clone_progress(
                     class_.clone_task_id,
                     completed=2,
-                    message=f"Class base created, starting {pool_size} student VMs...",
+                    message=f"Template management VM ready, creating {pool_size} student VMs...",
                     progress_percent=35
                 )
             
@@ -1050,42 +1131,58 @@ def create_class_vms(
             logger.warning(f"Failed to add teacher VM to VMInventory: {e}")
         
         # Track used VMIDs in memory to avoid collisions during creation
-        if base_qcow2_path is None and 'class_base_vmid' in locals():
-            # Template-less workflow: track teacher + class-base
-            used_vmids_in_this_session = {teacher_vmid, class_base_vmid}
-        else:
-            # Template-based workflow: only teacher (no class-base in this flow)
-            used_vmids_in_this_session = {teacher_vmid}
+        used_vmids_in_this_session = {teacher_vmid}
         
         # Step 3: Create student VMs as QCOW2 overlays
         if pool_size > 0:
             result.details.append(f"Creating {pool_size} student VMs...")
             
-            for i in range(pool_size):
+            # Find next available student index by querying existing VMAssignments
+            existing_student_vmids = VMAssignment.query.filter(
+                VMAssignment.class_id == class_id,
+                VMAssignment.is_teacher_vm == False
+            ).with_entities(VMAssignment.proxmox_vmid).all()
+            
+            # Extract indices from VMIDs (e.g., 23405 -> index 5)
+            existing_indices = set()
+            for (vmid,) in existing_student_vmids:
+                index = vmid % 100  # Extract last 2 digits
+                if 1 <= index <= 98:  # Valid student range (skip 0=teacher, 99=reserved)
+                    existing_indices.add(index)
+            
+            # Start from highest existing index + 1 (or 1 if no students exist)
+            next_student_index = max(existing_indices) + 1 if existing_indices else 1
+            logger.info(f"Starting student VM creation from index {next_student_index} (existing indices: {sorted(existing_indices)})")
+            
+            students_created = 0
+            current_index = next_student_index
+            
+            while students_created < pool_size:
                 # Update progress for each student VM
                 if class_.clone_task_id:
-                    student_progress = 35 + (60 * (i / pool_size))  # Progress from 35% to 95%
+                    student_progress = 35 + (60 * (students_created / pool_size))  # Progress from 35% to 95%
                     update_clone_progress(
                         class_.clone_task_id,
-                        completed=2 + i,
-                        current_vm=f"student-{i + 1}",
-                        message=f"Creating student VM {i + 1} of {pool_size}...",
+                        completed=1 + students_created,
+                        current_vm=f"student-{current_index}",
+                        message=f"Creating student VM {students_created + 1} of {pool_size} (index {current_index})...",
                         progress_percent=student_progress
                     )
                 
-                # Use allocated VMID from class prefix (index 1-99 for students)
-                # Student 1 = index 1, Student 2 = index 2, etc.
-                vmid = get_vmid_for_class_vm(class_id, i + 1)
+                # Check if we've hit the limit (indices 1-98 available for students)
+                if current_index >= 99:
+                    logger.error(f"Class VM limit reached - cannot create more students (need {pool_size - students_created} more)")
+                    result.failed += pool_size - students_created
+                    break
+                
+                # Use allocated VMID from class prefix
+                vmid = get_vmid_for_class_vm(class_id, current_index)
                 if not vmid:
-                    logger.error(f"Failed to allocate VMID for student {i + 1}")
-                    result.failed += 1
+                    logger.error(f"Failed to allocate VMID for student index {current_index}")
+                    current_index += 1  # Try next index
                     continue
                 
-                if i + 1 >= 100:
-                    logger.error("Class VM limit reached (99 students max per class)")
-                    result.failed += 1
-                    continue
-                student_name = f"{class_prefix}-student-{i + 1}"
+                student_name = f"{class_prefix}-student-{current_index}"
                 
                 # Select optimal node for this student VM (with simulated load balancing or override)
                 if class_.deployment_node:
@@ -1245,8 +1342,22 @@ def create_class_vms(
                     logger.info(f"Created student VM {vmid} ({student_name})")
                     
                 except Exception as e:
-                    logger.exception(f"Error creating student VM {vmid}: {e}")
-                    result.failed += 1
+                    # Check if error is VMID collision
+                    error_str = str(e).lower()
+                    if 'already exists' in error_str or ('vmid' in error_str and 'exist' in error_str):
+                        logger.warning(f"VMID {vmid} collision detected - auto-incrementing to next index")
+                        current_index += 1  # Try next index
+                        continue  # Don't increment students_created or failed counter
+                    else:
+                        logger.exception(f"Error creating student VM {vmid}: {e}")
+                        result.failed += 1
+                        current_index += 1  # Move to next index
+                        continue
+                
+                # Successfully created student VM - increment counters
+                students_created += 1
+                current_index += 1  # Move to next index for next iteration
+                logger.info(f"Student VM progress: {students_created}/{pool_size} complete")
         
         # Step 4: Start VMs if requested
         if auto_start and result.teacher_vmid:
@@ -1647,10 +1758,15 @@ def recreate_teacher_vm_from_base(class_id: int, class_name: str) -> tuple[bool,
 
 def save_teacher_vm_to_base(class_id: int, teacher_vmid: int, teacher_node: str, class_name: str) -> tuple[bool, str]:
     """
-    Export teacher VM disk to update the class base QCOW2.
+    Export teacher VM disk to staging QCOW2 file (class-base-staging.qcow2).
     
-    This updates the class template so that future student VMs (when pushed)
-    will have the teacher's changes.
+    This creates a new backing file for student overlays WITHOUT affecting current students.
+    Students are NOT affected until "Push to VMs" rebases their overlays.
+    
+    Workflow:
+    1. Export teacher VM disk → class-{prefix}-staging.qcow2
+    2. Students still use class-{prefix}-base.qcow2 (unchanged)
+    3. "Push to VMs" will rebase student overlays from old base to staging
     
     Args:
         class_id: Database ID of the class
@@ -1674,11 +1790,9 @@ def save_teacher_vm_to_base(class_id: int, teacher_vmid: int, teacher_node: str,
         if not class_prefix:
             class_prefix = f"class-{class_id}"
         
-        base_qcow2_path = f"{DEFAULT_TEMPLATE_STORAGE_PATH}/{class_prefix}-base.qcow2"
-        backup_path = f"{base_qcow2_path}.backup"
-        temp_export_path = f"{DEFAULT_TEMPLATE_STORAGE_PATH}/{class_prefix}-teacher-export.qcow2"
+        staging_qcow2_path = f"{DEFAULT_TEMPLATE_STORAGE_PATH}/{class_prefix}-staging.qcow2"
         
-        logger.info(f"Exporting teacher VM {teacher_vmid} disk to update class base QCOW2")
+        logger.info(f"Exporting teacher VM {teacher_vmid} disk to staging QCOW2: {staging_qcow2_path}")
         
         # Connect to SSH
         ssh_executor = get_cached_ssh_executor()
@@ -1692,15 +1806,15 @@ def save_teacher_vm_to_base(class_id: int, teacher_vmid: int, teacher_node: str,
             ssh_executor.disconnect()
             return False, f"Could not find disk for teacher VM {teacher_vmid}"
         
-        # Extract disk path from config line (format: "scsi0: STORAGE:vm-VMID-disk-0")
+        # Parse disk spec
         parts = disk_line.split(':', 1)
         if len(parts) < 2:
             ssh_executor.disconnect()
             return False, f"Could not parse disk config: {disk_line}"
         
-        disk_spec = parts[1].strip()
+        disk_spec = parts[1].strip().split(',')[0]  # Remove options like ,size=32G
         
-        # Convert storage:vm-ID format to actual path
+        # Convert to path
         if ':' in disk_spec:
             storage, disk_id = disk_spec.split(':', 1)
             teacher_disk_path = f"/mnt/pve/{storage}/images/{teacher_vmid}/{disk_id}.qcow2"
@@ -1709,39 +1823,156 @@ def save_teacher_vm_to_base(class_id: int, teacher_vmid: int, teacher_node: str,
         
         logger.info(f"Teacher VM disk: {teacher_disk_path}")
         
-        # Step 2: Backup current class base
-        logger.info(f"Backing up current class base to {backup_path}")
-        ssh_executor.execute(f"cp {base_qcow2_path} {backup_path}", check=True)
+        # Step 2: Remove old staging file if exists
+        ssh_executor.execute(f"rm -f {staging_qcow2_path}", check=False)
         
-        # Step 3: Export teacher VM disk (collapse all overlays into flat image)
-        logger.info(f"Exporting teacher VM disk to {temp_export_path}")
-        export_cmd = f"qemu-img convert -f qcow2 -O qcow2 {teacher_disk_path} {temp_export_path}"
-        exit_code, stdout, stderr = ssh_executor.execute(export_cmd, check=False)
+        # Step 3: Export teacher VM disk to staging (collapse any layers to flat image)
+        logger.info(f"Exporting teacher VM disk to staging (this may take a few minutes)")
+        export_cmd = f"qemu-img convert -f qcow2 -O qcow2 {teacher_disk_path} {staging_qcow2_path}"
+        exit_code, stdout, stderr = ssh_executor.execute(export_cmd, check=False, timeout=600)
         
         if exit_code != 0:
-            ssh_executor.execute(f"rm -f {backup_path}", check=False)
             ssh_executor.disconnect()
             return False, f"Failed to export teacher VM disk: {stderr}"
         
-        # Step 4: Replace class base with exported disk
-        logger.info(f"Replacing class base QCOW2 with teacher's exported disk")
-        ssh_executor.execute(f"mv {temp_export_path} {base_qcow2_path}", check=True)
+        ssh_executor.disconnect()
         
-        # Step 5: Clean up backup
-        ssh_executor.execute(f"rm -f {backup_path}", check=False)
+        logger.info(f"Successfully exported teacher VM {teacher_vmid} to staging QCOW2")
+        return True, "Template saved to staging. Students not affected. Click 'Push to VMs' to update students."
+        
+    except Exception as e:
+        logger.exception(f"Failed to save teacher VM to staging: {e}")
+        return False, str(e)
+
+
+def push_staging_to_students(class_id: int, class_name: str) -> tuple[bool, str, int]:
+    """
+    Push staging template to all student VMs by rebasing their overlays.
+    
+    This is FAST because it only changes overlay backing files, no data copying.
+    
+    Workflow:
+    1. Stop all student VMs
+    2. Swap: class-base.qcow2 ← class-staging.qcow2 (staging becomes new base)
+    3. Rebase all student overlays to point to new base
+    4. Student VMs now use teacher's updated template
+    
+    Args:
+        class_id: Database ID of the class
+        class_name: Name of the class
+        
+    Returns:
+        Tuple of (success, message, updated_count)
+    """
+    from app.models import Class, VMAssignment
+    from app.services.vm_utils import sanitize_vm_name
+    
+    try:
+        class_ = Class.query.get(class_id)
+        if not class_:
+            return False, f"Class {class_id} not found", 0
+        
+        # Get paths
+        class_prefix = sanitize_vm_name(class_name)
+        if not class_prefix:
+            class_prefix = f"class-{class_id}"
+        
+        base_qcow2_path = f"{DEFAULT_TEMPLATE_STORAGE_PATH}/{class_prefix}-base.qcow2"
+        staging_qcow2_path = f"{DEFAULT_TEMPLATE_STORAGE_PATH}/{class_prefix}-staging.qcow2"
+        old_base_backup = f"{DEFAULT_TEMPLATE_STORAGE_PATH}/{class_prefix}-base.old"
+        
+        # Check if staging exists
+        ssh_executor = get_cached_ssh_executor()
+        ssh_executor.connect()
+        
+        check_cmd = f"test -f {staging_qcow2_path} && echo 'exists' || echo 'not_found'"
+        exit_code, stdout, _ = ssh_executor.execute(check_cmd, check=False)
+        
+        if stdout.strip() != 'exists':
+            ssh_executor.disconnect()
+            return False, "No staging template found. Click 'Save Template' first.", 0
+        
+        # Get all student VMs (exclude teacher and class-base)
+        student_vms = VMAssignment.query.filter_by(
+            class_id=class_id,
+            is_teacher_vm=False,
+            is_template_vm=False
+        ).all()
+        
+        if not student_vms:
+            ssh_executor.disconnect()
+            return True, "No student VMs to update", 0
+        
+        logger.info(f"Pushing staging template to {len(student_vms)} student VMs")
+        
+        # Step 1: Stop all student VMs
+        logger.info("Stopping all student VMs")
+        for vm in student_vms:
+            ssh_executor.execute(f"qm stop {vm.proxmox_vmid}", check=False, timeout=60)
+        
+        # Wait for all to stop
+        import time
+        time.sleep(10)
+        
+        # Step 2: Backup old base and swap staging → base
+        logger.info(f"Swapping staging → base: {staging_qcow2_path} → {base_qcow2_path}")
+        ssh_executor.execute(f"mv {base_qcow2_path} {old_base_backup}", check=False)
+        ssh_executor.execute(f"mv {staging_qcow2_path} {base_qcow2_path}", check=True)
+        
+        # Step 3: Rebase all student overlays to new base (FAST - no data copy!)
+        updated_count = 0
+        for vm in student_vms:
+            try:
+                # Find student VM disk
+                find_cmd = f"qm config {vm.proxmox_vmid} | grep -E '^(scsi|virtio|sata|ide)[0-9]+:' | head -1"
+                exit_code, disk_line, _ = ssh_executor.execute(find_cmd, check=False)
+                
+                if exit_code != 0 or not disk_line:
+                    logger.warning(f"Could not find disk for VM {vm.proxmox_vmid}")
+                    continue
+                
+                # Parse disk spec
+                parts = disk_line.split(':', 1)
+                if len(parts) < 2:
+                    continue
+                
+                disk_spec = parts[1].strip().split(',')[0]
+                
+                # Convert to path
+                if ':' in disk_spec:
+                    storage, disk_id = disk_spec.split(':', 1)
+                    student_disk_path = f"/mnt/pve/{storage}/images/{vm.proxmox_vmid}/{disk_id}.qcow2"
+                else:
+                    student_disk_path = disk_spec
+                
+                # Rebase overlay to new base (FAST!)
+                logger.info(f"Rebasing VM {vm.proxmox_vmid} overlay to new base")
+                rebase_cmd = f"qemu-img rebase -u -f qcow2 -b {base_qcow2_path} {student_disk_path}"
+                exit_code, _, stderr = ssh_executor.execute(rebase_cmd, check=False, timeout=30)
+                
+                if exit_code == 0:
+                    updated_count += 1
+                else:
+                    logger.error(f"Failed to rebase VM {vm.proxmox_vmid}: {stderr}")
+                    
+            except Exception as e:
+                logger.error(f"Error processing VM {vm.proxmox_vmid}: {e}")
+        
+        # Clean up old base backup
+        ssh_executor.execute(f"rm -f {old_base_backup}", check=False)
         
         ssh_executor.disconnect()
         
-        logger.info(f"Successfully updated class base QCOW2 from teacher VM {teacher_vmid}")
-        return True, "Template saved successfully"
+        logger.info(f"Successfully pushed staging to {updated_count}/{len(student_vms)} student VMs")
+        return True, f"Updated {updated_count} student VMs with new template", updated_count
         
     except Exception as e:
-        logger.exception(f"Failed to save teacher VM to base: {e}")
-        # Try to restore backup
+        logger.exception(f"Failed to push staging to students: {e}")
+        # Try to restore old base
         try:
             if 'ssh_executor' in locals() and ssh_executor:
-                ssh_executor.execute(f"mv {backup_path} {base_qcow2_path}", check=False)
+                ssh_executor.execute(f"mv {old_base_backup} {base_qcow2_path}", check=False)
                 ssh_executor.disconnect()
         except Exception:
             pass
-        return False, str(e)
+        return False, str(e), 0

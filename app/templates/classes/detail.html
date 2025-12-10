@@ -1856,61 +1856,42 @@ async function reimageTemplate() {
 }
 
 async function saveTemplate() {
-    if (!confirm('Save current Editable VM as the new Class Base Template? This will replace the existing base template.')) return;
+    if (!confirm('Save teacher VM changes to class template? This will update the base template (students are NOT affected until you click Push).')) return;
+    
+    showAlert('Saving teacher VM to class template...', 'info');
     
     try {
-        const resp = await fetch(`/api/classes/${classId}/promote-editable`, { method: 'POST' });
+        const resp = await fetch(`/api/classes/${classId}/template/save`, { method: 'POST' });
         const data = await resp.json();
         
         if (data.ok) {
-            showAlert('Promotion started. Tracking progress...', 'info');
-            // Optionally poll progress
-            if (data.task_id) {
-                const taskId = data.task_id;
-                const interval = setInterval(async () => {
-                    try {
-                        const p = await fetch(`/api/classes/clone/progress/${taskId}`);
-                        const pj = await p.json();
-                        if (pj.status === 'completed') {
-                            clearInterval(interval);
-                            showAlert('Class Base Template updated successfully.', 'success');
-                            // Reload to reflect new template state
-                            setTimeout(() => location.reload(), 1500);
-                        } else if (pj.status === 'failed') {
-                            clearInterval(interval);
-                            showAlert('Promotion failed: ' + (pj.errors && pj.errors[0] || 'Unknown error'), 'error');
-                        }
-                    } catch (e) {
-                        clearInterval(interval);
-                    }
-                }, 1500);
-            }
+            showAlert(data.message || 'Template saved successfully. Click "Push to VMs" to update students.', 'success');
         } else {
-            showAlert(data.error || 'Failed to promote editable VM', 'error');
+            showAlert(data.error || 'Failed to save template', 'error');
         }
     } catch (e) {
-        showAlert('Failed to promote editable VM', 'error');
+        showAlert('Failed to save template: ' + e.message, 'error');
     }
 }
 
 async function pushTemplate() {
-    if (!confirm('Push template to all VMs?\n\nThis will:\n1. Copy your teacher VM changes to the class template\n2. Update all student VMs with the new template\n\nThis operation runs in the background and may take several minutes. Are you sure?')) return;
+    if (!confirm('Push template to all student VMs?\n\nThis will:\n1. Copy class template disk to all student VMs\n2. Replace student VM disks (VM shells stay intact)\n3. Students lose their current work and get the updated template\n\nThis operation runs in the background and may take several minutes. Are you sure?')) return;
     
-    showAlert('Publishing template changes... This runs in the background and may take several minutes.', 'info');
+    showAlert('Pushing template to student VMs... This runs in the background and may take several minutes.', 'info');
     
     try {
-        const resp = await fetch(`/api/classes/${classId}/publish-template`, { method: 'POST' });
+        const resp = await fetch(`/api/classes/${classId}/template/push`, { method: 'POST' });
         const data = await resp.json();
         
         if (data.ok) {
-            showAlert(data.message, 'success');
+            showAlert(data.message || 'Template push started successfully', 'success');
             // Refresh VMs after a delay to see updated status
-            setTimeout(() => refreshVMs(), 5000);
+            setTimeout(() => location.reload(), 5000);
         } else {
-            showAlert(data.error || 'Failed to publish template', 'error');
+            showAlert(data.error || 'Failed to push template', 'error');
         }
     } catch (e) {
-        showAlert('Failed to publish template: ' + e.message, 'error');
+        showAlert('Failed to push template: ' + e.message, 'error');
     }
 }
 

@@ -567,123 +567,35 @@ def save_template(class_id: int):
 @api_class_template_bp.route("/<int:class_id>/template/push", methods=['POST'])
 @login_required
 def push_template(class_id: int):
-    """Push template to student VMs only (preserve teacher/editable and template VMs).
+    """Push staging template to student VMs by rebasing overlays (FAST!).
     
-    Deletes only student VMs and recreates them from the current class base template.
+    This rebases student VM overlays to the new staging template without
+    recreating VMs. Much faster than delete/recreate approach.
     """
     class_, error_response, status_code = require_teacher_or_admin(class_id)
     if error_response:
         return error_response, status_code
     
-    if not class_.template:
-        return jsonify({'ok': False, 'error': 'No template assigned'}), 404
-    
     try:
-        from app.config import CLUSTERS
+        from app.services.class_vm_service import push_staging_to_students
         
-        template = class_.template
-        assignments = list(class_.vm_assignments)  # materialize
+        logger.info(f"Pushing staging template to students for class {class_id}")
         
-        results = []
-        errors = []
-        deleted_count = 0
-        created_count = 0
-        
-        # Resolve cluster id
-        cluster_id = None
-        for cluster in CLUSTERS:
-            if cluster["host"] == template.cluster_ip:
-                cluster_id = cluster["id"]
-                break
-        if not cluster_id:
-            return jsonify({'ok': False, 'error': 'Cluster not found'}), 500
-        
-        # Log current assignments
-        assignment_vmids = {a.proxmox_vmid for a in assignments}
-        logger.info(f"Class {class_id} has {len(assignment_vmids)} VMs in DB: {sorted(assignment_vmids)}")
-        
-        # Determine protected assignments
-        protected = []
-        # Always protect template reference VMs (if any are tracked as assignments)
-        protected.extend([a for a in assignments if a.is_template_vm])
-        
-        # Protect teacher's editable VM if assigned to the teacher
-        teacher_owned = [a for a in assignments if (not a.is_template_vm and a.assigned_user_id == class_.teacher_id)]
-        if teacher_owned:
-            protected.extend(teacher_owned)
-        else:
-            # Fallback: protect earliest created unassigned non-template VM as teacher editable
-            unassigned_non_template = [a for a in assignments if (not a.is_template_vm and a.assigned_user_id is None)]
-            if unassigned_non_template:
-                keep = sorted(unassigned_non_template, key=lambda a: a.created_at or 0)[0]
-                protected.append(keep)
-                logger.info(f"Protecting presumed teacher editable VMID {keep.proxmox_vmid}")
-        
-        protected_ids = {a.id for a in protected}
-        deletable = [a for a in assignments if a.id not in protected_ids]
-        
-        logger.info(f"Will preserve {len(protected)} VM(s): {[a.proxmox_vmid for a in protected]}")
-        logger.info(f"Will recreate {len(deletable)} student VM(s): {[a.proxmox_vmid for a in deletable]}")
-        
-        if not deletable:
-            return jsonify({
-                'ok': True,
-                'message': 'No student VMs to recreate; nothing changed.',
-                'deleted': 0,
-                'created': 0,
-                'results': [],
-                'errors': []
-            })
-        
-        # Delete only deletable VMs and their assignment records
-        for assignment in deletable:
-            try:
-                logger.info(f"Deleting student VM {assignment.proxmox_vmid} on node {assignment.node} (assignment_id={assignment.id})")
-                delete_success, delete_msg = delete_vm(assignment.proxmox_vmid, assignment.node, template.cluster_ip)
-                if delete_success:
-                    deleted_count += 1
-                    db.session.delete(assignment)
-                    results.append(f"Deleted VM {assignment.proxmox_vmid}")
-                else:
-                    logger.warning(f"Failed to delete VM {assignment.proxmox_vmid}: {delete_msg}")
-                    errors.append(f"Failed to delete VM {assignment.proxmox_vmid}: {delete_msg}")
-            except Exception as e:
-                logger.warning(f"Error deleting VM {assignment.proxmox_vmid}: {e}")
-                errors.append(f"Error deleting VM {assignment.proxmox_vmid}: {str(e)}")
-        
-        db.session.commit()
-        
-        # Recreate student VMs using disk copy approach (same as initial class creation)
-        from app.services.class_vm_service import recreate_student_vms_from_template
-        clone_count = len(deletable)
-        logger.info(f"Creating {clone_count} new student VM(s) from template {template.proxmox_vmid}")
-        
-        success, message, new_vmids = recreate_student_vms_from_template(
-            class_id=class_.id,
-            template_vmid=template.proxmox_vmid,
-            template_node=template.node,
-            count=clone_count,
+        # Use fast overlay rebase approach
+        success, message, updated_count = push_staging_to_students(
+            class_id=class_id,
             class_name=class_.name
         )
         
-        if not success:
-            errors.append(f"Failed to recreate VMs: {message}")
+        if success:
+            return jsonify({
+                'ok': True,
+                'message': message,
+                'updated': updated_count
+            })
         else:
-            created_count = len(new_vmids)
-            results.extend([f"Created new VM {vmid}" for vmid in new_vmids])
-        
-        db.session.commit()
-        
-        logger.info(f"Template push complete for class {class_.name}: deleted {deleted_count}, created {created_count}")
-        return jsonify({
-            'ok': True,
-            'message': f'Template pushed: deleted {deleted_count} student VM(s), created {created_count} new VM(s)',
-            'deleted': deleted_count,
-            'created': created_count,
-            'results': results,
-            'errors': errors
-        })
+            return jsonify({'ok': False, 'error': message}), 500
+            
     except Exception as e:
-        db.session.rollback()
         logger.exception(f"Failed to push template: {e}")
         return jsonify({'ok': False, 'error': str(e)}), 500
