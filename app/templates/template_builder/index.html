@@ -1148,7 +1148,7 @@ async function loadBuildOptions() {
         if (isoData.isos && isoData.isos.length > 0) {
             const isoSelect = document.getElementById('build-iso');
             isoSelect.innerHTML = isoData.isos.map(iso => 
-                `<option value="${iso.volid}">${iso.name} - ${iso.node}/${iso.storage} (${(iso.size / 1073741824).toFixed(2)}GB)</option>`
+                `<option value="${iso.volid}" data-node="${iso.node}" data-storage="${iso.storage}">${iso.name} - ${iso.node}/${iso.storage} (${(iso.size / 1073741824).toFixed(2)}GB)</option>`
             ).join('');
             console.log(`Loaded ${isoData.isos.length} ISOs`);
         } else {
@@ -1170,13 +1170,18 @@ function closeBuildModal() {
 async function submitBuildVM(event) {
     event.preventDefault();
     
-    const isoFile = document.getElementById('build-iso').value;
+    const isoSelect = document.getElementById('build-iso');
+    const isoFile = isoSelect.value;
     
     // Validate ISO is selected
     if (!isoFile) {
         alert('Please select an ISO image.');
         return;
     }
+    
+    // Get node from selected option's data attribute
+    const selectedOption = isoSelect.options[isoSelect.selectedIndex];
+    const targetNode = selectedOption.getAttribute('data-node');
     
     const submitBtn = event.target.querySelector('button[type="submit"]');
     submitBtn.disabled = true;
@@ -1187,6 +1192,7 @@ async function submitBuildVM(event) {
             vm_name: document.getElementById('build-vm-name').value,
             os_type: document.getElementById('build-os-type').value,
             iso_file: isoFile,
+            target_node: targetNode,  // Include node hint for fast deployment
             storage: 'TRUENAS-NFS',
             cpu_cores: parseInt(document.getElementById('build-cpu-cores').value),
             memory_mb: parseInt(document.getElementById('build-memory').value),
