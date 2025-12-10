@@ -32,9 +32,17 @@ function _captureProxy(e) {
 
     _captureRecursion = true;
     if (document.captureElement) {
-        document.captureElement.dispatchEvent(newEv);
-    } else {
-        _elementForUnflushedEvents.dispatchEvent(newEv);
+        try {
+            document.captureElement.dispatchEvent(newEv);
+        } catch (err) {
+            console.warn('Failed to dispatch captured event:', err);
+        }
+    } else if (_elementForUnflushedEvents) {
+        try {
+            _elementForUnflushedEvents.dispatchEvent(newEv);
+        } catch (err) {
+            console.warn('Failed to dispatch unflushed event:', err);
+        }
     }
     _captureRecursion = false;
 
@@ -55,7 +63,12 @@ function _captureProxy(e) {
 // Follow cursor style of target element
 function _capturedElemChanged() {
     const proxyElem = document.getElementById("noVNC_mouse_capture_elem");
-    proxyElem.style.cursor = window.getComputedStyle(document.captureElement).cursor;
+    if (proxyElem && document.captureElement) {
+        const computedStyle = window.getComputedStyle(document.captureElement);
+        if (computedStyle && computedStyle.cursor) {
+            proxyElem.style.cursor = computedStyle.cursor;
+        }
+    }
 }
 
 const _captureObserver = new MutationObserver(_capturedElemChanged);
