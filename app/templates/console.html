@@ -214,51 +214,48 @@
             // Cancel any scheduled refresh since we're disconnected
             cancelScheduledRefresh();
             
-            if (e.detail.clean) {
-                updateStatus('disconnected', 'Disconnected (Session Ended)');
-                showError('Console session ended', 
-                    'The VNC session has closed. <strong>VNC tickets are valid for 2 hours.</strong><br><br>' +
-                    '<button onclick="location.reload()" style="background: #4CAF50; color: white; border: none; padding: 12px 24px; border-radius: 4px; cursor: pointer; font-size: 16px; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.2);">🔄 Reconnect (Get Fresh Ticket)</button>');
-            } else {
-                const reason = e.detail.reason || '';
-                const code = e.detail.code || 0;
-                console.error('Disconnect code:', code, 'reason:', reason);
-                updateStatus('disconnected', 'Connection Lost');
+            const reason = e.detail.reason || '';
+            const code = e.detail.code || 0;
+            console.log('📊 Disconnect details - clean:', e.detail.clean, 'code:', code, 'reason:', reason);
+            
+            // AUTO-RECONNECT IMMEDIATELY for clean disconnects or ticket expiration
+            // Clean disconnect = normal VNC session end (ticket expired)
+            // Code 401/403 = authentication failure (expired ticket)
+            if (e.detail.clean || reason.includes('401') || reason.includes('403')) {
+                console.log('🔄 VNC session ended (ticket expired) - reconnecting immediately...');
+                updateStatus('connecting', 'Reconnecting...');
                 
-                // Provide helpful error messages based on close code
-                let helpText = '';
-                let errorMsg = reason || 'Unknown error';
-                
-                // Code 1006 = connection closed abnormally (usually SSL cert issue)
-                if (code === 1006 || reason.includes('1006')) {
-                    errorMsg = 'SSL Certificate not accepted';
-                    helpText = '<strong>Certificate Issue Detected</strong><br><br>' +
-                               '1. Open <a href="https://' + host + ':' + proxmoxPort + '" target="_blank" style="color: #4CAF50; font-weight: bold;">https://' + host + ':' + proxmoxPort + '</a> in a new tab<br>' +
-                               '2. Accept the certificate warning (click Advanced → Accept Risk)<br>' +
-                               '3. Close that tab and click the button below:<br><br>' +
-                               '<button onclick="location.reload()" style="background: #4CAF50; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: bold;">✅ Reload Console</button>';
-                } else if (reason.includes('401') || reason.includes('403')) {
-                    helpText = 'VNC ticket expired. Auto-refreshing to get a new ticket...<br><br>' +
-                               '<button onclick="location.reload()" style="background: #4CAF50; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: bold;">🔄 Get New Ticket & Reconnect</button>';
-                    
-                    // Auto-refresh after 2 seconds for ticket expiration
-                    console.log('⏰ VNC ticket expired, auto-refreshing in 2 seconds...');
-                    setTimeout(() => {
-                        console.log('🔄 Auto-refreshing to get new VNC ticket...');
-                        location.reload();
-                    }, 2000);
-                } else if (reason.includes('timeout') || reason.includes('ETIMEDOUT')) {
-                    helpText = 'Connection timed out. Check that the VM is running and the Proxmox server is reachable.<br><br>' +
-                               '<button onclick="location.reload()" style="background: #4CAF50; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: bold;">🔄 Retry Connection</button>';
-                } else {
-                    // Default reconnect button for any unknown error
-                    helpText = '<strong>Connection Lost</strong><br><br>' +
-                               'The console connection was interrupted. Click below to reconnect:<br><br>' +
-                               '<button onclick="location.reload()" style="background: #4CAF50; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: bold;">🔄 Reconnect to Console</button>';
-                }
-                
-                showError('Connection failed: ' + errorMsg, helpText);
+                // Immediate reconnect (no delay)
+                location.reload();
+                return;
             }
+            
+            // For non-clean disconnects, show error UI
+            updateStatus('disconnected', 'Connection Lost');
+            console.error('❌ Abnormal disconnect - code:', code, 'reason:', reason);
+            
+            let helpText = '';
+            let errorMsg = reason || 'Unknown error';
+            
+            // Code 1006 = connection closed abnormally (usually SSL cert issue)
+            if (code === 1006 || reason.includes('1006')) {
+                errorMsg = 'SSL Certificate not accepted';
+                helpText = '<strong>Certificate Issue Detected</strong><br><br>' +
+                           '1. Open <a href="https://' + host + ':' + proxmoxPort + '" target="_blank" style="color: #4CAF50; font-weight: bold;">https://' + host + ':' + proxmoxPort + '</a> in a new tab<br>' +
+                           '2. Accept the certificate warning (click Advanced → Accept Risk)<br>' +
+                           '3. Close that tab and click the button below:<br><br>' +
+                           '<button onclick="location.reload()" style="background: #4CAF50; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: bold;">✅ Reload Console</button>';
+            } else if (reason.includes('timeout') || reason.includes('ETIMEDOUT')) {
+                helpText = 'Connection timed out. Check that the VM is running and the Proxmox server is reachable.<br><br>' +
+                           '<button onclick="location.reload()" style="background: #4CAF50; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: bold;">🔄 Retry Connection</button>';
+            } else {
+                // Default reconnect button for any unknown error
+                helpText = '<strong>Connection Lost</strong><br><br>' +
+                           'The console connection was interrupted. Click below to reconnect:<br><br>' +
+                           '<button onclick="location.reload()" style="background: #4CAF50; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: bold;">🔄 Reconnect to Console</button>';
+            }
+            
+            showError('Connection failed: ' + errorMsg, helpText);
         }
         
         async function credentialsAreRequired(e) {

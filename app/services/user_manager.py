@@ -169,16 +169,29 @@ def is_admin_user(user: str) -> bool:
     """Check if user is an admin.
     
     Admin if:
-    1. User authenticated via Proxmox (any Proxmox user = admin)
+    1. User authenticated via Proxmox AND is in ADMIN_GROUP (if configured)
     2. Local database user with role='adminer'
+    
+    Note: Unlike the old design, not ALL Proxmox users are admins.
+    Only Proxmox users in the ADMIN_GROUP (default: 'adminers') are admins.
     """
     if not user:
         return False
     
     # Check if user has Proxmox realm suffix (authenticated via Proxmox)
     if '@' in user and (user.endswith('@pve') or user.endswith('@pam')):
-        logger.debug("is_admin_user(%s) -> True (Proxmox user)", user)
-        return True
+        # Check if user is in admin group (if configured)
+        if ADMIN_GROUP:
+            if _user_in_group(user, ADMIN_GROUP):
+                logger.debug("is_admin_user(%s) -> True (Proxmox user in %s group)", user, ADMIN_GROUP)
+                return True
+            else:
+                logger.debug("is_admin_user(%s) -> False (Proxmox user but not in %s group)", user, ADMIN_GROUP)
+                return False
+        else:
+            # No admin group configured - treat all Proxmox users as admins (legacy behavior)
+            logger.debug("is_admin_user(%s) -> True (Proxmox user, no admin group check)", user)
+            return True
     
     # Check if local database user with adminer role
     try:
