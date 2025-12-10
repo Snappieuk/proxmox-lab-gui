@@ -128,6 +128,33 @@ def api_build_vm():
         )
         
         if success:
+            # For non-admin teachers, create VM assignment so they can see the VM
+            # Admins don't need assignments (they see all VMs)
+            if not is_admin and local_user:
+                try:
+                    from app.models import VMAssignment, db
+                    
+                    # Get MAC address from VMInventory (should have been added by build_vm_from_scratch)
+                    from app.models import VMInventory
+                    vm_record = VMInventory.query.filter_by(cluster_id=cluster_id, vmid=vmid).first()
+                    mac_address = vm_record.mac_address if vm_record else None
+                    
+                    # Create assignment linking VM to the creator
+                    assignment = VMAssignment(
+                        proxmox_vmid=vmid,
+                        vm_name=vm_name,
+                        assigned_user_id=local_user.id,
+                        status='available',
+                        mac_address=mac_address,
+                        class_id=None  # Direct assignment, not part of a class
+                    )
+                    db.session.add(assignment)
+                    db.session.commit()
+                    logger.info(f"Created VM assignment for teacher {local_user.username} -> VM {vmid}")
+                except Exception as e:
+                    logger.warning(f"Failed to create VM assignment: {e}")
+                    # Don't fail the whole operation if assignment creation fails
+            
             return jsonify({
                 "ok": True,
                 "vmid": vmid,

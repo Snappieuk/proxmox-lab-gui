@@ -321,7 +321,7 @@ def _deploy_vm_with_iso(
                 node=node,
                 type='qemu',
                 status='stopped',
-                template=1 if convert_to_template else 0,
+                is_template=convert_to_template,  # Fixed: use is_template not template
                 # Hardware info
                 cores=cpu_cores,
                 memory=memory_mb,
@@ -359,7 +359,7 @@ def _deploy_vm_with_iso(
                 from app.models import VMInventory, db
                 vm_record = VMInventory.query.filter_by(cluster_id=cluster_config['id'], vmid=vmid).first()
                 if vm_record:
-                    vm_record.template = 1
+                    vm_record.is_template = True  # Fixed: use is_template not template
                     db.session.commit()
                     logger.info(f"Updated VMInventory template flag for VM {vmid}")
             except Exception as e:
