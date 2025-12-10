@@ -94,7 +94,7 @@
         <tr data-vmid="{{ vm.vmid }}" data-category="windows" data-node="{{ vm.node }}" data-vm-name="{{ vm.name|lower }}" data-vm-ip="{{ vm.ip|lower if vm.ip else '' }}">
             <td>
                 <strong>{{ vm.name }}</strong>
-                {% if vm.ip %}<i class="bi bi-display" style="margin-left: 0.5rem; color: #0078d4;" title="RDP Available"></i>{% endif %}
+                {% if vm.rdp_available %}<i class="bi bi-pc-display" style="margin-left: 0.5rem; color: #0078d4;" title="RDP Available"></i>{% endif %}
             </td>
             <td>{{ vm.vmid }}</td>
             <td>{{ vm.node }}</td>
@@ -752,8 +752,8 @@ function createVMRow(vm, category) {
     const isLinux = category === 'linux' || category === 'lxc';
     const hasRdp = isWindows || vm.rdp_available === true;  // Show RDP for all Windows VMs or if port 3389 is open
     
-    // Add RDP icon if IP is available
-    const rdpIcon = vm.ip && vm.ip !== 'N/A' && vm.ip !== 'Fetching...' ? '<i class="bi bi-display" style="margin-left: 0.5rem; color: #0078d4;" title="RDP Available"></i>' : '';
+    // Add RDP icon if IP is available (desktop PC icon for VMs with RDP/IP)
+    const rdpIcon = vm.ip && vm.ip !== 'N/A' && vm.ip !== 'Fetching...' ? ' <i class="bi bi-pc-display" style="margin-left: 0.5rem; color: #0078d4; font-size: 16px;" title="RDP Available"></i>' : '';
     
     row.innerHTML = `
         <td><strong>${vm.name}</strong>${rdpIcon}</td>
