@@ -675,6 +675,84 @@
                     </div>
                 </div>
                 
+                <!-- VM Hardware Specifications Section -->
+                <div class="settings-card">
+                    <div class="settings-card-header" onclick="toggleSection('vm-hardware')">
+                        <div style="display: flex; align-items: center; gap: 12px;">
+                            <i class="bi bi-cpu" style="font-size: 20px; color: #1e293b;"></i>
+                            <div>
+                                <h2 style="margin: 0; font-size: 17px; font-weight: 600; color: #1e293b;">VM Hardware Specifications</h2>
+                                <p style="margin: 4px 0 0 0; font-size: 14px; color: #64748b;">Configure CPU and RAM for student VMs</p>
+                            </div>
+                        </div>
+                        <i id="vm-hardware-chevron" class="bi bi-chevron-down" style="font-size: 20px; color: #64748b; transition: transform 0.2s;"></i>
+                    </div>
+                    
+                    <div id="vm-hardware-content" class="settings-card-content">
+                        <!-- Settings Grid -->
+                        <div class="settings-grid">
+                            <!-- CPU Cores -->
+                            <div class="setting-field">
+                                <label class="setting-label">CPU Cores</label>
+                                <div style="display: flex; align-items: center; gap: 12px;">
+                                    <input 
+                                        type="number" 
+                                        id="vm-cpu-cores" 
+                                        min="1" 
+                                        max="32" 
+                                        value="2" 
+                                        class="settings-input"
+                                        style="width: 100px;"
+                                    >
+                                    <span style="color: #64748b; font-size: 14px;">cores (1-32)</span>
+                                </div>
+                                <p class="setting-description">
+                                    Number of CPU cores allocated to each student VM
+                                </p>
+                            </div>
+                            
+                            <!-- Memory -->
+                            <div class="setting-field">
+                                <label class="setting-label">Memory (RAM)</label>
+                                <div style="display: flex; align-items: center; gap: 12px;">
+                                    <input 
+                                        type="number" 
+                                        id="vm-memory-mb" 
+                                        min="512" 
+                                        max="131072" 
+                                        step="512"
+                                        value="4096" 
+                                        class="settings-input"
+                                        style="width: 120px;"
+                                    >
+                                    <span style="color: #64748b; font-size: 14px;">MB (0.5GB - 128GB)</span>
+                                </div>
+                                <p class="setting-description">
+                                    Memory allocated to each student VM in megabytes
+                                </p>
+                            </div>
+                        </div>
+                        
+                        <!-- Inline Warning Callout -->
+                        <div class="warning-callout" style="background: #fef3c7; border-color: #fde047;">
+                            <i class="bi bi-exclamation-triangle-fill" style="font-size: 18px; color: #d97706; flex-shrink: 0;"></i>
+                            <div style="flex: 1;">
+                                <div style="font-weight: 600; font-size: 14px; color: #78350f; margin-bottom: 8px;">Important: VM Spec Changes</div>
+                                <div style="font-size: 14px; color: #92400e; line-height: 1.5;">
+                                    <strong>Changing VM specifications will recreate all student VMs.</strong> This process will:
+                                    <ul style="margin: 8px 0; padding-left: 20px;">
+                                        <li>Stop and delete all existing student VMs</li>
+                                        <li>Create new VMs with updated CPU and RAM from the class template</li>
+                                        <li>Preserve the teacher VM (not affected)</li>
+                                        <li>Run in the background (takes 1-2 minutes per VM)</li>
+                                    </ul>
+                                    Students will lose any work not saved in snapshots. Make sure students save their work before changing specs.
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
                 <!-- Settings Status Message -->
                 <div id="settings-status" style="display: none; margin-top: 24px; padding: 16px; border-radius: 8px;"></div>
             </div>
@@ -2958,6 +3036,10 @@ async function loadSettings() {
             
             document.getElementById('max-usage-hours').value = data.settings.max_usage_hours || 0;
             
+            // VM hardware specs
+            document.getElementById('vm-cpu-cores').value = data.settings.cpu_cores || 2;
+            document.getElementById('vm-memory-mb').value = data.settings.memory_mb || 4096;
+            
             // Update time restriction UI state
             toggleTimeRestrictions();
         }
@@ -2978,6 +3060,9 @@ async function saveAllSettings() {
     const hoursStart = document.getElementById('hours-start').value;
     const hoursEnd = document.getElementById('hours-end').value;
     const maxUsageHours = parseInt(document.getElementById('max-usage-hours').value);
+    
+    const vmCpuCores = parseInt(document.getElementById('vm-cpu-cores').value);
+    const vmMemoryMb = parseInt(document.getElementById('vm-memory-mb').value);
     
     // Parse time strings to hours (HH:MM -> HH)
     const startHour = parseInt(hoursStart.split(':')[0]);
@@ -3004,6 +3089,39 @@ async function saveAllSettings() {
         return;
     }
     
+    if (vmCpuCores < 1 || vmCpuCores > 32) {
+        showSettingsStatus('CPU cores must be between 1 and 32', 'error');
+        return;
+    }
+    
+    if (vmMemoryMb < 512 || vmMemoryMb > 131072) {
+        showSettingsStatus('Memory must be between 512MB and 128GB', 'error');
+        return;
+    }
+    
+    // Get current specs to check if they changed
+    const currentCpu = {{ class_.cpu_cores or 2 }};
+    const currentMemory = {{ class_.memory_mb or 4096 }};
+    const specsChanged = (vmCpuCores !== currentCpu || vmMemoryMb !== currentMemory);
+    
+    // Warn user if specs are changing
+    if (specsChanged) {
+        const confirmed = confirm(
+            'WARNING: Changing VM specifications will recreate ALL student VMs!\n\n' +
+            `Current specs: ${currentCpu} cores, ${currentMemory}MB RAM\n` +
+            `New specs: ${vmCpuCores} cores, ${vmMemoryMb}MB RAM\n\n` +
+            'This will:\n' +
+            '• Stop and delete all student VMs\n' +
+            '• Create new VMs with updated specs\n' +
+            '• Students will lose unsaved work\n\n' +
+            'Are you sure you want to continue?'
+        );
+        
+        if (!confirmed) {
+            return;
+        }
+    }
+    
     try {
         const resp = await fetch(`/api/classes/{{ class_.id }}/settings`, {
             method: 'POST',
@@ -3015,14 +3133,27 @@ async function saveAllSettings() {
                 restrict_hours: restrictHours,
                 hours_start: startHour,
                 hours_end: endHour,
-                max_usage_hours: maxUsageHours
+                max_usage_hours: maxUsageHours,
+                cpu_cores: vmCpuCores,
+                memory_mb: vmMemoryMb
             })
         });
         
         const data = await resp.json();
         
         if (data.ok) {
-            showSettingsStatus('Settings saved successfully', 'success');
+            showSettingsStatus(data.message, 'success');
+            
+            // If VMs are being recreated, show additional info
+            if (data.recreating_vms) {
+                setTimeout(() => {
+                    showSettingsStatus(
+                        'Student VMs are being recreated in the background. This may take a few minutes. ' +
+                        'Refresh the VM list to see the updated VMs.',
+                        'info'
+                    );
+                }, 5500);
+            }
         } else {
             showSettingsStatus(data.error || 'Failed to save settings', 'error');
         }
@@ -3042,16 +3173,22 @@ function showSettingsStatus(message, type) {
         statusDiv.style.background = '#d1fae5';
         statusDiv.style.border = '1px solid #6ee7b7';
         statusDiv.style.color = '#065f46';
+    } else if (type === 'info') {
+        statusDiv.style.background = '#dbeafe';
+        statusDiv.style.border = '1px solid #93c5fd';
+        statusDiv.style.color = '#1e40af';
     } else {
         statusDiv.style.background = '#fee2e2';
         statusDiv.style.border = '1px solid #fca5a5';
         statusDiv.style.color = '#991b1b';
     }
     
-    // Auto-hide after 5 seconds
-    setTimeout(() => {
-        statusDiv.style.display = 'none';
-    }, 5000);
+    // Auto-hide after 5 seconds (unless it's an info message about background recreation)
+    if (type !== 'info') {
+        setTimeout(() => {
+            statusDiv.style.display = 'none';
+        }, 5000);
+    }
 }
 
 {% if is_student %}

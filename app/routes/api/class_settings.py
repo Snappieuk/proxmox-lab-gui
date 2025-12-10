@@ -50,7 +50,9 @@ def get_class_settings(class_id: int):
             "restrict_hours": class_.restrict_hours or False,
             "hours_start": class_.hours_start or 0,
             "hours_end": class_.hours_end or 23,
-            "max_usage_hours": class_.max_usage_hours or 0
+            "max_usage_hours": class_.max_usage_hours or 0,
+            "cpu_cores": class_.cpu_cores or 2,
+            "memory_mb": class_.memory_mb or 4096
         }
     })
 
@@ -114,11 +116,47 @@ def update_class_settings(class_id: int):
         class_.hours_end = hours_end
         class_.max_usage_hours = max_usage_hours
     
+    # VM Hardware specs (optional) - will trigger student VM recreation
+    recreate_vms = False
+    if 'cpu_cores' in data or 'memory_mb' in data:
+        new_cpu = data.get('cpu_cores', class_.cpu_cores or 2)
+        new_memory = data.get('memory_mb', class_.memory_mb or 4096)
+        
+        if not isinstance(new_cpu, int) or new_cpu < 1 or new_cpu > 32:
+            return jsonify({"ok": False, "error": "CPU cores must be between 1 and 32"}), 400
+        
+        if not isinstance(new_memory, int) or new_memory < 512 or new_memory > 131072:
+            return jsonify({"ok": False, "error": "Memory must be between 512MB and 128GB"}), 400
+        
+        # Check if specs actually changed
+        if new_cpu != class_.cpu_cores or new_memory != class_.memory_mb:
+            class_.cpu_cores = new_cpu
+            class_.memory_mb = new_memory
+            recreate_vms = True
+    
     try:
         db.session.commit()
+        
+        # If VM specs changed, trigger recreation of student VMs in background
+        if recreate_vms:
+            import threading
+            from app.services.class_vm_service import recreate_student_vms_with_new_specs
+            
+            thread = threading.Thread(
+                target=recreate_student_vms_with_new_specs,
+                args=(class_.id, class_.cpu_cores, class_.memory_mb),
+                daemon=True
+            )
+            thread.start()
+            
+            message = "Settings updated. Student VMs are being recreated with new specs in the background."
+        else:
+            message = "Settings updated successfully"
+        
         return jsonify({
             "ok": True,
-            "message": "Settings updated successfully",
+            "message": message,
+            "recreating_vms": recreate_vms,
             "settings": {
                 "auto_shutdown_enabled": class_.auto_shutdown_enabled,
                 "auto_shutdown_cpu_threshold": class_.auto_shutdown_cpu_threshold,
@@ -126,7 +164,9 @@ def update_class_settings(class_id: int):
                 "restrict_hours": class_.restrict_hours,
                 "hours_start": class_.hours_start,
                 "hours_end": class_.hours_end,
-                "max_usage_hours": class_.max_usage_hours
+                "max_usage_hours": class_.max_usage_hours,
+                "cpu_cores": class_.cpu_cores,
+                "memory_mb": class_.memory_mb
             }
         })
     except Exception as e:

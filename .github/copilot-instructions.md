@@ -14,7 +14,10 @@ A Flask webapp providing a lab VM portal similar to Azure Labs for self-service 
 **Shell environment**: This repo is deployed on Linux servers but development may occur in Windows PowerShell environments. When generating terminal commands for deployment/maintenance, assume Linux bash. For local development on Windows, use PowerShell syntax with `;` for command chaining (never `&&`).
 
 ## Current state & architecture decisions (READ THIS FIRST!)
-- **VMInventory + background_sync system**: **Core architecture** - database-first design where all VM reads come from `VMInventory` table (see `DATABASE_FIRST_ARCHITECTURE.md`). Background sync daemon updates DB every 5min (full) and 30sec (quick). Provides 100x faster page loads vs direct Proxmox API calls. Code in `app/__init__.py` (lines 137-139), `app/routes/api/vms.py`, `app/services/inventory_service.py`, `app/services/background_sync.py`.
+- **VMInventory + background_sync system**: **Core architecture** - database-first design where all VM reads come from `VMInventory` table. Background sync daemon updates DB every 5min (full) and 30sec (quick). Provides 100x faster page loads vs direct Proxmox API calls. Code in `app/__init__.py` (lines 158-161), `app/routes/api/vms.py`, `app/services/inventory_service.py`, `app/services/background_sync.py`.
+- **Template sync daemon**: Background daemon syncs templates to database with full spec caching (CPU/RAM/disk/OS). Full sync every 30min, quick verification every 5min. Enables instant template dropdown loading (<100ms vs 5-30s). Code in `app/services/template_sync.py`, started in `app/__init__.py` (lines 185-187).
+- **Auto-shutdown service**: Monitors VMs in classes with auto-shutdown enabled, shuts down VMs with CPU below threshold for configured duration. Also enforces hour restrictions. Code in `app/services/auto_shutdown_service.py`, started in `app/__init__.py` (lines 163-165). Class settings stored in database (`auto_shutdown_enabled`, `auto_shutdown_cpu_threshold`, `auto_shutdown_idle_minutes`, `restrict_hours`, `allowed_hours_start`, `allowed_hours_end`).
+- **VM specs management**: Teachers can modify VM hardware specs (CPU cores and RAM) via class settings. Changes trigger automatic recreation of all student VMs with new specs. Function `recreate_student_vms_with_new_specs()` in `class_vm_service.py` deletes old student VMs and creates new ones with updated hardware while preserving overlay structure. API endpoint: `/api/classes/<id>/settings` (POST with `cpu_cores` and `memory_mb` fields).
 - **Progressive UI loading**: Frontend shows "Starting..." badge for VMs that are running but have no IP yet. Only transitions to "Running" after IP is discovered. Polls at 2s and 10s intervals after VM start, background sync triggers IP discovery 15s after start operation.
 - **IP discovery workflow**: Multi-tier hierarchy - VMInventory DB cache → Proxmox guest agent `network-get-interfaces` API → LXC `.interfaces.get()` → ARP scanner with nmap → RDP port 3389 validation. Background thread triggers immediate IP sync 15 seconds after VM start (allows boot time before network check).
 - **VM Deployment strategy** (VM shell + disk export/overlay - NEVER use qm clone):
@@ -31,11 +34,13 @@ A Flask webapp providing a lab VM portal similar to Azure Labs for self-service 
   - **Template push**: Export updated template disk to new class-base QCOW2, recreate student overlays
   - **Key functions**: `create_class_vms()`, `export_template_to_qcow2()`, `save_and_deploy_class_vms()`, `get_vm_mac_address()`
   - **SSH helper**: `SSHExecutor` from `ssh_executor.py` provides SSH connection wrapper
-- **Class co-owners feature** (see `CLASS_CO_OWNERS.md`): Teachers can grant other teachers/admins full class management permissions. Uses many-to-many relationship via `class_co_owners` association table. Check permissions with `Class.is_owner(user)` method.
+- **Class co-owners feature**: Teachers can grant other teachers/admins full class management permissions. Uses many-to-many relationship via `class_co_owners` association table. Check permissions with `Class.is_owner(user)` method.
 - **Template publishing workflow**: Teachers can publish VM changes to class template, then propagate to all student VMs. Located at `app/routes/api/publish_template.py` and `app/routes/api/class_template.py`. Deletes old student VMs and recreates fresh ones from updated template using disk copy approach (same as initial class creation).
 - **User VM assignments**: All VM→user mappings stored in database via VMAssignment table. Direct assignments (no class) use `class_id=NULL`. Located at `app/routes/api/user_vm_assignments.py`. NO JSON files used.
 - **Authentication model**: **Proxmox users = Admins only**. Going forward, no application users (students/teachers) should have Proxmox accounts. All non-admin users managed via SQLite database.
-- **Build VM from Scratch feature** (see `BUILD_VM_FROM_SCRATCH.md`): Teachers can create VMs from ISO images with hardware configuration. ISO-based deployment (no cloud-init). VM automatically created on node where ISO is located. Service in `app/services/vm_deployment_service.py`, API at `app/routes/api/vm_builder.py`, UI in template_builder modal.
+- **Build VM from Scratch feature**: Teachers can create VMs from ISO images with hardware configuration. ISO-based deployment (no cloud-init). VM automatically created on node where ISO is located. Service in `app/services/vm_deployment_service.py`, API at `app/routes/api/vm_builder.py`, UI in template_builder modal. ISO files synced on startup via `trigger_iso_sync_all_clusters()`.
+- **Console/VNC access**: Web-based console via noVNC (static files in `app/static/novnc/`). WebSocket proxy in `app/routes/api/console.py` bridges browser ↔ Proxmox VNC websocket. Routes: `/console/<vmid>` (noVNC UI), `/api/console/<vmid>/proxy` (WebSocket). Requires `flask-sock` package. Note: `vnc_proxy.py` exists as legacy/alternative implementation - use `console.py` for new development.
+- **SSH connection pooling**: Reusable SSH connections via `_connection_pool` in `app/services/ssh_executor.py`. Cleanup handler registered in `app/__init__.py` to close all connections on shutdown. Critical for performance - avoids SSH handshake overhead on every disk operation.
 
 ## Architecture patterns
 **Database-first user access control**:
@@ -63,7 +68,7 @@ A Flask webapp providing a lab VM portal similar to Azure Labs for self-service 
 - Prevents timeout on initial page load while Proxmox API is queried (can take 30s+ with many VMs)
 - See `templates/index.html` for fetch pattern, `app/routes/api/vms.py` for API
 
-**Database-first caching architecture** (see `DATABASE_FIRST_ARCHITECTURE.md`):
+**Database-first caching architecture**:
 1. **VMInventory table** (`app/models.py`): Single source of truth for all VM data shown in GUI. Stores identity, status, network, resources, metadata, and sync tracking.
 2. **Background sync daemon** (`app/services/background_sync.py`): Auto-starts on app init, keeps VMInventory synchronized with Proxmox. Full sync every 5min, quick sync every 30sec for running VMs.
 3. **Inventory service** (`app/services/inventory_service.py`): Database operations layer - `persist_vm_inventory()`, `fetch_vm_inventory()`, `update_vm_status()`.
@@ -110,10 +115,13 @@ api/
   vm_builder.py  → /api/vm-builder/build (build VM from scratch with ISO), /isos (list ISOs from all nodes)
   rdp.py         → /rdp/<vmid>.rdp (download RDP file)
   ssh.py         → /ssh/<vmid> (WebSocket terminal, requires flask-sock)
+  console.py     → /console/<vmid> (noVNC web console), /api/console/<vmid>/proxy (WebSocket)
+  vnc_proxy.py   → /api/vnc/<vmid>/proxy (alternative VNC WebSocket proxy)
   mappings.py    → /api/mappings (DEPRECATED - migrated to database, kept for legacy compat)
   clusters.py    → /api/clusters/switch (change active cluster)
   templates.py   → /api/templates (list templates, by-name lookup, node distribution, stats)
   sync.py        → /api/sync/status|trigger|inventory/summary (VMInventory sync control)
+  class_settings.py → /api/classes/<id>/settings (GET/PUT auto-shutdown, hour restrictions)
 ```
 
 
@@ -123,11 +131,20 @@ api/
 - Imports `create_app` factory from `app/` package, runs Flask app with `threaded=True`
 - Disables SSL warnings if `PVE_VERIFY=False` (before any imports)
 
-**`app/__init__.py`** (Application factory, ~110 lines):
+**`app/__init__.py`** (Application factory, ~215 lines):
 - `create_app()` function: configures Flask, initializes SQLAlchemy (`models.init_db()`), registers blueprints
 - WebSocket support: conditionally imports `flask-sock` (gracefully degrades if missing)
 - Context processor: injects `is_admin`, `clusters`, `current_cluster`, `local_user` into all templates
 - Templates/static served from `app/templates/` and `app/static/` directories
+- **Background services startup** (critical initialization order):
+  1. Database initialization (`init_db()`)
+  2. WebSocket/flask-sock setup (SSH terminal, VNC console)
+  3. Background IP scanner (`start_background_ip_scanner()`)
+  4. Background VM inventory sync (`start_background_sync()` - line 158-161)
+  5. Auto-shutdown daemon (`start_auto_shutdown_daemon()` - line 163-165)
+  6. ISO sync trigger (`trigger_iso_sync_all_clusters()`)
+  7. SSH connection pool cleanup handler (`atexit.register()`)
+  8. Template sync daemon (`start_template_sync_daemon()` - line 185-187)
 
 **`app/models.py`** (SQLAlchemy ORM, ~550 lines):
 - `Cluster`: **Database-first cluster config** - stores Proxmox cluster connection info (host, port, user, password, verify_ssl, is_active, is_default). Replaces clusters.json for persistent cluster management.
@@ -227,6 +244,30 @@ api/
 - **Background mode**: Spawns thread, returns cached results immediately (avoids blocking API responses)
 - **Root requirement**: `nmap -sn -PR` (ARP ping) needs root or `CAP_NET_RAW` capability. Falls back to ICMP ping without root.
 - **Cache**: `_arp_cache` (1hr TTL), `_rdp_hosts_cache` (RDP-enabled IPs), invalidated on VM operations
+
+**`app/services/auto_shutdown_service.py`** (Auto-shutdown daemon, ~321 lines):
+- **Auto-shutdown**: Monitors VMs in classes with `auto_shutdown_enabled=True`, shuts down VMs with CPU below threshold for configured duration
+- **Hour restrictions**: Enforces `restrict_hours` - shuts down VMs outside allowed time windows
+- **Key functions**:
+  - `start_auto_shutdown_daemon(app)`: Starts background daemon thread
+  - `check_and_shutdown_idle_vms()`: Main loop - checks all restricted classes
+  - `check_class_vms(class_)`: Enforces restrictions for specific class
+  - `_get_vm_cpu_usage()`: Queries Proxmox RRD data for CPU metrics
+- **Settings** (Class model): `auto_shutdown_enabled`, `auto_shutdown_cpu_threshold` (default 20%), `auto_shutdown_idle_minutes` (default 30), `restrict_hours`, `allowed_hours_start`, `allowed_hours_end`
+- **Check interval**: 300 seconds (5 minutes)
+- **Idle tracking**: `vm_idle_tracker` dict tracks idle state per VM (cluster, class_id, idle_since, low_cpu_checks)
+- **API endpoint**: `/api/classes/<id>/settings` (GET/PUT class restrictions)
+
+**`app/services/template_sync.py`** (Template sync daemon, ~270 lines):
+- **Background daemon**: Syncs Proxmox templates to database with full spec caching (CPU/RAM/disk/OS)
+- **Sync intervals**: Full sync every 30min, quick verification every 5min
+- **Key functions**:
+  - `start_template_sync_daemon(app)`: Starts background daemon thread
+  - `sync_templates_from_proxmox()`: Full sync - queries all clusters, caches specs
+  - `quick_template_verification()`: Fast check - verifies templates still exist
+- **Database storage**: Template table with cluster/node/vmid, specs (cores, memory, disk_size), OS detection
+- **Performance benefit**: Template dropdown loads instantly (<100ms vs 5-30s Proxmox API calls)
+- **API endpoints**: `/api/sync/templates/status`, `/api/sync/templates/trigger` (admin only)
 
 **`app/utils/caching.py`** (Cache utilities, ~170 lines):
 - `ThreadSafeCache`: In-memory dict with TTL, thread lock, `get()`/`set()`/`invalidate()` methods

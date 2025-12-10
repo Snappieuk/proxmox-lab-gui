@@ -1982,3 +1982,163 @@ def push_staging_to_students(class_id: int, class_name: str) -> tuple[bool, str,
         except Exception:
             pass
         return False, str(e), 0
+
+
+def recreate_student_vms_with_new_specs(class_id: int, cpu_cores: int, memory_mb: int) -> None:
+    """
+    Recreate all student VMs in a class with new hardware specifications.
+    
+    This function deletes existing student VMs (excluding teacher VM) and recreates
+    them with updated CPU and RAM specs. The recreation maintains the same VM IDs
+    and overlay structure from the class base template.
+    
+    Args:
+        class_id: Database ID of the class
+        cpu_cores: New CPU core count for VMs
+        memory_mb: New memory in MB for VMs
+    """
+    from app import create_app
+    from app.services.proxmox_service import get_proxmox_admin_for_cluster
+    
+    app = create_app()
+    
+    with app.app_context():
+        try:
+            logger.info(f"Starting VM recreation for class {class_id} with {cpu_cores} cores and {memory_mb}MB RAM")
+            
+            # Get class details
+            class_obj = Class.query.get(class_id)
+            if not class_obj:
+                logger.error(f"Class {class_id} not found")
+                return
+            
+            # Get student VMs (exclude teacher VM which is index 0)
+            student_vms = VMAssignment.query.filter_by(
+                class_id=class_id,
+                status='assigned'
+            ).filter(
+                VMAssignment.vm_name.notlike('%teacher%')
+            ).all()
+            
+            if not student_vms:
+                logger.info(f"No student VMs found for class {class_id}")
+                return
+            
+            logger.info(f"Found {len(student_vms)} student VMs to recreate")
+            
+            # Get SSH connection
+            ssh_executor = get_pooled_ssh_executor_from_config()
+            
+            # Get Proxmox connection
+            cluster_id = class_obj.deployment_cluster
+            if not cluster_id:
+                logger.error(f"No deployment cluster configured for class {class_id}")
+                return
+            
+            proxmox = get_proxmox_admin_for_cluster(int(cluster_id))
+            
+            # Get class base QCOW2 path
+            class_prefix = sanitize_vm_name(class_obj.name)
+            if not class_prefix:
+                class_prefix = f"class-{class_id}"
+            
+            base_qcow2_path = f"{DEFAULT_TEMPLATE_STORAGE_PATH}/{class_prefix}-base.qcow2"
+            
+            # Verify base template exists
+            exit_code, _, _ = ssh_executor.execute(f"test -f {base_qcow2_path}", check=False)
+            if exit_code != 0:
+                logger.error(f"Base template not found at {base_qcow2_path}")
+                return
+            
+            # Process each student VM
+            recreated_count = 0
+            for vm in student_vms:
+                try:
+                    vmid = vm.proxmox_vmid
+                    node = vm.node
+                    
+                    if not node:
+                        logger.warning(f"VM {vmid} has no node assignment, skipping")
+                        continue
+                    
+                    logger.info(f"Recreating VM {vmid} on node {node}")
+                    
+                    # Stop VM if running
+                    try:
+                        status = proxmox.nodes(node).qemu(vmid).status.current.get()
+                        if status.get('status') == 'running':
+                            logger.info(f"Stopping VM {vmid}")
+                            proxmox.nodes(node).qemu(vmid).status.shutdown.post()
+                            wait_for_vm_stopped(ssh_executor, vmid, node, timeout=120)
+                    except Exception as e:
+                        logger.warning(f"Could not check/stop VM {vmid}: {e}")
+                    
+                    # Delete existing VM
+                    logger.info(f"Deleting VM {vmid}")
+                    try:
+                        proxmox.nodes(node).qemu(vmid).delete()
+                    except Exception as e:
+                        logger.error(f"Failed to delete VM {vmid}: {e}")
+                        continue
+                    
+                    # Wait a moment for deletion to complete
+                    import time
+                    time.sleep(2)
+                    
+                    # Recreate VM with new specs
+                    student_name = vm.vm_name or f"{class_prefix}-student-{vmid}"
+                    
+                    # Create VM shell with new specs
+                    logger.info(f"Creating new VM {vmid} with {cpu_cores} cores and {memory_mb}MB RAM")
+                    exit_code, stdout, stderr = ssh_executor.execute(
+                        f"qm create {vmid} --name {student_name} --memory {memory_mb} --cores {cpu_cores} "
+                        f"--net0 virtio,bridge=vmbr0",
+                        timeout=60
+                    )
+                    
+                    if exit_code != 0:
+                        logger.error(f"Failed to create VM shell {vmid}: {stderr}")
+                        continue
+                    
+                    # Remove the default disk that qm create might add
+                    ssh_executor.execute(f"rm -rf {DEFAULT_VM_IMAGES_PATH}/{vmid}", check=False)
+                    
+                    # Create overlay disk pointing to class base
+                    overlay_path = f"{DEFAULT_VM_IMAGES_PATH}/{vmid}/vm-{vmid}-disk-0.qcow2"
+                    ssh_executor.execute(f"mkdir -p {DEFAULT_VM_IMAGES_PATH}/{vmid}", check=False)
+                    
+                    logger.info(f"Creating overlay disk for VM {vmid}")
+                    exit_code, stdout, stderr = ssh_executor.execute(
+                        f"qemu-img create -f qcow2 -F qcow2 -b {base_qcow2_path} {overlay_path}",
+                        timeout=120
+                    )
+                    
+                    if exit_code != 0:
+                        logger.error(f"Failed to create overlay for VM {vmid}: {stderr}")
+                        continue
+                    
+                    # Attach disk to VM
+                    exit_code, stdout, stderr = ssh_executor.execute(
+                        f"qm set {vmid} --scsi0 {overlay_path}",
+                        timeout=60
+                    )
+                    
+                    if exit_code != 0:
+                        logger.error(f"Failed to attach disk to VM {vmid}: {stderr}")
+                        continue
+                    
+                    # Set boot order
+                    ssh_executor.execute(f"qm set {vmid} --boot order=scsi0", check=False)
+                    
+                    recreated_count += 1
+                    logger.info(f"Successfully recreated VM {vmid}")
+                    
+                except Exception as e:
+                    logger.error(f"Error recreating VM {vmid}: {e}", exc_info=True)
+                    continue
+            
+            logger.info(f"VM recreation complete: {recreated_count}/{len(student_vms)} VMs successfully recreated")
+            
+        except Exception as e:
+            logger.error(f"Fatal error during VM recreation: {e}", exc_info=True)
+
