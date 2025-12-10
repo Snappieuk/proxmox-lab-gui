@@ -336,6 +336,15 @@ def _deploy_vm_with_iso(
             db.session.add(vm_inventory)
             db.session.commit()
             logger.info(f"VM {vmid} added to VMInventory database with MAC {mac_address}")
+            
+            # Trigger immediate background sync to update VM status and enable API actions
+            try:
+                from app.services.background_sync import trigger_immediate_sync
+                logger.info(f"Triggering immediate background sync for new VM {vmid}")
+                trigger_immediate_sync()
+            except Exception as sync_error:
+                logger.warning(f"Failed to trigger background sync: {sync_error}")
+                
         except Exception as e:
             logger.warning(f"Failed to add VM {vmid} to VMInventory database: {e}")
             # Don't fail the whole operation if database update fails
