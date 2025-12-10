@@ -330,7 +330,7 @@ def _deploy_vm_with_iso(
                 ip=None,
                 mac_address=mac_address,
                 # Timestamps
-                last_sync=datetime.utcnow(),
+                last_updated=datetime.utcnow(),
                 last_status_check=datetime.utcnow()
             )
             db.session.add(vm_inventory)

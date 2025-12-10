@@ -423,7 +423,7 @@ class VMAssignment(db.Model):
     __tablename__ = 'vm_assignments'
     
     id = db.Column(db.Integer, primary_key=True)
-    class_id = db.Column(db.Integer, db.ForeignKey('classes.id'), nullable=False, index=True)
+    class_id = db.Column(db.Integer, db.ForeignKey('classes.id'), nullable=True, index=True)  # NULL for direct assignments (builder VMs)
     proxmox_vmid = db.Column(db.Integer, nullable=False, index=True)  # Cloned VM's VMID in Proxmox
     vm_name = db.Column(db.String(120), nullable=True, index=True)  # VM name in Proxmox
     mac_address = db.Column(db.String(17), nullable=True, index=True)  # VM's MAC address (e.g., "AA:BB:CC:DD:EE:FF")

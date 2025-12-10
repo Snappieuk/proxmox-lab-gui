@@ -424,10 +424,27 @@ function applyFiltersDebounced() {
     }
 }
 
-document.getElementById('search-input').addEventListener('input', applyFiltersDebounced);
-document.getElementById('category-filter').addEventListener('change', applyFiltersDebounced);
-document.getElementById('status-filter').addEventListener('change', applyFiltersDebounced);
-document.getElementById('node-filter').addEventListener('change', applyFiltersDebounced);
+// Initialize filter event listeners after DOM is loaded
+function initializeFilterListeners() {
+    const searchInput = document.getElementById('search-input');
+    const categoryFilter = document.getElementById('category-filter');
+    const statusFilter = document.getElementById('status-filter');
+    const nodeFilter = document.getElementById('node-filter');
+    
+    if (searchInput) {
+        searchInput.addEventListener('input', applyFiltersDebounced);
+        console.log('Search input listener attached');
+    }
+    if (categoryFilter) {
+        categoryFilter.addEventListener('change', applyFiltersDebounced);
+    }
+    if (statusFilter) {
+        statusFilter.addEventListener('change', applyFiltersDebounced);
+    }
+    if (nodeFilter) {
+        nodeFilter.addEventListener('change', applyFiltersDebounced);
+    }
+}
 
 // Toggle section visibility (collapse/expand tables)
 function toggleSection(tableId) {
@@ -1112,6 +1129,9 @@ document.addEventListener('visibilitychange', function() {
 
 window.addEventListener("load", function () {
     const progressiveLoad = {{ 'true' if progressive_load else 'false' }};
+    
+    // Initialize filter event listeners
+    initializeFilterListeners();
     
     if (progressiveLoad) {
         // Load VMs immediately for progressive load

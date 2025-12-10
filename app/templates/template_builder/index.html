@@ -1394,9 +1394,25 @@ async function submitBuildVM(event) {
             successModal.style.display = 'flex';
             successModal.style.visibility = 'visible';
             
-            // Refresh templates after a delay
+            // Auto-start the VM after creation
+            if (!formData.convert_to_template) {
+                console.log(`🚀 Auto-starting VM ${data.vmid}...`);
+                fetch(`/api/vm/${data.vmid}/start`, { method: 'POST' })
+                    .then(resp => resp.json())
+                    .then(result => {
+                        if (result.ok) {
+                            console.log(`✅ VM ${data.vmid} started successfully`);
+                        } else {
+                            console.warn(`⚠️ Failed to auto-start VM ${data.vmid}: ${result.error}`);
+                        }
+                    })
+                    .catch(err => console.error(`❌ Failed to auto-start VM ${data.vmid}:`, err));
+            }
+            
+            // Refresh both templates and My Template VMs sections
             setTimeout(() => {
                 loadTemplates();
+                loadMyVMs();
             }, 3000);
         } else {
             alert('Build failed: ' + (data.error || 'Unknown error'));
