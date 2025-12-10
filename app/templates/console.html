@@ -232,9 +232,12 @@
             }
             
             isReconnecting = true;
-            console.log('🔄 Smooth reconnect (no screen clear)...');
+            console.log('🔄 Silent reconnect in background...');
             
-            // Disconnect old connection
+            // Don't change status - keep it showing "Connected" during reconnect
+            // Don't show loading screen - completely silent
+            
+            // Disconnect old connection silently
             if (rfb) {
                 try {
                     rfb.disconnect();
@@ -242,31 +245,39 @@
                 rfb = null;
             }
             
-            await new Promise(resolve => setTimeout(resolve, 200));
+            // Very brief pause
+            await new Promise(resolve => setTimeout(resolve, 100));
             
-            // Reconnect without clearing screen - reuse existing canvas
+            // Reconnect without any UI changes - reuse existing canvas
             const screenDiv = document.getElementById('screen');
-            rfb = new RFB(screenDiv, wsUrl, {
-                shared: false,
-                repeaterID: '',
-                wsProtocols: ['binary']
-            });
+            try {
+                rfb = new RFB(screenDiv, wsUrl, {
+                    shared: false,
+                    repeaterID: '',
+                    wsProtocols: ['binary']
+                });
+                
+                rfb.addEventListener("connect", connectedToServer);
+                rfb.addEventListener("disconnect", disconnectedFromServer);
+                rfb.addEventListener("credentialsrequired", credentialsAreRequired);
+                rfb.addEventListener("securityfailure", securityFailure);
+                
+                rfb.scaleViewport = true;
+                rfb.resizeSession = false;
+                rfb.viewOnly = false;
+                rfb.clipViewport = false;
+                rfb.dragViewport = false;
+                rfb.compressionLevel = 2;
+                rfb.qualityLevel = 0;
+                rfb.focusOnClick = true;
+                
+                console.log('✅ Silent reconnect complete');
+            } catch (err) {
+                console.error('❌ Reconnect failed:', err);
+                // If silent reconnect fails, fall back to full reconnect
+                initializeVNC();
+            }
             
-            rfb.addEventListener("connect", connectedToServer);
-            rfb.addEventListener("disconnect", disconnectedFromServer);
-            rfb.addEventListener("credentialsrequired", credentialsAreRequired);
-            rfb.addEventListener("securityfailure", securityFailure);
-            
-            rfb.scaleViewport = true;
-            rfb.resizeSession = false;
-            rfb.viewOnly = false;
-            rfb.clipViewport = false;
-            rfb.dragViewport = false;
-            rfb.compressionLevel = 2;
-            rfb.qualityLevel = 0;
-            rfb.focusOnClick = true;
-            
-            console.log('✅ Smooth reconnect initiated');
             isReconnecting = false;
         }
         
