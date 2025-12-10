@@ -58,6 +58,9 @@ def api_vms():
         # Augment with RDP availability
         _augment_rdp_availability(vms)
         
+        # Augment with builder VM information (for "My Template VMs" section)
+        _augment_builder_vm_info(vms, username)
+        
         # For admins ONLY, add mapped user information
         is_admin = is_admin_user(username)
         if is_admin:
@@ -207,6 +210,56 @@ def _augment_rdp_availability(vms: list):
         
         # Use database flag if available, otherwise infer from metadata
         vm['rdp_available'] = vm.get('rdp_available', False) or (is_windows and has_ip and is_running)
+
+
+def _augment_builder_vm_info(vms: list, username: str):
+    """Add is_builder_vm field to each VM dict in-place.
+    
+    A VM is considered a "builder VM" if:
+    1. It has a VMAssignment with class_id=NULL (direct assignment, not part of a class)
+    2. It's assigned to the current user
+    3. It's not a template
+    
+    This is used by the "My Template VMs" section in the Template Builder UI.
+    """
+    try:
+        # Get user record
+        variants = {username}
+        if '@' in username:
+            base = username.split('@', 1)[0]
+            variants.add(base)
+        variants.update({v + '@pve' for v in list(variants)})
+        variants.update({v + '@pam' for v in list(variants)})
+        
+        user_row = User.query.filter(User.username.in_(variants)).first()
+        if not user_row:
+            # User not found - no builder VMs
+            for vm in vms:
+                vm['is_builder_vm'] = False
+            return
+        
+        # Get all direct assignments (class_id=NULL) for this user
+        builder_vmids = set()
+        direct_assignments = VMAssignment.query.filter_by(
+            assigned_user_id=user_row.id,
+            class_id=None
+        ).all()
+        
+        for assign in direct_assignments:
+            if assign.proxmox_vmid:
+                builder_vmids.add(assign.proxmox_vmid)
+        
+        logger.debug("User %s has %d builder VMs: %s", username, len(builder_vmids), builder_vmids)
+        
+        # Mark VMs accordingly
+        for vm in vms:
+            vm['is_builder_vm'] = vm['vmid'] in builder_vmids and not vm.get('is_template', False)
+            
+    except Exception:
+        logger.exception("Failed to augment builder VM info for user %s", username)
+        # On error, mark all as non-builder VMs
+        for vm in vms:
+            vm['is_builder_vm'] = False
 
 
 @api_vms_bp.route("/vm/<int:vmid>/status")

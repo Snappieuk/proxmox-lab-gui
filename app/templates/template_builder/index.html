@@ -959,10 +959,11 @@ async function loadMyVMs() {
             return;
         }
         
-        // Filter to non-template VMs only
-        const vms = vmList.filter(vm => !vm.is_template);
+        // Filter to builder VMs only (VMs created via Template Builder that aren't templates yet)
+        // is_builder_vm flag is set by backend: VMAssignment with class_id=NULL and assigned to current user
+        const vms = vmList.filter(vm => vm.is_builder_vm === true);
         
-        console.log(`✅ Successfully loaded ${vms.length} VMs (${vmList.length} total, ${vmList.length - vms.length} templates excluded)`);
+        console.log(`✅ Successfully loaded ${vms.length} builder VMs (${vmList.length} total VMs)`);
         loadingDiv.style.display = 'none';
         listDiv.style.display = 'block';
         
