@@ -421,12 +421,7 @@ def init_websocket_proxy(app, sock_instance):
             
             # Connect to Proxmox with authentication (disable SSL verification for self-signed certs)
             # Need BOTH: PVEAuthCookie for WebSocket AND vncticket in URL for VNC protocol
-            proxmox_ws = websocket.WebSocket(
-                sslopt={"cert_reqs": ssl.CERT_NONE},
-                sockopt=[(socket.SOL_SOCKET, socket.SO_SNDBUF, 65536),  # 64KB send buffer
-                         (socket.SOL_SOCKET, socket.SO_RCVBUF, 65536),  # 64KB receive buffer
-                         (socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)]   # Disable Nagle's algorithm for lower latency
-            )
+            proxmox_ws = websocket.WebSocket(sslopt={"cert_reqs": ssl.CERT_NONE})
             
             try:
                 proxmox_ws.connect(
@@ -435,6 +430,15 @@ def init_websocket_proxy(app, sock_instance):
                     suppress_origin=True,
                     timeout=10
                 )
+                
+                # Apply socket options after connection for better performance
+                try:
+                    sock = proxmox_ws.sock
+                    sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)  # Disable Nagle's algorithm
+                    sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 65536)  # 64KB send buffer
+                    sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 65536)  # 64KB receive buffer
+                except Exception as sock_err:
+                    logger.debug(f"Could not set socket options (non-critical): {sock_err}")
                 logger.info(f"✓ Connected to Proxmox VNC for VM {vmid}")
                 logger.info(f"✓ VNC stream ready - forwarding will begin when browser connects")
                 
