@@ -941,22 +941,28 @@ async function loadMyVMs() {
         const data = await response.json();
         console.log('📦 VMs API response:', data);
         
-        if (!data.ok) {
+        // Handle actual API format: {"vms": [...], "is_admin": ...}
+        let vmList;
+        if (Array.isArray(data)) {
+            vmList = data;
+        } else if (data.vms && Array.isArray(data.vms)) {
+            vmList = data.vms;
+        } else if (data.data && Array.isArray(data.data)) {
+            vmList = data.data;
+        } else if (data.error) {
             console.error('❌ API returned error:', data.error);
             loadingDiv.innerHTML = `<p style="color: #d32f2f;">Failed to load VMs: ${data.error || 'Unknown error'}</p>`;
             return;
-        }
-        
-        if (!Array.isArray(data.data)) {
+        } else {
             console.error('❌ API response does not contain valid VM array:', data);
             loadingDiv.innerHTML = `<p style="color: #d32f2f;">Invalid response format</p>`;
             return;
         }
         
         // Filter to non-template VMs only
-        const vms = data.data.filter(vm => !vm.is_template);
+        const vms = vmList.filter(vm => !vm.is_template);
         
-        console.log(`✅ Successfully loaded ${vms.length} VMs (${data.data.length} total, ${data.data.length - vms.length} templates excluded)`);
+        console.log(`✅ Successfully loaded ${vms.length} VMs (${vmList.length} total, ${vmList.length - vms.length} templates excluded)`);
         loadingDiv.style.display = 'none';
         listDiv.style.display = 'block';
         
