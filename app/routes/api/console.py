@@ -361,12 +361,14 @@ def init_websocket_proxy(app, sock_instance):
             logger.info(f"WebSocket opened for VM {vmid} console (node={node}, type={vm_type}, cluster={cluster_id})")
             
             # Get Proxmox client
+            logger.debug(f"[{vmid}] Step 1: Getting Proxmox client for cluster {cluster_id}")
             proxmox = get_proxmox_admin_for_cluster(cluster_id) if cluster_id else get_proxmox_admin_for_cluster(None)
             
             # Generate VNC ticket NOW (just-in-time) to avoid timeout
-            logger.info(f"Generating VNC ticket for VM {vmid}...")
+            logger.info(f"[{vmid}] Step 2: Generating VNC ticket for VM {vmid}...")
             if vm_type == 'qemu':
                 vnc_data = proxmox.nodes(node).qemu(vmid).vncproxy.post(websocket=1)
+                logger.info(f"[{vmid}] Step 2: VNC ticket generated successfully")
             elif vm_type == 'lxc':
                 # LXC containers don't support VNC - they use terminal/console instead
                 logger.error(f"LXC containers (vmid={vmid}) don't support VNC console. Use terminal/SSH instead.")
@@ -385,16 +387,16 @@ def init_websocket_proxy(app, sock_instance):
             
             ticket = vnc_data['ticket']
             vnc_port = vnc_data['port']
-            logger.info(f"VNC ticket generated: port={vnc_port}")
+            logger.info(f"[{vmid}] Step 3: VNC ticket generated: port={vnc_port}")
             
             # Generate PVEAuthCookie - this authenticates the WebSocket connection
-            logger.info(f"Generating PVEAuthCookie for user {username}...")
+            logger.info(f"[{vmid}] Step 4: Generating PVEAuthCookie for user {username}...")
             try:
                 auth_result = proxmox.access.ticket.post(username=username, password=password)
                 pve_auth_cookie = auth_result['ticket']
-                logger.info(f"✓ PVEAuthCookie generated successfully (length={len(pve_auth_cookie)})")
+                logger.info(f"[{vmid}] Step 4: ✓ PVEAuthCookie generated successfully (length={len(pve_auth_cookie)})")
             except Exception as auth_error:
-                logger.error(f"❌ Failed to generate PVEAuthCookie: {auth_error}")
+                logger.error(f"[{vmid}] Step 4: ❌ Failed to generate PVEAuthCookie: {auth_error}")
                 try:
                     ws.close()
                 except Exception:
@@ -411,27 +413,30 @@ def init_websocket_proxy(app, sock_instance):
             query_string = urllib.parse.urlencode(params)
             proxmox_ws_url = f"{base_url}?{query_string}"
             
-            logger.info(f"Connecting to Proxmox VNC WebSocket...")
-            logger.info(f"  Node: {node}, Type: {vm_type}, VMID: {vmid}, VNC Port: {vnc_port}")
-            logger.info(f"  Ticket (first 30 chars): {ticket[:30]}...")
-            logger.info(f"  Auth Cookie (first 30 chars): {pve_auth_cookie[:30]}...")
+            logger.info(f"[{vmid}] Step 5: Connecting to Proxmox VNC WebSocket...")
+            logger.info(f"[{vmid}]   Node: {node}, Type: {vm_type}, VMID: {vmid}, VNC Port: {vnc_port}")
+            logger.debug(f"[{vmid}]   URL: {proxmox_ws_url[:80]}...")
+            logger.debug(f"[{vmid}]   Ticket (first 30 chars): {ticket[:30]}...")
+            logger.debug(f"[{vmid}]   Auth Cookie (first 30 chars): {pve_auth_cookie[:30]}...")
             
             # Store ticket in session for frontend VNC authentication
             session[f'vnc_{vmid}_ticket_for_auth'] = ticket
             
             # Connect to Proxmox with authentication (disable SSL verification for self-signed certs)
             # Need BOTH: PVEAuthCookie for WebSocket AND vncticket in URL for VNC protocol
+            logger.debug(f"[{vmid}] Step 6: Creating WebSocket client...")
             proxmox_ws = websocket.WebSocket(sslopt={"cert_reqs": ssl.CERT_NONE})
             
             try:
+                logger.debug(f"[{vmid}] Step 7: Initiating connection (timeout=10s)...")
                 proxmox_ws.connect(
                     proxmox_ws_url,
                     cookie=f"PVEAuthCookie={pve_auth_cookie}",
                     suppress_origin=True,
                     timeout=10
                 )
-                logger.info(f"✓ Connected to Proxmox VNC for VM {vmid}")
-                logger.info(f"✓ VNC stream ready - forwarding will begin when browser connects")
+                logger.info(f"[{vmid}] Step 7: ✓ Connected to Proxmox VNC successfully")
+                logger.info(f"[{vmid}] Step 8: ✓ VNC stream ready - starting bidirectional forwarding")
                 
             except Exception as conn_error:
                 logger.error(f"❌ Failed to connect to Proxmox WebSocket: {conn_error}")
