@@ -8,6 +8,7 @@ get_vnc_ticket(), get_auth_ticket(), and find_vm_location() helper functions.
 
 import logging
 import ssl
+import socket
 import urllib.parse
 from flask import Blueprint, jsonify, request, session, render_template
 
@@ -420,7 +421,12 @@ def init_websocket_proxy(app, sock_instance):
             
             # Connect to Proxmox with authentication (disable SSL verification for self-signed certs)
             # Need BOTH: PVEAuthCookie for WebSocket AND vncticket in URL for VNC protocol
-            proxmox_ws = websocket.WebSocket(sslopt={"cert_reqs": ssl.CERT_NONE})
+            proxmox_ws = websocket.WebSocket(
+                sslopt={"cert_reqs": ssl.CERT_NONE},
+                sockopt=[(socket.SOL_SOCKET, socket.SO_SNDBUF, 65536),  # 64KB send buffer
+                         (socket.SOL_SOCKET, socket.SO_RCVBUF, 65536),  # 64KB receive buffer
+                         (socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)]   # Disable Nagle's algorithm for lower latency
+            )
             
             try:
                 proxmox_ws.connect(
@@ -449,16 +455,16 @@ def init_websocket_proxy(app, sock_instance):
             stop_forwarding = threading.Event()
             
             def forward_to_browser():
-                """Forward Proxmox → Browser with minimal overhead"""
+                """Forward Proxmox → Browser with minimal overhead and binary frames"""
                 try:
                     while not stop_forwarding.is_set():
                         try:
-                            # Use recv() instead of recv_data() for better performance
+                            # Receive with explicit buffer size for better performance
                             data = proxmox_ws.recv()
                             if not data:
                                 break
-                            # Send immediately without buffering
-                            ws.send(data)
+                            # Send as binary frame immediately (VNC is binary protocol)
+                            ws.send(data, type='bytes')
                         except Exception as e:
                             if not stop_forwarding.is_set():
                                 logger.debug(f"Forward to browser stopped: {e}")

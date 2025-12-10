@@ -264,9 +264,9 @@
             rfb.clipViewport = false;  // Show full screen
             rfb.dragViewport = false;  // Disable drag (not needed when scaled)
             
-            // Enable compression for better performance over network
-            rfb.compressionLevel = 2;  // 0-9, lower = faster but more bandwidth
-            rfb.qualityLevel = 6;  // 0-9, higher = better quality
+            // Optimize for speed over bandwidth (disable compression for LAN)
+            rfb.compressionLevel = 0;  // 0-9, 0 = no compression (fastest, use on fast networks)
+            rfb.qualityLevel = 9;  // 0-9, higher = better quality
             rfb.focusOnClick = true;
             
             console.log('✅ noVNC RFB connection initialized, attempting to connect via proxy...');
