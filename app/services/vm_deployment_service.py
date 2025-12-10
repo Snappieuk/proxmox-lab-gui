@@ -289,10 +289,73 @@ def _deploy_vm_with_iso(
         # Wait for VM creation to finalize
         time.sleep(2)
         
+        # Get MAC address from VM config
+        mac_address = None
+        try:
+            vm_config_result = proxmox.nodes(node).qemu(vmid).config.get()
+            net0 = vm_config_result.get('net0', '')
+            if net0:
+                # Parse net0 format: "virtio=XX:XX:XX:XX:XX:XX,bridge=vmbr0"
+                for part in net0.split(','):
+                    if '=' in part:
+                        key, value = part.split('=', 1)
+                        if key.strip() == 'virtio' or key.strip() == 'e1000':
+                            mac_address = value.strip()
+                            logger.info(f"Extracted MAC address: {mac_address}")
+                            break
+        except Exception as e:
+            logger.warning(f"Failed to extract MAC address for VM {vmid}: {e}")
+        
+        # Update VMInventory database so VM appears in web UI immediately
+        try:
+            from app.models import VMInventory, db
+            from datetime import datetime
+            
+            logger.info(f"Adding VM {vmid} to VMInventory database")
+            
+            # Create VMInventory record
+            vm_inventory = VMInventory(
+                cluster_id=cluster_config['id'],
+                vmid=vmid,
+                name=vm_name,
+                node=node,
+                type='qemu',
+                status='stopped',
+                template=1 if convert_to_template else 0,
+                # Hardware info
+                cores=cpu_cores,
+                memory=memory_mb,
+                disk_size=disk_size_gb * 1024 * 1024 * 1024,  # Convert GB to bytes
+                # Network info (MAC discovered above, IP will be discovered on first sync)
+                ip=None,
+                mac_address=mac_address,
+                # Timestamps
+                last_sync=datetime.utcnow(),
+                last_status_check=datetime.utcnow()
+            )
+            db.session.add(vm_inventory)
+            db.session.commit()
+            logger.info(f"VM {vmid} added to VMInventory database with MAC {mac_address}")
+        except Exception as e:
+            logger.warning(f"Failed to add VM {vmid} to VMInventory database: {e}")
+            # Don't fail the whole operation if database update fails
+        
         # Convert to template if requested
         if convert_to_template:
             logger.info(f"Converting VM {vmid} to template")
             proxmox.nodes(node).qemu(vmid).template.post()
+            
+            # Update template flag in database
+            try:
+                from app.models import VMInventory, db
+                vm_record = VMInventory.query.filter_by(cluster_id=cluster_config['id'], vmid=vmid).first()
+                if vm_record:
+                    vm_record.template = 1
+                    db.session.commit()
+                    logger.info(f"Updated VMInventory template flag for VM {vmid}")
+            except Exception as e:
+                logger.warning(f"Failed to update template flag in database: {e}")
+            
             return True, f"VM {vmid} created and converted to template successfully. Ready to use in classes."
         
         # VM left stopped for manual installation
@@ -318,22 +381,25 @@ def list_available_isos(cluster_id: str) -> Tuple[bool, list, str]:
         # ALWAYS return from database first (database-first architecture)
         all_cached_isos = ISOImage.query.filter_by(cluster_id=cluster_id).all()
         
+        # Filter out container templates - only return actual ISO files
+        actual_isos = [iso for iso in all_cached_isos if iso.name.lower().endswith('.iso')]
+        
         # Check if cache is stale (>5 minutes old)
         five_minutes_ago = datetime.utcnow() - timedelta(minutes=5)
-        fresh_isos = [iso for iso in all_cached_isos if iso.last_seen >= five_minutes_ago]
+        fresh_isos = [iso for iso in actual_isos if iso.last_seen >= five_minutes_ago]
         
-        if not fresh_isos and all_cached_isos:
+        if not fresh_isos and actual_isos:
             logger.info(f"ISO cache is stale for cluster {cluster_id}, triggering background refresh")
             # Trigger background sync but still return stale data (app context available from request)
             threading.Thread(target=_sync_isos_background, args=(cluster_id, None), daemon=True).start()
-        elif not all_cached_isos:
+        elif not actual_isos:
             logger.info(f"No cached ISOs for cluster {cluster_id}, triggering immediate sync in background")
             # No ISOs at all - trigger background sync (app context available from request)
             threading.Thread(target=_sync_isos_background, args=(cluster_id, None), daemon=True).start()
         
         # Return whatever we have in database (even if empty or stale)
-        iso_list = [iso.to_dict() for iso in all_cached_isos]
-        logger.info(f"Returning {len(iso_list)} ISOs from database for cluster {cluster_id}")
+        iso_list = [iso.to_dict() for iso in actual_isos]
+        logger.info(f"Returning {len(iso_list)} ISO files from database for cluster {cluster_id}")
         return True, iso_list, f"Found {len(iso_list)} ISO images"
         
     except Exception as e:
@@ -423,6 +489,13 @@ def _sync_isos_background(cluster_id: str, app=None):
                             
                             for item in content:
                                 volid = item['volid']
+                                
+                                # Skip container templates (vzdump archives, tar.gz, tar.zst, etc.)
+                                # Only include actual ISO files
+                                filename = volid.split('/')[-1].lower()
+                                if not filename.endswith('.iso'):
+                                    logger.debug(f"Skipping non-ISO file: {volid}")
+                                    continue
                                 
                                 # Skip if we've already seen this ISO (shared storage across nodes)
                                 if volid in seen_volids:

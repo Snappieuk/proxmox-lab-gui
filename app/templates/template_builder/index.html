@@ -1135,11 +1135,23 @@ async function loadBuildOptions() {
         }
         
         if (isoData.isos && isoData.isos.length > 0) {
-            const isoSelect = document.getElementById('build-iso');
-            isoSelect.innerHTML = isoData.isos.map(iso => 
-                `<option value="${iso.volid}" data-node="${iso.node}" data-storage="${iso.storage}">${iso.name} - ${iso.node}/${iso.storage} (${(iso.size / 1073741824).toFixed(2)}GB)</option>`
-            ).join('');
-            console.log(`Loaded ${isoData.isos.length} ISOs`);
+            // Filter out container templates - only show actual ISO files
+            const actualISOs = isoData.isos.filter(iso => {
+                const filename = iso.name.toLowerCase();
+                return filename.endsWith('.iso');
+            });
+            
+            if (actualISOs.length > 0) {
+                const isoSelect = document.getElementById('build-iso');
+                isoSelect.innerHTML = actualISOs.map(iso => 
+                    `<option value="${iso.volid}" data-node="${iso.node}" data-storage="${iso.storage}">${iso.name} - ${iso.node}/${iso.storage} (${(iso.size / 1073741824).toFixed(2)}GB)</option>`
+                ).join('');
+                console.log(`Loaded ${actualISOs.length} ISO files (filtered out ${isoData.isos.length - actualISOs.length} container templates)`);
+            } else {
+                const isoSelect = document.getElementById('build-iso');
+                isoSelect.innerHTML = '<option value="">No ISO files found - Upload ISO to TRUENAS-NFS storage first</option>';
+                console.warn('All files were container templates, no actual ISOs found');
+            }
         } else {
             const isoSelect = document.getElementById('build-iso');
             isoSelect.innerHTML = '<option value="">No ISOs found - Upload ISO to TRUENAS-NFS storage first</option>';
@@ -1245,22 +1257,15 @@ async function openConsoleFromSuccess() {
 
 async function openConsole(vmid, vmName) {
     try {
-        // Get console URL from API
-        const response = await fetch(`/api/console/${vmid}/vnc`);
-        const data = await response.json();
+        // Use the same console view as the main portal (with WebSocket proxy and ticket auth)
+        // This avoids 401 errors from direct Proxmox console URLs
+        document.getElementById('console-vm-name').textContent = vmName || `VM ${vmid}`;
+        document.getElementById('console-frame').src = `/api/console/${vmid}/view2`;
         
-        if (data.ok) {
-            // Set console info
-            document.getElementById('console-vm-name').textContent = vmName || `VM ${vmid}`;
-            document.getElementById('console-frame').src = data.console_url;
-            
-            // Show console modal
-            const consoleModal = document.getElementById('console-modal');
-            consoleModal.style.display = 'flex';
-            consoleModal.style.visibility = 'visible';
-        } else {
-            alert('Failed to open console: ' + (data.error || 'Unknown error'));
-        }
+        // Show console modal
+        const consoleModal = document.getElementById('console-modal');
+        consoleModal.style.display = 'flex';
+        consoleModal.style.visibility = 'visible';
     } catch (error) {
         console.error('Failed to open console:', error);
         alert('Failed to open console: ' + error.message);
