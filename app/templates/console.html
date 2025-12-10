@@ -154,11 +154,13 @@
         let reconnectTimer = null;
         let ticketExpirationTimer = null;
         let isReconnecting = false;
+        let lastConnectTime = 0;
         
-        // Proxmox VNC tickets typically expire after 2 hours
-        // We'll auto-refresh 5 minutes before expiration to prevent interruption
+        // Proxmox VNC tickets with generate-password=1 last 7200 seconds (2 hours)
+        // We'll auto-refresh 10 minutes before expiration to prevent interruption
         const TICKET_LIFETIME_MS = 2 * 60 * 60 * 1000; // 2 hours
-        const REFRESH_BEFORE_EXPIRY_MS = 5 * 60 * 1000; // 5 minutes before expiry
+        const REFRESH_BEFORE_EXPIRY_MS = 10 * 60 * 1000; // 10 minutes before expiry
+        const MIN_RECONNECT_INTERVAL_MS = 30 * 1000; // Don't reconnect more than once per 30 seconds
         
         function scheduleTicketRefresh() {
             // Clear any existing timer
@@ -189,6 +191,13 @@
                 return;
             }
             
+            // Prevent reconnect spam - wait at least 30 seconds between reconnects
+            const timeSinceLastConnect = Date.now() - lastConnectTime;
+            if (timeSinceLastConnect < MIN_RECONNECT_INTERVAL_MS) {
+                console.log(`⏸️ Too soon to reconnect (${Math.round(timeSinceLastConnect/1000)}s since last connect), ignoring...`);
+                return;
+            }
+            
             isReconnecting = true;
             console.log('🔄 Reconnecting VNC (seamless)...');
             updateStatus('connecting', 'Reconnecting...');
@@ -211,6 +220,56 @@
             isReconnecting = false;
         }
         
+        async function reconnectVNCInPlace() {
+            if (isReconnecting) {
+                return;
+            }
+            
+            const timeSinceLastConnect = Date.now() - lastConnectTime;
+            if (timeSinceLastConnect < MIN_RECONNECT_INTERVAL_MS) {
+                console.log(`⏸️ Reconnect throttled (${Math.round(timeSinceLastConnect/1000)}s ago)`);
+                return;
+            }
+            
+            isReconnecting = true;
+            console.log('🔄 Smooth reconnect (no screen clear)...');
+            
+            // Disconnect old connection
+            if (rfb) {
+                try {
+                    rfb.disconnect();
+                } catch (e) {}
+                rfb = null;
+            }
+            
+            await new Promise(resolve => setTimeout(resolve, 200));
+            
+            // Reconnect without clearing screen - reuse existing canvas
+            const screenDiv = document.getElementById('screen');
+            rfb = new RFB(screenDiv, wsUrl, {
+                shared: false,
+                repeaterID: '',
+                wsProtocols: ['binary']
+            });
+            
+            rfb.addEventListener("connect", connectedToServer);
+            rfb.addEventListener("disconnect", disconnectedFromServer);
+            rfb.addEventListener("credentialsrequired", credentialsAreRequired);
+            rfb.addEventListener("securityfailure", securityFailure);
+            
+            rfb.scaleViewport = true;
+            rfb.resizeSession = false;
+            rfb.viewOnly = false;
+            rfb.clipViewport = false;
+            rfb.dragViewport = false;
+            rfb.compressionLevel = 2;
+            rfb.qualityLevel = 0;
+            rfb.focusOnClick = true;
+            
+            console.log('✅ Smooth reconnect initiated');
+            isReconnecting = false;
+        }
+        
         function updateStatus(state, msg) {
             const statusDot = document.getElementById('status-dot');
             const statusText = document.getElementById('status-text');
@@ -229,6 +288,7 @@
         
         function connectedToServer(e) {
             console.log('✅ Connected to VM console successfully!');
+            lastConnectTime = Date.now(); // Track connection time
             updateStatus('', 'Connected');
             document.getElementById('loading').style.display = 'none';
             
@@ -250,10 +310,10 @@
             // Clean disconnect = normal VNC session end (ticket expired)
             // Code 401/403 = authentication failure (expired ticket)
             if (e.detail.clean || reason.includes('401') || reason.includes('403')) {
-                console.log('🔄 VNC session ended (ticket expired) - reconnecting seamlessly...');
+                console.log('🔄 VNC session ended (ticket expired) - reconnecting in background...');
                 
-                // Seamless reconnect without page reload
-                reconnectVNC();
+                // Seamless in-place reconnect - don't show loading screen
+                setTimeout(() => reconnectVNCInPlace(), 500);
                 return;
             }
             
@@ -339,11 +399,11 @@
                 rfb.addEventListener("securityfailure", securityFailure);
                 
                 // Configure display for maximum performance
-                rfb.scaleViewport = false;  // Disable scaling - causes cursor misalignment
+                rfb.scaleViewport = true;  // Enable scaling to fit window
                 rfb.resizeSession = false;  // Don't resize VM display (causes lag)
                 rfb.viewOnly = false;
                 rfb.clipViewport = false;  // Don't clip viewport
-                rfb.dragViewport = true;   // Enable drag to navigate if VM is larger than window
+                rfb.dragViewport = false;   // No need to drag when scaling is enabled
                 
                 // Remove visual indicator styling
                 screenDiv.style.cursor = 'default';

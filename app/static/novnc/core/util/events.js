@@ -121,8 +121,18 @@ function _setupManualCapture(target) {
 }
 
 export function releaseCapture() {
+    // Use modern releasePointerCapture if available
+    if (document.captureElement && document.captureElement.releasePointerCapture) {
+        try {
+            document.captureElement.releasePointerCapture(1);
+            document.captureElement = null;
+            return;
+        } catch (e) {
+            // Fall through to legacy methods
+        }
+    }
+    
     if (document.releaseCapture) {
-
         document.releaseCapture();
         document.captureElement = null;
 
