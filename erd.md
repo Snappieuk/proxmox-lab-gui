@@ -55,7 +55,7 @@ erDiagram
         datetime created_at
     }
     
-    Class {
+    LabClass {
         int id PK
         string name
         text description
@@ -191,25 +191,25 @@ erDiagram
 %% Relationships
 %% =========================
 
-    User ||--o{ Class : "teaches"
+    User ||--o{ LabClass : "teaches"
     User ||--o{ Template : "creates"
     User ||--o{ VMAssignment : "assigned_to"
     
-    Class ||--o{ VMAssignment : "has_pool"
-    Class }o--|| Template : "uses_base"
-    Class ||--o{ Template : "owns_class_templates"
-    Class }o--|| User : "taught_by"
+    LabClass ||--o{ VMAssignment : "has_pool"
+    LabClass }o--|| Template : "uses_base"
+    LabClass ||--o{ Template : "owns_class_templates"
+    LabClass }o--|| User : "taught_by"
     
     Template }o--o| Template : "cloned_from"
     Template }o--|| User : "created_by"
-    Template }o--o| Class : "class_specific"
+    Template }o--o| LabClass : "class_specific"
     
     Cluster ||--o{ VMInventory : "stores_inventory"
     Cluster ||--o{ VMIPCache : "caches_ips"
     Cluster ||--o{ ISOImage : "stores_isos"
     
     ClassEnrollment }o--|| User : "student"
-    ClassEnrollment }o--|| Class : "enrolled_in"
+    ClassEnrollment }o--|| LabClass : "enrolled_in"
     
     ClassCoOwner }o--|| User : "co_owner"
-    ClassCoOwner }o--|| Class : "co_owned_class"
+    ClassCoOwner }o--|| LabClass : "co_owned_class"
