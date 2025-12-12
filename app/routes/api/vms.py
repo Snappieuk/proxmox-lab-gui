@@ -538,3 +538,73 @@ def api_vm_eject_iso(vmid: int):
     except Exception as e:
         logger.exception(f"Failed to eject ISO from VM {vmid}")
         return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@api_vms_bp.route("/vm/<int:vmid>/convert-to-template", methods=["POST"])
+@login_required
+def api_vm_convert_to_template(vmid: int):
+    """Convert a VM to a template.
+    
+    WARNING: This action is irreversible. Once converted to a template, the VM
+    can no longer be started directly and can only be used as a base for cloning.
+    """
+    from app.services.inventory_service import get_vm_from_inventory
+    from app.services.proxmox_operations import convert_vm_to_template
+    from app.services.user_manager import is_admin_user, require_user
+    
+    user = require_user()
+    cluster_id = session.get("cluster_id", CLUSTERS[0]["id"])
+    if request.is_json and request.json:
+        cluster_id = request.json.get('cluster_id', cluster_id)
+    
+    try:
+        # Get VM from database for validation
+        vm = get_vm_from_inventory(cluster_id, vmid)
+        if not vm:
+            return jsonify({"ok": False, "error": "VM not found"}), 404
+        
+        # Check access permissions
+        if not is_admin_user(user):
+            owned_vmids = _resolve_user_owned_vmids(user)
+            if vmid not in owned_vmids:
+                return jsonify({"ok": False, "error": "VM not accessible"}), 403
+        
+        # Only QEMU VMs can be templates (LXC uses different mechanism)
+        if vm['type'] != 'qemu':
+            return jsonify({"ok": False, "error": "Only QEMU VMs can be converted to templates"}), 400
+        
+        # Get cluster IP for convert_vm_to_template function
+        cluster_ip = None
+        for cluster in CLUSTERS:
+            if cluster["id"] == cluster_id:
+                cluster_ip = cluster["host"]
+                break
+        
+        if not cluster_ip:
+            return jsonify({"ok": False, "error": "Cluster configuration not found"}), 500
+        
+        # Execute conversion
+        node = vm['node']
+        success, message = convert_vm_to_template(vmid, node, cluster_ip)
+        
+        if success:
+            logger.info(f"VM {vmid} converted to template successfully by user {user}")
+            
+            # Trigger background sync to update VMInventory
+            try:
+                from app.services.background_sync import trigger_immediate_sync
+                trigger_immediate_sync()
+            except Exception as sync_err:
+                logger.warning(f"Failed to trigger sync after template conversion: {sync_err}")
+            
+            return jsonify({
+                "ok": True,
+                "message": message
+            })
+        else:
+            return jsonify({"ok": False, "error": message}), 400
+        
+    except Exception as e:
+        logger.exception(f"Failed to convert VM {vmid} to template")
+        return jsonify({"ok": False, "error": str(e)}), 500
+

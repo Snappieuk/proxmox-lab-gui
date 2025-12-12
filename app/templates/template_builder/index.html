@@ -37,14 +37,6 @@
                     <h3 style="font-size: 1.15rem; margin: 1rem 0 0.5rem; font-weight: 600;">Convert Existing VM</h3>
                     <p style="color: #666; font-size: 0.9rem; margin: 0;">Turn an existing VM into a reusable template</p>
                 </div>
-                
-                <div class="option-card" id="btn-migrate-template" style="cursor: pointer;">
-                    <div class="option-card-icon" style="background: #f3e5f5;">
-                        <i class="bi bi-arrow-left-right" style="font-size: 2.5rem; color: #5c2d91;"></i>
-                    </div>
-                    <h3 style="font-size: 1.15rem; margin: 1rem 0 0.5rem; font-weight: 600;">Migrate Template</h3>
-                    <p style="color: #666; font-size: 0.9rem; margin: 0;">Move or copy a template between clusters</p>
-                </div>
             </div>
         </div>
     </div>
@@ -85,68 +77,6 @@
 </div>
 
 <!-- Migration Modal -->
-<div id="migrate-modal" class="modal" style="display: none;">
-    <div class="modal-content migration-modal">
-        <div class="modal-header">
-            <h2 style="font-size: 1.25rem; font-weight: 600; margin: 0;">
-                <i class="bi bi-arrow-left-right" style="margin-right: 0.5rem;"></i>Migrate Template
-            </h2>
-            <button class="btn-close" onclick="closeMigrateModal()">&times;</button>
-        </div>
-        <div class="modal-body" style="padding: 1.25rem 1.5rem;">
-            <form id="migrate-form" onsubmit="submitMigration(event)">
-                <!-- Source Section -->
-                <div class="form-section">
-                    <div class="section-label">Source</div>
-                    <div class="form-row">
-                        <div class="form-col">
-                            <label for="source-cluster" class="compact-label">Cluster</label>
-                            <select id="source-cluster" class="form-control compact-input" onchange="updateSourceTemplates()" required>
-                                <option value="">Select cluster...</option>
-                            </select>
-                        </div>
-                        <div class="form-col">
-                            <label for="source-template" class="compact-label">Template</label>
-                            <select id="source-template" class="form-control compact-input" required>
-                                <option value="">Select template...</option>
-                            </select>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Divider -->
-                <div class="form-divider"></div>
-
-                <!-- Destination Section -->
-                <div class="form-section">
-                    <div class="section-label">Destination</div>
-                    <div class="form-row">
-                        <div class="form-col" style="grid-column: 1 / -1;">
-                            <label for="destination-cluster" class="compact-label">Cluster</label>
-                            <select id="destination-cluster" class="form-control compact-input" required>
-                                <option value="">Select cluster...</option>
-                            </select>
-                            <small style="color: #666; margin-top: 0.5rem; display: block;">
-                                Template will be copied to TRUENAS storage on the destination cluster
-                            </small>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Action Buttons -->
-                <div class="modal-actions">
-                    <button type="button" onclick="closeMigrateModal()" class="btn-cancel">
-                        Cancel
-                    </button>
-                    <button type="submit" class="btn-migrate">
-                        <i class="bi bi-arrow-right-circle" style="margin-right: 0.5rem;"></i>Copy Template
-                    </button>
-                </div>
-            </form>
-        </div>
-    </div>
-</div>
-
 <!-- Build VM Modal -->
 <div id="build-modal" class="modal" style="display: none;">
     <div class="modal-content" style="max-width: 800px; width: 90%; max-height: 90vh; overflow-y: auto;">
@@ -783,33 +713,8 @@ window.showConvertExisting = function() {
     alert('Convert Existing VM - Feature coming soon!\n\nThis will let you select an existing VM and convert it to a template.');
 };
 
-window.showMigrateTemplate = async function() {
-    console.log('✅ showMigrateTemplate called - VERSION v5');
-    try {
-        const modal = document.getElementById('migrate-modal');
-        if (modal) {
-            modal.style.display = 'flex';
-        } else {
-            console.error('migrate-modal element not found');
-            return;
-        }
-        
-        const response = await fetch('/api/templates/migration-options');
-        const data = await response.json();
-        
-        if (data.ok) {
-            populateMigrationOptions(data.clusters);
-        } else {
-            alert('Failed to load migration options: ' + (data.error || 'Unknown error'));
-        }
-    } catch (error) {
-        console.error('Failed to load migration options:', error);
-        alert('Failed to load migration options: ' + error.message);
-    }
-};
-
 console.log('✅ Functions defined VERSION v5 - attached to window');
-console.log('✅ Window functions:', typeof window.showCreateFromScratch, typeof window.showConvertExisting, typeof window.showMigrateTemplate);
+console.log('✅ Window functions:', typeof window.showCreateFromScratch, typeof window.showConvertExisting);
 
 // Load user's templates
 async function loadTemplates() {
@@ -1099,12 +1004,10 @@ document.addEventListener('DOMContentLoaded', function() {
     // Attach click event listeners to buttons
     const btnCreateFromScratch = document.getElementById('btn-create-from-scratch');
     const btnConvertExisting = document.getElementById('btn-convert-existing');
-    const btnMigrateTemplate = document.getElementById('btn-migrate-template');
     
     console.log('🔍 Button elements:', {
         btnCreateFromScratch: btnCreateFromScratch,
-        btnConvertExisting: btnConvertExisting,
-        btnMigrateTemplate: btnMigrateTemplate
+        btnConvertExisting: btnConvertExisting
     });
     
     if (btnCreateFromScratch) {
@@ -1129,197 +1032,11 @@ document.addEventListener('DOMContentLoaded', function() {
         console.error('❌ btn-convert-existing not found in DOM');
     }
     
-    if (btnMigrateTemplate) {
-        btnMigrateTemplate.addEventListener('click', function(e) {
-            console.log('🖱️ Migrate template clicked');
-            e.preventDefault();
-            showMigrateTemplate();
-        });
-        console.log('✅ Attached listener to btn-migrate-template');
-    } else {
-        console.error('❌ btn-migrate-template not found in DOM');
-    }
-    
     console.log('📋 Starting template load...');
     loadTemplates();
     loadMyVMs();
-    // Pre-load templates for migration modal
-    loadTemplatesForMigration();
     console.log('🎉 Template builder initialization complete');
 });
-
-// Pre-load templates from database for instant migration modal
-function loadTemplatesForMigration() {
-    fetch('/api/templates')
-        .then(r => r.json())
-        .then(data => {
-            if (data.ok && data.templates) {
-                allTemplates = data.templates;
-                templatesLoaded = true;
-                console.log('Pre-loaded', allTemplates.length, 'templates from database');
-            }
-        })
-        .catch(err => {
-            console.error('Failed to pre-load templates:', err);
-        });
-}
-
-// Migration modal functions
-let migrationClusters = [];
-let allTemplates = [];
-let templatesLoaded = false;
-
-async function populateMigrationOptions(clusters) {
-    migrationClusters = clusters;
-    
-    // Ensure templates are loaded before populating
-    if (!templatesLoaded) {
-        console.log('Templates not loaded yet, loading now...');
-        try {
-            const response = await fetch('/api/templates');
-            const data = await response.json();
-            if (data.ok && data.templates) {
-                allTemplates = data.templates;
-                templatesLoaded = true;
-                console.log('Loaded', allTemplates.length, 'templates');
-            }
-        } catch (err) {
-            console.error('Failed to load templates:', err);
-        }
-    } else {
-        console.log('Using pre-loaded templates:', allTemplates.length);
-    }
-    
-    // Populate source clusters
-    const sourceClusterSelect = document.getElementById('source-cluster');
-    sourceClusterSelect.innerHTML = '<option value="">Select source cluster...</option>';
-    
-    clusters.forEach(cluster => {
-        sourceClusterSelect.innerHTML += `<option value="${cluster.id}" data-host="${cluster.host}">
-            ${cluster.name} (${cluster.host})
-        </option>`;
-    });
-    
-    // Populate destination clusters
-    const destClusterSelect = document.getElementById('destination-cluster');
-    destClusterSelect.innerHTML = '<option value="">Select destination cluster...</option>';
-    
-    clusters.forEach(cluster => {
-        destClusterSelect.innerHTML += `<option value="${cluster.id}" data-host="${cluster.host}">
-            ${cluster.name} (${cluster.host})
-        </option>`;
-    });
-}
-
-function updateSourceTemplates() {
-    const sourceClusterSelect = document.getElementById('source-cluster');
-    const sourceTemplateSelect = document.getElementById('source-template');
-    
-    const selectedClusterId = sourceClusterSelect.value;
-    
-    if (!selectedClusterId) {
-        sourceTemplateSelect.innerHTML = '<option value="">Select a template to migrate...</option>';
-        return;
-    }
-    
-    if (!templatesLoaded || allTemplates.length === 0) {
-        sourceTemplateSelect.innerHTML = '<option value="">Loading templates...</option>';
-        console.log('Templates not yet loaded, waiting...');
-        // Retry after templates load
-        setTimeout(updateSourceTemplates, 200);
-        return;
-    }
-    
-    console.log('=== Template Filtering Debug ===');
-    console.log('Selected cluster ID:', selectedClusterId);
-    console.log('Total templates loaded:', allTemplates.length);
-    console.log('All templates:', JSON.stringify(allTemplates, null, 2));
-    
-    // Filter templates by matching cluster_id (database-first approach)
-    const clusterTemplates = allTemplates.filter(t => {
-        const matches = t.cluster_id === selectedClusterId || t.cluster_ip === selectedClusterId;
-        console.log(`Template "${t.name}" (VMID ${t.proxmox_vmid}): cluster_id="${t.cluster_id}" cluster_ip="${t.cluster_ip}" vs "${selectedClusterId}" => ${matches ? 'MATCH' : 'NO MATCH'}`);
-        return matches;
-    });
-    
-    console.log('Filtered templates:', clusterTemplates.length, 'matches');
-    console.log('=== End Debug ===');
-    
-    sourceTemplateSelect.innerHTML = '<option value="">Select a template to migrate...</option>';
-    
-    if (clusterTemplates.length === 0) {
-        sourceTemplateSelect.innerHTML += '<option value="" disabled>No templates found on this cluster</option>';
-    } else {
-        clusterTemplates.forEach(template => {
-            sourceTemplateSelect.innerHTML += `<option value="${template.id}">
-                ${template.name || 'VM ' + template.proxmox_vmid} (VMID ${template.proxmox_vmid})
-            </option>`;
-        });
-    }
-}
-
-function closeMigrateModal() {
-    document.getElementById('migrate-modal').style.display = 'none';
-    document.getElementById('migrate-form').reset();
-}
-
-async function submitMigration(event) {
-    event.preventDefault();
-    
-    const sourceClusterId = document.getElementById('source-cluster').value;
-    const sourceTemplateId = document.getElementById('source-template').value;
-    const destinationClusterId = document.getElementById('destination-cluster').value;
-    const destinationStorage = 'TRUENAS-NFS';  // Hardcoded to TRUENAS-NFS storage
-    
-    if (!sourceClusterId || !sourceTemplateId || !destinationClusterId) {
-        alert('Please fill in all required fields');
-        return;
-    }
-    
-    if (sourceClusterId === destinationClusterId) {
-        alert('Source and destination clusters must be different');
-        return;
-    }
-    
-    const submitBtn = event.target.querySelector('button[type="submit"]');
-    submitBtn.disabled = true;
-    submitBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Copying template...';
-    
-    try {
-        const response = await fetch('/api/templates/migrate', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                source_template_id: parseInt(sourceTemplateId),
-                source_cluster_id: sourceClusterId,
-                destination_cluster_id: destinationClusterId,
-                destination_storage: destinationStorage,
-                operation: 'copy'  // Always copy (never delete source)
-            })
-        });
-        
-        const data = await response.json();
-        
-        if (data.ok) {
-            alert(`Template copy started successfully!\\n\\n${data.message}\\n\\nThis may take several minutes depending on disk size. The template will appear in the list once the copy is complete.`);
-            closeMigrateModal();
-            
-            // Refresh templates after a delay to show the new template
-            setTimeout(() => {
-                loadTemplates();
-            }, 10000);  // 10 second delay
-        } else {
-            alert('Template copy failed: ' + (data.error || 'Unknown error'));
-            submitBtn.disabled = false;
-            submitBtn.innerHTML = '<i class="bi bi-arrow-right-circle"></i> Copy Template';
-        }
-    } catch (error) {
-        console.error('Template copy failed:', error);
-        alert('Template copy failed: ' + error.message);
-        submitBtn.disabled = false;
-        submitBtn.innerHTML = '<i class="bi bi-arrow-right-circle"></i> Copy Template';
-    }
-}
 
 // Build VM from Scratch functions
 function toggleStartMethod() {
