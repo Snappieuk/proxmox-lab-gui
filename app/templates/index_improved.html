@@ -503,9 +503,26 @@ function applyFilters() {
     });
 }
 
-document.getElementById('search-input').addEventListener('input', applyFilters);
-document.getElementById('category-filter').addEventListener('change', applyFilters);
-document.getElementById('node-filter').addEventListener('change', applyFilters);
+// Initialize filters - called after VMs are loaded
+function initializeFilters() {
+    // Remove any existing listeners to avoid duplicates
+    const searchInput = document.getElementById('search-input');
+    const categoryFilter = document.getElementById('category-filter');
+    const nodeFilter = document.getElementById('node-filter');
+    
+    if (searchInput) {
+        searchInput.removeEventListener('input', applyFilters);
+        searchInput.addEventListener('input', applyFilters);
+    }
+    if (categoryFilter) {
+        categoryFilter.removeEventListener('change', applyFilters);
+        categoryFilter.addEventListener('change', applyFilters);
+    }
+    if (nodeFilter) {
+        nodeFilter.removeEventListener('change', applyFilters);
+        nodeFilter.addEventListener('change', applyFilters);
+    }
+}
 
 // Populate node filter
 window.addEventListener('load', function() {
@@ -578,6 +595,9 @@ async function loadVMs() {
         
         // Populate node filter
         populateNodeFilter(data);
+        
+        // Initialize filter event listeners
+        initializeFilters();
         
         // Reattach event handlers
         attachVMEventHandlers();

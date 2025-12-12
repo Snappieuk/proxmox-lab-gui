@@ -465,3 +465,76 @@ def api_vm_stop(vmid: int):
     except Exception as e:
         logger.exception(f"Failed to stop VM {vmid}")
         return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@api_vms_bp.route("/vm/<int:vmid>/eject-iso", methods=["POST"])
+@login_required
+def api_vm_eject_iso(vmid: int):
+    """Eject ISO/installation media from VM CD/DVD drive.
+    
+    Removes ISO from ide2 (CD/DVD drive) so VM can boot from disk instead of installation media.
+    Useful after OS installation is complete.
+    """
+    from app.services.inventory_service import get_vm_from_inventory
+    from app.services.proxmox_service import get_proxmox_admin
+    from app.services.user_manager import is_admin_user, require_user
+    
+    user = require_user()
+    cluster_id = session.get("cluster_id", CLUSTERS[0]["id"])
+    if request.is_json and request.json:
+        cluster_id = request.json.get('cluster_id', cluster_id)
+    
+    try:
+        # Get VM from database for validation
+        vm = get_vm_from_inventory(cluster_id, vmid)
+        if not vm:
+            return jsonify({"ok": False, "error": "VM not found"}), 404
+        
+        # Check access permissions
+        if not is_admin_user(user):
+            owned_vmids = _resolve_user_owned_vmids(user)
+            if vmid not in owned_vmids:
+                return jsonify({"ok": False, "error": "VM not accessible"}), 403
+        
+        # Only QEMU VMs have CD/DVD drives (LXC doesn't support ISO mounting)
+        if vm['type'] != 'qemu':
+            return jsonify({"ok": False, "error": "Only QEMU VMs support ISO ejection"}), 400
+        
+        # Execute eject via Proxmox API
+        proxmox = get_proxmox_admin()
+        node = vm['node']
+        
+        # Query cluster to find actual node (VM may have been migrated)
+        actual_node = node
+        try:
+            resources = proxmox.cluster.resources.get(type="vm")
+            for r in resources:
+                if int(r.get('vmid', -1)) == int(vmid):
+                    actual_node = r.get('node')
+                    if actual_node != node:
+                        logger.info(f"VM {vmid} was migrated from {node} to {actual_node}, using actual node")
+                    break
+        except Exception as e:
+            logger.warning(f"Cluster resources query failed: {e}, using database node {node}")
+        
+        # Eject ISO by setting ide2 to 'none' or 'cdrom,media=cdrom'
+        # This removes the ISO but keeps the CD/DVD drive
+        try:
+            proxmox.nodes(actual_node).qemu(vmid).config.put(ide2='none')
+            logger.info(f"Ejected ISO from VM {vmid} on node {actual_node}")
+            return jsonify({
+                "ok": True, 
+                "message": "Installation media ejected successfully. VM can now boot from disk."
+            })
+        except Exception as eject_error:
+            error_msg = str(eject_error)
+            if "does not have" in error_msg.lower() or "not found" in error_msg.lower():
+                return jsonify({
+                    "ok": False, 
+                    "error": "No CD/DVD drive found (ide2). VM may already have ISO ejected."
+                }), 400
+            raise
+        
+    except Exception as e:
+        logger.exception(f"Failed to eject ISO from VM {vmid}")
+        return jsonify({"ok": False, "error": str(e)}), 500

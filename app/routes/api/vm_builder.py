@@ -128,16 +128,41 @@ def api_build_vm():
         )
         
         if success:
+            # Trigger immediate background sync to ensure VMInventory is updated
+            try:
+                from app.services.background_sync import trigger_immediate_sync
+                trigger_immediate_sync()
+                # Give it a moment to update
+                import time
+                time.sleep(1)
+            except Exception as sync_err:
+                logger.warning(f"Failed to trigger immediate sync: {sync_err}")
+            
             # Create VM assignment so the VM shows up in "My Template VMs"
             # This applies to both teachers and admins
             if local_user:
                 try:
                     from app.models import VMAssignment, db
                     
-                    # Get MAC address from VMInventory (should have been added by build_vm_from_scratch)
+                    # Get MAC address and node from VMInventory (should have been added by build_vm_from_scratch)
                     from app.models import VMInventory
                     vm_record = VMInventory.query.filter_by(cluster_id=cluster_id, vmid=vmid).first()
                     mac_address = vm_record.mac_address if vm_record else None
+                    node = vm_record.node if vm_record else None
+                    
+                    # If VMInventory doesn't have the VM yet, query Proxmox directly for node
+                    if not node:
+                        try:
+                            from app.services.proxmox_service import get_proxmox_admin_for_cluster
+                            proxmox = get_proxmox_admin_for_cluster(cluster_id)
+                            resources = proxmox.cluster.resources.get(type="vm")
+                            for r in resources:
+                                if int(r.get('vmid', -1)) == int(vmid):
+                                    node = r.get('node')
+                                    logger.info(f"Found node {node} for VM {vmid} via cluster resources")
+                                    break
+                        except Exception as node_err:
+                            logger.warning(f"Failed to query node for VM {vmid}: {node_err}")
                     
                     # Create assignment linking VM to the creator
                     # class_id=NULL means this is a builder VM (not part of a class)
@@ -147,6 +172,7 @@ def api_build_vm():
                         assigned_user_id=local_user.id,
                         status='available',
                         mac_address=mac_address,
+                        node=node,
                         class_id=None  # Direct assignment = builder VM for "My Template VMs"
                     )
                     db.session.add(assignment)

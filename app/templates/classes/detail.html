@@ -746,7 +746,6 @@
                                         <li>Preserve the teacher VM (not affected)</li>
                                         <li>Run in the background (takes 1-2 minutes per VM)</li>
                                     </ul>
-                                    Students will lose any work not saved in snapshots. Make sure students save their work before changing specs.
                                 </div>
                             </div>
                         </div>
@@ -1805,12 +1804,27 @@ async function togglePower() {
             await stopTemplate();
         }
     } finally {
-        // Re-enable toggle and refresh status immediately
+        // Re-enable toggle
         powerToggle.disabled = false;
         window.vmActionInProgress = false;
-        // Refresh template info to get latest status (will update toggle)
-        // Poll multiple times to catch VM state changes
-        const pollIntervals = [2000, 5000, 10000, 15000, 20000]; // 2s, 5s, 10s, 15s, 20s
+        
+        // Immediate status refresh
+        setTimeout(async () => {
+            try {
+                const resp = await fetch(`/api/classes/${classId}/template/info?v=${Date.now()}`);
+                const data = await resp.json();
+                if (data.ok && data.template) {
+                    currentTemplateInfo = data.template;
+                    updateTemplateDisplay();
+                    console.log(`🔌 Post-action status: ${currentTemplateInfo.status}`);
+                }
+            } catch (e) {
+                console.error('Failed to refresh template status:', e);
+            }
+        }, 500); // Quick initial check after 500ms
+        
+        // Continue polling to catch delayed state changes (VMs take time to fully start/stop)
+        const pollIntervals = [2000, 4000, 7000, 12000, 20000]; // More aggressive polling
         pollIntervals.forEach(delay => {
             setTimeout(async () => {
                 try {

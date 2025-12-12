@@ -995,8 +995,11 @@ async function loadMyVMs() {
                     </div>
                 </div>
                 <div class="template-actions">
-                    <button class="btn-icon" onclick="openConsole(${vm.vmid}, '${vm.name}')">
+                    <button class="btn-icon" onclick="openConsole(${vm.vmid}, '${vm.name}')" title="Open Console">
                         <i class="bi bi-terminal"></i> Console
+                    </button>
+                    <button class="btn-icon btn-secondary" onclick="ejectISO(${vm.vmid})" title="Eject Installation Media">
+                        <i class="bi bi-eject"></i> Eject ISO
                     </button>
                     ${vm.status !== 'running' ? `
                     <button class="btn-icon btn-secondary" onclick="startVM(${vm.vmid})">
@@ -1047,6 +1050,26 @@ async function stopVM(vmid) {
         }
     } catch (error) {
         alert(`Failed to stop VM: ${error.message}`);
+    }
+}
+
+async function ejectISO(vmid) {
+    if (!confirm(`Eject installation media from VM ${vmid}?\n\nThis will remove the ISO from the CD/DVD drive so the VM can boot from disk.`)) {
+        return;
+    }
+    
+    try {
+        const response = await fetch(`/api/vm/${vmid}/eject-iso`, { method: 'POST' });
+        const data = await response.json();
+        if (data.ok) {
+            alert(`Installation media ejected from VM ${vmid}. You can now boot from disk.`);
+            setTimeout(() => loadMyVMs(), 1000); // Refresh after 1 second
+        } else {
+            alert(`Failed to eject ISO: ${data.error || 'Unknown error'}`);
+        }
+    } catch (error) {
+        console.error('Error ejecting ISO:', error);
+        alert(`Failed to eject ISO: ${error.message}`);
     }
 }
 
