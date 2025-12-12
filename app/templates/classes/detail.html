@@ -256,7 +256,7 @@
                         <div style="display: flex; align-items: center; gap: 0.75rem;">
                             <!-- Power Toggle -->
                             <label class="toggle-switch" title="Power On/Off">
-                                <input type="checkbox" id="power-toggle" onchange="togglePower()">
+                                <input type="checkbox" id="power-toggle" onclick="togglePower(event)">
                                 <span class="toggle-slider"></span>
                             </label>
                             
@@ -1798,9 +1798,13 @@ function updateTemplateDisplay() {
     }
 }
 
-async function togglePower() {
+async function togglePower(event) {
+    // Prevent the checkbox from changing until we're ready
+    event.preventDefault();
+    
     const powerToggle = document.getElementById('power-toggle');
-    const shouldStart = powerToggle.checked;
+    const currentState = powerToggle.checked;
+    const shouldStart = !currentState; // Opposite of current state (what user wants)
     
     // Disable toggle during operation
     powerToggle.disabled = true;
@@ -1815,7 +1819,10 @@ async function togglePower() {
             await stopTemplate();
         }
         
-        // Success - start polling to catch state changes
+        // Success - update toggle to reflect desired state
+        powerToggle.checked = shouldStart;
+        
+        // Start polling to catch state changes
         const pollIntervals = [500, 2000, 4000, 7000, 12000, 20000];
         
         pollIntervals.forEach((delay, index) => {
@@ -1854,9 +1861,9 @@ async function togglePower() {
         });
         
     } catch (e) {
-        // Error or cancellation - revert toggle to actual state
+        // Error or cancellation - keep toggle in current state (don't change it)
         console.log('Power toggle action failed or cancelled:', e.message);
-        powerToggle.checked = (currentTemplateInfo.status === 'running');
+        // powerToggle.checked stays as it was (currentState)
         window.vmPowerTransition = false;
     } finally {
         // Re-enable toggle
