@@ -1371,23 +1371,28 @@ async function loadTemplatesForBuild() {
             return;
         }
         
-        // Get cluster IP from cluster ID
+        // Get cluster IP from cluster ID using AVAILABLE_CLUSTERS
         let clusterIp = null;
-        for (const cluster of CLUSTERS) {
-            if (cluster.id === clusterId) {
-                clusterIp = cluster.host;
-                break;
+        if (typeof AVAILABLE_CLUSTERS !== 'undefined') {
+            for (const cluster of AVAILABLE_CLUSTERS) {
+                if (cluster.id === clusterId) {
+                    clusterIp = cluster.host;
+                    break;
+                }
             }
         }
         
         if (!clusterIp) {
             console.error('Could not find cluster IP for cluster ID:', clusterId);
-            document.getElementById('build-template').innerHTML = '<option value="">Error: Cluster not found</option>';
-            return;
+            // Fallback: just use cluster_id parameter instead
+            console.log('Using cluster_id parameter as fallback');
         }
         
-        // Load templates from API
-        const templateResponse = await fetch(`/api/templates?cluster_ip=${clusterIp}`);
+        // Load templates from API (use cluster_ip if available, otherwise cluster_id)
+        const apiUrl = clusterIp 
+            ? `/api/templates?cluster_ip=${clusterIp}` 
+            : `/api/templates?cluster_id=${clusterId}`;
+        const templateResponse = await fetch(apiUrl);
         const templateData = await templateResponse.json();
         
         console.log('Template response:', templateData);

@@ -1771,6 +1771,12 @@ function updateTemplateDisplay() {
     if (powerToggle) {
         const isRunning = currentTemplateInfo.status === 'running';
         
+        // Don't update toggle during power transition (user just toggled it)
+        if (window.vmPowerTransition) {
+            console.log('🔌 Skipping toggle update during transition');
+            return;
+        }
+        
         // Only update toggle if it doesn't match Proxmox state
         // This allows the toggle to stay in user's selected position
         // unless Proxmox reports a different state
@@ -1800,6 +1806,9 @@ async function togglePower() {
     // Disable toggle during operation
     powerToggle.disabled = true;
     
+    // Set flag to prevent status polling from overriding toggle during transition
+    window.vmPowerTransition = true;
+    
     try {
         if (shouldStart) {
             await startTemplate();
@@ -1807,11 +1816,10 @@ async function togglePower() {
             await stopTemplate();
         }
         
-        // Toggle stays in user's selected position (don't revert on success)
-        // Polling will update it only if Proxmox reports different state
-        
         // Continue polling to catch state changes
         const pollIntervals = [500, 2000, 4000, 7000, 12000, 20000];
+        let pollCount = 0;
+        
         pollIntervals.forEach(delay => {
             setTimeout(async () => {
                 try {
@@ -1820,13 +1828,28 @@ async function togglePower() {
                     if (data.ok && data.template) {
                         const oldStatus = currentTemplateInfo.status;
                         currentTemplateInfo = data.template;
+                        
+                        // Check if VM reached desired state
+                        const desiredState = shouldStart ? 'running' : 'stopped';
+                        if (currentTemplateInfo.status === desiredState) {
+                            console.log(`✅ VM reached desired state: ${desiredState}`);
+                            window.vmPowerTransition = false;
+                        }
+                        
                         if (oldStatus !== currentTemplateInfo.status) {
                             console.log(`✅ VM status changed: ${oldStatus} → ${currentTemplateInfo.status}`);
                         }
+                        
                         updateTemplateDisplay();
                     }
                 } catch (e) {
                     console.error('Failed to refresh template status:', e);
+                }
+                
+                // Clear transition flag after last poll
+                pollCount++;
+                if (pollCount >= pollIntervals.length) {
+                    window.vmPowerTransition = false;
                 }
             }, delay);
         });
