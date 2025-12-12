@@ -297,13 +297,22 @@ def migrate_clusters_from_json(cursor):
 
 def migrate():
     """Add all missing columns to existing tables and migrate clusters."""
-    if not os.path.exists(DB_PATH):
-        print(f"❌ Database not found: {DB_PATH}")
-        print("   Run the Flask app first to create the database")
-        return 1
     
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
+    # Create database if it doesn't exist
+    if not os.path.exists(DB_PATH):
+        print(f"📦 Database not found - creating new database: {DB_PATH}")
+        # Ensure directory exists
+        os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+        
+        # Create database (will be initialized by Flask models on first run)
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        print(f"   ✓ Created empty database at {DB_PATH}")
+        print(f"   ℹ️  Tables will be created by Flask on first startup")
+    else:
+        print(f"✓ Database found: {DB_PATH}")
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
     
     try:
         total_changes = 0

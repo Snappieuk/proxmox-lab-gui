@@ -164,9 +164,29 @@ else
     echo -e "${GREEN}✓ .env file already exists${NC}"
 fi
 
-# Initialize database
+# Initialize database and create tables
 echo -e "${BLUE}→ Initializing database...${NC}"
 python3 migrate_db.py
+
+# Create database tables by importing Flask app
+echo -e "${BLUE}→ Creating database tables...${NC}"
+python3 <<PYEOF
+import sys
+sys.path.insert(0, '${APP_DIR}')
+
+try:
+    from app import create_app
+    from app.models import db
+    
+    app = create_app()
+    with app.app_context():
+        db.create_all()
+        print("   ✓ Database tables created successfully")
+except Exception as e:
+    print(f"   ⚠️ Warning: Could not create tables: {e}")
+    print(f"   ℹ️  Tables will be created on first app startup")
+PYEOF
+
 echo -e "${GREEN}✓ Database initialized${NC}"
 
 # Prompt for initial cluster configuration
