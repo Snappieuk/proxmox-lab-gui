@@ -348,7 +348,7 @@
 <!-- Refresh Cache Button at bottom (Admin only) -->
 {% if is_admin %}
 <div style="margin-top: 3rem; padding: 2rem 0; border-top: 1px solid #e1dfdd; text-align: center;">
-    <button type="button" id="refresh-btn" class="btn-secondary" onclick="refreshVMs()" style="padding: 0.75rem 2rem; font-size: 14px;">
+    <button type="button" id="refresh-btn" class="btn-secondary" style="padding: 0.75rem 2rem; font-size: 14px;">
         <i class="bi bi-arrow-clockwise"></i> Refresh Cache
     </button>
     <p style="margin-top: 0.5rem; color: #605e5c; font-size: 12px;">Admin only: Force reload VM data from Proxmox server</p>
@@ -1136,6 +1136,12 @@ window.addEventListener("load", function () {
     
     // Initialize filter event listeners
     initializeFilterListeners();
+    
+    // Attach refresh button handler
+    const refreshBtn = document.getElementById('refresh-btn');
+    if (refreshBtn) {
+        refreshBtn.addEventListener('click', window.refreshVMs);
+    }
     
     if (progressiveLoad) {
         // Load VMs immediately for progressive load
