@@ -1059,8 +1059,8 @@ async function sendPowerAction(vmid, action, btn) {
     }
 }
 
-// Refresh cache
-async function refreshVMs() {
+// Refresh cache - exposed on window for onclick handler
+window.refreshVMs = async function() {
     const btn = document.getElementById('refresh-btn');
     btn.disabled = true;
     btn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> Refreshing...';
@@ -1071,6 +1071,8 @@ async function refreshVMs() {
             const payload = await resp.json();
             const data = Array.isArray(payload) ? payload : (payload.vms || []);
             window.isAdminView = payload.is_admin || false;
+            // Update global VMs array
+            allVMs = data;
             // Clear and repopulate tables with fresh data
             populateTables(data);
             // Apply current filters
