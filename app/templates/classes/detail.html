@@ -1609,6 +1609,20 @@ function startContinuousStatusUpdates() {
         
         try {
             const resp = await fetch(`/api/classes/${classId}/template/info?v=${Date.now()}`);
+            
+            // Check if response is OK before parsing JSON
+            if (!resp.ok) {
+                console.warn(`Template status poll failed: ${resp.status} ${resp.statusText}`);
+                return;
+            }
+            
+            // Check content type to ensure it's JSON
+            const contentType = resp.headers.get('content-type');
+            if (!contentType || !contentType.includes('application/json')) {
+                console.warn(`Template status returned non-JSON response: ${contentType}`);
+                return;
+            }
+            
             const data = await resp.json();
             
             if (data.ok && data.template) {
@@ -1630,6 +1644,12 @@ function startContinuousStatusUpdates() {
                 }
             }
         } catch (e) {
+            // Silently fail on JSON parse errors during background polling
+            // This prevents console spam from transient network issues
+            if (e instanceof SyntaxError && e.message.includes('JSON')) {
+                // JSON parse error - likely transient, ignore
+                return;
+            }
             console.error('Failed to update template status:', e);
         }
     }, 10000); // Update every 10 seconds
