@@ -15,8 +15,7 @@ from flask import Blueprint, jsonify, request, session, render_template
 from app.utils.decorators import login_required
 from app.services.user_manager import require_user, is_admin_user
 from app.services.class_service import get_user_by_username
-from app.services.proxmox_service import get_proxmox_admin_for_cluster
-from app.config import CLUSTERS
+from app.services.proxmox_service import get_proxmox_admin_for_cluster, get_clusters_from_db
 
 logger = logging.getLogger(__name__)
 
@@ -59,9 +58,13 @@ def api_get_vnc_info(vmid: int):
         
         cluster_id = request.args.get('cluster_id') or session.get('cluster_id')
         if not cluster_id:
+            clusters = get_clusters_from_db()
+            cluster_id = clusters[0]['id'] if clusters else None
+        
+        if not cluster_id:
             return jsonify({
                 "ok": False,
-                "error": "No cluster selected"
+                "error": "No cluster configured"
             }), 400
         
         proxmox = get_proxmox_admin_for_cluster(cluster_id)
@@ -115,8 +118,9 @@ def api_get_vnc_info(vmid: int):
             }), 404
         
         # Get cluster configuration for host info
+        clusters = get_clusters_from_db()
         cluster_config = None
-        for cluster in CLUSTERS:
+        for cluster in clusters:
             if cluster['id'] == cluster_id:
                 cluster_config = cluster
                 break
@@ -214,15 +218,17 @@ def view_console(vmid: int):
         
         # Get cluster info
         cluster_id = request.args.get('cluster_id') or session.get('cluster_id')
+        clusters = get_clusters_from_db()
+        
         if not cluster_id:
-            cluster_id = CLUSTERS[0]['id'] if CLUSTERS else None
+            cluster_id = clusters[0]['id'] if clusters else None
         
         if not cluster_id:
             return "No cluster configured", 500
         
         # Find cluster config
         cluster_config = None
-        for cluster in CLUSTERS:
+        for cluster in clusters:
             if cluster['id'] == cluster_id:
                 cluster_config = cluster
                 break
