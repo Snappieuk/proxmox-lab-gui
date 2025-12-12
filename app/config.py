@@ -1,25 +1,19 @@
-# Proxmox admin API config (defaults can be overriden via env vars)
+# Configuration - Database-First Architecture
+# All Proxmox cluster credentials are now managed via /admin/settings UI
+# These legacy defaults are only used if database is empty on first startup
 import os
 
-# Multi-cluster configuration
-# Each cluster has: id (internal key), name (display), host, user, password
+# LEGACY: Default cluster config (only used if database is empty)
+# After installation, configure clusters via /admin/settings UI
 CLUSTERS = [
     {
-        "id": "cluster1",
-        "name": "Main Cluster (10.220.15.249)",
+        "id": "default-cluster",
+        "name": "Default Cluster (Configure via UI)",
         "host": os.getenv("PVE_HOST", "10.220.15.249"),
         "user": os.getenv("PVE_ADMIN_USER", "root@pam"),
         "password": os.getenv("PVE_ADMIN_PASS", "password!"),
         "verify_ssl": os.getenv("PVE_VERIFY", "False").lower() in ("true", "1", "yes"),
-    },
-    {
-        "id": "cluster2",
-        "name": "Secondary Cluster (10.220.12.6)",
-        "host": "10.220.12.6",
-        "user": "root@pam",
-        "password": "abc123##",
-        "verify_ssl": False,
-    },
+    }
 ]
 
 # Load cluster config from database (preferred) or JSON file (legacy)
@@ -77,11 +71,12 @@ if os.path.exists(CLUSTER_CONFIG_FILE):
         print(f"Warning: Failed to load cluster config from {CLUSTER_CONFIG_FILE}: {e}")
         # Keep defaults if loading fails
 
-# Legacy single-cluster config (deprecated - kept for backwards compatibility)
+# LEGACY: Single-cluster config (only used as fallback if database empty)
+# These are only here for backwards compatibility and initial startup
+# Configure clusters via /admin/settings UI instead
 PVE_HOST        = os.getenv("PVE_HOST", "10.220.15.249")
-PVE_ADMIN_USER  = os.getenv("PVE_ADMIN_USER", "root@pam")  # admin/service account
+PVE_ADMIN_USER  = os.getenv("PVE_ADMIN_USER", "root@pam")
 PVE_ADMIN_PASS  = os.getenv("PVE_ADMIN_PASS", "password!")
-# PVE_VERIFY: SSL certificate verification - set to False for self-signed certs
 _verify = os.getenv("PVE_VERIFY", "False").lower()
 PVE_VERIFY = _verify in ("true", "1", "yes")
 

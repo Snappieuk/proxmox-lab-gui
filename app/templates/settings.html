@@ -951,7 +951,7 @@ async function testConnection() {
     const dbId = document.getElementById('cluster-db-id').value;
     
     if (!dbId) {
-        showAlert('Please save the cluster first before testing connection', 'info');
+        alert('Please save the cluster first before testing connection');
         return;
     }
     
@@ -967,13 +967,13 @@ async function testConnection() {
         
         const data = await resp.json();
         if (data.ok) {
-            showAlert(`✓ Connection successful! Version: ${data.version}, Nodes: ${data.node_names.join(', ')}`, 'success');
+            alert(`✅ Connection Successful!\n\nProxmox Version: ${data.version}\nNodes: ${data.nodes}\nNode Names: ${data.node_names.join(', ')}`);
         } else {
-            showAlert(data.error, 'error');
+            alert(`❌ Connection Failed\n\n${data.error}`);
         }
     } catch (e) {
         console.error('Test failed:', e);
-        showAlert('Connection test failed: ' + e.message, 'error');
+        alert(`❌ Connection Test Failed\n\n${e.message}`);
     } finally {
         btn.disabled = false;
         btn.innerHTML = originalText;

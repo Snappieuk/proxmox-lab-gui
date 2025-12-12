@@ -141,25 +141,24 @@ echo -e "${GREEN}✓ Python dependencies installed${NC}"
 # Create .env file if it doesn't exist
 if [ ! -f "${APP_DIR}/.env" ]; then
     echo -e "${BLUE}→ Creating .env configuration file...${NC}"
+    # Generate random secret key
+    SECRET_KEY=$(openssl rand -hex 32)
+    
     if [ -f "${APP_DIR}/.env.example" ]; then
         cp "${APP_DIR}/.env.example" "${APP_DIR}/.env"
-        echo -e "${GREEN}✓ .env file created from example${NC}"
-        echo -e "${YELLOW}⚠ Please edit ${APP_DIR}/.env with your Proxmox credentials${NC}"
+        # Replace placeholder with actual random key
+        sed -i "s/change-me-to-random-string-in-production/${SECRET_KEY}/" "${APP_DIR}/.env"
+        echo -e "${GREEN}✓ .env file created with random secret key${NC}"
     else
         # Create minimal .env
         cat > "${APP_DIR}/.env" <<EOF
-# Proxmox Configuration (Legacy - use database for cluster management)
-PVE_HOST=10.220.15.249
-PVE_ADMIN_USER=root@pam
-PVE_ADMIN_PASS=change-this-password
-PVE_VERIFY=False
-
 # Flask Configuration
-SECRET_KEY=$(openssl rand -hex 32)
+SECRET_KEY=${SECRET_KEY}
 FLASK_ENV=production
+
+# Note: Proxmox clusters are configured via /admin/settings UI
 EOF
         echo -e "${GREEN}✓ .env file created${NC}"
-        echo -e "${YELLOW}⚠ Please edit ${APP_DIR}/.env with your Proxmox credentials${NC}"
     fi
 else
     echo -e "${GREEN}✓ .env file already exists${NC}"
@@ -249,9 +248,10 @@ echo -e "  Edit:     ${YELLOW}nano ${APP_DIR}/.env${NC}"
 echo -e "  Clusters: ${YELLOW}http://${IP_ADDR}:8080/admin/settings${NC}"
 echo ""
 echo -e "${BLUE}Next Steps:${NC}"
-echo -e "  1. Edit ${APP_DIR}/.env with your Proxmox credentials"
+echo -e "  1. Login as admin (any Proxmox user)"
 echo -e "  2. Configure clusters at http://${IP_ADDR}:8080/admin/settings"
-echo -e "  3. Restart service: systemctl restart ${SERVICE_NAME}"
+echo -e "  3. Add your first cluster with credentials"
+echo -e "  4. Create teacher/student accounts or classes"
 echo ""
 echo -e "${BLUE}Update:${NC}"
 echo -e "  Run:      ${YELLOW}bash ${APP_DIR}/update.sh${NC}"

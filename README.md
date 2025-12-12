@@ -20,6 +20,53 @@ Flask webapp providing a lab VM portal similar to Azure Labs for self-service st
 
 ## Quick Start
 
+### ⚡ One-Command Installation (Recommended)
+
+Install and auto-start with systemd in one command:
+
+```bash
+# Download and run installer
+curl -sSL https://raw.githubusercontent.com/Snappieuk/proxmox-lab-gui/main/install.sh | sudo bash
+
+# Or if you prefer wget
+wget -qO- https://raw.githubusercontent.com/Snappieuk/proxmox-lab-gui/main/install.sh | sudo bash
+```
+
+**What it does:**
+- ✅ Installs all system dependencies (Python, git, nmap, etc.)
+- ✅ Clones repository to `/opt/proxmox-lab-gui`
+- ✅ Creates Python virtual environment
+- ✅ Installs Python dependencies
+- ✅ Initializes database with migrations
+- ✅ Creates systemd service for auto-start
+- ✅ Starts the service automatically
+
+**After installation:**
+1. Access the web UI: `http://your-ip:8080`
+2. Login as admin (any Proxmox user initially)
+3. Configure clusters at: `http://your-ip:8080/admin/settings`
+4. Add your Proxmox clusters with credentials
+5. Create teacher/student accounts or classes
+
+**Note:** No .env configuration needed! All cluster credentials are managed through the web UI.
+
+### 🔄 One-Command Update
+
+Update to the latest version:
+
+```bash
+sudo bash /opt/proxmox-lab-gui/update.sh
+```
+
+**What it does:**
+- ✅ Creates automatic backup (database + config)
+- ✅ Stops the service
+- ✅ Pulls latest code from git
+- ✅ Updates Python dependencies
+- ✅ Runs database migrations
+- ✅ Restarts the service
+- ✅ Keeps last 5 backups
+
 ### Development Setup (Testing Only)
 
 **WARNING**: This code must run on a server with network access to Proxmox clusters. Local development is for testing only.
@@ -32,7 +79,7 @@ cp .env.example .env  # Edit with your Proxmox credentials
 python3 run.py  # Runs on http://0.0.0.0:8080
 ```
 
-### Production Deployment
+### Manual Production Deployment
 
 **Option 1: Start script (standalone)**
 ```bash
@@ -40,7 +87,7 @@ chmod +x start.sh
 ./start.sh  # Activates venv, loads .env, runs Flask
 ```
 
-**Option 2: Systemd service (recommended)**
+**Option 2: Systemd service (manual setup)**
 ```bash
 # Edit proxmox-gui.service: update User, Group, WorkingDirectory paths
 sudo cp proxmox-gui.service /etc/systemd/system/
