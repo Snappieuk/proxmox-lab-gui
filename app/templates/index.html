@@ -121,7 +121,7 @@
                         <i class="bi bi-stop-fill"></i>
                     </button>
                     <button class="btn-icon btn-icon-info"
-                            onclick="openVMConsole({{ vm.vmid }})"
+                            onclick="openVMConsole({{ vm.vmid }}, '{{ vm.cluster_id }}')"
                             data-tooltip="Web Console">
                         <i class="bi bi-window"></i>
                     </button>
@@ -201,7 +201,7 @@
                         <i class="bi bi-clipboard"></i>
                     </button>
                     <button class="btn-icon btn-icon-info"
-                            onclick="openVMConsole({{ vm.vmid }})"
+                            onclick="openVMConsole({{ vm.vmid }}, '{{ vm.cluster_id }}')"
                             data-tooltip="Web Console">
                         <i class="bi bi-window"></i>
                     </button>
@@ -280,7 +280,7 @@
                         <i class="bi bi-clipboard"></i>
                     </button>
                     <button class="btn-icon btn-icon-info"
-                            onclick="openVMConsole({{ vm.vmid }})"
+                            onclick="openVMConsole({{ vm.vmid }}, '{{ vm.cluster_id }}')"
                             data-tooltip="Web Console">
                         <i class="bi bi-window"></i>
                     </button>
@@ -753,7 +753,9 @@ function createVMRow(vm, category) {
     const hasRdp = isWindows || vm.rdp_available === true;  // Show RDP for all Windows VMs or if port 3389 is open
     
     // Add RDP icon if IP is available (desktop PC icon for VMs with RDP/IP)
-    const rdpIcon = vm.ip && vm.ip !== 'N/A' && vm.ip !== 'Fetching...' ? ' <i class="bi bi-pc-display" style="margin-left: 0.5rem; color: #0078d4; font-size: 16px;" title="RDP Available"></i>' : '';
+    const hasValidIP = vm.ip && vm.ip !== 'N/A' && vm.ip !== 'Fetching...' && vm.ip.trim() !== '';
+    console.log(`VM ${vm.name}: IP="${vm.ip}", hasValidIP=${hasValidIP}`); // Debug logging
+    const rdpIcon = hasValidIP ? ' <i class="bi bi-pc-display" style="margin-left: 0.5rem; color: #0078d4; font-size: 16px;" title="RDP Available"></i>' : '';
     
     row.innerHTML = `
         <td><strong>${vm.name}</strong>${rdpIcon}</td>
@@ -800,7 +802,7 @@ function createVMRow(vm, category) {
                 ` : ''}
                 ${vm.type === 'qemu' ? `
                 <button class="btn-icon btn-icon-info"
-                        onclick="openVMConsole(${vm.vmid})"
+                        onclick="openVMConsole(${vm.vmid}, '${vm.cluster_id}')"
                         data-tooltip="Web Console (VNC)">
                     <i class="bi bi-window"></i>
                 </button>
@@ -1194,15 +1196,16 @@ window.addEventListener("load", function () {
     });
 
     // Open VM Console (noVNC)
-    window.openVMConsole = async function(vmid) {
+    window.openVMConsole = async function(vmid, clusterId) {
         try {
-            // Open console directly - no API call needed
+            // Open console directly - no API call needed, pass cluster_id
             const width = 1280;
             const height = 800;
             const left = (screen.width - width) / 2;
             const top = (screen.height - height) / 2;
+            const url = clusterId ? `/api/console/${vmid}/view2?cluster_id=${clusterId}` : `/api/console/${vmid}/view2`;
             window.open(
-                `/api/console/${vmid}/view2`,
+                url,
                 `console-${vmid}`,
                 `width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=yes,status=no,toolbar=no,menubar=no`
             );

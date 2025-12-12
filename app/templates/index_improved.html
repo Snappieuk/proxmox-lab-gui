@@ -241,10 +241,10 @@
                                     <i class="bi bi-three-dots-vertical"></i>
                                 </button>
                                 <div class="dropdown-menu">
-                                    <button class="dropdown-item" onclick="openVMConsole({{ vm.vmid }})">
+                                    <button class="dropdown-item" onclick="openVMConsole({{ vm.vmid }}, '{{ vm.cluster_id }}')">
                                         <i class="bi bi-window"></i> Web Console
                                     </button>
-                                    <button class="dropdown-item btn-ssh-web" 
+                                    <button class="dropdown-item btn-ssh"
                                             data-vmid="{{ vm.vmid }}"
                                             data-ip="{{ vm.ip or '' }}"
                                             data-name="{{ vm.name }}"
@@ -640,7 +640,7 @@ function createVMRow(vm, category) {
     let dropdownItems = '';
     if (category === 'windows') {
         dropdownItems = `
-            <button class="dropdown-item" onclick="openVMConsole(${vm.vmid})">
+            <button class="dropdown-item" onclick="openVMConsole(${vm.vmid}, '${vm.cluster_id}')">
                 <i class="bi bi-window"></i> Web Console
             </button>
             <button class="dropdown-item btn-rdp" 
@@ -659,7 +659,7 @@ function createVMRow(vm, category) {
         `;
     } else {
         dropdownItems = `
-            <button class="dropdown-item" onclick="openVMConsole(${vm.vmid})">
+            <button class="dropdown-item" onclick="openVMConsole(${vm.vmid}, '${vm.cluster_id}')">
                 <i class="bi bi-window"></i> Web Console
             </button>
             <button class="dropdown-item btn-ssh" 
@@ -852,15 +852,16 @@ function attachVMEventHandlers() {
 }
 
 // Open VM console in new window
-function openVMConsole(vmid) {
+function openVMConsole(vmid, clusterId) {
     const width = 1280;
     const height = 800;
     const left = (screen.width - width) / 2;
     const top = (screen.height - height) / 2;
     
-    // Open custom console page with embedded noVNC
+    // Open custom console page with embedded noVNC, passing cluster_id
+    const url = clusterId ? `/api/console/${vmid}/view2?cluster_id=${clusterId}` : `/api/console/${vmid}/view2`;
     window.open(
-        `/api/console/${vmid}/view2`,
+        url,
         `console-${vmid}`,
         `width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=yes,status=no,toolbar=no,menubar=no`
     );
