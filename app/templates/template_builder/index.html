@@ -167,8 +167,17 @@
                             <input type="text" id="build-vm-name" class="form-control compact-input" required placeholder="my-template-vm">
                         </div>
                         <div class="form-col">
+                            <label for="build-start-method" class="compact-label">Start Method</label>
+                            <select id="build-start-method" class="form-control compact-input" onchange="toggleStartMethod()" required>
+                                <option value="iso">ISO Image</option>
+                                <option value="template">Clone from Template</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-row" id="iso-section">
+                        <div class="form-col">
                             <label for="build-os-type" class="compact-label">OS Type</label>
-                            <select id="build-os-type" class="form-control compact-input" required>
+                            <select id="build-os-type" class="form-control compact-input">
                                 <option value="ubuntu">Ubuntu</option>
                                 <option value="debian">Debian</option>
                                 <option value="centos">CentOS</option>
@@ -177,27 +186,36 @@
                                 <option value="windows">Windows</option>
                             </select>
                         </div>
-                    </div>
-                    <div class="form-row">
-                        <div class="form-col" style="grid-column: 1 / -1;">
+                        <div class="form-col">
                             <label for="build-iso" class="compact-label">ISO Image</label>
-                            <select id="build-iso" class="form-control compact-input" required>
+                            <select id="build-iso" class="form-control compact-input">
                                 <option value="">Loading ISOs...</option>
                             </select>
-                            <div style="display: flex; align-items: center; gap: 0.5rem; margin-top: 0.5rem;">
-                                <small style="color: #666; flex: 1;">
-                                    VM will be created on TRUENAS storage. ISO location determines node.
-                                </small>
-                                <button type="button" onclick="openUploadISOModal()" class="btn-upload-iso">
-                                    <i class="bi bi-upload"></i>Upload ISO
-                                </button>
-                            </div>
                         </div>
+                    </div>
+                    <div class="form-row" id="template-section" style="display: none;">
+                        <div class="form-col" style="grid-column: 1 / -1;">
+                            <label for="build-template" class="compact-label">Template</label>
+                            <select id="build-template" class="form-control compact-input">
+                                <option value="">Loading templates...</option>
+                            </select>
+                            <small style="color: #666; display: block; margin-top: 0.5rem;">
+                                VM will be cloned from the selected template with hardware specs from template
+                            </small>
+                        </div>
+                    </div>
+                    <div id="iso-upload-section" style="display: flex; align-items: center; gap: 0.5rem; margin-top: 0.5rem;">
+                        <small style="color: #666; flex: 1;">
+                            VM will be created on TRUENAS storage. ISO location determines node.
+                        </small>
+                        <button type="button" onclick="openUploadISOModal()" class="btn-upload-iso">
+                            <i class="bi bi-upload"></i>Upload ISO
+                        </button>
                     </div>
                 </div>
 
                 <!-- Hardware Configuration -->
-                <div class="form-section">
+                <div class="form-section" id="hardware-section">
                     <div class="section-label">Hardware</div>
                     <div class="form-row">
                         <div class="form-col">
@@ -1304,6 +1322,100 @@ async function submitMigration(event) {
 }
 
 // Build VM from Scratch functions
+function toggleStartMethod() {
+    const startMethod = document.getElementById('build-start-method').value;
+    const isoSection = document.getElementById('iso-section');
+    const templateSection = document.getElementById('template-section');
+    const isoUploadSection = document.getElementById('iso-upload-section');
+    const hardwareSection = document.getElementById('hardware-section');
+    const osTypeField = document.getElementById('build-os-type');
+    const isoField = document.getElementById('build-iso');
+    const templateField = document.getElementById('build-template');
+    
+    if (startMethod === 'iso') {
+        // Show ISO selection, hide template selection
+        isoSection.style.display = 'grid';
+        templateSection.style.display = 'none';
+        isoUploadSection.style.display = 'flex';
+        hardwareSection.style.display = 'block';
+        
+        // Make ISO fields required, template optional
+        osTypeField.required = true;
+        isoField.required = true;
+        templateField.required = false;
+    } else {
+        // Show template selection, hide ISO selection
+        isoSection.style.display = 'none';
+        templateSection.style.display = 'grid';
+        isoUploadSection.style.display = 'none';
+        hardwareSection.style.display = 'none';  // Templates use their own hardware specs
+        
+        // Make template required, ISO fields optional
+        osTypeField.required = false;
+        isoField.required = false;
+        templateField.required = true;
+        
+        // Load templates if not already loaded
+        loadTemplatesForBuild();
+    }
+}
+
+async function loadTemplatesForBuild() {
+    try {
+        const clusterId = CURRENT_CLUSTER_ID;
+        console.log('Loading templates for cluster:', clusterId);
+        
+        if (!clusterId || clusterId === 'None' || clusterId === '') {
+            console.error('No valid cluster ID available');
+            document.getElementById('build-template').innerHTML = '<option value="">No cluster selected - Please refresh page</option>';
+            return;
+        }
+        
+        // Get cluster IP from cluster ID
+        let clusterIp = null;
+        for (const cluster of CLUSTERS) {
+            if (cluster.id === clusterId) {
+                clusterIp = cluster.host;
+                break;
+            }
+        }
+        
+        if (!clusterIp) {
+            console.error('Could not find cluster IP for cluster ID:', clusterId);
+            document.getElementById('build-template').innerHTML = '<option value="">Error: Cluster not found</option>';
+            return;
+        }
+        
+        // Load templates from API
+        const templateResponse = await fetch(`/api/templates?cluster_ip=${clusterIp}`);
+        const templateData = await templateResponse.json();
+        
+        console.log('Template response:', templateData);
+        
+        if (!templateData.ok) {
+            console.error('Template API returned error:', templateData.error);
+            document.getElementById('build-template').innerHTML = `<option value="">Error: ${templateData.error || 'Unknown error'}</option>`;
+            return;
+        }
+        
+        if (templateData.templates && templateData.templates.length > 0) {
+            const templateSelect = document.getElementById('build-template');
+            templateSelect.innerHTML = templateData.templates.map(tmpl => {
+                const specs = tmpl.cores && tmpl.memory ? ` (${tmpl.cores} cores, ${(tmpl.memory / 1024).toFixed(1)}GB RAM)` : '';
+                return `<option value="${tmpl.proxmox_vmid}" data-node="${tmpl.node}" data-cores="${tmpl.cores || 2}" data-memory="${tmpl.memory || 2048}">${tmpl.name} - ${tmpl.node}${specs}</option>`;
+            }).join('');
+            console.log(`Loaded ${templateData.templates.length} templates`);
+        } else {
+            const templateSelect = document.getElementById('build-template');
+            templateSelect.innerHTML = '<option value="">No templates found - Create templates first</option>';
+            console.warn('No templates found in response');
+        }
+    } catch (error) {
+        console.error('Failed to load templates:', error);
+        document.getElementById('build-template').innerHTML = '<option value="">Error loading templates - Check console</option>';
+    }
+}
+
 async function loadBuildOptions() {
     try {
         // Get current cluster_id from session (injected by Flask context processor)
@@ -1360,44 +1472,84 @@ async function loadBuildOptions() {
 function closeBuildModal() {
     document.getElementById('build-modal').style.display = 'none';
     document.getElementById('build-form').reset();
+    // Reset to ISO mode
+    toggleStartMethod();
 }
 
 async function submitBuildVM(event) {
     event.preventDefault();
     
-    const isoSelect = document.getElementById('build-iso');
-    const isoFile = isoSelect.value;
-    
-    // Validate ISO is selected
-    if (!isoFile) {
-        alert('Please select an ISO image.');
-        return;
-    }
-    
-    // Get node from selected option's data attribute
-    const selectedOption = isoSelect.options[isoSelect.selectedIndex];
-    const targetNode = selectedOption.getAttribute('data-node');
-    
+    const startMethod = document.getElementById('build-start-method').value;
     const submitBtn = event.target.querySelector('button[type="submit"]');
     submitBtn.disabled = true;
     submitBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Building VM...';
     
     try {
-        const formData = {
-            vm_name: document.getElementById('build-vm-name').value,
-            os_type: document.getElementById('build-os-type').value,
-            iso_file: isoFile,
-            target_node: targetNode,  // Include node hint for fast deployment
-            storage: 'TRUENAS-NFS',
-            cpu_cores: parseInt(document.getElementById('build-cpu-cores').value),
-            memory_mb: parseInt(document.getElementById('build-memory').value),
-            disk_size_gb: parseInt(document.getElementById('build-disk-size').value),
-            network_bridge: document.getElementById('build-network-bridge').value,
-            agent_enabled: true,  // Always enabled
-            convert_to_template: document.getElementById('build-convert-template').checked
-        };
+        let formData;
+        let endpoint;
         
-        const response = await fetch('/api/vm-builder/build', {
+        if (startMethod === 'iso') {
+            // ISO-based build
+            const isoSelect = document.getElementById('build-iso');
+            const isoFile = isoSelect.value;
+            
+            // Validate ISO is selected
+            if (!isoFile) {
+                alert('Please select an ISO image.');
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = '<i class="bi bi-play-circle"></i> Build VM';
+                return;
+            }
+            
+            // Get node from selected option's data attribute
+            const selectedOption = isoSelect.options[isoSelect.selectedIndex];
+            const targetNode = selectedOption.getAttribute('data-node');
+            
+            formData = {
+                vm_name: document.getElementById('build-vm-name').value,
+                os_type: document.getElementById('build-os-type').value,
+                iso_file: isoFile,
+                target_node: targetNode,  // Include node hint for fast deployment
+                storage: 'TRUENAS-NFS',
+                cpu_cores: parseInt(document.getElementById('build-cpu-cores').value),
+                memory_mb: parseInt(document.getElementById('build-memory').value),
+                disk_size_gb: parseInt(document.getElementById('build-disk-size').value),
+                network_bridge: document.getElementById('build-network-bridge').value,
+                agent_enabled: true,  // Always enabled
+                convert_to_template: document.getElementById('build-convert-template').checked
+            };
+            
+            endpoint = '/api/vm-builder/build';
+            
+        } else {
+            // Template-based build (clone)
+            const templateSelect = document.getElementById('build-template');
+            const templateVmid = templateSelect.value;
+            
+            // Validate template is selected
+            if (!templateVmid) {
+                alert('Please select a template.');
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = '<i class="bi bi-play-circle"></i> Build VM';
+                return;
+            }
+            
+            // Get node and specs from selected option's data attributes
+            const selectedOption = templateSelect.options[templateSelect.selectedIndex];
+            const targetNode = selectedOption.getAttribute('data-node');
+            
+            formData = {
+                vm_name: document.getElementById('build-vm-name').value,
+                template_vmid: parseInt(templateVmid),
+                target_node: targetNode,
+                storage: 'TRUENAS-NFS',
+                convert_to_template: document.getElementById('build-convert-template').checked
+            };
+            
+            endpoint = '/api/vm-builder/clone-from-template';
+        }
+        
+        const response = await fetch(endpoint, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(formData)
@@ -1417,7 +1569,7 @@ async function submitBuildVM(event) {
             successModal.style.display = 'flex';
             successModal.style.visibility = 'visible';
             
-            // Auto-start the VM after creation
+            // Auto-start the VM after creation (unless converted to template)
             if (!formData.convert_to_template) {
                 console.log(`🚀 Auto-starting VM ${data.vmid}...`);
                 fetch(`/api/vm/${data.vmid}/start`, { method: 'POST' })

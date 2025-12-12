@@ -202,6 +202,221 @@ def api_build_vm():
         }), 500
 
 
+@vm_builder_bp.route("/clone-from-template", methods=["POST"])
+@login_required
+def api_clone_from_template():
+    """Clone a VM from an existing template."""
+    try:
+        user = require_user()
+        
+        # Check if user is teacher or admin
+        is_admin = is_admin_user(user)
+        username = user.split('@')[0] if '@' in user else user
+        local_user = get_user_by_username(username)
+        
+        if not is_admin and (not local_user or local_user.role not in ['teacher', 'adminer']):
+            return jsonify({
+                "ok": False,
+                "error": "Access denied. Only teachers and administrators can clone VMs."
+            }), 403
+        
+        data = request.json
+        
+        # Required parameters
+        cluster_id = data.get('cluster_id') or session.get('cluster_id')
+        vm_name = data.get('vm_name')
+        template_vmid = data.get('template_vmid')
+        target_node = data.get('target_node')
+        
+        if not all([cluster_id, vm_name, template_vmid]):
+            return jsonify({
+                "ok": False,
+                "error": "Missing required parameters: cluster_id, vm_name, template_vmid"
+            }), 400
+        
+        # Storage configuration
+        storage = data.get('storage', 'TRUENAS-NFS')
+        
+        # Template options
+        convert_to_template = data.get('convert_to_template', False)
+        
+        logger.info(f"Cloning VM from template {template_vmid}: {vm_name} on cluster {cluster_id}")
+        if target_node:
+            logger.info(f"Target node: {target_node}")
+        
+        from app.services.proxmox_service import get_proxmox_admin_for_cluster
+        from app.services.vm_utils import get_next_available_vmid
+        from app.models import VMAssignment, db
+        from app.services.background_sync import trigger_immediate_sync
+        import time
+        
+        proxmox = get_proxmox_admin_for_cluster(cluster_id)
+        if not proxmox:
+            return jsonify({
+                "ok": False,
+                "error": f"Failed to connect to cluster {cluster_id}"
+            }), 500
+        
+        # Get next available VMID
+        new_vmid = get_next_available_vmid(proxmox)
+        logger.info(f"Allocated VMID: {new_vmid}")
+        
+        # If no target node specified, find the node where template exists
+        if not target_node:
+            try:
+                resources = proxmox.cluster.resources.get(type='vm')
+                for resource in resources:
+                    if int(resource.get('vmid', -1)) == int(template_vmid):
+                        target_node = resource.get('node')
+                        logger.info(f"Found template on node: {target_node}")
+                        break
+                
+                if not target_node:
+                    return jsonify({
+                        "ok": False,
+                        "error": f"Template {template_vmid} not found in cluster"
+                    }), 404
+            except Exception as e:
+                logger.error(f"Failed to locate template: {e}")
+                return jsonify({
+                    "ok": False,
+                    "error": f"Failed to locate template: {str(e)}"
+                }), 500
+        
+        try:
+            # Clone the template using Proxmox API
+            # Full clone with target storage
+            clone_params = {
+                'newid': new_vmid,
+                'name': vm_name,
+                'full': 1,  # Full clone (not linked)
+                'storage': storage,
+                'target': target_node
+            }
+            
+            logger.info(f"Cloning template {template_vmid} to VM {new_vmid} with params: {clone_params}")
+            
+            task_upid = proxmox.nodes(target_node).qemu(template_vmid).clone.post(**clone_params)
+            logger.info(f"Clone task started: {task_upid}")
+            
+            # Wait for clone to complete (can take a few minutes)
+            import time
+            max_wait = 300  # 5 minutes
+            wait_interval = 2
+            elapsed = 0
+            
+            while elapsed < max_wait:
+                try:
+                    task_status = proxmox.nodes(target_node).tasks(task_upid).status.get()
+                    status = task_status.get('status')
+                    
+                    if status == 'stopped':
+                        exitstatus = task_status.get('exitstatus')
+                        if exitstatus == 'OK':
+                            logger.info(f"Clone completed successfully: {task_upid}")
+                            break
+                        else:
+                            error_msg = f"Clone task failed with status: {exitstatus}"
+                            logger.error(error_msg)
+                            return jsonify({
+                                "ok": False,
+                                "error": error_msg
+                            }), 500
+                except Exception as e:
+                    logger.warning(f"Failed to check task status: {e}")
+                
+                time.sleep(wait_interval)
+                elapsed += wait_interval
+            
+            if elapsed >= max_wait:
+                return jsonify({
+                    "ok": False,
+                    "error": "Clone operation timed out (5 minutes)"
+                }), 500
+            
+            # Convert to template if requested
+            if convert_to_template:
+                logger.info(f"Converting VM {new_vmid} to template")
+                proxmox.nodes(target_node).qemu(new_vmid).template.post()
+                message = f"VM {new_vmid} cloned and converted to template successfully"
+            else:
+                message = f"VM {new_vmid} cloned successfully"
+            
+            # Get MAC address for inventory
+            mac_address = None
+            try:
+                vm_config = proxmox.nodes(target_node).qemu(new_vmid).config.get()
+                net0 = vm_config.get('net0', '')
+                if net0:
+                    for part in net0.split(','):
+                        if '=' in part:
+                            key, value = part.split('=', 1)
+                            if key.strip().lower() in ['macaddr', 'hwaddr']:
+                                mac_address = value.strip()
+                                break
+            except Exception as e:
+                logger.warning(f"Failed to get MAC address: {e}")
+            
+            # Trigger immediate background sync
+            try:
+                logger.info("Triggering immediate background sync for VMInventory update")
+                trigger_immediate_sync()
+                time.sleep(1)  # Give sync a moment to process
+            except Exception as sync_err:
+                logger.warning(f"Failed to trigger sync: {sync_err}")
+            
+            # Create VM assignment for builder VM
+            if local_user:
+                try:
+                    # Query VMInventory for node if not yet populated
+                    node = target_node
+                    if not node:
+                        try:
+                            resources = proxmox.cluster.resources.get(type='vm')
+                            for r in resources:
+                                if int(r.get('vmid', -1)) == int(new_vmid):
+                                    node = r.get('node')
+                                    logger.info(f"Found node {node} for VM {new_vmid} via cluster resources")
+                                    break
+                        except Exception as node_err:
+                            logger.warning(f"Failed to query node for VM {new_vmid}: {node_err}")
+                    
+                    assignment = VMAssignment(
+                        proxmox_vmid=new_vmid,
+                        vm_name=vm_name,
+                        assigned_user_id=local_user.id,
+                        status='available',
+                        mac_address=mac_address,
+                        node=node,
+                        class_id=None  # Direct assignment = builder VM
+                    )
+                    db.session.add(assignment)
+                    db.session.commit()
+                    logger.info(f"Created VM assignment for user {local_user.username} -> VM {new_vmid}")
+                except Exception as e:
+                    logger.warning(f"Failed to create VM assignment: {e}")
+            
+            return jsonify({
+                "ok": True,
+                "vmid": new_vmid,
+                "message": message
+            })
+            
+        except Exception as clone_error:
+            logger.error(f"Clone operation failed: {clone_error}", exc_info=True)
+            return jsonify({
+                "ok": False,
+                "error": f"Clone failed: {str(clone_error)}"
+            }), 500
+            
+    except Exception as e:
+        logger.error(f"Failed to clone from template: {e}", exc_info=True)
+        return jsonify({
+            "ok": False,
+            "error": str(e)
+        }), 500
+
+
 @vm_builder_bp.route("/isos", methods=["GET"])
 @login_required
 def api_list_isos():

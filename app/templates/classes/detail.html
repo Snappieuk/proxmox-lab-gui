@@ -1770,8 +1770,14 @@ function updateTemplateDisplay() {
     const powerToggle = document.getElementById('power-toggle');
     if (powerToggle) {
         const isRunning = currentTemplateInfo.status === 'running';
-        powerToggle.checked = isRunning;
-        console.log('🔌 Initial power toggle update: status=' + currentTemplateInfo.status + ', checked=' + isRunning);
+        
+        // Only update toggle if it doesn't match Proxmox state
+        // This allows the toggle to stay in user's selected position
+        // unless Proxmox reports a different state
+        if (powerToggle.checked !== isRunning) {
+            powerToggle.checked = isRunning;
+            console.log('🔌 Power toggle updated to match Proxmox: status=' + currentTemplateInfo.status + ', checked=' + isRunning);
+        }
     }
     
     // RDP button: enable if VM has IP address
@@ -1794,37 +1800,18 @@ async function togglePower() {
     // Disable toggle during operation
     powerToggle.disabled = true;
     
-    // Store the action to prevent status polling from interfering
-    window.vmActionInProgress = true;
-    
     try {
         if (shouldStart) {
             await startTemplate();
         } else {
             await stopTemplate();
         }
-    } finally {
-        // Re-enable toggle
-        powerToggle.disabled = false;
-        window.vmActionInProgress = false;
         
-        // Immediate status refresh
-        setTimeout(async () => {
-            try {
-                const resp = await fetch(`/api/classes/${classId}/template/info?v=${Date.now()}`);
-                const data = await resp.json();
-                if (data.ok && data.template) {
-                    currentTemplateInfo = data.template;
-                    updateTemplateDisplay();
-                    console.log(`🔌 Post-action status: ${currentTemplateInfo.status}`);
-                }
-            } catch (e) {
-                console.error('Failed to refresh template status:', e);
-            }
-        }, 500); // Quick initial check after 500ms
+        // Toggle stays in user's selected position (don't revert on success)
+        // Polling will update it only if Proxmox reports different state
         
-        // Continue polling to catch delayed state changes (VMs take time to fully start/stop)
-        const pollIntervals = [2000, 4000, 7000, 12000, 20000]; // More aggressive polling
+        // Continue polling to catch state changes
+        const pollIntervals = [500, 2000, 4000, 7000, 12000, 20000];
         pollIntervals.forEach(delay => {
             setTimeout(async () => {
                 try {
@@ -1843,6 +1830,11 @@ async function togglePower() {
                 }
             }, delay);
         });
+    } finally {
+        // Re-enable toggle after a brief delay
+        setTimeout(() => {
+            powerToggle.disabled = false;
+        }, 1000);
     }
 }
 
@@ -1868,10 +1860,11 @@ function consoleToTemplate() {
 }
 
 async function startTemplate() {
+    const powerToggle = document.getElementById('power-toggle');
+    
     if (!confirm('Start the template VM?')) {
-        // User cancelled - revert toggle
-        const powerToggle = document.getElementById('power-toggle');
-        powerToggle.checked = false;
+        // User cancelled - revert toggle to match actual state
+        powerToggle.checked = (currentTemplateInfo.status === 'running');
         powerToggle.disabled = false;
         return;
     }
@@ -1882,25 +1875,25 @@ async function startTemplate() {
         
         if (data.ok) {
             showAlert(data.message, 'success');
+            // Keep toggle in ON position (user's choice)
         } else {
             showAlert(data.error || 'Failed to start template', 'error');
-            // Revert toggle on error
-            const powerToggle = document.getElementById('power-toggle');
-            powerToggle.checked = false;
+            // Revert toggle to match actual state on error
+            powerToggle.checked = (currentTemplateInfo.status === 'running');
         }
     } catch (e) {
         showAlert('Failed to start template', 'error');
-        // Revert toggle on error
-        const powerToggle = document.getElementById('power-toggle');
-        powerToggle.checked = false;
+        // Revert toggle to match actual state on error
+        powerToggle.checked = (currentTemplateInfo.status === 'running');
     }
 }
 
 async function stopTemplate() {
+    const powerToggle = document.getElementById('power-toggle');
+    
     if (!confirm('Stop the template VM?')) {
-        // User cancelled - revert toggle
-        const powerToggle = document.getElementById('power-toggle');
-        powerToggle.checked = true;
+        // User cancelled - revert toggle to match actual state
+        powerToggle.checked = (currentTemplateInfo.status === 'running');
         powerToggle.disabled = false;
         return;
     }
@@ -1911,17 +1904,16 @@ async function stopTemplate() {
         
         if (data.ok) {
             showAlert(data.message, 'success');
+            // Keep toggle in OFF position (user's choice)
         } else {
             showAlert(data.error || 'Failed to stop template', 'error');
-            // Revert toggle on error
-            const powerToggle = document.getElementById('power-toggle');
-            powerToggle.checked = true;
+            // Revert toggle to match actual state on error
+            powerToggle.checked = (currentTemplateInfo.status === 'running');
         }
     } catch (e) {
         showAlert('Failed to stop template', 'error');
-        // Revert toggle on error
-        const powerToggle = document.getElementById('power-toggle');
-        powerToggle.checked = true;
+        // Revert toggle to match actual state on error
+        powerToggle.checked = (currentTemplateInfo.status === 'running');
     }
 }
 
