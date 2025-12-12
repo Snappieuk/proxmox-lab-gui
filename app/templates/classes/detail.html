@@ -2870,6 +2870,11 @@ document.addEventListener('DOMContentLoaded', () => {
     loadTemplateInfo();
     loadStudentsList();
     refreshAllVMs(); // Load VM status, MAC, and IP addresses
+    
+    // Poll VM status every 30 seconds to keep student VM status in sync
+    setInterval(() => {
+        refreshAllVMs();
+    }, 30000); // 30 seconds
 });
 
 // Co-Owners Management
