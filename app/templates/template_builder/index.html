@@ -196,6 +196,34 @@
     </div>
 </div>
 
+<!-- Convert Existing VM Modal -->
+<div id="convert-existing-modal" class="modal" style="display: none;">
+    <div class="modal-content" style="max-width: 600px; width: 90%;">
+        <div class="modal-header">
+            <h2 style="font-size: 1.25rem; font-weight: 600; margin: 0;">
+                <i class="bi bi-arrow-repeat" style="margin-right: 0.5rem;"></i>Convert Existing VM to Template
+            </h2>
+            <button class="btn-close" onclick="closeConvertExistingModal()">&times;</button>
+        </div>
+        <div class="modal-body" style="padding: 1.25rem 1.5rem;">
+            <div id="convert-vm-loading" style="text-align: center; padding: 2rem; color: #666;">
+                <i class="bi bi-hourglass-split"></i> Loading your VMs...
+            </div>
+            <div id="convert-vm-list" style="display: none;">
+                <p style="color: #666; margin-bottom: 1rem;">Select a VM to convert to a template. <strong>Warning:</strong> This action cannot be undone.</p>
+                <div id="convert-vm-cards" style="display: flex; flex-direction: column; gap: 0.75rem;">
+                    <!-- VM cards will be loaded here -->
+                </div>
+            </div>
+            <div id="convert-vm-empty" style="display: none; text-align: center; padding: 2rem; color: #999;">
+                <i class="bi bi-inbox" style="font-size: 3rem; display: block; margin-bottom: 1rem;"></i>
+                <p>No VMs available to convert.</p>
+                <p style="font-size: 0.9rem;">Build a VM first, then come back here to convert it to a template.</p>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Console Modal -->
 <div id="console-modal" class="modal" style="display: none; visibility: hidden;">
     <div class="modal-content" style="max-width: 1400px; width: 95%; max-height: 95vh;">
@@ -708,9 +736,101 @@ window.showCreateFromScratch = function() {
     }
 };
 
-window.showConvertExisting = function() {
-    console.log('✅ showConvertExisting called - VERSION v5');
-    alert('Convert Existing VM - Feature coming soon!\n\nThis will let you select an existing VM and convert it to a template.');
+window.showConvertExisting = async function() {
+    console.log('✅ showConvertExisting called - loading VMs');
+    
+    // Show modal
+    document.getElementById('convert-existing-modal').style.display = 'flex';
+    document.getElementById('convert-vm-loading').style.display = 'block';
+    document.getElementById('convert-vm-list').style.display = 'none';
+    document.getElementById('convert-vm-empty').style.display = 'none';
+    
+    try {
+        // Fetch user's VMs (builder VMs with class_id=NULL)
+        const response = await fetch('/api/vms');
+        const data = await response.json();
+        
+        if (!data.ok) {
+            alert('Failed to load VMs: ' + (data.error || 'Unknown error'));
+            closeConvertExistingModal();
+            return;
+        }
+        
+        // Filter to only QEMU VMs that are not already templates and are in "My Template VMs" section
+        const convertibleVMs = data.data.filter(vm => 
+            vm.type === 'qemu' && 
+            vm.template !== 1 && 
+            vm.is_builder_vm === true  // Only show VMs created via builder
+        );
+        
+        document.getElementById('convert-vm-loading').style.display = 'none';
+        
+        if (convertibleVMs.length === 0) {
+            document.getElementById('convert-vm-empty').style.display = 'block';
+        } else {
+            document.getElementById('convert-vm-list').style.display = 'block';
+            displayConvertibleVMs(convertibleVMs);
+        }
+    } catch (error) {
+        console.error('Failed to load VMs:', error);
+        alert('Failed to load VMs: ' + error.message);
+        closeConvertExistingModal();
+    }
+};
+
+function displayConvertibleVMs(vms) {
+    const container = document.getElementById('convert-vm-cards');
+    container.innerHTML = vms.map(vm => `
+        <div class="vm-convert-card" style="border: 1px solid #ddd; border-radius: 8px; padding: 1rem; cursor: pointer; transition: all 0.2s;" 
+             onclick="confirmConvertVM(${vm.vmid}, '${vm.name || 'VM ' + vm.vmid}')"
+             onmouseover="this.style.borderColor='#0078d4'; this.style.backgroundColor='#f5f5f5';"
+             onmouseout="this.style.borderColor='#ddd'; this.style.backgroundColor='white';">
+            <div style="display: flex; align-items: center; gap: 1rem;">
+                <div style="width: 40px; height: 40px; background: #e8f4f8; border-radius: 8px; display: flex; align-items: center; justify-content: center;">
+                    <i class="bi bi-display" style="font-size: 1.5rem; color: #0078d4;"></i>
+                </div>
+                <div style="flex: 1;">
+                    <div style="font-weight: 600; font-size: 1rem;">${vm.name || 'VM ' + vm.vmid}</div>
+                    <div style="color: #666; font-size: 0.85rem;">
+                        VMID: ${vm.vmid} • Node: ${vm.node} • Status: ${vm.status}
+                    </div>
+                </div>
+                <div>
+                    <i class="bi bi-arrow-right-circle" style="font-size: 1.5rem; color: #0078d4;"></i>
+                </div>
+            </div>
+        </div>
+    `).join('');
+}
+
+async function confirmConvertVM(vmid, vmname) {
+    if (!confirm(`Convert VM "${vmname}" to a template?\n\nWARNING: This action cannot be undone. The VM will become a template and can no longer be started directly.\n\nClick OK to proceed.`)) {
+        return;
+    }
+    
+    // Close the modal
+    closeConvertExistingModal();
+    
+    try {
+        const response = await fetch(`/api/vm/${vmid}/convert-to-template`, { method: 'POST' });
+        const data = await response.json();
+        
+        if (data.ok) {
+            alert(`✅ VM "${vmname}" has been successfully converted to a template!\n\nIt will now appear in your "My Templates" list.`);
+            // Refresh both lists
+            loadTemplates();
+            loadMyVMs();
+        } else {
+            alert(`❌ Failed to convert VM to template: ${data.error || 'Unknown error'}`);
+        }
+    } catch (error) {
+        console.error('Error converting VM to template:', error);
+        alert(`❌ Failed to convert VM to template: ${error.message}`);
+    }
+}
+
+function closeConvertExistingModal() {
+    document.getElementById('convert-existing-modal').style.display = 'none';
 };
 
 console.log('✅ Functions defined VERSION v5 - attached to window');
