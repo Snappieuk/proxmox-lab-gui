@@ -1882,7 +1882,9 @@ async function togglePower(event) {
         
     } catch (e) {
         // Error or cancellation - keep toggle in current state (don't change it)
-        console.log('Power toggle action failed or cancelled:', e.message);
+        if (e.message !== 'CANCELLED') {
+            console.error('Power toggle action failed:', e.message);
+        }
         // powerToggle.checked stays as it was (currentState)
         window.vmPowerTransition = false;
     } finally {
@@ -1915,44 +1917,34 @@ function consoleToTemplate() {
 async function startTemplate() {
     if (!confirm('Start the template VM?')) {
         // User cancelled
-        throw new Error('User cancelled');
+        throw new Error('CANCELLED');
     }
     
-    try {
-        const resp = await fetch(`/api/classes/${classId}/template/start`, { method: 'POST' });
-        const data = await resp.json();
-        
-        if (data.ok) {
-            showAlert(data.message, 'success');
-        } else {
-            showAlert(data.error || 'Failed to start template', 'error');
-            throw new Error(data.error || 'Failed to start template');
-        }
-    } catch (e) {
-        showAlert('Failed to start template', 'error');
-        throw e;
+    const resp = await fetch(`/api/classes/${classId}/template/start`, { method: 'POST' });
+    const data = await resp.json();
+    
+    if (data.ok) {
+        showAlert(data.message, 'success');
+    } else {
+        showAlert(data.error || 'Failed to start template', 'error');
+        throw new Error(data.error || 'Failed to start template');
     }
 }
 
 async function stopTemplate() {
     if (!confirm('Stop the template VM?')) {
         // User cancelled
-        throw new Error('User cancelled');
+        throw new Error('CANCELLED');
     }
     
-    try {
-        const resp = await fetch(`/api/classes/${classId}/template/stop`, { method: 'POST' });
-        const data = await resp.json();
-        
-        if (data.ok) {
-            showAlert(data.message, 'success');
-        } else {
-            showAlert(data.error || 'Failed to stop template', 'error');
-            throw new Error(data.error || 'Failed to stop template');
-        }
-    } catch (e) {
-        showAlert('Failed to stop template', 'error');
-        throw e;
+    const resp = await fetch(`/api/classes/${classId}/template/stop`, { method: 'POST' });
+    const data = await resp.json();
+    
+    if (data.ok) {
+        showAlert(data.message, 'success');
+    } else {
+        showAlert(data.error || 'Failed to stop template', 'error');
+        throw new Error(data.error || 'Failed to stop template');
     }
 }
 
