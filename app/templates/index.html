@@ -359,6 +359,40 @@
 // Store all VMs globally for filtering
 let allVMs = [];
 
+// Refresh cache function - defined early for immediate availability
+window.refreshVMs = async function() {
+    const btn = document.getElementById('refresh-btn');
+    if (!btn) return;
+    
+    btn.disabled = true;
+    btn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> Refreshing...';
+    
+    try {
+        const resp = await fetch("/api/vms?force_refresh=true");
+        if (resp.ok) {
+            const payload = await resp.json();
+            const data = Array.isArray(payload) ? payload : (payload.vms || []);
+            window.isAdminView = payload.is_admin || false;
+            // Update global VMs array
+            allVMs = data;
+            // Clear and repopulate tables with fresh data
+            if (typeof populateTables === 'function') {
+                populateTables(data);
+            }
+            // Apply current filters
+            if (typeof applyFilters === 'function') {
+                applyFilters();
+            }
+        }
+    } catch (e) {
+        console.error('Refresh failed:', e);
+        alert('Failed to refresh: ' + e.message);
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> Refresh Cache';
+    }
+};
+
 // Filter VMs by cluster (called from base.html dropdown)
 window.filterVMsByCluster = function(clusterId) {
     console.log('filterVMsByCluster called with:', clusterId);
@@ -1056,33 +1090,6 @@ async function sendPowerAction(vmid, action, btn) {
             btn.style.opacity = '';
             btn.disabled = false;
         }, 3000);
-    }
-}
-
-// Refresh cache - exposed on window for onclick handler
-window.refreshVMs = async function() {
-    const btn = document.getElementById('refresh-btn');
-    btn.disabled = true;
-    btn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> Refreshing...';
-    
-    try {
-        const resp = await fetch("/api/vms?force_refresh=true");
-        if (resp.ok) {
-            const payload = await resp.json();
-            const data = Array.isArray(payload) ? payload : (payload.vms || []);
-            window.isAdminView = payload.is_admin || false;
-            // Update global VMs array
-            allVMs = data;
-            // Clear and repopulate tables with fresh data
-            populateTables(data);
-            // Apply current filters
-            applyFilters();
-        }
-    } catch (e) {
-        console.error(e);
-    } finally {
-        btn.disabled = false;
-        btn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> Refresh Cache';
     }
 }
 

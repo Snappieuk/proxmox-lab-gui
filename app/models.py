@@ -63,6 +63,20 @@ class Cluster(db.Model):
     # Storage configuration
     default_storage = db.Column(db.String(100), nullable=True)  # Default storage pool for VMs (e.g., 'local-lvm')
     template_storage = db.Column(db.String(100), nullable=True)  # Storage for template exports
+    qcow2_template_path = db.Column(db.String(512), nullable=True)  # Path for QCOW2 templates (e.g., '/mnt/pve/TRUENAS-NFS/images')
+    qcow2_images_path = db.Column(db.String(512), nullable=True)  # Path for VM overlay images
+    
+    # Admin configuration (per-cluster admin groups and users)
+    admin_group = db.Column(db.String(100), nullable=True)  # Proxmox group for admins (e.g., 'adminers')
+    admin_users = db.Column(db.Text, nullable=True)  # Comma-separated list of admin usernames
+    
+    # IP discovery settings (per-cluster ARP subnets)
+    arp_subnets = db.Column(db.Text, nullable=True)  # Comma-separated broadcast addresses (e.g., '10.220.15.255,192.168.1.255')
+    
+    # Cache settings (per-cluster overrides)
+    vm_cache_ttl = db.Column(db.Integer, nullable=True)  # VM cache TTL in seconds (NULL = use global default)
+    enable_ip_lookup = db.Column(db.Boolean, default=True)  # Enable IP lookup via guest agent
+    enable_ip_persistence = db.Column(db.Boolean, default=False)  # Save IPs to Proxmox descriptions
     
     # Metadata
     description = db.Column(db.Text, nullable=True)  # Optional description/notes
@@ -88,6 +102,14 @@ class Cluster(db.Model):
             'priority': self.priority,
             'default_storage': self.default_storage,
             'template_storage': self.template_storage,
+            'qcow2_template_path': self.qcow2_template_path,
+            'qcow2_images_path': self.qcow2_images_path,
+            'admin_group': self.admin_group,
+            'admin_users': self.admin_users,
+            'arp_subnets': self.arp_subnets,
+            'vm_cache_ttl': self.vm_cache_ttl,
+            'enable_ip_lookup': self.enable_ip_lookup,
+            'enable_ip_persistence': self.enable_ip_persistence,
             'description': self.description,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
@@ -112,6 +134,14 @@ class Cluster(db.Model):
             'priority': self.priority,
             'default_storage': self.default_storage,
             'template_storage': self.template_storage,
+            'qcow2_template_path': self.qcow2_template_path,
+            'qcow2_images_path': self.qcow2_images_path,
+            'admin_group': self.admin_group,
+            'admin_users': self.admin_users,
+            'arp_subnets': self.arp_subnets,
+            'vm_cache_ttl': self.vm_cache_ttl,
+            'enable_ip_lookup': self.enable_ip_lookup,
+            'enable_ip_persistence': self.enable_ip_persistence,
             'description': self.description,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
@@ -119,6 +149,47 @@ class Cluster(db.Model):
     
     def __repr__(self):
         return f'<Cluster {self.name} ({self.host})>'
+
+
+class SystemSettings(db.Model):
+    """Global system settings stored in database."""
+    __tablename__ = 'system_settings'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    key = db.Column(db.String(100), unique=True, nullable=False, index=True)
+    value = db.Column(db.Text, nullable=True)
+    description = db.Column(db.Text, nullable=True)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Settings categories
+    # Cache settings: vm_cache_ttl, proxmox_cache_ttl, db_ip_cache_ttl
+    # IP discovery: enable_ip_lookup, enable_ip_persistence, arp_subnets
+    # Admin access: admin_users, admin_group
+    # Storage: qcow2_template_path, qcow2_images_path
+    # Features: enable_template_replication
+    
+    @staticmethod
+    def get(key, default=None):
+        """Get setting value by key."""
+        setting = SystemSettings.query.filter_by(key=key).first()
+        return setting.value if setting else default
+    
+    @staticmethod
+    def set(key, value, description=None):
+        """Set setting value by key."""
+        setting = SystemSettings.query.filter_by(key=key).first()
+        if setting:
+            setting.value = value
+            if description:
+                setting.description = description
+            setting.updated_at = datetime.utcnow()
+        else:
+            setting = SystemSettings(key=key, value=value, description=description)
+            db.session.add(setting)
+        return setting
+    
+    def __repr__(self):
+        return f'<SystemSettings {self.key}={self.value}>'
 
 
 class ISOImage(db.Model):

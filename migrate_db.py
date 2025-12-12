@@ -55,8 +55,27 @@ CRITICAL_MIGRATIONS = [
     ('clusters', 'priority', 'INTEGER', '50'),
     ('clusters', 'default_storage', 'VARCHAR(100)', 'NULL'),
     ('clusters', 'template_storage', 'VARCHAR(100)', 'NULL'),
+    ('clusters', 'qcow2_template_path', 'VARCHAR(512)', 'NULL'),
+    ('clusters', 'qcow2_images_path', 'VARCHAR(512)', 'NULL'),
+    ('clusters', 'admin_group', 'VARCHAR(100)', 'NULL'),
+    ('clusters', 'admin_users', 'TEXT', 'NULL'),
+    ('clusters', 'arp_subnets', 'TEXT', 'NULL'),
+    ('clusters', 'vm_cache_ttl', 'INTEGER', 'NULL'),
+    ('clusters', 'enable_ip_lookup', 'BOOLEAN', '1'),
+    ('clusters', 'enable_ip_persistence', 'BOOLEAN', '0'),
     ('clusters', 'description', 'TEXT', 'NULL'),
 ]
+
+# System settings table schema
+SYSTEM_SETTINGS_TABLE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS system_settings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    key VARCHAR(100) UNIQUE NOT NULL,
+    value TEXT,
+    description TEXT,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)
+"""
 
 # Cluster table schema
 CLUSTER_TABLE_SCHEMA = """
@@ -78,6 +97,14 @@ CREATE TABLE IF NOT EXISTS clusters (
     priority INTEGER DEFAULT 50,
     default_storage VARCHAR(100),
     template_storage VARCHAR(100),
+    qcow2_template_path VARCHAR(512),
+    qcow2_images_path VARCHAR(512),
+    admin_group VARCHAR(100),
+    admin_users TEXT,
+    arp_subnets TEXT,
+    vm_cache_ttl INTEGER,
+    enable_ip_lookup BOOLEAN DEFAULT 1,
+    enable_ip_persistence BOOLEAN DEFAULT 0,
     description TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -106,6 +133,20 @@ ISO_IMAGES_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_iso_storage ON iso_images(storage)",
     "CREATE INDEX IF NOT EXISTS idx_iso_cluster ON iso_images(cluster_id)",
 ]
+
+def create_system_settings_table(cursor):
+    """Create system_settings table if it doesn't exist."""
+    print("\n📋 Checking system_settings table...")
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='system_settings'")
+    if not cursor.fetchone():
+        print("➕ Creating system_settings table")
+        cursor.execute(SYSTEM_SETTINGS_TABLE_SCHEMA)
+        print("   ✓ System settings table created")
+        return True
+    else:
+        print("✓ System settings table already exists")
+        return False
+
 
 def create_clusters_table(cursor):
     """Create clusters table if it doesn't exist."""
@@ -317,7 +358,10 @@ def migrate():
     try:
         total_changes = 0
         
-        # Step 1: Create clusters table if needed
+        # Step 1: Create system tables if needed
+        if create_system_settings_table(cursor):
+            total_changes += 1
+        
         if create_clusters_table(cursor):
             total_changes += 1
         
