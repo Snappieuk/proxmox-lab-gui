@@ -1826,6 +1826,8 @@ async function togglePower(event) {
     const currentState = powerToggle.checked;
     const shouldStart = !currentState; // Opposite of current state (what user wants)
     
+    console.log(`🔌 Toggle clicked: currentState=${currentState}, shouldStart=${shouldStart}, vmStatus=${currentTemplateInfo?.status}`);
+    
     // Disable toggle during operation
     powerToggle.disabled = true;
     
