@@ -746,7 +746,7 @@ window.showConvertExisting = async function() {
     document.getElementById('convert-vm-empty').style.display = 'none';
     
     try {
-        // Fetch user's VMs (builder VMs with class_id=NULL)
+        // Fetch user's VMs
         const response = await fetch('/api/vms');
         
         if (!response.ok) {
@@ -756,27 +756,16 @@ window.showConvertExisting = async function() {
         const data = await response.json();
         console.log('VMs API response:', data);
         
-        // Check if response has the expected structure
-        if (!data || typeof data !== 'object') {
-            throw new Error('Invalid response format');
+        // Handle error response
+        if (data.error) {
+            throw new Error(data.message || data.error || 'Unknown error');
         }
         
-        // Handle both {ok: true, data: [...]} and direct array formats
-        let vms = [];
-        if (data.ok === false) {
-            throw new Error(data.error || 'API returned error');
-        } else if (Array.isArray(data.data)) {
-            vms = data.data;
-        } else if (Array.isArray(data)) {
-            vms = data;
-        } else {
-            throw new Error('Unexpected response format: ' + JSON.stringify(data).substring(0, 100));
-        }
-        
+        // The /api/vms endpoint returns {vms: [...], is_admin: bool}
+        const vms = data.vms || [];
         console.log('Found', vms.length, 'total VMs');
         
         // Filter to only QEMU VMs that are not already templates
-        // Don't filter by is_builder_vm - show all user's VMs
         const convertibleVMs = vms.filter(vm => 
             vm.type === 'qemu' && 
             vm.template !== 1
