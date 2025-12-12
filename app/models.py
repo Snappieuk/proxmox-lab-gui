@@ -52,6 +52,20 @@ class Cluster(db.Model):
     verify_ssl = db.Column(db.Boolean, default=False)  # SSL certificate verification
     is_default = db.Column(db.Boolean, default=False)  # Default cluster for new users
     is_active = db.Column(db.Boolean, default=True)  # Enable/disable cluster
+    
+    # Deployment and management options
+    allow_vm_deployment = db.Column(db.Boolean, default=True)  # Allow creating VMs on this cluster
+    allow_template_sync = db.Column(db.Boolean, default=True)  # Sync templates from this cluster
+    allow_iso_sync = db.Column(db.Boolean, default=True)  # Sync ISO images from this cluster
+    auto_shutdown_enabled = db.Column(db.Boolean, default=False)  # Enable auto-shutdown monitoring for this cluster
+    priority = db.Column(db.Integer, default=50)  # Deployment priority (higher = preferred), 0-100
+    
+    # Storage configuration
+    default_storage = db.Column(db.String(100), nullable=True)  # Default storage pool for VMs (e.g., 'local-lvm')
+    template_storage = db.Column(db.String(100), nullable=True)  # Storage for template exports
+    
+    # Metadata
+    description = db.Column(db.Text, nullable=True)  # Optional description/notes
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
@@ -67,6 +81,14 @@ class Cluster(db.Model):
             'verify_ssl': self.verify_ssl,
             'is_default': self.is_default,
             'is_active': self.is_active,
+            'allow_vm_deployment': self.allow_vm_deployment,
+            'allow_template_sync': self.allow_template_sync,
+            'allow_iso_sync': self.allow_iso_sync,
+            'auto_shutdown_enabled': self.auto_shutdown_enabled,
+            'priority': self.priority,
+            'default_storage': self.default_storage,
+            'template_storage': self.template_storage,
+            'description': self.description,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
         }
@@ -75,6 +97,7 @@ class Cluster(db.Model):
         """Convert to dictionary without sensitive data."""
         return {
             'id': self.cluster_id,
+            'db_id': self.id,  # Include numeric database ID
             'name': self.name,
             'host': self.host,
             'port': self.port,
@@ -82,6 +105,14 @@ class Cluster(db.Model):
             'verify_ssl': self.verify_ssl,
             'is_default': self.is_default,
             'is_active': self.is_active,
+            'allow_vm_deployment': self.allow_vm_deployment,
+            'allow_template_sync': self.allow_template_sync,
+            'allow_iso_sync': self.allow_iso_sync,
+            'auto_shutdown_enabled': self.auto_shutdown_enabled,
+            'priority': self.priority,
+            'default_storage': self.default_storage,
+            'template_storage': self.template_storage,
+            'description': self.description,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
         }

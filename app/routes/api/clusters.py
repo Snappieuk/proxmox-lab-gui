@@ -104,32 +104,223 @@ def api_switch_cluster():
 @api_clusters_bp.route("/cluster-config", methods=["GET"])
 @admin_required
 def api_get_cluster_config():
-    """Get current cluster configuration."""
-    return jsonify({"ok": True, "clusters": get_cluster_config()})
+    """Get all cluster configurations from database (without passwords)."""
+    from app.models import Cluster, db
+    
+    try:
+        clusters = Cluster.query.order_by(Cluster.priority.desc(), Cluster.name).all()
+        return jsonify({
+            "ok": True, 
+            "clusters": [c.to_safe_dict() for c in clusters]
+        })
+    except Exception as e:
+        logger.error(f"Failed to load clusters: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 
 @api_clusters_bp.route("/cluster-config", methods=["POST"])
 @admin_required
-def api_save_cluster_config():
-    """Save updated cluster configuration."""
+def api_create_cluster():
+    """Create a new cluster configuration."""
+    from app.models import Cluster, db
+    
     data = request.get_json()
-    clusters = data.get("clusters", [])
     
-    if not clusters:
-        return jsonify({"ok": False, "error": "No clusters provided"}), 400
+    # Validate required fields
+    required = ["cluster_id", "name", "host", "user", "password"]
+    if not all(k in data for k in required):
+        return jsonify({"ok": False, "error": f"Missing required fields: {required}"}), 400
     
-    # Validate cluster structure
-    for cluster in clusters:
-        required = ["id", "name", "host", "user", "password"]
-        if not all(k in cluster for k in required):
-            return jsonify({"ok": False, "error": f"Cluster missing required fields: {required}"}), 400
+    # Check for duplicate cluster_id
+    existing = Cluster.query.filter_by(cluster_id=data["cluster_id"]).first()
+    if existing:
+        return jsonify({"ok": False, "error": f"Cluster ID '{data['cluster_id']}' already exists"}), 400
     
     try:
-        save_cluster_config(clusters)
-        return jsonify({"ok": True, "message": "Cluster configuration saved. Refresh the page to see changes."})
+        cluster = Cluster(
+            cluster_id=data["cluster_id"],
+            name=data["name"],
+            host=data["host"],
+            port=data.get("port", 8006),
+            user=data["user"],
+            password=data["password"],
+            verify_ssl=data.get("verify_ssl", False),
+            is_default=data.get("is_default", False),
+            is_active=data.get("is_active", True),
+            allow_vm_deployment=data.get("allow_vm_deployment", True),
+            allow_template_sync=data.get("allow_template_sync", True),
+            allow_iso_sync=data.get("allow_iso_sync", True),
+            auto_shutdown_enabled=data.get("auto_shutdown_enabled", False),
+            priority=data.get("priority", 50),
+            default_storage=data.get("default_storage"),
+            template_storage=data.get("template_storage"),
+            description=data.get("description")
+        )
+        
+        # If this is set as default, unset other defaults
+        if cluster.is_default:
+            Cluster.query.filter(Cluster.id != cluster.id).update({"is_default": False})
+        
+        db.session.add(cluster)
+        db.session.commit()
+        
+        # Invalidate caches
+        invalidate_cluster_cache()
+        _invalidate_vm_cache()
+        
+        return jsonify({
+            "ok": True, 
+            "message": "Cluster created successfully",
+            "cluster": cluster.to_safe_dict()
+        })
+        
     except Exception as e:
-        logger.error(f"Failed to save cluster config: {e}")
+        db.session.rollback()
+        logger.error(f"Failed to create cluster: {e}")
         return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@api_clusters_bp.route("/cluster-config/<int:cluster_db_id>", methods=["PUT"])
+@admin_required
+def api_update_cluster(cluster_db_id: int):
+    """Update an existing cluster configuration."""
+    from app.models import Cluster, db
+    
+    cluster = Cluster.query.get(cluster_db_id)
+    if not cluster:
+        return jsonify({"ok": False, "error": "Cluster not found"}), 404
+    
+    data = request.get_json()
+    
+    try:
+        # Update fields (excluding cluster_id which shouldn't change)
+        if "name" in data:
+            cluster.name = data["name"]
+        if "host" in data:
+            cluster.host = data["host"]
+        if "port" in data:
+            cluster.port = data["port"]
+        if "user" in data:
+            cluster.user = data["user"]
+        if "password" in data and data["password"]:  # Only update if password provided
+            cluster.password = data["password"]
+        if "verify_ssl" in data:
+            cluster.verify_ssl = data["verify_ssl"]
+        if "is_active" in data:
+            cluster.is_active = data["is_active"]
+        if "is_default" in data:
+            cluster.is_default = data["is_default"]
+            # If setting as default, unset others
+            if cluster.is_default:
+                Cluster.query.filter(Cluster.id != cluster.id).update({"is_default": False})
+        if "allow_vm_deployment" in data:
+            cluster.allow_vm_deployment = data["allow_vm_deployment"]
+        if "allow_template_sync" in data:
+            cluster.allow_template_sync = data["allow_template_sync"]
+        if "allow_iso_sync" in data:
+            cluster.allow_iso_sync = data["allow_iso_sync"]
+        if "auto_shutdown_enabled" in data:
+            cluster.auto_shutdown_enabled = data["auto_shutdown_enabled"]
+        if "priority" in data:
+            cluster.priority = data["priority"]
+        if "default_storage" in data:
+            cluster.default_storage = data["default_storage"]
+        if "template_storage" in data:
+            cluster.template_storage = data["template_storage"]
+        if "description" in data:
+            cluster.description = data["description"]
+        
+        cluster.updated_at = datetime.utcnow()
+        db.session.commit()
+        
+        # Invalidate caches
+        invalidate_cluster_cache()
+        _invalidate_vm_cache()
+        
+        return jsonify({
+            "ok": True, 
+            "message": "Cluster updated successfully",
+            "cluster": cluster.to_safe_dict()
+        })
+        
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Failed to update cluster: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@api_clusters_bp.route("/cluster-config/<int:cluster_db_id>", methods=["DELETE"])
+@admin_required
+def api_delete_cluster(cluster_db_id: int):
+    """Delete a cluster configuration."""
+    from app.models import Cluster, db
+    
+    cluster = Cluster.query.get(cluster_db_id)
+    if not cluster:
+        return jsonify({"ok": False, "error": "Cluster not found"}), 404
+    
+    # Prevent deleting the last cluster
+    total_clusters = Cluster.query.count()
+    if total_clusters <= 1:
+        return jsonify({"ok": False, "error": "Cannot delete the last cluster"}), 400
+    
+    try:
+        cluster_name = cluster.name
+        db.session.delete(cluster)
+        db.session.commit()
+        
+        # Invalidate caches
+        invalidate_cluster_cache()
+        _invalidate_vm_cache()
+        
+        return jsonify({
+            "ok": True, 
+            "message": f"Cluster '{cluster_name}' deleted successfully"
+        })
+        
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Failed to delete cluster: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@api_clusters_bp.route("/cluster-config/<int:cluster_db_id>/test", methods=["POST"])
+@admin_required
+def api_test_cluster_connection(cluster_db_id: int):
+    """Test connection to a cluster."""
+    from app.models import Cluster
+    from proxmoxer import ProxmoxAPI
+    
+    cluster = Cluster.query.get(cluster_db_id)
+    if not cluster:
+        return jsonify({"ok": False, "error": "Cluster not found"}), 404
+    
+    try:
+        # Attempt to connect and get version
+        proxmox = ProxmoxAPI(
+            cluster.host,
+            user=cluster.user,
+            password=cluster.password,
+            verify_ssl=cluster.verify_ssl,
+            port=cluster.port
+        )
+        version = proxmox.version.get()
+        nodes = proxmox.nodes.get()
+        
+        return jsonify({
+            "ok": True,
+            "message": "Connection successful",
+            "version": version.get("version"),
+            "nodes": len(nodes),
+            "node_names": [n["node"] for n in nodes]
+        })
+        
+    except Exception as e:
+        logger.error(f"Failed to connect to cluster {cluster.name}: {e}")
+        return jsonify({
+            "ok": False, 
+            "error": f"Connection failed: {str(e)}"
+        }), 500
 
 
 # Constants for resource calculations

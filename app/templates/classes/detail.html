@@ -2684,6 +2684,13 @@ async function confirmAssignVM() {
             })
         });
         
+        if (!resp.ok) {
+            const errorText = await resp.text();
+            console.error('Assign VM failed:', resp.status, errorText);
+            showAlert(`Failed to assign VM: ${resp.status} ${resp.statusText}`, 'error');
+            return;
+        }
+        
         const data = await resp.json();
         
         if (data.ok) {
@@ -2691,10 +2698,12 @@ async function confirmAssignVM() {
             closeAssignVMModal();
             loadStudentsList(); // Refresh the list
         } else {
+            console.error('Assign VM error:', data);
             showAlert(data.error || 'Failed to assign VM', 'error');
         }
     } catch (e) {
-        showAlert('Failed to assign VM', 'error');
+        console.error('Assign VM exception:', e);
+        showAlert(`Failed to assign VM: ${e.message}`, 'error');
     }
 }
 
@@ -2885,11 +2894,31 @@ document.addEventListener('DOMContentLoaded', () => {
     loadStudentsList();
     refreshAllVMs(); // Load VM status, MAC, and IP addresses
     
+    // Immediately check teacher VM status on page load
+    checkTeacherVMStatus();
+    
     // Poll VM status every 30 seconds to keep student VM status in sync
     setInterval(() => {
         refreshAllVMs();
     }, 30000); // 30 seconds
 });
+
+// Check teacher VM status immediately when page loads
+async function checkTeacherVMStatus() {
+    try {
+        const resp = await fetch(`/api/classes/${classId}/template/info?v=${Date.now()}`);
+        if (!resp.ok) return;
+        
+        const data = await resp.json();
+        if (data.ok && data.template) {
+            currentTemplateInfo = data.template;
+            updateTemplateDisplay();
+            console.log('✅ Initial teacher VM status loaded:', data.template.status);
+        }
+    } catch (e) {
+        console.warn('Failed to load initial teacher VM status:', e);
+    }
+}
 
 // Co-Owners Management
 let availableTeachers = [];

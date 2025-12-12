@@ -721,12 +721,22 @@ const CURRENT_CLUSTER_ID = '{{ current_cluster if current_cluster else "" }}';
 console.log('Template Builder initialized with cluster:', CURRENT_CLUSTER_ID);
 
 // Define functions in global scope IMMEDIATELY
-window.showCreateFromScratch = function() {
+window.showCreateFromScratch = async function() {
     console.log('✅ showCreateFromScratch called - VERSION v5');
     try {
         const modal = document.getElementById('build-modal');
         if (modal) {
             modal.style.display = 'flex';
+            
+            // Trigger template sync to get latest templates from Proxmox
+            console.log('🔄 Triggering template sync to refresh from Proxmox...');
+            try {
+                await fetch('/api/sync/templates/trigger', { method: 'POST' });
+                console.log('✅ Template sync triggered');
+            } catch (syncErr) {
+                console.warn('⚠️ Template sync trigger failed (non-critical):', syncErr);
+            }
+            
             loadBuildOptions();
         } else {
             console.error('build-modal element not found');
@@ -820,16 +830,50 @@ function displayConvertibleVMs(vms) {
 }
 
 async function confirmConvertVM(vmid, vmname) {
-    if (!confirm(`Convert VM "${vmname}" to a template?\n\nWARNING: This action cannot be undone. The VM will become a template and can no longer be started directly.\n\nClick OK to proceed.`)) {
+    if (!confirm(`Convert VM "${vmname}" to a template?\n\nWARNING: This action cannot be undone. The VM will become a template and can no longer be started directly.\n\nNote: If the VM is running, it will be stopped first. This may take up to 60 seconds.\n\nClick OK to proceed.`)) {
         return;
     }
     
     // Close the modal
     closeConvertExistingModal();
     
+    // Show loading indicator with animation
+    const loadingAlert = document.createElement('div');
+    loadingAlert.id = 'convert-loading-alert';
+    loadingAlert.style.cssText = 'position: fixed; top: 20px; right: 20px; background: linear-gradient(135deg, #0078d4 0%, #005a9e 100%); color: white; padding: 1.25rem 1.75rem; border-radius: 12px; box-shadow: 0 8px 24px rgba(0,120,212,0.4); z-index: 10000; display: flex; align-items: center; gap: 1rem; font-weight: 500; animation: slideIn 0.3s ease-out;';
+    loadingAlert.innerHTML = `
+        <div style="width: 24px; height: 24px; border: 3px solid rgba(255,255,255,0.3); border-top-color: white; border-radius: 50%; animation: spin 1s linear infinite;"></div>
+        <div>
+            <div style="font-size: 1rem; margin-bottom: 0.25rem;">Converting "${vmname}" to template...</div>
+            <div style="font-size: 0.85rem; opacity: 0.9;">⏱️ This may take up to 60 seconds</div>
+        </div>
+    `;
+    
+    // Add animations if not already present
+    if (!document.getElementById('convert-animations')) {
+        const style = document.createElement('style');
+        style.id = 'convert-animations';
+        style.textContent = `
+            @keyframes spin {
+                to { transform: rotate(360deg); }
+            }
+            @keyframes slideIn {
+                from { transform: translateX(400px); opacity: 0; }
+                to { transform: translateX(0); opacity: 1; }
+            }
+        `;
+        document.head.appendChild(style);
+    }
+    
+    document.body.appendChild(loadingAlert);
+    
     try {
         const response = await fetch(`/api/vm/${vmid}/convert-to-template`, { method: 'POST' });
         const data = await response.json();
+        
+        // Remove loading indicator
+        const alert = document.getElementById('convert-loading-alert');
+        if (alert) alert.remove();
         
         if (data.ok) {
             alert(`✅ VM "${vmname}" has been successfully converted to a template!\n\nIt will now appear in your "My Templates" list.`);
@@ -840,6 +884,10 @@ async function confirmConvertVM(vmid, vmname) {
             alert(`❌ Failed to convert VM to template: ${data.error || 'Unknown error'}`);
         }
     } catch (error) {
+        // Remove loading indicator
+        const alert = document.getElementById('convert-loading-alert');
+        if (alert) alert.remove();
+        
         console.error('Error converting VM to template:', error);
         alert(`❌ Failed to convert VM to template: ${error.message}`);
     }
@@ -1242,9 +1290,10 @@ async function loadTemplatesForBuild() {
         }
         
         // Load templates from API (use cluster_ip if available, otherwise cluster_id)
+        // Add cache-busting parameter to get fresh data
         const apiUrl = clusterIp 
-            ? `/api/templates?cluster_ip=${clusterIp}` 
-            : `/api/templates?cluster_id=${clusterId}`;
+            ? `/api/templates?cluster_ip=${clusterIp}&_t=${Date.now()}` 
+            : `/api/templates?cluster_id=${clusterId}&_t=${Date.now()}`;
         const templateResponse = await fetch(apiUrl);
         const templateData = await templateResponse.json();
         
@@ -1412,6 +1461,21 @@ async function submitBuildVM(event) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(formData)
         });
+        
+        // Check if response is OK before parsing
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error('Build API error:', response.status, response.statusText, errorText);
+            throw new Error(`Server returned ${response.status}: ${errorText.substring(0, 200)}`);
+        }
+        
+        // Check content type to ensure it's JSON
+        const contentType = response.headers.get('content-type');
+        if (!contentType || !contentType.includes('application/json')) {
+            const responseText = await response.text();
+            console.error('Non-JSON response received:', responseText);
+            throw new Error(`Server returned non-JSON response (${contentType}). This usually means a server error occurred. Check server logs. Response: ${responseText.substring(0, 200)}`);
+        }
         
         const data = await response.json();
         
@@ -1714,7 +1778,7 @@ async function submitUploadISO(event) {
             alert('Upload endpoint is not accessible. Check server logs.');
         }
         
-        progressText.textContent = `Uploading to ${storage} on ${node} (Cluster ${clusterId})...`;
+        progressText.textContent = `Uploading ${file.name} directly to Proxmox storage...`;
         
         // Create FormData
         const formData = new FormData();
@@ -1780,15 +1844,21 @@ async function submitUploadISO(event) {
                 try {
                     const data = JSON.parse(xhr.responseText);
                     if (data.ok) {
-                        progressText.textContent = 'Upload complete! Processing...';
+                        progressText.textContent = 'Upload complete! ISO saved to Proxmox.';
                         progressBar.style.width = '100%';
-                        alert('✓ ISO uploaded successfully to TRUENAS-NFS!');
+                        
+                        // Show success notification
+                        alert(`✅ ISO uploaded successfully!\n\n` +
+                              `File: ${data.filename || file.name}\n` +
+                              `Location: ${storage} on ${node}\n\n` +
+                              `The ISO has been uploaded directly to Proxmox storage and is now available for VM creation.`);
+                        
                         closeUploadISOModal();
-                        // Reload ISOs
+                        // Reload ISOs to show the newly uploaded file
                         await loadBuildOptions();
                     } else {
                         console.error('Server returned error:', data.error);
-                        alert('Upload failed: ' + (data.error || 'Unknown error'));
+                        alert(`❌ Upload failed: ${data.error || 'Unknown error'}\n\nThe file may not have been uploaded to Proxmox. Check server logs for details.`);
                         submitBtn.disabled = false;
                         submitBtn.innerHTML = '<i class="bi bi-upload"></i> Upload ISO';
                         progressDiv.style.display = 'none';
@@ -1796,7 +1866,7 @@ async function submitUploadISO(event) {
                 } catch (e) {
                     console.error('Failed to parse response:', e);
                     console.error('Response text:', xhr.responseText);
-                    alert('Upload completed but response was invalid. Check console for details.');
+                    alert(`⚠️ Upload may have succeeded but response was invalid.\n\nCheck the Proxmox web interface to verify if the ISO is present:\n1. Go to Datacenter → ${node} → ${storage}\n2. Look for ${file.name}\n\nConsole shows: ${e.message}`);
                     submitBtn.disabled = false;
                     submitBtn.innerHTML = '<i class="bi bi-upload"></i> Upload ISO';
                     progressDiv.style.display = 'none';

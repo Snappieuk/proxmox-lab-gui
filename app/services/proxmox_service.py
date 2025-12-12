@@ -30,26 +30,45 @@ _proxmox_lock = threading.Lock()
 _proxmox_connections: Dict[str, Any] = {}
 
 
+def get_clusters_from_db():
+    """Load active clusters from database, fall back to config if database unavailable."""
+    try:
+        from app.models import Cluster
+        from flask import has_app_context
+        
+        if has_app_context():
+            clusters = Cluster.query.filter_by(is_active=True).order_by(Cluster.priority.desc(), Cluster.name).all()
+            if clusters:
+                return [c.to_dict() for c in clusters]
+    except Exception as e:
+        logger.debug(f"Could not load clusters from database: {e}")
+    
+    # Fallback to CLUSTERS from config
+    return CLUSTERS
+
+
 def get_current_cluster_id() -> str:
     """Get current cluster ID from Flask session or default to first cluster."""
+    clusters = get_clusters_from_db()
     try:
         from flask import session
-        return session.get("cluster_id", CLUSTERS[0]["id"])
+        return session.get("cluster_id", clusters[0]["id"])
     except (RuntimeError, ImportError):
         # No Flask context (e.g., background thread or CLI) - use default
-        return CLUSTERS[0]["id"]
+        return clusters[0]["id"]
 
 
 def get_current_cluster() -> Dict[str, Any]:
     """Get current cluster configuration based on session."""
+    clusters = get_clusters_from_db()
     cluster_id = get_current_cluster_id()
     
-    for cluster in CLUSTERS:
+    for cluster in clusters:
         if cluster["id"] == cluster_id:
             return cluster
     
     # Fallback to first cluster if invalid ID
-    return CLUSTERS[0]
+    return clusters[0]
 
 
 def get_proxmox_admin_for_cluster(cluster_id: str) -> ProxmoxAPI:
@@ -57,21 +76,42 @@ def get_proxmox_admin_for_cluster(cluster_id: str) -> ProxmoxAPI:
     
     Unlike get_proxmox_admin(), this doesn't rely on Flask session context.
     Used when fetching VMs from multiple clusters simultaneously.
+    
+    Args:
+        cluster_id: Can be cluster_id string, numeric database ID, or IP address
     """
     global _proxmox_connections
     
+    clusters = get_clusters_from_db()
+    
     # Fast path: return existing connection if available
-    if cluster_id in _proxmox_connections:
-        return _proxmox_connections[cluster_id]
-
-    # Find the cluster config by ID or IP
-    cluster = next((c for c in CLUSTERS if c["id"] == cluster_id), None)
-    if not cluster:
-        # Try matching by IP address
-        cluster = next((c for c in CLUSTERS if c["host"] == cluster_id), None)
+    if str(cluster_id) in _proxmox_connections:
+        return _proxmox_connections[str(cluster_id)]
+    
+    # Try to convert to int for database ID lookup
+    try:
+        numeric_id = int(cluster_id)
+        # Load from database by numeric ID
+        from app.models import Cluster
+        from flask import has_app_context
+        if has_app_context():
+            db_cluster = Cluster.query.get(numeric_id)
+            if db_cluster:
+                cluster = db_cluster.to_dict()
+                cluster_id = cluster["id"]
+            else:
+                raise ValueError(f"Unknown cluster database ID: {numeric_id}")
+        else:
+            raise ValueError(f"Cannot lookup numeric cluster ID {numeric_id} without app context")
+    except (ValueError, TypeError):
+        # Not a number, find the cluster config by ID or IP
+        cluster = next((c for c in clusters if c["id"] == cluster_id), None)
         if not cluster:
-            raise ValueError(f"Unknown cluster_id or cluster_ip: {cluster_id}")
-        cluster_id = cluster["id"]
+            # Try matching by IP address
+            cluster = next((c for c in clusters if c["host"] == cluster_id), None)
+            if not cluster:
+                raise ValueError(f"Unknown cluster_id or cluster_ip: {cluster_id}")
+            cluster_id = cluster["id"]
 
     with _proxmox_lock:
         # Double-check inside lock to handle race conditions
@@ -123,8 +163,10 @@ def switch_cluster(cluster_id: str) -> None:
     """
     global _proxmox_connections
     
+    clusters = get_clusters_from_db()
+    
     # Validate cluster ID
-    valid = any(c["id"] == cluster_id for c in CLUSTERS)
+    valid = any(c["id"] == cluster_id for c in clusters)
     if not valid:
         raise ValueError(f"Invalid cluster ID: {cluster_id}")
     

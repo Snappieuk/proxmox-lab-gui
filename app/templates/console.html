@@ -157,10 +157,10 @@
         let lastConnectTime = 0;
         
         // Proxmox VNC tickets with generate-password=1 last 7200 seconds (2 hours)
-        // We'll auto-refresh 10 minutes before expiration to prevent interruption
+        // We'll auto-refresh 5 minutes before expiration to prevent interruption
         const TICKET_LIFETIME_MS = 2 * 60 * 60 * 1000; // 2 hours
-        const REFRESH_BEFORE_EXPIRY_MS = 10 * 60 * 1000; // 10 minutes before expiry
-        const MIN_RECONNECT_INTERVAL_MS = 30 * 1000; // Don't reconnect more than once per 30 seconds
+        const REFRESH_BEFORE_EXPIRY_MS = 5 * 60 * 1000; // 5 minutes before expiry
+        const MIN_RECONNECT_INTERVAL_MS = 2 * 1000; // Only throttle very rapid reconnects (2 seconds)
         
         function scheduleTicketRefresh() {
             // Clear any existing timer
@@ -222,60 +222,43 @@
         
         async function reconnectVNCInPlace() {
             if (isReconnecting) {
+                console.log('⏸️ Reconnect already in progress, skipping...');
                 return;
             }
             
             const timeSinceLastConnect = Date.now() - lastConnectTime;
             if (timeSinceLastConnect < MIN_RECONNECT_INTERVAL_MS) {
-                console.log(`⏸️ Reconnect throttled (${Math.round(timeSinceLastConnect/1000)}s ago)`);
+                console.log(`⏸️ Reconnect throttled (${Math.round(timeSinceLastConnect/1000)}s since last connect)`);
                 return;
             }
             
             isReconnecting = true;
-            console.log('🔄 Silent reconnect in background...');
+            console.log('🔄 VNC ticket expired - reconnecting seamlessly in background...');
             
-            // Don't change status - keep it showing "Connected" during reconnect
-            // Don't show loading screen - completely silent
+            // Keep showing "Connected" status during reconnect (seamless UX)
+            updateStatus('connecting', 'Refreshing connection...');
             
             // Disconnect old connection silently
             if (rfb) {
                 try {
                     rfb.disconnect();
-                } catch (e) {}
+                } catch (e) {
+                    console.warn('Error disconnecting old RFB:', e);
+                }
                 rfb = null;
             }
             
-            // Very brief pause
-            await new Promise(resolve => setTimeout(resolve, 100));
+            // Brief pause to allow cleanup
+            await new Promise(resolve => setTimeout(resolve, 200));
             
-            // Reconnect without any UI changes - reuse existing canvas
-            const screenDiv = document.getElementById('screen');
             try {
-                rfb = new RFB(screenDiv, wsUrl, {
-                    shared: false,
-                    repeaterID: '',
-                    wsProtocols: ['binary']
-                });
-                
-                rfb.addEventListener("connect", connectedToServer);
-                rfb.addEventListener("disconnect", disconnectedFromServer);
-                rfb.addEventListener("credentialsrequired", credentialsAreRequired);
-                rfb.addEventListener("securityfailure", securityFailure);
-                
-                rfb.scaleViewport = true;
-                rfb.resizeSession = false;
-                rfb.viewOnly = false;
-                rfb.clipViewport = false;
-                rfb.dragViewport = false;
-                rfb.compressionLevel = 2;
-                rfb.qualityLevel = 0;
-                rfb.focusOnClick = true;
-                
-                console.log('✅ Silent reconnect complete');
+                // Use initializeVNC which handles ticket fetching properly
+                console.log('🔌 Re-initializing VNC connection...');
+                initializeVNC();
+                console.log('✅ Seamless reconnect initiated');
             } catch (err) {
                 console.error('❌ Reconnect failed:', err);
-                // If silent reconnect fails, fall back to full reconnect
-                initializeVNC();
+                showError('Reconnection failed', 'Please reload the page to reconnect.');
             }
             
             isReconnecting = false;

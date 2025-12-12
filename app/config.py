@@ -58,14 +58,21 @@ def load_clusters_from_db():
     return CLUSTERS
 
 
-# Load cluster config from JSON file if it exists (overrides defaults above)
-# DEPRECATED: Use database for cluster management (see load_clusters_from_db)
+# DEPRECATED: Load cluster config from JSON file (kept for backwards compatibility only)
+# NEW: Clusters are now managed via database. Use /admin/settings UI to configure clusters.
+# On first startup, migrate_db.py will automatically migrate clusters.json to database.
 CLUSTER_CONFIG_FILE = os.getenv("CLUSTER_CONFIG_FILE") or os.path.join(os.path.dirname(__file__), "clusters.json")
 if os.path.exists(CLUSTER_CONFIG_FILE):
     try:
         import json
         with open(CLUSTER_CONFIG_FILE, "r", encoding="utf-8") as f:
-            CLUSTERS = json.load(f)
+            json_clusters = json.load(f)
+            # Only use JSON clusters if database is empty (fallback during initial setup)
+            # After first startup, database takes precedence
+            print(f"⚠️  WARNING: Found legacy clusters.json with {len(json_clusters)} clusters.")
+            print(f"   Run 'python migrate_db.py' to migrate to database.")
+            print(f"   After migration, clusters can be managed via /admin/settings UI.")
+            CLUSTERS = json_clusters
     except Exception as e:
         print(f"Warning: Failed to load cluster config from {CLUSTER_CONFIG_FILE}: {e}")
         # Keep defaults if loading fails

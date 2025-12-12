@@ -122,15 +122,34 @@ def check_class_vms(class_: Class):
     
     logger.info(f"Checking {len(vms)} VMs in class {class_.name} ({', '.join(restrictions)})")
     
-    cluster_id = class_.deployment_cluster
-    if not cluster_id:
+    cluster_identifier = class_.deployment_cluster
+    if not cluster_identifier:
         logger.warning(f"Class {class_.id} has no deployment_cluster set")
         return
     
     try:
-        proxmox = get_proxmox_admin_for_cluster(int(cluster_id))
+        # Handle both numeric IDs and cluster names
+        from app.models import Cluster
+        
+        # Try to parse as integer first
+        try:
+            cluster_id = int(cluster_identifier)
+        except (ValueError, TypeError):
+            # Not a number, look up by name or ID string
+            cluster = Cluster.query.filter(
+                (Cluster.id == cluster_identifier) | 
+                (Cluster.name == cluster_identifier)
+            ).first()
+            
+            if not cluster:
+                logger.error(f"Could not find cluster with identifier '{cluster_identifier}'")
+                return
+            
+            cluster_id = cluster.id
+        
+        proxmox = get_proxmox_admin_for_cluster(cluster_id)
     except Exception as e:
-        logger.error(f"Failed to get Proxmox connection for cluster {cluster_id}: {e}")
+        logger.error(f"Failed to get Proxmox connection for cluster {cluster_identifier}: {e}", exc_info=True)
         return
     
     for vm in vms:

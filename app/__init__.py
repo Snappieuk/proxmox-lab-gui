@@ -125,9 +125,11 @@ def create_app(config=None):
         if user:
             app.logger.debug("inject_admin_flag: user=%s is_admin=%s", user, is_admin)
         
-        # Inject cluster info for dropdown
-        current_cluster = session.get("cluster_id", CLUSTERS[0]["id"])
-        clusters = [{"id": c["id"], "name": c["name"]} for c in CLUSTERS]
+        # Inject cluster info for dropdown (load from database)
+        from app.services.proxmox_service import get_clusters_from_db
+        db_clusters = get_clusters_from_db()
+        current_cluster = session.get("cluster_id", db_clusters[0]["id"] if db_clusters else "")
+        clusters = [{"id": c["id"], "name": c["name"]} for c in db_clusters]
         
         # Check if user has local account with role info
         local_user = None

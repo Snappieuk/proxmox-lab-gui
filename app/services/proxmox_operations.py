@@ -1980,8 +1980,26 @@ def convert_vm_to_template(vmid: int, node: str, cluster_ip: str = None) -> Tupl
             if vm_status.get('status') == 'running':
                 logger.info(f"Stopping VM {vmid} on {node} before template conversion")
                 proxmox.nodes(node).qemu(vmid).status.shutdown.post()
+                
+                # Wait for VM to stop (up to 60 seconds)
                 import time
-                time.sleep(5)
+                max_wait = 60
+                waited = 0
+                while waited < max_wait:
+                    time.sleep(2)
+                    waited += 2
+                    status = proxmox.nodes(node).qemu(vmid).status.current.get()
+                    if status.get('status') == 'stopped':
+                        logger.info(f"VM {vmid} stopped after {waited} seconds")
+                        break
+                else:
+                    logger.warning(f"VM {vmid} did not stop after {max_wait} seconds, forcing stop")
+                    try:
+                        proxmox.nodes(node).qemu(vmid).status.stop.post()
+                        time.sleep(3)
+                    except Exception as force_stop_err:
+                        logger.error(f"Force stop failed: {force_stop_err}")
+                        return False, f"VM did not stop after {max_wait} seconds and force stop failed"
         except Exception as stop_err:
             logger.debug(f"VM stop check/action: {stop_err}")
         

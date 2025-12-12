@@ -47,6 +47,15 @@ CRITICAL_MIGRATIONS = [
     ('templates', 'network_bridge', 'TEXT', 'NULL'),
     ('templates', 'os_type', 'TEXT', 'NULL'),
     ('templates', 'specs_cached_at', 'TIMESTAMP', 'NULL'),
+    # Cluster management columns
+    ('clusters', 'allow_vm_deployment', 'BOOLEAN', '1'),
+    ('clusters', 'allow_template_sync', 'BOOLEAN', '1'),
+    ('clusters', 'allow_iso_sync', 'BOOLEAN', '1'),
+    ('clusters', 'auto_shutdown_enabled', 'BOOLEAN', '0'),
+    ('clusters', 'priority', 'INTEGER', '50'),
+    ('clusters', 'default_storage', 'VARCHAR(100)', 'NULL'),
+    ('clusters', 'template_storage', 'VARCHAR(100)', 'NULL'),
+    ('clusters', 'description', 'TEXT', 'NULL'),
 ]
 
 # Cluster table schema
@@ -62,6 +71,14 @@ CREATE TABLE IF NOT EXISTS clusters (
     verify_ssl BOOLEAN DEFAULT 0,
     is_default BOOLEAN DEFAULT 0,
     is_active BOOLEAN DEFAULT 1,
+    allow_vm_deployment BOOLEAN DEFAULT 1,
+    allow_template_sync BOOLEAN DEFAULT 1,
+    allow_iso_sync BOOLEAN DEFAULT 1,
+    auto_shutdown_enabled BOOLEAN DEFAULT 0,
+    priority INTEGER DEFAULT 50,
+    default_storage VARCHAR(100),
+    template_storage VARCHAR(100),
+    description TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 )
