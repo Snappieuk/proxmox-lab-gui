@@ -748,20 +748,41 @@ window.showConvertExisting = async function() {
     try {
         // Fetch user's VMs (builder VMs with class_id=NULL)
         const response = await fetch('/api/vms');
-        const data = await response.json();
         
-        if (!data.ok) {
-            alert('Failed to load VMs: ' + (data.error || 'Unknown error'));
-            closeConvertExistingModal();
-            return;
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
         
-        // Filter to only QEMU VMs that are not already templates and are in "My Template VMs" section
-        const convertibleVMs = data.data.filter(vm => 
+        const data = await response.json();
+        console.log('VMs API response:', data);
+        
+        // Check if response has the expected structure
+        if (!data || typeof data !== 'object') {
+            throw new Error('Invalid response format');
+        }
+        
+        // Handle both {ok: true, data: [...]} and direct array formats
+        let vms = [];
+        if (data.ok === false) {
+            throw new Error(data.error || 'API returned error');
+        } else if (Array.isArray(data.data)) {
+            vms = data.data;
+        } else if (Array.isArray(data)) {
+            vms = data;
+        } else {
+            throw new Error('Unexpected response format: ' + JSON.stringify(data).substring(0, 100));
+        }
+        
+        console.log('Found', vms.length, 'total VMs');
+        
+        // Filter to only QEMU VMs that are not already templates
+        // Don't filter by is_builder_vm - show all user's VMs
+        const convertibleVMs = vms.filter(vm => 
             vm.type === 'qemu' && 
-            vm.template !== 1 && 
-            vm.is_builder_vm === true  // Only show VMs created via builder
+            vm.template !== 1
         );
+        
+        console.log('Found', convertibleVMs.length, 'convertible VMs');
         
         document.getElementById('convert-vm-loading').style.display = 'none';
         
@@ -773,8 +794,14 @@ window.showConvertExisting = async function() {
         }
     } catch (error) {
         console.error('Failed to load VMs:', error);
-        alert('Failed to load VMs: ' + error.message);
-        closeConvertExistingModal();
+        document.getElementById('convert-vm-loading').style.display = 'none';
+        document.getElementById('convert-vm-empty').style.display = 'block';
+        document.getElementById('convert-vm-empty').innerHTML = `
+            <i class="bi bi-exclamation-triangle" style="font-size: 3rem; display: block; margin-bottom: 1rem; color: #dc3545;"></i>
+            <p style="color: #dc3545; font-weight: 600;">Failed to load VMs</p>
+            <p style="font-size: 0.9rem; color: #666;">${error.message}</p>
+            <button onclick="closeConvertExistingModal()" class="btn-cancel" style="margin-top: 1rem;">Close</button>
+        `;
     }
 };
 
