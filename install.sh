@@ -169,6 +169,69 @@ echo -e "${BLUE}→ Initializing database...${NC}"
 python3 migrate_db.py
 echo -e "${GREEN}✓ Database initialized${NC}"
 
+# Prompt for initial cluster configuration
+echo ""
+echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo -e "${BLUE}Initial Cluster Configuration${NC}"
+echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo ""
+echo -e "${BLUE}To get started, let's configure your first Proxmox cluster.${NC}"
+echo -e "${YELLOW}(You can add more clusters later via the web UI at /admin/settings)${NC}"
+echo ""
+
+read -p "Enter Proxmox host IP or hostname: " CLUSTER_HOST
+read -p "Enter Proxmox admin user (default: root@pam): " CLUSTER_USER
+CLUSTER_USER=${CLUSTER_USER:-root@pam}
+read -sp "Enter Proxmox password: " CLUSTER_PASS
+echo ""
+read -p "Verify SSL certificates? (y/N): " VERIFY_SSL
+VERIFY_SSL=${VERIFY_SSL:-N}
+
+if [[ $VERIFY_SSL =~ ^[Yy]$ ]]; then
+    VERIFY_SSL_BOOL="1"
+else
+    VERIFY_SSL_BOOL="0"
+fi
+
+# Create initial cluster in database
+echo -e "${BLUE}→ Adding cluster to database...${NC}"
+python3 <<EOF
+import sys
+sys.path.insert(0, '${APP_DIR}')
+
+from app import create_app
+from app.models import db, Cluster
+
+app = create_app()
+with app.app_context():
+    # Check if any clusters exist
+    existing = Cluster.query.first()
+    if not existing:
+        cluster = Cluster(
+            cluster_id='cluster1',
+            name='${CLUSTER_HOST}',
+            host='${CLUSTER_HOST}',
+            port=8006,
+            user='${CLUSTER_USER}',
+            password='${CLUSTER_PASS}',
+            verify_ssl=${VERIFY_SSL_BOOL},
+            is_default=True,
+            is_active=True,
+            allow_vm_deployment=True,
+            allow_template_sync=True,
+            allow_iso_sync=True,
+            priority=50
+        )
+        db.session.add(cluster)
+        db.session.commit()
+        print("✓ Cluster added to database")
+    else:
+        print("✓ Cluster already exists in database")
+EOF
+
+echo -e "${GREEN}✓ Initial cluster configured${NC}"
+echo ""
+
 # Create systemd service
 echo -e "${BLUE}→ Creating systemd service...${NC}"
 cat > "$SERVICE_FILE" <<EOF
@@ -248,10 +311,10 @@ echo -e "  Edit:     ${YELLOW}nano ${APP_DIR}/.env${NC}"
 echo -e "  Clusters: ${YELLOW}http://${IP_ADDR}:8080/admin/settings${NC}"
 echo ""
 echo -e "${BLUE}Next Steps:${NC}"
-echo -e "  1. Login as admin (any Proxmox user)"
-echo -e "  2. Configure clusters at http://${IP_ADDR}:8080/admin/settings"
-echo -e "  3. Add your first cluster with credentials"
-echo -e "  4. Create teacher/student accounts or classes"
+echo -e "  1. Login with your Proxmox credentials (${CLUSTER_USER})"
+echo -e "  2. Add more clusters at http://${IP_ADDR}:8080/admin/settings (optional)"
+echo -e "  3. Create teacher/student accounts via /admin/users"
+echo -e "  4. Create classes and deploy VMs"
 echo ""
 echo -e "${BLUE}Update:${NC}"
 echo -e "  Run:      ${YELLOW}bash ${APP_DIR}/update.sh${NC}"
