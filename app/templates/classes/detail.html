@@ -1942,13 +1942,24 @@ async function handleStopTemplate() {
 async function refreshTemplateInfo() {
     try {
         const resp = await fetch(`/api/classes/${classId}/template/info?v=${Date.now()}`);
+        
+        // Handle non-OK responses
+        if (!resp.ok) {
+            console.warn(`Template info fetch returned ${resp.status}: ${resp.statusText}`);
+            return;
+        }
+        
         const data = await resp.json();
         if (data.ok && data.template) {
             currentTemplateInfo = data.template;
             updateTemplateDisplay();
+            console.log('✅ Template info refreshed');
+        } else {
+            console.warn('Template info response not OK:', data);
         }
     } catch (e) {
         console.error('Failed to refresh template info:', e);
+        // Don't throw - just log and continue
     }
 }
 
