@@ -18,14 +18,19 @@ Set SECRET_KEY in .env file or environment variable.
 import os
 
 # ============================================================================
-# Flask SECRET_KEY (REQUIRED - set in .env file)
+# Flask SECRET_KEY (Development default provided, change in production!)
 # ============================================================================
 
-SECRET_KEY = os.getenv("SECRET_KEY")
-if not SECRET_KEY:
-    raise ValueError(
-        "SECRET_KEY environment variable is required!\n"
-        "Set it in .env file or run: export SECRET_KEY=$(openssl rand -hex 32)"
+SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key-change-in-production")
+
+# Warn if using default secret key
+if SECRET_KEY == "dev-secret-key-change-in-production":
+    import warnings
+    warnings.warn(
+        "Using default SECRET_KEY! This is INSECURE for production.\n"
+        "Set SECRET_KEY in .env file or run: export SECRET_KEY=$(openssl rand -hex 32)",
+        RuntimeWarning,
+        stacklevel=2
     )
 
 # ============================================================================
