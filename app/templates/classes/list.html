@@ -14,6 +14,9 @@
     </div>
     {% if user_role == 'teacher' or user_role == 'adminer' %}
     <div>
+        <button type="button" class="btn-secondary" onclick="openImportModal()" style="margin-right: 0.5rem;">
+            <i class="bi bi-download"></i> Import Existing
+        </button>
         <a href="{{ url_for('classes.create_class') }}" class="btn-primary">
             <i class="bi bi-plus-circle"></i> Create Class
         </a>
@@ -324,6 +327,120 @@ async function deleteClass(classId, className) {
         alert('Failed to delete class. Please try again.');
     }
 }
+
+// Import existing classes modal
+function openImportModal() {
+    document.getElementById('import-modal').style.display = 'flex';
+    scanForClasses();
+}
+
+function closeImportModal() {
+    document.getElementById('import-modal').style.display = 'none';
+}
+
+async function scanForClasses() {
+    const container = document.getElementById('importable-classes');
+    container.innerHTML = '<p style="text-align:center; padding:2rem;"><i class="bi bi-hourglass-split"></i> Scanning Proxmox for classes...</p>';
+    
+    try {
+        const resp = await fetch('/api/class-import/scan');
+        const data = await resp.json();
+        
+        if (!data.ok) {
+            container.innerHTML = `<p style="color: #a4262c; padding: 2rem;">${data.error}</p>`;
+            return;
+        }
+        
+        if (data.potential_classes.length === 0) {
+            container.innerHTML = '<p style="padding: 2rem; text-align: center;">No importable classes found.<br><br>Expected naming patterns:<br>• <strong>ABC00-01</strong> (student VMs)<br>• <strong>ABC-teacher</strong> (teacher VM)<br>• <strong>ABC-base</strong> (base VM)</p>';
+            return;
+        }
+        
+        // Display found classes
+        let html = '';
+        data.potential_classes.forEach(cls => {
+            const studentIds = JSON.stringify(cls.student_vms.map(vm => vm.vmid));
+            html += `
+                <div style="border: 1px solid #e1dfdd; border-radius: 4px; padding: 1rem; margin-bottom: 1rem;">
+                    <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 0.5rem;">
+                        <div>
+                            <h4 style="margin: 0 0 0.5rem 0;">${cls.suggested_name}</h4>
+                            <div style="font-size: 12px; color: #605e5c;">
+                                <strong>Prefix:</strong> ${cls.prefix} | <strong>Students:</strong> ${cls.student_count}
+                                ${cls.teacher_vm ? ' | ✓ Teacher VM' : ''}
+                                ${cls.base_vm ? ' | ✓ Base VM' : ''}
+                            </div>
+                        </div>
+                        <button type="button" class="btn-primary" style="padding: 0.5rem 1rem; font-size: 0.85rem;" onclick='importClass("${cls.prefix}", "${cls.suggested_name}", ${cls.teacher_vm ? cls.teacher_vm.vmid : 'null'}, ${cls.base_vm ? cls.base_vm.vmid : 'null'}, ${studentIds})'>
+                            <i class="bi bi-download"></i> Import
+                        </button>
+                    </div>
+                    <details style="font-size: 12px; margin-top: 0.5rem;">
+                        <summary style="cursor: pointer; color: #0078d4;">View ${cls.student_count + (cls.teacher_vm ? 1 : 0) + (cls.base_vm ? 1 : 0)} VMs</summary>
+                        <div style="margin-top: 0.5rem; padding-left: 1rem;">
+                            ${cls.teacher_vm ? `<div>• <strong>Teacher:</strong> ${cls.teacher_vm.name} (${cls.teacher_vm.vmid})</div>` : ''}
+                            ${cls.base_vm ? `<div>• <strong>Base:</strong> ${cls.base_vm.name} (${cls.base_vm.vmid})</div>` : ''}
+                            <div style="margin-top: 0.25rem;"><strong>Students:</strong></div>
+                            ${cls.student_vms.map(vm => `<div>• ${vm.name} (${vm.vmid})</div>`).join('')}
+                        </div>
+                    </details>
+                </div>
+            `;
+        });
+        
+        container.innerHTML = html;
+        
+    } catch (e) {
+        console.error('Failed to scan:', e);
+        container.innerHTML = `<p style="color: #a4262c; padding: 2rem;">Error: ${e.message}</p>`;
+    }
+}
+
+async function importClass(prefix, suggestedName, teacherVmid, baseVmid, studentVmids) {
+    const className = prompt(`Enter class name for ${prefix}:`, suggestedName);
+    if (!className) return;
+    
+    try {
+        const resp = await fetch('/api/class-import/import', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                class_name: className,
+                prefix: prefix,
+                teacher_vmid: teacherVmid,
+                base_vmid: baseVmid,
+                student_vmids: studentVmids,
+                cluster_id: null
+            })
+        });
+        
+        const data = await resp.json();
+        
+        if (data.ok) {
+            alert(data.message);
+            closeImportModal();
+            location.reload();
+        } else {
+            alert('Failed: ' + data.error);
+        }
+    } catch (e) {
+        alert('Error: ' + e.message);
+    }
+}
 </script>
+
+<!-- Import Modal -->
+<div id="import-modal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center;">
+    <div style="background: white; border-radius: 8px; max-width: 800px; width: 90%; max-height: 80vh; overflow: auto; padding: 2rem;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+            <h2 style="margin: 0;"><i class="bi bi-download"></i> Import Existing Classes</h2>
+            <button onclick="closeImportModal()" style="background: none; border: none; font-size: 24px; cursor: pointer;">&times;</button>
+        </div>
+        <p style="color: #605e5c; margin-bottom: 1.5rem;">
+            Scan Proxmox for VMs matching class naming conventions.
+        </p>
+        <div id="importable-classes"></div>
+    </div>
+</div>
 
 {% endblock %}
