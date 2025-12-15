@@ -38,10 +38,12 @@ def create_app(config=None):
                 static_folder=static_folder)
     
     # Configure secret key (required for sessions)
+    # Flask checks both app.secret_key and app.config['SECRET_KEY']
     if not SECRET_KEY:
         raise RuntimeError("SECRET_KEY is not set! Check app/config.py")
     
-    app.config['SECRET_KEY'] = SECRET_KEY
+    app.secret_key = SECRET_KEY  # Flask sessions check this attribute
+    app.config['SECRET_KEY'] = SECRET_KEY  # Standard Flask config
     logger.info(f"SECRET_KEY configured (length: {len(SECRET_KEY)})")
     
     # Configure file upload limits (10GB max for ISOs)
