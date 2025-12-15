@@ -165,12 +165,26 @@
                         </div>
                         <div class="form-group">
                             <label for="default-storage">Default Storage</label>
-                            <input type="text" id="default-storage" placeholder="e.g., local-lvm">
+                            <div class="input-with-button">
+                                <select id="default-storage" class="storage-select">
+                                    <option value="">-- Select Storage --</option>
+                                </select>
+                                <button type="button" class="btn btn-sm btn-secondary" onclick="loadStorages()" title="Load available storages from cluster">
+                                    <i class="bi bi-arrow-clockwise"></i>
+                                </button>
+                            </div>
                             <small>Storage pool for VM disks (optional)</small>
                         </div>
                         <div class="form-group form-group-full">
                             <label for="template-storage">Template Storage</label>
-                            <input type="text" id="template-storage" placeholder="e.g., local">
+                            <div class="input-with-button">
+                                <select id="template-storage" class="storage-select">
+                                    <option value="">-- Select Storage --</option>
+                                </select>
+                                <button type="button" class="btn btn-sm btn-secondary" onclick="loadStorages()" title="Load available storages from cluster">
+                                    <i class="bi bi-arrow-clockwise"></i>
+                                </button>
+                            </div>
                             <small>Storage for template exports (optional)</small>
                         </div>
                         <div class="form-group form-group-full">
@@ -511,7 +525,8 @@
 }
 
 .form-group input,
-.form-group textarea {
+.form-group textarea,
+.form-group select {
     padding: 10px 14px;
     border: 2px solid #e2e8f0;
     border-radius: 8px;
@@ -521,10 +536,30 @@
 }
 
 .form-group input:focus,
-.form-group textarea:focus {
+.form-group textarea:focus,
+.form-group select:focus {
     outline: none;
     border-color: #667eea;
     box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+}
+
+.input-with-button {
+    display: flex;
+    gap: 8px;
+}
+
+.input-with-button select {
+    flex: 1;
+}
+
+.input-with-button .btn-sm {
+    padding: 10px 14px;
+    font-size: 14px;
+    white-space: nowrap;
+}
+
+.storage-select {
+    min-width: 0; /* Allow flexbox to shrink */
 }
 
 .form-group small {
@@ -868,6 +903,87 @@ function editCluster(dbId) {
     document.getElementById('description').value = cluster.description || '';
     
     showModal();
+}
+
+async function loadStorages() {
+    const dbId = document.getElementById('cluster-db-id').value;
+    const clusterHost = document.getElementById('cluster-host').value;
+    const clusterUser = document.getElementById('cluster-user').value;
+    const clusterPassword = document.getElementById('cluster-password').value;
+    
+    // Check if we have connection details
+    if (!clusterHost || !clusterUser) {
+        showAlert('Please fill in host and user fields first', 'warning');
+        return;
+    }
+    
+    // For new clusters, we need password. For edit, password is optional
+    if (!dbId && !clusterPassword) {
+        showAlert('Please enter password to test connection', 'warning');
+        return;
+    }
+    
+    const button = event.target.closest('button');
+    const originalHTML = button.innerHTML;
+    button.disabled = true;
+    button.innerHTML = '<i class="bi bi-hourglass-split"></i> Loading...';
+    
+    try {
+        let url;
+        if (dbId) {
+            // Editing existing cluster - use stored credentials
+            url = `/api/clusters/${dbId}/storages`;
+        } else {
+            // New cluster - need to test connection first
+            // We'll create a temporary test using the test connection endpoint
+            showAlert('Please save the cluster first, then edit it to load storages', 'info');
+            return;
+        }
+        
+        const resp = await fetch(url);
+        const data = await resp.json();
+        
+        if (data.ok) {
+            // Populate both dropdowns
+            const defaultSelect = document.getElementById('default-storage');
+            const templateSelect = document.getElementById('template-storage');
+            
+            // Save current selections
+            const currentDefault = defaultSelect.value;
+            const currentTemplate = templateSelect.value;
+            
+            // Clear and repopulate
+            [defaultSelect, templateSelect].forEach(select => {
+                // Keep first option
+                select.innerHTML = '<option value="">-- Select Storage --</option>';
+                
+                data.storages.forEach(storage => {
+                    const option = document.createElement('option');
+                    option.value = storage.storage;
+                    option.textContent = `${storage.storage} (${storage.type})`;
+                    if (!storage.active) {
+                        option.textContent += ' [inactive]';
+                        option.disabled = true;
+                    }
+                    select.appendChild(option);
+                });
+            });
+            
+            // Restore selections if they still exist
+            if (currentDefault) defaultSelect.value = currentDefault;
+            if (currentTemplate) templateSelect.value = currentTemplate;
+            
+            showAlert(`Loaded ${data.storages.length} storage(s) from cluster`, 'success');
+        } else {
+            showAlert(data.error, 'error');
+        }
+    } catch (e) {
+        console.error('Failed to load storages:', e);
+        showAlert('Failed to load storages: ' + e.message, 'error');
+    } finally {
+        button.disabled = false;
+        button.innerHTML = originalHTML;
+    }
 }
 
 async function saveCluster(event) {

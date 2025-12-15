@@ -1877,144 +1877,10 @@ def get_all_vms(skip_ips: bool = False, force_refresh: bool = False) -> List[Dic
 # These functions are imported at the top of this file and re-exported
 # for backward compatibility with existing code.
 #
-# INTERNAL functions (used by user_manager.py):
-# - _get_admin_group_members_cached()
-# - _user_in_group()
-# - _debug_is_admin_user()
-# - _invalidate_admin_group_cache()
 # ---------------------------------------------------------------------------
-
-# These internal functions are still here because they're used by user_manager.py
-# or for backward compatibility with code that directly accesses them
-
-def _get_admin_group_members_cached() -> List[str]:
-    """
-    Get admin group members from cache or fetch from Proxmox if cache expired.
-    Thread-safe with 120s TTL to avoid repeated Proxmox calls.
-    
-    Returns a list of member userids (strings).
-    """
-    global _admin_group_cache, _admin_group_ts
-    
-    if not ADMIN_GROUP:
-        return []
-    
-    now = time.time()
-    
-    # Check cache first (thread-safe read)
-    with _admin_group_lock:
-        if _admin_group_cache is not None and (now - _admin_group_ts) < ADMIN_GROUP_CACHE_TTL:
-            logger.debug("Using cached admin group members (age=%.1fs)", now - _admin_group_ts)
-            return list(_admin_group_cache)
-    
-    # Cache miss or expired - fetch from Proxmox
-    try:
-        grp = get_proxmox_admin().access.groups(ADMIN_GROUP).get()
-        raw_members = (grp.get("members", []) or []) if isinstance(grp, dict) else []
-        members = []
-        for m in raw_members:
-            if isinstance(m, str):
-                members.append(m)
-            elif isinstance(m, dict) and "userid" in m:
-                members.append(m["userid"])
-        
-        # Update cache (thread-safe write)
-        with _admin_group_lock:
-            _admin_group_cache = members
-            _admin_group_ts = now
-        logger.debug("Refreshed admin group cache: %d members", len(members))
-        return members
-        
-    except Exception as e:
-        logger.warning("Failed to get admin group members: %s", e)
-        # On error, return cached value if we have one (even if expired)
-        with _admin_group_lock:
-            if _admin_group_cache is not None:
-                logger.debug("Using stale admin group cache due to error")
-                return list(_admin_group_cache)
-        return []
-
-
-def _user_in_group(user: str, groupid: str) -> bool:
-    """
-    Handles both possible Proxmox group member formats:
-    - members: ["user@pve", "other@pve"]
-    - members: [{"userid": "user@pve"}, {"userid": "other@pve"}]
-    
-    Uses cached admin group members if groupid is the admin group.
-    """
-    if not groupid:
-        logger.debug("_user_in_group: groupid is None/empty")
-        return False
-
-    # Use cached admin group members for the admin group
-    if groupid == ADMIN_GROUP:
-        members = _get_admin_group_members_cached()
-        logger.info("_user_in_group: checking user=%s against admin group '%s', members=%s", user, groupid, members)
-    else:
-        # For other groups, fetch directly (no caching)
-        try:
-            data = get_proxmox_admin().access.groups(groupid).get()
-            if not data:
-                logger.warning("_user_in_group: group '%s' returned no data", groupid)
-                return False
-        except Exception as e:
-            logger.warning("_user_in_group: failed to fetch group '%s': %s", groupid, e)
-            return False
-
-        raw_members = data.get("members", []) or []
-        members = []
-        for m in raw_members:
-            if isinstance(m, str):
-                members.append(m)
-            elif isinstance(m, dict) and "userid" in m:
-                members.append(m["userid"])
-        logger.debug("_user_in_group: group '%s' has members: %s", groupid, members)
-
-    # Accept both realm variants for matching: user (full), or username@pam, username@pve
-    variants = {user}
-    if "@" in user:
-        name, realm = user.split("@", 1)
-        for r in ("pam", "pve"):
-            variants.add(f"{name}@{r}")
-    else:
-        # User without realm - add both common realms
-        variants.add(f"{user}@pve")
-        variants.add(f"{user}@pam")
-    
-    logger.debug("_user_in_group: checking variants %s against members %s", variants, members)
-    result = any(u in members for u in variants)
-    logger.info("_user_in_group: user=%s group=%s result=%s", user, groupid, result)
-    return result
-
-
-def _debug_is_admin_user(user: str) -> bool:
-    """Internal debug function for admin checking (used by tests)."""
-    try:
-        grp = get_proxmox_admin().access.groups(ADMIN_GROUP).get()
-    except Exception:
-        grp = {}
-    raw_members = (grp.get("members", []) or []) if isinstance(grp, dict) else []
-    members = []
-    for m in raw_members:
-        if isinstance(m, str):
-            members.append(m)
-        elif isinstance(m, dict) and "userid" in m:
-            members.append(m["userid"])
-    logger.debug("DEBUG: ADMIN_GROUP=%s members=%s, user=%s", ADMIN_GROUP, members, user)
-    return user in members
-
-
-def _invalidate_admin_group_cache() -> None:
-    """Invalidate the admin group cache to force a refresh on next access.
-    
-    INTERNAL FUNCTION: Used by user_manager.py functions.
-    """
-    global _admin_group_cache, _admin_group_ts
-    with _admin_group_lock:
-        _admin_group_cache = None
-        _admin_group_ts = 0.0
-    logger.debug("Invalidated admin group cache")
+# DEPRECATED: Legacy admin group functions removed (moved to user_manager.py)
+# All admin group checking now uses settings_service.get_all_admin_groups()
+# ---------------------------------------------------------------------------
 
 
 def get_vm_ip(cluster_id: str, vmid: int, node: str, vmtype: str) -> Optional[str]:
@@ -2052,8 +1918,8 @@ def get_vms_for_user(user: str, search: Optional[str] = None, skip_ips: bool = F
     # Get all VMs from all clusters
     vms = get_all_vms(skip_ips=skip_ips, force_refresh=force_refresh)
     admin = is_admin_user(user)
-    logger.info("get_vms_for_user: user=%s is_admin=%s all_vms=%d ADMIN_USERS=%s ADMIN_GROUP=%s", 
-                user, admin, len(vms), ADMIN_USERS, ADMIN_GROUP)
+    logger.info("get_vms_for_user: user=%s is_admin=%s all_vms=%d", 
+                user, admin, len(vms))
     
     if not admin:
         # Build set of accessible VMIDs from multiple sources

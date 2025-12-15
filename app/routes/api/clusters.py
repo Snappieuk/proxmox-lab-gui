@@ -274,6 +274,46 @@ def api_update_cluster(cluster_db_id: int):
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+@api_clusters_bp.route("/clusters/<int:cluster_db_id>/storages", methods=["GET"])
+@admin_required
+def api_get_cluster_storages(cluster_db_id: int):
+    """Get list of storage pools available on a cluster."""
+    try:
+        from app.models import Cluster
+        from app.services.proxmox_service import get_proxmox_admin_for_cluster
+        
+        # Get cluster from database
+        cluster = Cluster.query.get(cluster_db_id)
+        if not cluster:
+            return jsonify({"ok": False, "error": "Cluster not found"}), 404
+        
+        # Get Proxmox connection for this cluster
+        proxmox = get_proxmox_admin_for_cluster(cluster.cluster_id)
+        
+        # Fetch storage list from Proxmox
+        storages = proxmox.storage.get()
+        
+        # Filter to only show storages that support disk images (not backup/iso-only)
+        storage_list = []
+        for storage in storages:
+            content_types = storage.get('content', '').split(',')
+            # Include storages that can hold VM images or rootdir (for containers)
+            if 'images' in content_types or 'rootdir' in content_types:
+                storage_list.append({
+                    'storage': storage['storage'],
+                    'type': storage.get('type', 'unknown'),
+                    'content': storage.get('content', ''),
+                    'active': storage.get('active', 0) == 1,
+                    'enabled': storage.get('enabled', 0) == 1
+                })
+        
+        return jsonify({"ok": True, "storages": storage_list})
+        
+    except Exception as e:
+        logger.exception(f"Failed to get storages for cluster {cluster_db_id}: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 @api_clusters_bp.route("/cluster-config/<int:cluster_db_id>", methods=["DELETE"])
 @admin_required
 def api_delete_cluster(cluster_db_id: int):

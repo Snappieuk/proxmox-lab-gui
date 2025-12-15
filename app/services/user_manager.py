@@ -235,11 +235,23 @@ def _invalidate_admin_group_cache() -> None:
     logger.debug("Invalidated admin group cache")
 
 
-def add_user_to_admin_group(user: str) -> bool:
-    """Add a user to the admin group in Proxmox."""
-    if not ADMIN_GROUP:
-        logger.warning("ADMIN_GROUP not configured, cannot add user")
-        return False
+def add_user_to_admin_group(user: str, admin_group: str = None) -> bool:
+    """Add a user to the admin group in Proxmox.
+    
+    Args:
+        user: Username to add (with realm suffix, e.g., user@pam)
+        admin_group: Proxmox group name (if None, uses first configured admin group)
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    if not admin_group:
+        from app.services.settings_service import get_all_admin_groups
+        admin_groups = get_all_admin_groups()
+        if not admin_groups:
+            logger.warning("No admin groups configured, cannot add user")
+            return False
+        admin_group = admin_groups[0]  # Use first configured group
     
     try:
         from app.services.proxmox_service import get_proxmox_admin
@@ -247,24 +259,24 @@ def add_user_to_admin_group(user: str) -> bool:
         # Get current group info
         current_members = get_admin_group_members()
         if user in current_members:
-            logger.info("User %s already in admin group", user)
+            logger.info("User %s already in admin group %s", user, admin_group)
             return True
         
         current_members.append(user)
         
         # Get current group to fetch comment
         try:
-            group_info = get_proxmox_admin().access.groups(ADMIN_GROUP).get()
+            group_info = get_proxmox_admin().access.groups(admin_group).get()
             comment = group_info.get('comment', '') if group_info else ''
         except Exception:
             comment = ''
         
-        get_proxmox_admin().access.groups(ADMIN_GROUP).put(
+        get_proxmox_admin().access.groups(admin_group).put(
             comment=comment,
             members=",".join(current_members)
         )
         _invalidate_admin_group_cache()
-        logger.info("Added user %s to admin group %s", user, ADMIN_GROUP)
+        logger.info("Added user %s to admin group %s", user, admin_group)
         return True
     except Exception as e:
         logger.exception("Failed to add user %s to admin group: %s", user, e)
