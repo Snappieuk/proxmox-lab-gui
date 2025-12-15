@@ -220,8 +220,6 @@ def create_app(config=None):
     # Check template replication in background to avoid blocking startup
     import threading
     threading.Thread(target=check_template_replication, daemon=True).start()
-    else:
-        logger.info("Template replication at startup disabled")
     
     # Depl0y integration removed
     
