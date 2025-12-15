@@ -61,22 +61,30 @@ def get_current_cluster_id():
     """Get current cluster ID from Flask session or default to first cluster."""
     try:
         from flask import session
-        return session.get("cluster_id", CLUSTERS[0]["id"])
+        from app.services.proxmox_service import get_clusters_from_db
+        clusters = get_clusters_from_db()
+        if not clusters:
+            return None
+        return session.get("cluster_id", clusters[0]["id"])
     except (RuntimeError, ImportError):
         # No Flask context (e.g., background thread or CLI) - use default
-        return CLUSTERS[0]["id"]
+        from app.services.proxmox_service import get_clusters_from_db
+        clusters = get_clusters_from_db()
+        return clusters[0]["id"] if clusters else None
 
 
 def get_current_cluster():
     """Get current cluster configuration based on session."""
+    from app.services.proxmox_service import get_clusters_from_db
     cluster_id = get_current_cluster_id()
+    clusters = get_clusters_from_db()
     
-    for cluster in CLUSTERS:
+    for cluster in clusters:
         if cluster["id"] == cluster_id:
             return cluster
     
     # Fallback to first cluster if invalid ID somehow
-    return CLUSTERS[0]
+    return clusters[0] if clusters else None
 
 
 def switch_cluster(cluster_id: str):
@@ -90,7 +98,9 @@ def switch_cluster(cluster_id: str):
     global _proxmox_connections
     
     # Validate cluster ID
-    valid = any(c["id"] == cluster_id for c in CLUSTERS)
+    from app.services.proxmox_service import get_clusters_from_db
+    clusters = get_clusters_from_db()
+    valid = any(c["id"] == cluster_id for c in clusters)
     if not valid:
         raise ValueError(f"Invalid cluster ID: {cluster_id}")
     
@@ -113,7 +123,9 @@ def get_proxmox_admin_for_cluster(cluster_id: str):
         return _proxmox_connections[cluster_id]
     
     # Find the cluster config
-    cluster = next((c for c in CLUSTERS if c["id"] == cluster_id), None)
+    from app.services.proxmox_service import get_clusters_from_db
+    clusters = get_clusters_from_db()
+    cluster = next((c for c in clusters if c["id"] == cluster_id), None)
     if not cluster:
         raise ValueError(f"Unknown cluster_id: {cluster_id}")
     
@@ -1714,7 +1726,11 @@ def get_all_vms(skip_ips: bool = False, force_refresh: bool = False) -> List[Dic
     # Fetch VMs from all clusters
     out: List[Dict[str, Any]] = []
     
-    for cluster in CLUSTERS:
+    # Get clusters from database
+    from app.services.proxmox_service import get_clusters_from_db
+    clusters = get_clusters_from_db()
+    
+    for cluster in clusters:
         cluster_id = cluster["id"]
         cluster_name = cluster["name"]
         logger.info(f"get_all_vms: Fetching VMs from cluster {cluster_name} ({cluster_id})")
