@@ -67,6 +67,11 @@
     0% { transform: rotate(0deg); }
     100% { transform: rotate(360deg); }
 }
+
+.spin {
+    animation: spin 1s linear infinite;
+    display: inline-block;
+}
 </style>
 {% endif %}
 
@@ -365,31 +370,50 @@ window.refreshVMs = async function() {
     if (!btn) return;
     
     btn.disabled = true;
-    btn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> Refreshing...';
+    btn.innerHTML = '<i class="bi bi-arrow-clockwise spin"></i> Refreshing...';
     
     try {
+        // Trigger force refresh
         const resp = await fetch("/api/vms?force_refresh=true");
-        if (resp.ok) {
-            const payload = await resp.json();
-            const data = Array.isArray(payload) ? payload : (payload.vms || []);
-            window.isAdminView = payload.is_admin || false;
-            // Update global VMs array
-            allVMs = data;
-            // Clear and repopulate tables with fresh data
-            if (typeof populateTables === 'function') {
-                populateTables(data);
-            }
-            // Apply current filters
-            if (typeof applyFilters === 'function') {
-                applyFilters();
-            }
+        if (!resp.ok) {
+            throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
         }
+        
+        const payload = await resp.json();
+        
+        // Update global VMs array
+        const data = Array.isArray(payload) ? payload : (payload.vms || []);
+        window.isAdminView = payload.is_admin || false;
+        allVMs = data;
+        
+        // Clear and repopulate tables with fresh data
+        if (typeof populateTables === 'function') {
+            populateTables(data);
+        }
+        
+        // Apply current filters
+        if (typeof applyFilters === 'function') {
+            applyFilters();
+        }
+        
+        // Show success message
+        console.log('Cache refreshed successfully, loaded', data.length, 'VMs');
+        
+        // Visual feedback
+        btn.innerHTML = '<i class="bi bi-check-circle"></i> Refreshed!';
+        setTimeout(() => {
+            btn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> Refresh Cache';
+        }, 2000);
+        
     } catch (e) {
         console.error('Refresh failed:', e);
-        alert('Failed to refresh: ' + e.message);
+        alert('Failed to refresh cache: ' + e.message);
+        btn.innerHTML = '<i class="bi bi-x-circle"></i> Failed';
+        setTimeout(() => {
+            btn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> Refresh Cache';
+        }, 2000);
     } finally {
         btn.disabled = false;
-        btn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> Refresh Cache';
     }
 };
 

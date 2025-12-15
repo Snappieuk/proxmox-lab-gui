@@ -366,9 +366,9 @@ async function scanForClasses() {
             container.innerHTML = `<p style="padding: 2rem; text-align: center;">
                 No importable classes found.<br><br>
                 <strong>Expected naming pattern:</strong><br>
-                • Student VMs: <code>12301-networking-student01</code>, <code>12302-networking-student02</code><br>
-                • Teacher VM: <code>123-networking-teacher</code><br>
-                • Base VM: <code>123-networking-base</code><br><br>
+                • Teacher VM: <code>12300-networking-teacher</code> (00 suffix)<br>
+                • Base VM: <code>12399-networking-base</code> (99 suffix)<br>
+                • Student VMs: <code>12301-networking-student01</code>, <code>12302-networking-student02</code> (01-98 suffix)<br><br>
                 (Scanned ${data.total_vms_scanned} VMs, ${data.unmatched_count} didn't match pattern)
                 ${unmatchedHtml}
                 <br><br><em>Check browser console (F12) for full VM list</em>

@@ -215,9 +215,9 @@ def _analyze_vm_naming_patterns(vms: List[Dict]) -> Tuple[List[Dict], List[Dict]
     """Analyze VM names to find potential class groupings.
     
     Looks for patterns:
-    - {3digits}{01-99}-{classname}-student{01-99} (e.g., 12301-networking-student01)
-    - {3digits}-{classname}-teacher (e.g., 123-networking-teacher)
-    - {3digits}-{classname}-base (e.g., 123-networking-base)
+    - {3digits}00-{classname}-teacher (e.g., 12300-networking-teacher)
+    - {3digits}99-{classname}-base (e.g., 12399-networking-base)
+    - {3digits}{01-98}-{classname}-student{01-99} (e.g., 12301-networking-student01)
     
     Args:
         vms: List of VM dictionaries from inventory
@@ -225,18 +225,18 @@ def _analyze_vm_naming_patterns(vms: List[Dict]) -> Tuple[List[Dict], List[Dict]
     Returns:
         Tuple of (potential_classes, unmatched_vms)
     """
-    # Pattern for your naming convention: {3digits}{01-99}-{classname}-{role}
+    # Pattern for your naming convention: {3digits}{00|01-99}-{classname}-{role}
     # Examples: 
-    #   12301-networking-student01, 12302-networking-student02
-    #   123-networking-teacher
-    #   123-networking-base
+    #   12300-networking-teacher (teacher with 00 suffix)
+    #   12399-networking-base (base with 99 suffix)
+    #   12301-networking-student01, 12302-networking-student02 (students 01-98)
     patterns = {
-        # Student VMs: {3 digits}{2 digits}-{classname}-student{01-99}
+        # Teacher VM: {3 digits}00-{classname}-teacher
+        'teacher': re.compile(r'^(\d{3})00-([^-]+)-teacher$', re.IGNORECASE),
+        # Base VM: {3 digits}99-{classname}-base
+        'base': re.compile(r'^(\d{3})99-([^-]+)-(base|class-base)$', re.IGNORECASE),
+        # Student VMs: {3 digits}{01-98}-{classname}-student{number}
         'student': re.compile(r'^(\d{3})(\d{2})-([^-]+)-student(\d+)$', re.IGNORECASE),
-        # Teacher VM: {3 digits}-{classname}-teacher
-        'teacher': re.compile(r'^(\d{3})-([^-]+)-teacher$', re.IGNORECASE),
-        # Base VM: {3 digits}-{classname}-base
-        'base': re.compile(r'^(\d{3})-([^-]+)-(base|class-base)$', re.IGNORECASE),
     }
     
     # Group VMs by prefix (3-digit code + classname)
