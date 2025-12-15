@@ -52,13 +52,20 @@ def api_scan_importable_classes():
         # Get all VMs from inventory
         vms = fetch_vm_inventory(cluster_id=cluster_id)
         
+        logger.info(f"Scanning {len(vms)} VMs for importable classes")
+        if vms:
+            logger.info(f"Sample VM names: {[vm.get('name') for vm in vms[:5]]}")
+        
         # Group VMs by potential class prefix
         potential_classes = _analyze_vm_naming_patterns(vms)
+        
+        logger.info(f"Found {len(potential_classes)} potential class groups")
         
         return jsonify({
             "ok": True,
             "potential_classes": potential_classes,
-            "total_groups": len(potential_classes)
+            "total_groups": len(potential_classes),
+            "total_vms_scanned": len(vms)
         })
         
     except Exception as e:
@@ -231,6 +238,7 @@ def _analyze_vm_naming_patterns(vms: List[Dict]) -> List[Dict]:
     
     # Group VMs by prefix (3-digit code + classname)
     groups = {}
+    unmatched_vms = []  # Track VMs that didn't match any pattern
     
     for vm in vms:
         vm_name = vm.get('name', '')
@@ -239,9 +247,12 @@ def _analyze_vm_naming_patterns(vms: List[Dict]) -> List[Dict]:
         if not vm_name or not vmid:
             continue
         
+        matched = False
+        
         # Try to match student VM pattern
         match = patterns['student'].match(vm_name)
         if match:
+            matched = True
             prefix = match.group(1)  # 3-digit code (e.g., "123")
             classname = match.group(3)  # class name (e.g., "networking")
             group_key = f"{prefix}-{classname}"
@@ -260,53 +271,61 @@ def _analyze_vm_naming_patterns(vms: List[Dict]) -> List[Dict]:
                 'node': vm.get('node'),
                 'status': vm.get('status')
             })
-            continue
         
         # Try to match teacher VM pattern
-        match = patterns['teacher'].match(vm_name)
-        if match:
-            prefix = match.group(1)
-            classname = match.group(2)
-            group_key = f"{prefix}-{classname}"
-            
-            if group_key not in groups:
-                groups[group_key] = {
-                    'prefix': prefix,
-                    'classname': classname,
-                    'teacher_vm': None,
-                    'base_vm': None,
-                    'student_vms': []
+        if not matched:
+            match = patterns['teacher'].match(vm_name)
+            if match:
+                matched = True
+                prefix = match.group(1)
+                classname = match.group(2)
+                group_key = f"{prefix}-{classname}"
+                
+                if group_key not in groups:
+                    groups[group_key] = {
+                        'prefix': prefix,
+                        'classname': classname,
+                        'teacher_vm': None,
+                        'base_vm': None,
+                        'student_vms': []
+                    }
+                groups[group_key]['teacher_vm'] = {
+                    'vmid': vmid,
+                    'name': vm_name,
+                    'node': vm.get('node'),
+                    'status': vm.get('status')
                 }
-            groups[group_key]['teacher_vm'] = {
-                'vmid': vmid,
-                'name': vm_name,
-                'node': vm.get('node'),
-                'status': vm.get('status')
-            }
-            continue
         
         # Try to match base VM pattern
-        match = patterns['base'].match(vm_name)
-        if match:
-            prefix = match.group(1)
-            classname = match.group(2)
-            group_key = f"{prefix}-{classname}"
-            
-            if group_key not in groups:
-                groups[group_key] = {
-                    'prefix': prefix,
-                    'classname': classname,
-                    'teacher_vm': None,
-                    'base_vm': None,
-                    'student_vms': []
+        if not matched:
+            match = patterns['base'].match(vm_name)
+            if match:
+                matched = True
+                prefix = match.group(1)
+                classname = match.group(2)
+                group_key = f"{prefix}-{classname}"
+                
+                if group_key not in groups:
+                    groups[group_key] = {
+                        'prefix': prefix,
+                        'classname': classname,
+                        'teacher_vm': None,
+                        'base_vm': None,
+                        'student_vms': []
+                    }
+                groups[group_key]['base_vm'] = {
+                    'vmid': vmid,
+                    'name': vm_name,
+                    'node': vm.get('node'),
+                    'status': vm.get('status')
                 }
-            groups[group_key]['base_vm'] = {
+        
+        # Track unmatched VMs for debugging
+        if not matched:
+            unmatched_vms.append({
                 'vmid': vmid,
-                'name': vm_name,
-                'node': vm.get('node'),
-                'status': vm.get('status')
-            }
-            continue
+                'name': vm_name
+            })
     
     # Convert to list and filter out groups with no student VMs
     result = []
@@ -321,5 +340,9 @@ def _analyze_vm_naming_patterns(vms: List[Dict]) -> List[Dict]:
     
     # Sort by prefix
     result.sort(key=lambda x: x['prefix'])
+    
+    # Log unmatched VMs for debugging
+    if unmatched_vms:
+        logger.info(f"Found {len(unmatched_vms)} VMs that didn't match naming pattern: {[vm['name'] for vm in unmatched_vms][:10]}")
     
     return result

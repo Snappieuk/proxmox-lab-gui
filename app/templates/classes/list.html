@@ -437,7 +437,12 @@ async function importClass(prefix, suggestedName, teacherVmid, baseVmid, student
             <button onclick="closeImportModal()" style="background: none; border: none; font-size: 24px; cursor: pointer;">&times;</button>
         </div>
         <p style="color: #605e5c; margin-bottom: 1.5rem;">
-            Scan Proxmox for VMs matching class naming conventions.
+            Scan Proxmox for VMs matching class naming conventions:<br>
+            <strong>Format:</strong> <code>{3digits}{01-99}-{classname}-{role}</code><br>
+            <strong>Examples:</strong><br>
+            • Student VMs: <code>12301-networking-student01</code>, <code>12302-networking-student02</code><br>
+            • Teacher VM: <code>123-networking-teacher</code><br>
+            • Base VM: <code>123-networking-base</code>
         </p>
         <div id="importable-classes"></div>
     </div>
