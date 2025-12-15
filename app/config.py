@@ -21,15 +21,16 @@ import os
 # Flask SECRET_KEY (Development default provided, change in production!)
 # ============================================================================
 
-SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key-change-in-production")
+SECRET_KEY = os.getenv("SECRET_KEY")
 
-# Log warning if using default secret key (non-blocking)
-if SECRET_KEY == "dev-secret-key-change-in-production":
+# If no SECRET_KEY set, use development default
+if not SECRET_KEY or SECRET_KEY.strip() == "":
+    SECRET_KEY = "dev-secret-key-change-in-production-" + os.urandom(16).hex()
     import logging
     logger = logging.getLogger(__name__)
     logger.warning(
-        "⚠️  Using default SECRET_KEY! This is INSECURE for production. "
-        "Set SECRET_KEY in .env file or environment variable."
+        "⚠️  No SECRET_KEY found in environment! Generated temporary key for this session. "
+        "Set SECRET_KEY in .env file for production use."
     )
 
 # ============================================================================
