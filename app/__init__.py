@@ -163,40 +163,59 @@ def create_app(config=None):
         }
     
     # Start background IP scanner
-    from app.services.proxmox_client import start_background_ip_scanner
-    start_background_ip_scanner()
+    try:
+        from app.services.proxmox_client import start_background_ip_scanner
+        start_background_ip_scanner()
+        logger.info("Background IP scanner started")
+    except Exception as e:
+        logger.error(f"Failed to start background IP scanner: {e}", exc_info=True)
     
     # Start background VM inventory sync
-    from app.services.background_sync import start_background_sync
-    start_background_sync(app)
-    logger.info("Background VM inventory sync started")
+    try:
+        from app.services.background_sync import start_background_sync
+        start_background_sync(app)
+        logger.info("Background VM inventory sync started")
+    except Exception as e:
+        logger.error(f"Failed to start background VM inventory sync: {e}", exc_info=True)
     
     # Start auto-shutdown daemon
-    from app.services.auto_shutdown_service import start_auto_shutdown_daemon
-    start_auto_shutdown_daemon(app)
-    logger.info("Auto-shutdown daemon started")
+    try:
+        from app.services.auto_shutdown_service import start_auto_shutdown_daemon
+        start_auto_shutdown_daemon(app)
+        logger.info("Auto-shutdown daemon started")
+    except Exception as e:
+        logger.error(f"Failed to start auto-shutdown daemon: {e}", exc_info=True)
     
     # Trigger initial ISO sync for all clusters on startup
-    from app.services.vm_deployment_service import trigger_iso_sync_all_clusters
-    trigger_iso_sync_all_clusters()
-    logger.info("Initial ISO sync triggered for all clusters")
+    try:
+        from app.services.vm_deployment_service import trigger_iso_sync_all_clusters
+        trigger_iso_sync_all_clusters()
+        logger.info("Initial ISO sync triggered for all clusters")
+    except Exception as e:
+        logger.error(f"Failed to trigger ISO sync: {e}", exc_info=True)
     
     # Register cleanup handler for SSH connection pool
-    import atexit
-    from app.services.ssh_executor import _connection_pool
-    
-    def cleanup_ssh_pool():
-        """Close all SSH connections on app shutdown."""
-        logger.info("Closing SSH connection pool...")
-        _connection_pool.close_all()
-    
-    atexit.register(cleanup_ssh_pool)
-    logger.info("SSH connection pool cleanup handler registered")
+    try:
+        import atexit
+        from app.services.ssh_executor import _connection_pool
+        
+        def cleanup_ssh_pool():
+            """Close all SSH connections on app shutdown."""
+            logger.info("Closing SSH connection pool...")
+            _connection_pool.close_all()
+        
+        atexit.register(cleanup_ssh_pool)
+        logger.info("SSH connection pool cleanup handler registered")
+    except Exception as e:
+        logger.error(f"Failed to register SSH cleanup handler: {e}", exc_info=True)
     
     # Start background template sync (database-first architecture)
-    from app.services.template_sync import start_template_sync_daemon
-    start_template_sync_daemon(app)
-    logger.info("Background template sync started")
+    try:
+        from app.services.template_sync import start_template_sync_daemon
+        start_template_sync_daemon(app)
+        logger.info("Background template sync started")
+    except Exception as e:
+        logger.error(f"Failed to start template sync daemon: {e}", exc_info=True)
     
     # Ensure templates are replicated across all nodes at startup (disabled by default)
     # Check SystemSettings for enable_template_replication (database-first)
