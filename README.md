@@ -3,20 +3,35 @@ Flask webapp providing a lab VM portal similar to Azure Labs for self-service st
 
 ## Features
 
-- **Multi-cluster support**: Connect to multiple Proxmox clusters, switch between them in the UI
-- **Database-first architecture**: VMInventory and Template caching with background sync daemons for 100x faster page loads
-- **Class-based management**: Teachers create classes, deploy VMs with disk overlay strategy, generate invite links
-- **Disk overlay deployment**: Instant VM deployment using QCOW2 overlays (100x faster than traditional cloning)
-- **Student self-service**: Students join classes via invite, get auto-assigned VMs, start/stop/revert
-- **Template sync daemon**: Background daemon syncs templates to database with full spec caching (CPU/RAM/disk/OS)
-- **Cluster-aware templates**: Templates tied to source cluster, UI dynamically filters by selected cluster
-- **Single-node deployment override**: Deploy entire class to specific node (bypasses load balancing)
-- **Class co-owners**: Teachers can grant other teachers full class management permissions
-- **Progressive loading**: Fast page renders with async VM data fetching from database cache
-- **Fast IP discovery**: Multi-tier system with guest agent + ARP verification, background sync triggers
-- **RDP downloads**: Generate .rdp files for Windows VM connections with fast IP verification
-- **SSH terminal**: Web-based SSH terminal (optional, requires flask-sock)
-- **Template publishing**: Teachers can publish VM changes to class template and propagate to all students
+### Core Architecture
+- **Database-first multi-cluster**: All cluster configurations stored in database, managed via web UI (no .env files needed)
+- **VMInventory caching**: Background sync daemons cache all VM data for 100x faster page loads (<100ms vs 5-30s Proxmox API)
+- **Template sync daemon**: Automatic background sync of templates with full spec caching (CPU/RAM/disk/OS), updates every 30min
+- **ISO sync daemon**: Caches ISO images from configured storage pools for instant VM builder access
+- **Progressive UI**: Skeleton HTML + async API calls prevent timeout on slow Proxmox responses
+
+### Class Management
+- **Class-based labs**: Teachers create classes, deploy VMs using disk overlay strategy, generate invite links
+- **Disk overlay deployment**: QCOW2 copy-on-write overlays for instant VM deployment (100x faster than `qm clone`)
+- **Class import**: Scan existing Proxmox VMs by VMID pattern and import as classes (teacher VM: xxxxx00, base VM: xxxxx99, students: xxxxx01-98)
+- **Template publishing**: Teachers can modify their VM, save to class template, and push updates to all student VMs
+- **Class co-owners**: Grant other teachers full class management permissions (many-to-many relationship)
+- **Auto-shutdown**: Configure idle CPU thresholds and time restrictions per class to save resources
+- **Single-node override**: Deploy entire class to specific node (bypasses load balancing)
+
+### Student Experience
+- **Self-service portal**: Students join classes via invite links, get auto-assigned VMs from pool
+- **VM controls**: Start/stop VMs, download RDP files, access web console and SSH terminal
+- **Revert to baseline**: Students can reset VMs to original snapshot state
+- **Progressive status**: UI shows "Starting..." badge until IP discovered (2s/10s polling + background sync)
+
+### VM Management
+- **VM Builder**: Create VMs from ISO images with custom hardware specs (CPU, RAM, disk, network)
+- **Multi-tier IP discovery**: Guest agent → LXC API → ARP scanner with nmap → RDP port validation
+- **RDP generation**: Automatic .rdp file creation with IP validation (Windows VMs + Linux with xrdp)
+- **Web console**: Embedded noVNC with automatic ticket refresh and compression optimization
+- **SSH terminal**: Web-based SSH access (requires flask-sock package)
+- **Direct VM assignments**: Assign VMs to users outside of class context (for template VMs)
 
 ## Quick Start
 
