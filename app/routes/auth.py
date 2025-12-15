@@ -55,27 +55,24 @@ def login():
                 error = "Invalid username or password."
         
         if full_user:
-            # Debug: Verify Flask app has secret_key configured
-            from flask import current_app
-            if not current_app.secret_key:
-                logger.error("CRITICAL: Flask app.secret_key is None at login!")
-                error = "Server configuration error - please contact administrator"
-            else:
-                try:
-                    session["user"] = full_user
-                    # Initialize cluster selection (default to first cluster if available)
-                    if "cluster_id" not in session:
-                        clusters = get_clusters_from_db()
-                        if clusters:
-                            session["cluster_id"] = clusters[0]["id"]
-                        else:
-                            logger.warning("No clusters configured in database")
-                    logger.info("user logged in: %s", full_user)
-                    next_url = request.args.get("next") or url_for("portal.portal")
-                    return redirect(next_url)
-                except RuntimeError as e:
-                    logger.error(f"Session error during login: {e}", exc_info=True)
-                    error = f"Login failed: {str(e)}"
+            try:
+                session["user"] = full_user
+                # Initialize cluster selection (default to first cluster if available)
+                if "cluster_id" not in session:
+                    clusters = get_clusters_from_db()
+                    if clusters:
+                        session["cluster_id"] = clusters[0]["id"]
+                    else:
+                        logger.warning("No clusters configured in database")
+                logger.info("user logged in: %s", full_user)
+                next_url = request.args.get("next") or url_for("portal.portal")
+                return redirect(next_url)
+            except Exception as e:
+                logger.error(f"Login session error: {e}", exc_info=True)
+                from flask import current_app
+                logger.error(f"App secret_key exists: {current_app.secret_key is not None}")
+                logger.error(f"App config SECRET_KEY exists: {current_app.config.get('SECRET_KEY') is not None}")
+                error = "Server configuration error. Please check logs."
 
     return render_template("login.html", error=error)
 

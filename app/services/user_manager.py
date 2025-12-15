@@ -89,21 +89,31 @@ def authenticate_proxmox_user(username: str, password: str) -> Optional[str]:
         return None
 
 
-def _get_admin_group_members_cached() -> List[str]:
-    """Get admin group members from cache or fetch from Proxmox if cache expired."""
+def _get_admin_group_members_cached(admin_group: str) -> List[str]:
+    """Get admin group members from cache or fetch from Proxmox if cache expired.
+    
+    Args:
+        admin_group: The Proxmox group name to check
+        
+    Returns:
+        List of userids in the group
+    """
     global _admin_group_cache, _admin_group_ts
     
-    if not ADMIN_GROUP:
+    if not admin_group:
         return []
     
     import time
     now = time.time()
     
+    # Cache key based on group name
+    cache_key = admin_group
+    
     # Check cache first (thread-safe read)
     with _admin_group_lock:
-        if _admin_group_cache is not None and (now - _admin_group_ts) < ADMIN_GROUP_CACHE_TTL:
-            logger.debug("Using cached admin group members (age=%.1fs)", now - _admin_group_ts)
-            return list(_admin_group_cache)
+        if cache_key in _admin_group_cache and (now - _admin_group_ts.get(cache_key, 0)) < ADMIN_GROUP_CACHE_TTL:
+            logger.debug("Using cached admin group members for %s (age=%.1fs)", admin_group, now - _admin_group_ts.get(cache_key, 0))
+            return list(_admin_group_cache[cache_key])
     
     # Cache miss or expired - fetch from Proxmox
     try:
@@ -119,18 +129,18 @@ def _get_admin_group_members_cached() -> List[str]:
         
         # Update cache (thread-safe write)
         with _admin_group_lock:
-            _admin_group_cache = members
-            _admin_group_ts = now
-        logger.debug("Refreshed admin group cache: %d members", len(members))
+            _admin_group_cache[cache_key] = members
+            _admin_group_ts[cache_key] = now
+        logger.debug("Refreshed admin group cache for %s: %d members", admin_group, len(members))
         return members
         
     except Exception as e:
-        logger.warning("Failed to get admin group members: %s", e)
+        logger.warning("Failed to get admin group members for %s: %s", admin_group, e)
         # On error, return cached value if we have one (even if expired)
         with _admin_group_lock:
-            if _admin_group_cache is not None:
-                logger.debug("Using stale admin group cache due to error")
-                return list(_admin_group_cache)
+            if cache_key in _admin_group_cache:
+                logger.debug("Using stale admin group cache for %s due to error", admin_group)
+                return list(_admin_group_cache[cache_key])
         return []
 
 
