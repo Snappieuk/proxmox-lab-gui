@@ -104,6 +104,8 @@ def api_import_class():
             return jsonify({"ok": False, "error": "Access denied"}), 403
         
         data = request.get_json()
+        logger.info(f"Import class request data: {data}")
+        
         class_name = data.get("class_name")
         prefix = data.get("prefix")
         teacher_vmid = data.get("teacher_vmid")
@@ -111,7 +113,10 @@ def api_import_class():
         student_vmids = data.get("student_vmids", [])
         cluster_id = data.get("cluster_id")  # Can be None - will use current cluster
         
+        logger.info(f"Parsed fields - class_name: {class_name}, prefix: {prefix}, teacher_vmid: {teacher_vmid}, base_vmid: {base_vmid}, student_vmids: {student_vmids}, cluster_id: {cluster_id}")
+        
         if not class_name or not prefix:
+            logger.warning(f"Missing required fields - class_name: {class_name}, prefix: {prefix}")
             return jsonify({"ok": False, "error": "Missing required fields: class_name and prefix"}), 400
         
         # Get teacher user ID

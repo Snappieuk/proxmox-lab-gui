@@ -421,31 +421,40 @@ async function importClass(prefix, suggestedName, teacherVmid, baseVmid, student
     const className = prompt(`Enter class name for ${prefix}:`, suggestedName);
     if (!className) return;
     
+    const payload = {
+        class_name: className,
+        prefix: prefix,
+        teacher_vmid: teacherVmid,
+        base_vmid: baseVmid,
+        student_vmids: studentVmids,
+        cluster_id: null
+    };
+    
+    console.log('Importing class with payload:', payload);
+    
     try {
         const resp = await fetch('/api/class-import/import', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-                class_name: className,
-                prefix: prefix,
-                teacher_vmid: teacherVmid,
-                base_vmid: baseVmid,
-                student_vmids: studentVmids,
-                cluster_id: null
-            })
+            body: JSON.stringify(payload)
         });
         
+        console.log('Import response status:', resp.status);
+        
         const data = await resp.json();
+        console.log('Import response data:', data);
         
         if (data.ok) {
             alert(data.message);
             closeImportModal();
             location.reload();
         } else {
-            alert('Failed: ' + data.error);
+            alert('Failed to import class:\n' + (data.error || 'Unknown error'));
+            console.error('Import failed:', data);
         }
     } catch (e) {
-        alert('Error: ' + e.message);
+        console.error('Import error:', e);
+        alert('Error importing class:\n' + e.message);
     }
 }
 </script>
