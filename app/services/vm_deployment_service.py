@@ -399,12 +399,16 @@ def list_available_isos(cluster_id: str) -> Tuple[bool, list, str]:
         
         if not fresh_isos and actual_isos:
             logger.info(f"ISO cache is stale for cluster {cluster_id}, triggering background refresh")
-            # Trigger background sync but still return stale data (app context available from request)
-            threading.Thread(target=_sync_isos_background, args=(cluster_id, None), daemon=True).start()
+            # Get app instance to pass to background thread
+            from flask import current_app
+            app = current_app._get_current_object()
+            threading.Thread(target=_sync_isos_background, args=(cluster_id, app), daemon=True).start()
         elif not actual_isos:
             logger.info(f"No cached ISOs for cluster {cluster_id}, triggering immediate sync in background")
-            # No ISOs at all - trigger background sync (app context available from request)
-            threading.Thread(target=_sync_isos_background, args=(cluster_id, None), daemon=True).start()
+            # Get app instance to pass to background thread
+            from flask import current_app
+            app = current_app._get_current_object()
+            threading.Thread(target=_sync_isos_background, args=(cluster_id, app), daemon=True).start()
         
         # Return whatever we have in database (even if empty or stale)
         iso_list = [iso.to_dict() for iso in actual_isos]

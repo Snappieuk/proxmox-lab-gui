@@ -90,8 +90,9 @@ sudo bash /opt/proxmox-lab-gui/update.sh
 python3 -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate
 pip install -r requirements.txt
-cp .env.example .env  # Edit with your Proxmox credentials
+python3 migrate_db.py  # Initialize database
 python3 run.py  # Runs on http://0.0.0.0:8080
+# Then configure clusters via web UI at http://localhost:8080/admin/settings
 ```
 
 ### Manual Production Deployment
@@ -99,7 +100,7 @@ python3 run.py  # Runs on http://0.0.0.0:8080
 **Option 1: Start script (standalone)**
 ```bash
 chmod +x start.sh
-./start.sh  # Activates venv, loads .env, runs Flask
+./start.sh  # Activates venv, runs Flask
 ```
 
 **Option 2: Systemd service (manual setup)**
@@ -118,36 +119,23 @@ sudo systemctl status proxmox-gui
 
 ## Configuration
 
-Create a `.env` file (or set environment variables):
+### Database-First Architecture
+
+**All cluster configurations are managed through the web UI** - no `.env` or `clusters.json` files needed!
+
+1. **First-time setup**: After installation, visit `http://your-ip:8080`
+2. **Add clusters**: Go to Settings → Add your Proxmox clusters with credentials
+3. **Configure storage**: Set SSH credentials and storage paths for each cluster
+4. **Start using**: Create classes, assign VMs, manage users - all through the web interface
+
+### Optional: Environment Variables (.env)
+
+Only required if you need to override defaults. Most settings are managed per-cluster in the web UI.
+
+Create `.env` file (optional):
 
 ```bash
-# Proxmox cluster (can also use clusters.json for multi-cluster)
-PVE_HOST=10.220.15.249
-PVE_ADMIN_USER=root@pam
-PVE_ADMIN_PASS=your_password
-PVE_VERIFY=False  # SSL verification (set True for production certs)
-
-# Admin users (comma-separated Proxmox usernames)
-ADMIN_USERS=root@pam,admin@pve
-
-# Performance tuning
-VM_CACHE_TTL=300  # seconds (5min default, used as fallback)
-ENABLE_IP_LOOKUP=True
-
-# Background sync intervals (seconds)
-BACKGROUND_SYNC_FULL_INTERVAL=300    # Full inventory sync every 5 minutes
-BACKGROUND_SYNC_QUICK_INTERVAL=30    # Quick status check every 30 seconds
-BACKGROUND_SYNC_CHECK_INTERVAL=30    # Loop check every 30 seconds
-
-# Template sync intervals (seconds)
-TEMPLATE_SYNC_FULL_INTERVAL=1800     # Full template sync every 30 minutes
-TEMPLATE_SYNC_QUICK_INTERVAL=300     # Quick verification every 5 minutes
-
-# ARP scanner settings
-ARP_SUBNETS=10.220.15.255  # Broadcast address for your network
-ENABLE_ARP_SCANNER=True
-
-# SSH access for disk operations (required)
+# SSH access for disk operations (can also be configured per-cluster in web UI)
 SSH_HOST=10.220.15.249
 SSH_USER=root
 SSH_PASSWORD=your_ssh_password
@@ -157,34 +145,17 @@ SSH_PORT=22
 QCOW2_TEMPLATE_PATH=/mnt/pve/TRUENAS-NFS/images
 QCOW2_IMAGES_PATH=/mnt/pve/TRUENAS-NFS/images
 
-# Session security
+# Network settings (optional - defaults work for most setups)
+ARP_SUBNETS=10.220.15.255  # Broadcast address for your network
+
+# Session security (optional - auto-generated if not provided)
 SECRET_KEY=your-secret-key-here  # Generate: python3 -c 'import secrets; print(secrets.token_hex(32))'
 ```
 
-### Multi-Cluster Setup
-
-Create `clusters.json` in project root:
-
-```json
-[
-  {
-    "id": "cluster1",
-    "name": "Main Cluster",
-    "host": "10.220.15.249",
-    "user": "root@pam",
-    "password": "password",
-    "verify_ssl": false
-  },
-  {
-    "id": "cluster2",
-    "name": "Secondary Cluster",
-    "host": "10.220.12.6",
-    "user": "root@pam",
-    "password": "password",
-    "verify_ssl": false
-  }
-]
-```
+**Note**: 
+- Cluster credentials are stored in database, managed via web UI (no `.env` needed)
+- SSH credentials can be set per-cluster in web UI or via `.env` as global default
+- Session SECRET_KEY is auto-generated on first run if not provided
 
 ## Architecture
 
