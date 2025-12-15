@@ -2013,6 +2013,22 @@ def convert_vm_to_template(vmid: int, node: str, cluster_ip: str = None) -> Tupl
             cfg = proxmox.nodes(node).qemu(vmid).config.get()
             if cfg.get('template') == 1:
                 logger.info(f"Confirmed VM {vmid} is now a template on {node}")
+                
+                # Update VMInventory database immediately
+                try:
+                    from app.models import VMInventory, db
+                    vm_record = VMInventory.query.filter_by(cluster_id=cluster_id, vmid=vmid).first()
+                    if vm_record:
+                        vm_record.is_template = True
+                        vm_record.status = 'stopped'  # Templates are always stopped
+                        db.session.commit()
+                        logger.info(f"Updated VMInventory: VM {vmid} marked as template")
+                    else:
+                        logger.warning(f"VM {vmid} not found in VMInventory, background sync will update")
+                except Exception as db_err:
+                    logger.warning(f"Failed to update VMInventory for template conversion: {db_err}")
+                    # Don't fail the whole operation if database update fails
+                
                 return True, "VM converted to template"
             else:
                 logger.error(f"VM {vmid} config shows template={cfg.get('template')}, conversion may have failed")
