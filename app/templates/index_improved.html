@@ -1,6 +1,19 @@
 {% extends "base.html" %}
 
 {% block content %}
+<style>
+/* Spin animation for refresh button */
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+.spin {
+    animation: spin 1s linear infinite;
+    display: inline-block;
+}
+</style>
+
 <div class="page-header">
     <div>
         <h1>{% if is_admin and request.endpoint == 'admin_view' %}Admin View - All Virtual Machines{% else %}My Lab Machines{% endif %}</h1>
@@ -887,8 +900,91 @@ function openVMConsole(vmid, clusterId) {
     );
 }
 
+// Refresh VMs function (admin only)
+async function refreshVMs() {
+    const refreshBtn = document.getElementById('refresh-btn');
+    if (!refreshBtn) return;
+    
+    const icon = refreshBtn.querySelector('i');
+    const originalText = refreshBtn.innerHTML;
+    
+    try {
+        // Show loading state
+        refreshBtn.disabled = true;
+        icon.classList.add('spin');
+        refreshBtn.innerHTML = '<i class="bi bi-arrow-clockwise spin"></i> Refreshing...';
+        
+        // Trigger background sync
+        const resp = await fetch('/api/sync/trigger?type=full', { method: 'POST' });
+        
+        if (!resp.ok) {
+            throw new Error(`Failed to trigger sync: ${resp.status}`);
+        }
+        
+        // Show success briefly
+        refreshBtn.innerHTML = '<i class="bi bi-check-circle"></i> Cache Refreshed!';
+        
+        // Wait a moment for background sync to complete
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        
+        // Reload VMs
+        await loadVMs();
+        
+        // Reset button
+        setTimeout(() => {
+            refreshBtn.disabled = false;
+            refreshBtn.innerHTML = originalText;
+            icon.classList.remove('spin');
+        }, 500);
+        
+    } catch (error) {
+        console.error('Refresh failed:', error);
+        refreshBtn.innerHTML = '<i class="bi bi-exclamation-triangle"></i> Refresh Failed';
+        setTimeout(() => {
+            refreshBtn.disabled = false;
+            refreshBtn.innerHTML = originalText;
+            icon.classList.remove('spin');
+        }, 2000);
+    }
+}
+
+// Auto-refresh VMs every 30 seconds to catch background changes (template conversions, etc.)
+let autoRefreshInterval = null;
+
+function startAutoRefresh() {
+    // Clear any existing interval
+    if (autoRefreshInterval) {
+        clearInterval(autoRefreshInterval);
+    }
+    
+    // Refresh every 30 seconds
+    autoRefreshInterval = setInterval(async () => {
+        console.log('Auto-refresh: Reloading VMs');
+        try {
+            await loadVMs();
+        } catch (error) {
+            console.error('Auto-refresh failed:', error);
+        }
+    }, 30000); // 30 seconds
+}
+
+// Stop auto-refresh when page is hidden (battery saving)
+document.addEventListener('visibilitychange', function() {
+    if (document.hidden) {
+        if (autoRefreshInterval) {
+            clearInterval(autoRefreshInterval);
+            autoRefreshInterval = null;
+        }
+    } else {
+        startAutoRefresh();
+        // Refresh immediately when page becomes visible
+        loadVMs();
+    }
+});
+
 if (document.getElementById('loading-indicator')) {
     loadVMs();
+    startAutoRefresh(); // Start auto-refresh after initial load
 }
 </script>
 

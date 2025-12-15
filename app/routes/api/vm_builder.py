@@ -3,6 +3,7 @@ VM Builder API endpoints - Build VMs from scratch with full configuration
 """
 
 import logging
+import threading
 from flask import Blueprint, jsonify, request, session
 
 from app.utils.decorators import login_required
@@ -99,100 +100,107 @@ def api_build_vm():
         if target_node:
             logger.info(f"Frontend provided target node: {target_node}")
         
-        # Build the VM (node will be auto-detected from ISO location or database)
-        success, vmid, message = build_vm_from_scratch(
-            cluster_id=cluster_id,
-            vm_name=vm_name,
-            iso_file=iso_file,
-            os_type=os_type,
-            cpu_cores=cpu_cores,
-            cpu_sockets=cpu_sockets,
-            memory_mb=memory_mb,
-            disk_size_gb=disk_size_gb,
-            network_bridge=network_bridge,
-            storage=storage,
-            cpu_type=cpu_type,
-            cpu_flags=cpu_flags,
-            cpu_limit=cpu_limit,
-            numa_enabled=numa_enabled,
-            bios_type=bios_type,
-            machine_type=machine_type,
-            vga_type=vga_type,
-            boot_order=boot_order,
-            scsihw=scsihw,
-            tablet=tablet,
-            agent_enabled=agent_enabled,
-            onboot=onboot,
-            convert_to_template=convert_to_template,
-            target_node=target_node  # Pass node hint if available
-        )
-        
-        if success:
-            # Trigger immediate background sync to ensure VMInventory is updated
+        # Build the VM in a background thread to avoid gateway timeout
+        # Return immediately with success message
+        def build_vm_background():
+            """Background thread to build VM without blocking the request."""
             try:
-                from app.services.background_sync import trigger_immediate_sync
-                trigger_immediate_sync()
-                # Give it a moment to update
-                import time
-                time.sleep(1)
-            except Exception as sync_err:
-                logger.warning(f"Failed to trigger immediate sync: {sync_err}")
-            
-            # Create VM assignment so the VM shows up in "My Template VMs"
-            # This applies to both teachers and admins
-            if local_user:
-                try:
-                    from app.models import VMAssignment, db
+                from flask import current_app
+                app = current_app._get_current_object()
+                
+                with app.app_context():
+                    logger.info(f"[Background] Starting VM build: {vm_name} (VMID will be auto-assigned)")
                     
-                    # Get MAC address and node from VMInventory (should have been added by build_vm_from_scratch)
-                    from app.models import VMInventory
-                    vm_record = VMInventory.query.filter_by(cluster_id=cluster_id, vmid=vmid).first()
-                    mac_address = vm_record.mac_address if vm_record else None
-                    node = vm_record.node if vm_record else None
-                    
-                    # If VMInventory doesn't have the VM yet, query Proxmox directly for node
-                    if not node:
-                        try:
-                            from app.services.proxmox_service import get_proxmox_admin_for_cluster
-                            proxmox = get_proxmox_admin_for_cluster(cluster_id)
-                            resources = proxmox.cluster.resources.get(type="vm")
-                            for r in resources:
-                                if int(r.get('vmid', -1)) == int(vmid):
-                                    node = r.get('node')
-                                    logger.info(f"Found node {node} for VM {vmid} via cluster resources")
-                                    break
-                        except Exception as node_err:
-                            logger.warning(f"Failed to query node for VM {vmid}: {node_err}")
-                    
-                    # Create assignment linking VM to the creator
-                    # class_id=NULL means this is a builder VM (not part of a class)
-                    assignment = VMAssignment(
-                        proxmox_vmid=vmid,
+                    success, vmid, message = build_vm_from_scratch(
+                        cluster_id=cluster_id,
                         vm_name=vm_name,
-                        assigned_user_id=local_user.id,
-                        status='available',
-                        mac_address=mac_address,
-                        node=node,
-                        class_id=None  # Direct assignment = builder VM for "My Template VMs"
+                        iso_file=iso_file,
+                        os_type=os_type,
+                        cpu_cores=cpu_cores,
+                        cpu_sockets=cpu_sockets,
+                        memory_mb=memory_mb,
+                        disk_size_gb=disk_size_gb,
+                        network_bridge=network_bridge,
+                        storage=storage,
+                        cpu_type=cpu_type,
+                        cpu_flags=cpu_flags,
+                        cpu_limit=cpu_limit,
+                        numa_enabled=numa_enabled,
+                        bios_type=bios_type,
+                        machine_type=machine_type,
+                        vga_type=vga_type,
+                        boot_order=boot_order,
+                        scsihw=scsihw,
+                        tablet=tablet,
+                        agent_enabled=agent_enabled,
+                        onboot=onboot,
+                        convert_to_template=convert_to_template,
+                        target_node=target_node
                     )
-                    db.session.add(assignment)
-                    db.session.commit()
-                    logger.info(f"Created VM assignment for user {local_user.username} -> VM {vmid} (builder VM)")
-                except Exception as e:
-                    logger.warning(f"Failed to create VM assignment: {e}")
-                    # Don't fail the whole operation if assignment creation fails
-            
-            return jsonify({
-                "ok": True,
-                "vmid": vmid,
-                "message": message
-            })
-        else:
-            return jsonify({
-                "ok": False,
-                "error": message,
-                "vmid": vmid
-            }), 500
+                    
+                    if success:
+                        logger.info(f"[Background] VM {vmid} created successfully: {message}")
+                        
+                        # Trigger immediate background sync
+                        try:
+                            from app.services.background_sync import trigger_immediate_sync
+                            trigger_immediate_sync()
+                        except Exception as sync_err:
+                            logger.warning(f"Failed to trigger sync: {sync_err}")
+                        
+                        # Create VM assignment
+                        if local_user:
+                            try:
+                                from app.models import VMAssignment, VMInventory, db
+                                
+                                vm_record = VMInventory.query.filter_by(cluster_id=cluster_id, vmid=vmid).first()
+                                mac_address = vm_record.mac_address if vm_record else None
+                                node = vm_record.node if vm_record else None
+                                
+                                if not node:
+                                    try:
+                                        from app.services.proxmox_service import get_proxmox_admin_for_cluster
+                                        proxmox = get_proxmox_admin_for_cluster(cluster_id)
+                                        resources = proxmox.cluster.resources.get(type="vm")
+                                        for r in resources:
+                                            if int(r.get('vmid', -1)) == int(vmid):
+                                                node = r.get('node')
+                                                break
+                                    except Exception as node_err:
+                                        logger.warning(f"Failed to query node: {node_err}")
+                                
+                                assignment = VMAssignment(
+                                    proxmox_vmid=vmid,
+                                    vm_name=vm_name,
+                                    assigned_user_id=local_user.id,
+                                    status='available',
+                                    mac_address=mac_address,
+                                    node=node,
+                                    class_id=None
+                                )
+                                db.session.add(assignment)
+                                db.session.commit()
+                                logger.info(f"[Background] Created VM assignment for {local_user.username} -> VM {vmid}")
+                            except Exception as e:
+                                logger.warning(f"Failed to create assignment: {e}")
+                    else:
+                        logger.error(f"[Background] VM build failed: {message}")
+                        
+            except Exception as e:
+                logger.error(f"[Background] Exception during VM build: {e}", exc_info=True)
+        
+        # Start background thread
+        from flask import current_app
+        app = current_app._get_current_object()
+        threading.Thread(target=build_vm_background, daemon=True).start()
+        
+        # Return immediately
+        return jsonify({
+            "ok": True,
+            "message": f"VM '{vm_name}' creation started in background. This will take 1-2 minutes. Check the portal for the new VM.",
+            "vm_name": vm_name,
+            "cluster_id": cluster_id
+        })
             
     except Exception as e:
         logger.error(f"Failed to build VM: {e}", exc_info=True)
