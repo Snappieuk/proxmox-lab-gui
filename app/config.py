@@ -23,14 +23,13 @@ import os
 
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key-change-in-production")
 
-# Warn if using default secret key
+# Log warning if using default secret key (non-blocking)
 if SECRET_KEY == "dev-secret-key-change-in-production":
-    import warnings
-    warnings.warn(
-        "Using default SECRET_KEY! This is INSECURE for production.\n"
-        "Set SECRET_KEY in .env file or run: export SECRET_KEY=$(openssl rand -hex 32)",
-        RuntimeWarning,
-        stacklevel=2
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.warning(
+        "⚠️  Using default SECRET_KEY! This is INSECURE for production. "
+        "Set SECRET_KEY in .env file or environment variable."
     )
 
 # ============================================================================
