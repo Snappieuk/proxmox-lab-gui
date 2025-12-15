@@ -88,12 +88,13 @@ def get_all_vm_ids_and_names() -> List[Dict[str, Any]]:
     
     Returns: List of {vmid, name, cluster_id, node}
     """
-    from app.config import CLUSTERS, VALID_NODES
+    from app.services.proxmox_service import get_clusters_from_db
+# VALID_NODES deprecated - no longer used
     from app.services.proxmox_service import get_proxmox_admin_for_cluster
     
     results = []
     
-    for cluster in CLUSTERS:
+    for cluster in get_clusters_from_db():
         cluster_id = cluster["id"]
         cluster_name = cluster["name"]
         try:

@@ -10,7 +10,7 @@ from datetime import datetime
 
 from flask import Blueprint, jsonify, request, session
 
-from app.config import CLUSTERS
+from app.services.proxmox_service import get_clusters_from_db
 from app.services.proxmox_client import (
     _invalidate_vm_cache,
     get_cluster_config,
@@ -29,14 +29,14 @@ api_clusters_bp = Blueprint('api_clusters', __name__, url_prefix='/api')
 @login_required
 def api_list_clusters():
     """List all configured Proxmox clusters."""
-    logger.info(f"API /clusters called - CLUSTERS has {len(CLUSTERS)} entries")
+    logger.info(f"API /clusters called - get_clusters_from_db() has {len(get_clusters_from_db())} entries")
     clusters_list = [
         {
             "id": c["id"],
             "name": c["name"],
             "host": c["host"]
         }
-        for c in CLUSTERS
+        for c in get_clusters_from_db()
     ]
     logger.info(f"Returning {len(clusters_list)} clusters: {[c['id'] for c in clusters_list]}")
     return jsonify({"ok": True, "clusters": clusters_list})
@@ -50,7 +50,7 @@ def api_get_cluster_nodes(cluster_id: str):
         from app.services.proxmox_service import get_proxmox_admin_for_cluster
         
         # Validate cluster ID
-        if cluster_id not in [c["id"] for c in CLUSTERS]:
+        if cluster_id not in [c["id"] for c in get_clusters_from_db()]:
             return jsonify({"ok": False, "error": "Invalid cluster ID"}), 400
         
         proxmox = get_proxmox_admin_for_cluster(cluster_id)
@@ -83,12 +83,12 @@ def api_switch_cluster():
     cluster_id = data.get("cluster_id")
     
     # Validate cluster ID
-    valid_cluster_ids = [c["id"] for c in CLUSTERS]
+    valid_cluster_ids = [c["id"] for c in get_clusters_from_db()]
     if cluster_id not in valid_cluster_ids:
         return jsonify({"ok": False, "error": "Invalid cluster ID"}), 400
     
     # Store in session and mark as modified
-    old_cluster = session.get("cluster_id", CLUSTERS[0]["id"])
+    old_cluster = session.get("cluster_id", get_clusters_from_db()[0]["id"])
     session["cluster_id"] = cluster_id
     session.modified = True
     logger.info("User %s switched from cluster %s to %s", user, old_cluster, cluster_id)
@@ -155,6 +155,14 @@ def api_create_cluster():
             priority=data.get("priority", 50),
             default_storage=data.get("default_storage"),
             template_storage=data.get("template_storage"),
+            qcow2_template_path=data.get("qcow2_template_path"),
+            qcow2_images_path=data.get("qcow2_images_path"),
+            admin_group=data.get("admin_group"),
+            admin_users=data.get("admin_users"),
+            arp_subnets=data.get("arp_subnets"),
+            vm_cache_ttl=data.get("vm_cache_ttl"),
+            enable_ip_lookup=data.get("enable_ip_lookup", True),
+            enable_ip_persistence=data.get("enable_ip_persistence", False),
             description=data.get("description")
         )
         
@@ -228,6 +236,22 @@ def api_update_cluster(cluster_db_id: int):
             cluster.default_storage = data["default_storage"]
         if "template_storage" in data:
             cluster.template_storage = data["template_storage"]
+        if "qcow2_template_path" in data:
+            cluster.qcow2_template_path = data["qcow2_template_path"]
+        if "qcow2_images_path" in data:
+            cluster.qcow2_images_path = data["qcow2_images_path"]
+        if "admin_group" in data:
+            cluster.admin_group = data["admin_group"]
+        if "admin_users" in data:
+            cluster.admin_users = data["admin_users"]
+        if "arp_subnets" in data:
+            cluster.arp_subnets = data["arp_subnets"]
+        if "vm_cache_ttl" in data:
+            cluster.vm_cache_ttl = data["vm_cache_ttl"]
+        if "enable_ip_lookup" in data:
+            cluster.enable_ip_lookup = data["enable_ip_lookup"]
+        if "enable_ip_persistence" in data:
+            cluster.enable_ip_persistence = data["enable_ip_persistence"]
         if "description" in data:
             cluster.description = data["description"]
         
@@ -338,12 +362,12 @@ def get_cluster_resources(cluster_id: str):
     from app.services.proxmox_service import get_proxmox_admin_for_cluster
     
     logger.info(f"[RESOURCES API] GET /clusters/{cluster_id}/resources called")
-    logger.info(f"[RESOURCES API] Available cluster IDs: {[c['id'] for c in CLUSTERS]}")
+    logger.info(f"[RESOURCES API] Available cluster IDs: {[c['id'] for c in get_clusters_from_db()]}")
     
     try:
         # Validate cluster ID
-        if cluster_id not in [c["id"] for c in CLUSTERS]:
-            logger.error(f"[RESOURCES API] Cluster {cluster_id} not found in CLUSTERS")
+        if cluster_id not in [c["id"] for c in get_clusters_from_db()]:
+            logger.error(f"[RESOURCES API] Cluster {cluster_id} not found in get_clusters_from_db()")
             return jsonify({"ok": False, "error": "Cluster not found"}), 404
         
         logger.info(f"[RESOURCES API] Getting Proxmox connection for cluster {cluster_id}")
@@ -467,7 +491,7 @@ def get_node_resources(cluster_id: str, node_name: str):
     
     try:
         # Validate cluster ID
-        if cluster_id not in [c["id"] for c in CLUSTERS]:
+        if cluster_id not in [c["id"] for c in get_clusters_from_db()]:
             return jsonify({"ok": False, "error": "Cluster not found"}), 404
         
         proxmox = get_proxmox_admin_for_cluster(cluster_id)
@@ -541,4 +565,91 @@ def get_node_resources(cluster_id: str, node_name: str):
             
     except Exception as e:
         logger.exception("Failed to get node resources")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@api_clusters_bp.route("/cluster-config/<int:cluster_db_id>/storage", methods=["GET"])
+@admin_required
+def api_get_cluster_storage(cluster_db_id: int):
+    """Get available storage pools from a cluster."""
+    from app.models import Cluster
+    from app.services.proxmox_service import get_proxmox_admin_for_cluster
+    
+    try:
+        cluster = Cluster.query.get(cluster_db_id)
+        if not cluster:
+            return jsonify({"ok": False, "error": "Cluster not found"}), 404
+        
+        proxmox = get_proxmox_admin_for_cluster(cluster.cluster_id)
+        if not proxmox:
+            return jsonify({"ok": False, "error": "Failed to connect to cluster"}), 500
+        
+        # Get storage from first available node
+        nodes = proxmox.nodes.get()
+        if not nodes:
+            return jsonify({"ok": False, "error": "No nodes found in cluster"}), 500
+        
+        node_name = nodes[0]['node']
+        storage_list = proxmox.nodes(node_name).storage.get()
+        
+        # Filter for VM-compatible storage (types that support VMs)
+        vm_storage = []
+        for storage in storage_list:
+            content = storage.get('content', '')
+            storage_type = storage.get('type', '')
+            
+            # Include storage that supports images or rootdir
+            if 'images' in content or 'rootdir' in content:
+                vm_storage.append({
+                    'storage': storage['storage'],
+                    'type': storage_type,
+                    'content': content,
+                    'active': storage.get('active', 0) == 1,
+                    'enabled': storage.get('enabled', 0) == 1
+                })
+        
+        return jsonify({
+            "ok": True,
+            "storage": vm_storage
+        })
+        
+    except Exception as e:
+        logger.error(f"Failed to get storage for cluster {cluster_db_id}: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@api_clusters_bp.route("/cluster-config/<int:cluster_db_id>/groups", methods=["GET"])
+@admin_required
+def api_get_cluster_groups(cluster_db_id: int):
+    """Get Proxmox groups from a cluster."""
+    from app.models import Cluster
+    from app.services.proxmox_service import get_proxmox_admin_for_cluster
+    
+    try:
+        cluster = Cluster.query.get(cluster_db_id)
+        if not cluster:
+            return jsonify({"ok": False, "error": "Cluster not found"}), 404
+        
+        proxmox = get_proxmox_admin_for_cluster(cluster.cluster_id)
+        if not proxmox:
+            return jsonify({"ok": False, "error": "Failed to connect to cluster"}), 500
+        
+        # Get groups from Proxmox
+        groups = proxmox.access.groups.get()
+        
+        group_list = [
+            {
+                'groupid': g['groupid'],
+                'comment': g.get('comment', '')
+            }
+            for g in groups
+        ]
+        
+        return jsonify({
+            "ok": True,
+            "groups": group_list
+        })
+        
+    except Exception as e:
+        logger.error(f"Failed to get groups for cluster {cluster_db_id}: {e}")
         return jsonify({"ok": False, "error": str(e)}), 500

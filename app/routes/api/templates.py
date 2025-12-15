@@ -5,7 +5,7 @@ from datetime import datetime
 
 from flask import Blueprint, jsonify, request
 
-from app.config import CLUSTERS
+from app.services.proxmox_service import get_clusters_from_db
 from app.models import Template, db
 from app.utils.decorators import login_required
 
@@ -44,7 +44,7 @@ def list_templates():
     cluster_id = request.args.get("cluster_id")
     if cluster_id:
         # Convert cluster_id to cluster_ip
-        for cluster in CLUSTERS:
+        for cluster in get_clusters_from_db():
             if cluster["id"] == cluster_id:
                 cluster_ip = cluster["host"]
                 break
@@ -230,14 +230,14 @@ def sync_templates_from_proxmox():
     # Determine which clusters to sync
     clusters_to_sync = []
     if cluster_filter:
-        for cluster in CLUSTERS:
+        for cluster in get_clusters_from_db():
             if cluster["host"] == cluster_filter:
                 clusters_to_sync.append(cluster)
                 break
         if not clusters_to_sync:
             return jsonify({"ok": False, "error": f"Cluster {cluster_filter} not found"}), 404
     else:
-        clusters_to_sync = CLUSTERS
+        clusters_to_sync = get_clusters_from_db()
     
     for cluster in clusters_to_sync:
         cluster_id = cluster["id"]
@@ -420,7 +420,7 @@ def migrate_template():
     # Find cluster configs
     source_cluster = None
     destination_cluster = None
-    for cluster in CLUSTERS:
+    for cluster in get_clusters_from_db():
         if cluster["id"] == source_cluster_id:
             source_cluster = cluster
         if cluster["id"] == destination_cluster_id:

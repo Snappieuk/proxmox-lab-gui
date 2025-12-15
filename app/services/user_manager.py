@@ -13,13 +13,11 @@ from typing import Any, Dict, List, Optional
 from flask import abort, session
 from proxmoxer import ProxmoxAPI
 
-from app.config import ADMIN_GROUP, ADMIN_USERS, CLUSTERS
-
 logger = logging.getLogger(__name__)
 
-# Admin group membership cache
-_admin_group_cache: Optional[List[str]] = None
-_admin_group_ts: float = 0.0
+# Admin group membership cache (per-group caching)
+_admin_group_cache: Dict[str, List[str]] = {}  # groupid -> members
+_admin_group_ts: Dict[str, float] = {}  # groupid -> timestamp
 _admin_group_lock = threading.Lock()
 ADMIN_GROUP_CACHE_TTL = 120  # 2 minutes
 
@@ -49,8 +47,14 @@ def authenticate_proxmox_user(username: str, password: str) -> Optional[str]:
         return None
 
     # Get cluster config from session or default to first cluster
-    cluster_id = session.get("cluster_id", CLUSTERS[0]["id"])
-    cluster = next((c for c in CLUSTERS if c["id"] == cluster_id), CLUSTERS[0])
+    from app.services.proxmox_service import get_clusters_from_db
+    clusters = get_clusters_from_db()
+    if not clusters:
+        logger.error("No active clusters configured")
+        return None
+    
+    cluster_id = session.get("cluster_id", clusters[0]["id"])
+    cluster = next((c for c in clusters if c["id"] == cluster_id), clusters[0])
     
     # If username already has realm suffix, try as-is
     if '@' in username:
@@ -104,7 +108,7 @@ def _get_admin_group_members_cached() -> List[str]:
     # Cache miss or expired - fetch from Proxmox
     try:
         from app.services.proxmox_service import get_proxmox_admin
-        grp = get_proxmox_admin().access.groups(ADMIN_GROUP).get()
+        grp = get_proxmox_admin().access.groups(admin_group).get()
         raw_members = (grp.get("members", []) or []) if isinstance(grp, dict) else []
         members = []
         for m in raw_members:
@@ -135,26 +139,10 @@ def _user_in_group(user: str, groupid: str) -> bool:
     if not groupid:
         return False
 
-    # Use cached admin group members for the admin group
-    if groupid == ADMIN_GROUP:
-        members = _get_admin_group_members_cached()
-    else:
-        # For other groups, fetch directly (no caching)
-        try:
-            from app.services.proxmox_service import get_proxmox_admin
-            data = get_proxmox_admin().access.groups(groupid).get()
-            if not data:
-                return False
-        except Exception:
-            return False
-
-        raw_members = data.get("members", []) or []
-        members = []
-        for m in raw_members:
-            if isinstance(m, str):
-                members.append(m)
-            elif isinstance(m, dict) and "userid" in m:
-                members.append(m["userid"])
+    # Use cached admin group members (function handles all groups now)
+    members = _get_admin_group_members_cached(groupid)
+    if not members:
+        return False
 
     # Accept both realm variants for matching
     variants = {user}
@@ -180,14 +168,18 @@ def is_admin_user(user: str) -> bool:
     
     # Check if user has Proxmox realm suffix (authenticated via Proxmox)
     if '@' in user and (user.endswith('@pve') or user.endswith('@pam')):
-        # Check if user is in admin group (if configured)
-        if ADMIN_GROUP:
-            if _user_in_group(user, ADMIN_GROUP):
-                logger.debug("is_admin_user(%s) -> True (Proxmox user in %s group)", user, ADMIN_GROUP)
-                return True
-            else:
-                logger.debug("is_admin_user(%s) -> False (Proxmox user but not in %s group)", user, ADMIN_GROUP)
-                return False
+        # Check if user is in any configured admin group
+        from app.services.settings_service import get_all_admin_groups
+        admin_groups = get_all_admin_groups()
+        
+        if admin_groups:
+            # Check all configured admin groups
+            for admin_group in admin_groups:
+                if _user_in_group(user, admin_group):
+                    logger.debug("is_admin_user(%s) -> True (Proxmox user in %s group)", user, admin_group)
+                    return True
+            logger.debug("is_admin_user(%s) -> False (Proxmox user but not in any admin group)", user)
+            return False
         else:
             # No admin group configured - treat all Proxmox users as admins (legacy behavior)
             logger.debug("is_admin_user(%s) -> True (Proxmox user, no admin group check)", user)
@@ -363,7 +355,11 @@ def probe_proxmox() -> Dict[str, Any]:
     
     Contains node list, resource count, sample resources, and any error messages.
     """
-    from app.config import VALID_NODES
+    from app.services.settings_service import get_all_admin_users, get_all_admin_groups
+    
+    # Get admin settings from all clusters
+    admin_users = get_all_admin_users()
+    admin_groups = get_all_admin_groups()
     
     info: Dict[str, Any] = {
         "ok": True,
@@ -371,9 +367,9 @@ def probe_proxmox() -> Dict[str, Any]:
         "nodes_count": 0,
         "resources_count": 0,
         "resources_sample": [],
-        "valid_nodes": VALID_NODES,
-        "admin_users": ADMIN_USERS,
-        "admin_group": ADMIN_GROUP,
+        "valid_nodes": [],  # VALID_NODES removed - no longer used
+        "admin_users": admin_users,
+        "admin_groups": admin_groups,  # Changed from singular to plural
         "error": None,
     }
     

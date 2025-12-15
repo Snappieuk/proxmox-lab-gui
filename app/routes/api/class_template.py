@@ -92,9 +92,9 @@ def get_template_info(class_id: int):
         cluster_ip = class_.template.cluster_ip if class_.template else None
         if not cluster_ip:
             # For template-less classes, use the first available cluster
-            from app.config import CLUSTERS
-            if CLUSTERS:
-                cluster_ip = CLUSTERS[0]["host"]
+            from app.services.proxmox_service import get_clusters_from_db
+            if get_clusters_from_db():
+                cluster_ip = get_clusters_from_db()[0]["host"]
                 logger.info(f"Template-less class, using default cluster: {cluster_ip}")
             else:
                 return jsonify({'ok': False, 'error': 'No clusters configured'}), 500
@@ -167,9 +167,9 @@ def get_template_info(class_id: int):
         # Second: Check VMInventory cache
         if not ip_address:
             from app.models import VMInventory
-            from app.config import CLUSTERS
+            from app.services.proxmox_service import get_clusters_from_db
             cluster_id = None
-            for c in CLUSTERS:
+            for c in get_clusters_from_db():
                 if c['host'] == cluster_ip:
                     cluster_id = c['id']
                     break
@@ -215,10 +215,10 @@ def get_template_info(class_id: int):
                 # Fallback: ARP scan if guest agent failed
                 if not ip_address and mac_address:
                     logger.info(f"Attempting ARP scan for VM {vmid} with MAC {mac_address}")
-                    from app.config import ARP_SUBNETS, CLUSTERS
+                    # ARP_SUBNETS now from settings_service.get_arp_subnets(cluster_dict), get_clusters_from_db()
                     from app.services.arp_scanner import discover_ips_via_arp
                     cluster_id = None
-                    for c in CLUSTERS:
+                    for c in get_clusters_from_db():
                         if c['host'] == cluster_ip:
                             cluster_id = c['id']
                             break
@@ -300,9 +300,9 @@ def start_template(class_id: int):
         
         if not cluster_ip:
             # For template-less classes, use the first available cluster
-            from app.config import CLUSTERS
-            if CLUSTERS:
-                cluster_ip = CLUSTERS[0]["host"]
+            from app.services.proxmox_service import get_clusters_from_db
+            if get_clusters_from_db():
+                cluster_ip = get_clusters_from_db()[0]["host"]
                 logger.info(f"Template-less class, using default cluster: {cluster_ip}")
             else:
                 return jsonify({'ok': False, 'error': 'No clusters configured'}), 500
@@ -367,9 +367,9 @@ def stop_template(class_id: int):
         
         if not cluster_ip:
             # For template-less classes, use the first available cluster
-            from app.config import CLUSTERS
-            if CLUSTERS:
-                cluster_ip = CLUSTERS[0]["host"]
+            from app.services.proxmox_service import get_clusters_from_db
+            if get_clusters_from_db():
+                cluster_ip = get_clusters_from_db()[0]["host"]
                 logger.info(f"Template-less class, using default cluster: {cluster_ip}")
             else:
                 return jsonify({'ok': False, 'error': 'No clusters configured'}), 500
@@ -440,9 +440,9 @@ def reimage_template(class_id: int):
         cluster_ip = class_.template.cluster_ip if class_.template else None
         
         if not cluster_ip:
-            from app.config import CLUSTERS
-            if CLUSTERS:
-                cluster_ip = CLUSTERS[0]["host"]
+            from app.services.proxmox_service import get_clusters_from_db
+            if get_clusters_from_db():
+                cluster_ip = get_clusters_from_db()[0]["host"]
             else:
                 return jsonify({'ok': False, 'error': 'No clusters configured'}), 500
         
@@ -523,9 +523,9 @@ def save_template(class_id: int):
         cluster_ip = class_.template.cluster_ip if class_.template else None
         
         if not cluster_ip:
-            from app.config import CLUSTERS
-            if CLUSTERS:
-                cluster_ip = CLUSTERS[0]["host"]
+            from app.services.proxmox_service import get_clusters_from_db
+            if get_clusters_from_db():
+                cluster_ip = get_clusters_from_db()[0]["host"]
             else:
                 return jsonify({'ok': False, 'error': 'No clusters configured'}), 500
         

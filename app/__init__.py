@@ -11,7 +11,8 @@ import os
 
 from flask import Flask, session
 
-from app.config import CLUSTERS, SECRET_KEY
+from app.config import SECRET_KEY
+from app.services.settings_service import get_secret_key
 
 # Initialize logging
 from app.utils.logging import configure_logging, get_logger
@@ -189,8 +190,11 @@ def create_app(config=None):
     logger.info("Background template sync started")
     
     # Ensure templates are replicated across all nodes at startup (disabled by default)
-    from app.config import ENABLE_TEMPLATE_REPLICATION
-    if ENABLE_TEMPLATE_REPLICATION:
+    # Check SystemSettings for enable_template_replication (database-first)
+    from app.models import SystemSettings
+    enable_template_replication = SystemSettings.get('enable_template_replication', 'false') == 'true'
+    
+    if enable_template_replication:
         def _replicate_templates_startup():
             import time
             time.sleep(2)

@@ -112,13 +112,13 @@ def get_migration_options():
     if not is_admin and (not local_user or local_user.role not in ['teacher', 'adminer']):
         return jsonify({"ok": False, "error": "Access denied"}), 403
     
-    from app.config import CLUSTERS
+    from app.services.proxmox_service import get_clusters_from_db
     from app.services.proxmox_service import get_proxmox_admin_for_cluster
     
     # Get list of clusters with their available storages
     clusters_info = []
     
-    for cluster in CLUSTERS:
+    for cluster in get_clusters_from_db():
         cluster_id = cluster["id"]
         cluster_name = cluster["name"]
         

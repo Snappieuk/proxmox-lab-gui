@@ -26,7 +26,7 @@ with SSHExecutor for direct qm/qemu-img operations.
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 
-from app.config import CLUSTERS
+from app.services.proxmox_service import get_clusters_from_db
 from app.models import VMInventory
 from app.services.proxmox_service import get_proxmox_admin_for_cluster
 
@@ -285,7 +285,7 @@ def replicate_templates_to_all_nodes(cluster_ip: str = None) -> None:
         
         target_ip = cluster_ip or CLASS_CLUSTER_IP
         cluster_id = None
-        for cluster in CLUSTERS:
+        for cluster in get_clusters_from_db():
             if cluster["host"] == target_ip:
                 cluster_id = cluster["id"]
                 break
@@ -577,7 +577,7 @@ def list_proxmox_templates(cluster_ip: str = None) -> List[Dict[str, Any]]:
         
         # Find cluster by IP
         cluster_id = None
-        for cluster in CLUSTERS:
+        for cluster in get_clusters_from_db():
             if cluster["host"] == target_ip:
                 cluster_id = cluster["id"]
                 break
@@ -639,7 +639,7 @@ def clone_vm_from_template(template_vmid: int, new_vmid: int, name: str, node: s
             return False, f"VM deployment restricted to {CLASS_CLUSTER_IP} cluster only"
         
         cluster_id = None
-        for cluster in CLUSTERS:
+        for cluster in get_clusters_from_db():
             if cluster["host"] == target_ip:
                 cluster_id = cluster["id"]
                 break
@@ -810,7 +810,7 @@ def clone_vms_for_class(template_vmid: int, node: str, count: int, name_prefix: 
             return []
         
         cluster_id = None
-        for cluster in CLUSTERS:
+        for cluster in get_clusters_from_db():
             if cluster["host"] == target_ip:
                 cluster_id = cluster["id"]
                 break
@@ -1479,7 +1479,7 @@ def start_class_vm(vmid: int, node: str, cluster_ip: str = None) -> Tuple[bool, 
     """
     try:
         cluster_id = None
-        for cluster in CLUSTERS:
+        for cluster in get_clusters_from_db():
             if cluster["host"] == (cluster_ip or CLASS_CLUSTER_IP):
                 cluster_id = cluster["id"]
                 break
@@ -1534,7 +1534,7 @@ def stop_class_vm(vmid: int, node: str, cluster_ip: str = None) -> Tuple[bool, s
     """
     try:
         cluster_id = None
-        for cluster in CLUSTERS:
+        for cluster in get_clusters_from_db():
             if cluster["host"] == (cluster_ip or CLASS_CLUSTER_IP):
                 cluster_id = cluster["id"]
                 break
@@ -1593,7 +1593,7 @@ def get_vm_status_from_inventory(vmid: int, cluster_ip: str = None) -> Dict[str,
     try:
         # Find cluster_id from cluster_ip
         cluster_id = None
-        for cluster in CLUSTERS:
+        for cluster in get_clusters_from_db():
             if cluster["host"] == (cluster_ip or CLASS_CLUSTER_IP):
                 cluster_id = cluster["id"]
                 break
@@ -1666,7 +1666,7 @@ def get_vm_status(vmid: int, node: str = None, cluster_ip: str = None) -> Dict[s
     """
     try:
         cluster_id = None
-        for cluster in CLUSTERS:
+        for cluster in get_clusters_from_db():
             if cluster["host"] == (cluster_ip or CLASS_CLUSTER_IP):
                 cluster_id = cluster["id"]
                 break
@@ -1727,7 +1727,7 @@ def get_vm_status(vmid: int, node: str = None, cluster_ip: str = None) -> Dict[s
                 # If not found, trigger background ARP discovery for configured subnets
                 if not ip_address:
                     try:
-                        from app.config import ARP_SUBNETS
+                        # ARP_SUBNETS now from settings_service.get_arp_subnets(cluster_dict)
 
                         # Trigger background scan; returns cached results if available
                         discover_ips_via_arp({}, ARP_SUBNETS, background=True)
@@ -1769,7 +1769,7 @@ def create_vm_snapshot(vmid: int, node: str, snapname: str, description: str = "
     """
     try:
         cluster_id = None
-        for cluster in CLUSTERS:
+        for cluster in get_clusters_from_db():
             if cluster["host"] == (cluster_ip or CLASS_CLUSTER_IP):
                 cluster_id = cluster["id"]
                 break
@@ -1806,7 +1806,7 @@ def revert_vm_to_snapshot(vmid: int, node: str, snapname: str,
     """
     try:
         cluster_id = None
-        for cluster in CLUSTERS:
+        for cluster in get_clusters_from_db():
             if cluster["host"] == (cluster_ip or CLASS_CLUSTER_IP):
                 cluster_id = cluster["id"]
                 break
@@ -1856,7 +1856,7 @@ def delete_vm(vmid: int, node: str, cluster_ip: str = None) -> Tuple[bool, str]:
     try:
         # Get Proxmox API connection for VM control
         cluster_id = None
-        for cluster in CLUSTERS:
+        for cluster in get_clusters_from_db():
             if cluster["host"] == (cluster_ip or CLASS_CLUSTER_IP):
                 cluster_id = cluster["id"]
                 break
@@ -1955,7 +1955,7 @@ def convert_vm_to_template(vmid: int, node: str, cluster_ip: str = None) -> Tupl
     """
     try:
         cluster_id = None
-        for cluster in CLUSTERS:
+        for cluster in get_clusters_from_db():
             if cluster["host"] == (cluster_ip or CLASS_CLUSTER_IP):
                 cluster_id = cluster["id"]
                 break
@@ -2046,7 +2046,7 @@ def save_teacher_template(teacher_vm_vmid: int, teacher_vm_node: str, old_base_t
     """
     try:
         cluster_id = None
-        for cluster in CLUSTERS:
+        for cluster in get_clusters_from_db():
             if cluster["host"] == (cluster_ip or CLASS_CLUSTER_IP):
                 cluster_id = cluster["id"]
                 break
@@ -2133,7 +2133,7 @@ def reimage_teacher_vm(old_teacher_vm_vmid: int, old_teacher_vm_node: str,
     """
     try:
         cluster_id = None
-        for cluster in CLUSTERS:
+        for cluster in get_clusters_from_db():
             if cluster["host"] == (cluster_ip or CLASS_CLUSTER_IP):
                 cluster_id = cluster["id"]
                 break
@@ -2201,7 +2201,7 @@ def push_template_to_students(base_template_vmid: int, base_template_node: str,
     
     try:
         cluster_id = None
-        for cluster in CLUSTERS:
+        for cluster in get_clusters_from_db():
             if cluster["host"] == (cluster_ip or CLASS_CLUSTER_IP):
                 cluster_id = cluster["id"]
                 break
@@ -2319,7 +2319,7 @@ def convert_template_to_vm(template_vmid: int, new_vmid: int, name: str, node: s
     """
     try:
         cluster_id = None
-        for cluster in CLUSTERS:
+        for cluster in get_clusters_from_db():
             if cluster["host"] == (cluster_ip or CLASS_CLUSTER_IP):
                 cluster_id = cluster["id"]
                 break
@@ -2381,7 +2381,7 @@ def clone_template_for_class(template_vmid: int, node: str, name: str,
         
         target_ip = cluster_ip or CLASS_CLUSTER_IP
         cluster_id = None
-        for cluster in CLUSTERS:
+        for cluster in get_clusters_from_db():
             if cluster["host"] == target_ip:
                 cluster_id = cluster["id"]
                 break
@@ -2478,7 +2478,7 @@ def create_vm_shells(count: int, name_prefix: str, node: str, cluster_ip: str = 
     target_ip = cluster_ip or CLASS_CLUSTER_IP
     cluster_id = None
     
-    for cluster in CLUSTERS:
+    for cluster in get_clusters_from_db():
         if cluster["host"] == target_ip:
             cluster_id = cluster["id"]
             break
@@ -2586,7 +2586,7 @@ def populate_vm_shell_with_disk(vmid: int, node: str, template_vmid: int, templa
     target_ip = cluster_ip or CLASS_CLUSTER_IP
     cluster_id = None
     
-    for cluster in CLUSTERS:
+    for cluster in get_clusters_from_db():
         if cluster["host"] == target_ip:
             cluster_id = cluster["id"]
             break
@@ -2652,7 +2652,7 @@ def remove_vm_disk(vmid: int, node: str, cluster_ip: str = None) -> Tuple[bool, 
     target_ip = cluster_ip or CLASS_CLUSTER_IP
     cluster_id = None
     
-    for cluster in CLUSTERS:
+    for cluster in get_clusters_from_db():
         if cluster["host"] == target_ip:
             cluster_id = cluster["id"]
             break
@@ -2707,7 +2707,7 @@ def copy_vm_disk(source_vmid: int, source_node: str, target_vmid: int, target_no
     target_ip = cluster_ip or CLASS_CLUSTER_IP
     cluster_id = None
     
-    for cluster in CLUSTERS:
+    for cluster in get_clusters_from_db():
         if cluster["host"] == target_ip:
             cluster_id = cluster["id"]
             break

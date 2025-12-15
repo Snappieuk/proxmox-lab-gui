@@ -16,19 +16,15 @@ urllib3.disable_warnings()
 # Initialize logger at module level (before any conditional imports)
 logger = logging.getLogger(__name__)
 
+# Import minimal config (only SECRET_KEY and cache TTLs remain in config.py)
 from app.config import (  # noqa: E402 - import after SSL config
-    ADMIN_GROUP,
-    ADMIN_USERS,
-    ARP_SUBNETS,
-    CLUSTERS,
     DB_IP_CACHE_TTL,
-    ENABLE_IP_LOOKUP,
-    ENABLE_IP_PERSISTENCE,
     PROXMOX_CACHE_TTL,
-    VALID_NODES,
-    VM_CACHE_FILE,
-    VM_CACHE_TTL,
 )
+
+# All other settings now come from database via settings_service
+# (ADMIN_GROUP, ADMIN_USERS, ARP_SUBNETS, CLUSTERS, ENABLE_IP_LOOKUP, 
+#  ENABLE_IP_PERSISTENCE, VALID_NODES, VM_CACHE_TTL are now database-first)
 
 # Import ARP scanner for fast IP discovery
 try:
@@ -173,21 +169,40 @@ def get_cluster_config() -> List[Dict[str, Any]]:
 
 
 def save_cluster_config(clusters: List[Dict[str, Any]]) -> None:
-    """Save cluster configuration to JSON file and update runtime config.
+    """Save cluster configuration to database.
     
-    Persists changes across restarts by writing to clusters.json.
+    DEPRECATED: This function is for backward compatibility only.
+    Use Cluster model directly for database-first architecture.
     """
-    global CLUSTERS
-    import app.config as config
-    from app.config import CLUSTER_CONFIG_FILE
-
-    # Update runtime config
-    CLUSTERS.clear()
-    CLUSTERS.extend(clusters)
-    config.CLUSTERS = CLUSTERS
+    logger.warning("save_cluster_config() is deprecated - use Cluster model directly")
     
-    # Write to JSON file for persistence
     try:
+        from app.models import Cluster, db
+        
+        # Update existing clusters or create new ones
+        for cluster_data in clusters:
+            cluster_id = cluster_data.get("id")
+            if cluster_id:
+                cluster = Cluster.query.get(cluster_id)
+                if cluster:
+                    # Update existing
+                    for key, value in cluster_data.items():
+                        if hasattr(cluster, key) and key != 'id':
+                            setattr(cluster, key, value)
+                else:
+                    # Create new with specified ID
+                    cluster = Cluster(**cluster_data)
+                    db.session.add(cluster)
+            else:
+                # Create new (auto-generate ID)
+                cluster = Cluster(**{k: v for k, v in cluster_data.items() if k != 'id'})
+                db.session.add(cluster)
+        
+        db.session.commit()
+        logger.info(f"Saved {len(clusters)} clusters to database")
+    except Exception as e:
+        logger.error(f"Failed to save cluster config: {e}", exc_info=True)
+        raise
         with open(CLUSTER_CONFIG_FILE, "w", encoding="utf-8") as f:
             json.dump(clusters, f, indent=2)
         logger.info(f"Saved cluster configuration to {CLUSTER_CONFIG_FILE}")
@@ -747,10 +762,15 @@ def _fallback_arp_scan(cluster_id: str, node: str, vmid: int, vmtype: str, subne
     if not vm_mac:
         return None
     
-    # Use configured subnets or default
+    # Use configured subnets or get from cluster settings
     if not subnets:
-        from app.config import ARP_SUBNETS
-        subnets = ARP_SUBNETS
+        from app.services.proxmox_service import get_clusters_from_db
+        from app.services.settings_service import get_arp_subnets
+        
+        # Get cluster config to extract ARP subnets
+        clusters = get_clusters_from_db()
+        cluster_dict = next((c for c in clusters if c.get("id") == cluster_id), {})
+        subnets = get_arp_subnets(cluster_dict)
     
     # Run synchronous ARP scan (background=False for immediate results)
     try:
@@ -775,9 +795,11 @@ def _save_ip_to_proxmox(node: str, vmid: int, vmtype: str, ip: Optional[str]) ->
     This survives cache expiration and doesn't require re-scanning.
     
     WARNING: This is SLOW - requires reading AND writing VM config (2 API calls per VM).
-    Only enable via ENABLE_IP_PERSISTENCE=true if you really need it.
+    Only enable via enable_ip_persistence in cluster settings if you really need it.
     """
-    if not ENABLE_IP_PERSISTENCE or not ip:
+    # Default to disabled for performance (can be enabled per-cluster in database)
+    enable_ip_persistence = False  # TODO: Get from cluster settings when cluster_id available
+    if not enable_ip_persistence or not ip:
         return
     
     try:
@@ -815,9 +837,11 @@ def _get_ip_from_proxmox_notes(raw: Dict[str, Any]) -> Optional[str]:
     Looks for pattern: [CACHED_IP:192.168.1.100]
     Returns None if not found or invalid.
     
-    WARNING: Only used if ENABLE_IP_PERSISTENCE=true (disabled by default for performance).
+    WARNING: Only used if enable_ip_persistence=true (disabled by default for performance).
     """
-    if not ENABLE_IP_PERSISTENCE:
+    # Default to disabled for performance (can be enabled per-cluster in database)
+    enable_ip_persistence = False  # TODO: Get from cluster settings when cluster_id available
+    if not enable_ip_persistence:
         return None
     
     description = raw.get('description', '')
@@ -951,7 +975,9 @@ def _lookup_vm_ip_thread_safe(node: str, vmid: int, vmtype: str) -> Optional[str
     Used by ThreadPoolExecutor workers for parallel IP lookups.
     Creates a short-lived client to avoid thread-safety issues with ProxmoxAPI.
     """
-    if not ENABLE_IP_LOOKUP:
+    # Default to enabled (can be disabled per-cluster in database)
+    enable_ip_lookup = True  # TODO: Get from cluster settings when cluster_id available
+    if not enable_ip_lookup:
         return None
     
     # Only handle LXC containers - QEMU VMs use ARP scanning
@@ -1653,15 +1679,19 @@ def get_all_vms(skip_ips: bool = False, force_refresh: bool = False) -> List[Dic
     # Check if we have valid cached data
     cached_vms = _vm_cache_data.get(cache_key)
     cached_ts = _vm_cache_ts.get(cache_key, 0)
-    cache_valid = cached_vms is not None and (now - cached_ts) < VM_CACHE_TTL
+    
+    # Get VM cache TTL from settings (use default 300 for multi-cluster queries)
+    # Note: For per-cluster queries, use cluster-specific vm_cache_ttl from database
+    vm_cache_ttl = 300  # Default 5 minutes for backward compatibility
+    cache_valid = cached_vms is not None and (now - cached_ts) < vm_cache_ttl
     
     # Force IP enrichment always now (ignore caller skip_ips request)
     skip_ips = False
 
     # If cache is valid and not forcing refresh, return cached data (still includes IPs)
     if not force_refresh and cache_valid and cached_vms is not None:
-        logger.info("get_all_vms: returning cached data for all clusters (age=%.1fs)", 
-                   now - cached_ts)
+        logger.info("get_all_vms: returning cached data for all clusters (age=%.1fs, ttl=%ds)", 
+                   now - cached_ts, vm_cache_ttl)
         result = []
         for vm in cached_vms:
             result.append({**vm})

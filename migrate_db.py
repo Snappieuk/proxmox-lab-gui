@@ -148,6 +148,36 @@ def create_system_settings_table(cursor):
         return False
 
 
+def insert_default_system_settings(cursor):
+    """Insert default system settings if they don't exist."""
+    print("\n📋 Checking default system settings...")
+    
+    default_settings = [
+        ('enable_template_replication', 'false', 'Enable automatic template replication across all nodes at startup'),
+        ('template_sync_interval', '1800', 'Template sync interval in seconds (default: 30 minutes)'),
+        ('vm_sync_interval', '300', 'VM inventory sync interval in seconds (default: 5 minutes)'),
+        ('vm_sync_quick_interval', '30', 'Quick VM status sync interval in seconds (default: 30 seconds)'),
+        ('ip_discovery_delay', '15', 'Delay in seconds after VM start before IP discovery (default: 15 seconds)'),
+    ]
+    
+    inserted_count = 0
+    for key, value, description in default_settings:
+        cursor.execute("SELECT id FROM system_settings WHERE key = ?", (key,))
+        if not cursor.fetchone():
+            cursor.execute(
+                "INSERT INTO system_settings (key, value, description, updated_at) VALUES (?, ?, ?, ?)",
+                (key, value, description, datetime.utcnow())
+            )
+            print(f"   ✓ Inserted default setting: {key} = {value}")
+            inserted_count += 1
+        else:
+            print(f"   ⏭️  Setting already exists: {key}")
+    
+    if inserted_count > 0:
+        print(f"   ✓ Inserted {inserted_count} default settings")
+    return inserted_count
+
+
 def create_clusters_table(cursor):
     """Create clusters table if it doesn't exist."""
     print("\n📋 Checking clusters table...")
@@ -393,44 +423,55 @@ def migrate():
         
         # Step 2.5: Regenerate join tokens to use new simple format
         print("\n🔄 Checking join token format...")
-        cursor.execute("SELECT id, name, vmid_prefix, join_token FROM classes WHERE join_token IS NOT NULL")
-        classes_with_tokens = cursor.fetchall()
         
-        regenerated = 0
-        for class_id, class_name, vmid_prefix, current_token in classes_with_tokens:
-            # Check if token is old format (long random string)
-            if len(current_token) > 30 or '-' not in current_token:
-                import re
-                # Generate new simple token
-                sanitized_name = re.sub(r'[^a-z0-9]+', '-', class_name.lower()).strip('-')
-                identifier = str(vmid_prefix) if vmid_prefix else str(class_id)
-                new_token = f"{sanitized_name}-{identifier}"
-                
-                print(f"   🔄 Updating class '{class_name}': {current_token[:20]}... → {new_token}")
-                
-                try:
-                    cursor.execute("UPDATE classes SET join_token = ? WHERE id = ?", (new_token, class_id))
-                    regenerated += 1
-                except Exception as e:
-                    print(f"   ⚠ Failed to update class {class_id}: {e}")
-        
-        if regenerated > 0:
-            print(f"   ✅ Regenerated {regenerated} join token(s) to simple format")
-            total_changes += regenerated
+        # Check if classes table exists first
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='classes'")
+        if not cursor.fetchone():
+            print("   ⏭️  Classes table doesn't exist yet - skipping join token migration")
         else:
-            print("   ✓ All join tokens already use simple format")
+            cursor.execute("SELECT id, name, vmid_prefix, join_token FROM classes WHERE join_token IS NOT NULL")
+            classes_with_tokens = cursor.fetchall()
+            
+            regenerated = 0
+            for class_id, class_name, vmid_prefix, current_token in classes_with_tokens:
+                # Check if token is old format (long random string)
+                if len(current_token) > 30 or '-' not in current_token:
+                    import re
+                    # Generate new simple token
+                    sanitized_name = re.sub(r'[^a-z0-9]+', '-', class_name.lower()).strip('-')
+                    identifier = str(vmid_prefix) if vmid_prefix else str(class_id)
+                    new_token = f"{sanitized_name}-{identifier}"
+                    
+                    print(f"   🔄 Updating class '{class_name}': {current_token[:20]}... → {new_token}")
+                    
+                    try:
+                        cursor.execute("UPDATE classes SET join_token = ? WHERE id = ?", (new_token, class_id))
+                        regenerated += 1
+                    except Exception as e:
+                        print(f"   ⚠ Failed to update class {class_id}: {e}")
+            
+            if regenerated > 0:
+                print(f"   ✅ Regenerated {regenerated} join token(s) to simple format")
+                total_changes += regenerated
+            else:
+                print("   ✓ All join tokens already use simple format")
         
         # Step 3: Make VMAssignment.class_id nullable (for builder VMs)
         class_id_updated = make_class_id_nullable(cursor)
         if class_id_updated:
             total_changes += 1
         
-        # Step 4: Migrate clusters from JSON to database
+        # Step 4: Insert default system settings
+        default_settings_inserted = insert_default_system_settings(cursor)
+        if default_settings_inserted > 0:
+            total_changes += default_settings_inserted
+        
+        # Step 5: Migrate clusters from JSON to database
         clusters_migrated = migrate_clusters_from_json(cursor)
         if clusters_migrated > 0:
             total_changes += clusters_migrated
         
-        # Step 5: Create ISO images cache table
+        # Step 6: Create ISO images cache table
         iso_table_created = create_iso_images_table(cursor)
         if iso_table_created:
             total_changes += 1

@@ -537,12 +537,12 @@ def create_template(name: str, proxmox_vmid: int, cluster_ip: str = '10.220.15.2
     # If node not provided, try to fetch it from Proxmox
     if not node:
         try:
-            from app.config import CLUSTERS
+            from app.services.proxmox_service import get_clusters_from_db
             from app.services.proxmox_service import get_proxmox_admin_for_cluster
 
             # Find cluster by IP
             cluster_id = None
-            for cluster in CLUSTERS:
+            for cluster in get_clusters_from_db():
                 if cluster["host"] == cluster_ip:
                     cluster_id = cluster["id"]
                     break
@@ -864,12 +864,12 @@ def _fetch_and_cache_template_specs(template: Template, cluster_ip: str) -> None
     """
     
     try:
-        from app.config import CLUSTERS
+        from app.services.proxmox_service import get_clusters_from_db
         from app.services.proxmox_service import get_proxmox_admin_for_cluster
 
         # Find cluster by IP
         cluster_id = None
-        for cluster in CLUSTERS:
+        for cluster in get_clusters_from_db():
             if cluster["host"] == cluster_ip:
                 cluster_id = cluster["id"]
                 break

@@ -341,11 +341,11 @@ def deploy_class_vms(
         
         # If no template, get first available node
         if not template_node:
-            from app.config import CLUSTERS
+            from app.services.proxmox_service import get_clusters_from_db
             from app.services.proxmox_service import get_proxmox_admin_for_cluster
             
             cluster_id = None
-            for cluster in CLUSTERS:
+            for cluster in get_clusters_from_db():
                 if cluster["host"] == "10.220.15.249":
                     cluster_id = cluster["id"]
                     break
@@ -1099,7 +1099,7 @@ def create_class_vms(
         
         # Update VMInventory immediately for teacher VM (makes it visible in UI right away)
         try:
-            from app.config import CLUSTERS
+            from app.services.proxmox_service import get_clusters_from_db
             from app.services.inventory_service import persist_vm_inventory, update_vm_status
 
             # Get cluster_ip from class template, or fallback to default
@@ -1112,7 +1112,7 @@ def create_class_vms(
             
             # Find cluster_id from cluster_ip
             cluster_id = None
-            for cluster in CLUSTERS:
+            for cluster in get_clusters_from_db():
                 if cluster["host"] == cluster_ip:
                     cluster_id = cluster["id"]
                     break
@@ -1386,7 +1386,7 @@ def create_class_vms(
         
         # Update VMInventory with MAC addresses for all created VMs
         try:
-            from app.config import CLUSTERS
+            from app.services.proxmox_service import get_clusters_from_db
             from app.services.inventory_service import persist_vm_inventory
 
             # Get cluster_id
@@ -1397,7 +1397,7 @@ def create_class_vms(
                 cluster_ip = "10.220.15.249"
             
             cluster_id = None
-            for cluster in CLUSTERS:
+            for cluster in get_clusters_from_db():
                 if cluster["host"] == cluster_ip:
                     cluster_id = cluster["id"]
                     break
@@ -1630,9 +1630,9 @@ def recreate_teacher_vm_from_base(class_id: int, class_name: str) -> tuple[bool,
         # Determine node
         cluster_ip = class_.template.cluster_ip if class_.template else None
         if not cluster_ip:
-            from app.config import CLUSTERS
-            if CLUSTERS:
-                cluster_ip = CLUSTERS[0]["host"]
+            from app.services.proxmox_service import get_clusters_from_db
+            if get_clusters_from_db():
+                cluster_ip = get_clusters_from_db()[0]["host"]
             else:
                 return False, "No clusters configured", None
         

@@ -11,7 +11,7 @@ import logging
 
 from flask import Blueprint, jsonify, request, session
 
-from app.config import CLUSTERS
+from app.services.proxmox_service import get_clusters_from_db
 from app.models import User, VMAssignment
 from app.utils.decorators import login_required
 
@@ -88,12 +88,12 @@ def api_vm_ip(vmid: int):
     """Get IP address for a specific VM from database (lazy loading)."""
     from flask import session
 
-    from app.config import CLUSTERS
+    from app.services.proxmox_service import get_clusters_from_db
     from app.services.inventory_service import get_vm_from_inventory
     from app.services.user_manager import is_admin_user, require_user
     
     user = require_user()
-    cluster_id = request.args.get('cluster', session.get("cluster_id", CLUSTERS[0]["id"]))
+    cluster_id = request.args.get('cluster', session.get("cluster_id", get_clusters_from_db()[0]["id"]))
     
     try:
         # Query from database
@@ -273,12 +273,12 @@ def api_vm_status(vmid: int):
     """
     from flask import session
 
-    from app.config import CLUSTERS
+    from app.services.proxmox_service import get_clusters_from_db
     from app.services.inventory_service import get_vm_from_inventory
     from app.services.user_manager import is_admin_user, require_user
     
     user = require_user()
-    cluster_id = request.args.get('cluster', session.get("cluster_id", CLUSTERS[0]["id"]))
+    cluster_id = request.args.get('cluster', session.get("cluster_id", get_clusters_from_db()[0]["id"]))
     
     try:
         # Query from database
@@ -317,7 +317,7 @@ def api_vm_start(vmid: int):
     
     user = require_user()
     # Handle both JSON and non-JSON requests
-    cluster_id = session.get("cluster_id", CLUSTERS[0]["id"])
+    cluster_id = session.get("cluster_id", get_clusters_from_db()[0]["id"])
     if request.is_json and request.json:
         cluster_id = request.json.get('cluster_id', cluster_id)
     
@@ -409,7 +409,7 @@ def api_vm_stop(vmid: int):
     
     user = require_user()
     # Handle both JSON and non-JSON requests
-    cluster_id = session.get("cluster_id", CLUSTERS[0]["id"])
+    cluster_id = session.get("cluster_id", get_clusters_from_db()[0]["id"])
     if request.is_json and request.json:
         cluster_id = request.json.get('cluster_id', cluster_id)
     
@@ -480,7 +480,7 @@ def api_vm_eject_iso(vmid: int):
     from app.services.user_manager import is_admin_user, require_user
     
     user = require_user()
-    cluster_id = session.get("cluster_id", CLUSTERS[0]["id"])
+    cluster_id = session.get("cluster_id", get_clusters_from_db()[0]["id"])
     if request.is_json and request.json:
         cluster_id = request.json.get('cluster_id', cluster_id)
     
@@ -553,7 +553,7 @@ def api_vm_convert_to_template(vmid: int):
     from app.services.user_manager import is_admin_user, require_user
     
     user = require_user()
-    cluster_id = session.get("cluster_id", CLUSTERS[0]["id"])
+    cluster_id = session.get("cluster_id", get_clusters_from_db()[0]["id"])
     if request.is_json and request.json:
         cluster_id = request.json.get('cluster_id', cluster_id)
     
@@ -575,7 +575,7 @@ def api_vm_convert_to_template(vmid: int):
         
         # Get cluster IP for convert_vm_to_template function
         cluster_ip = None
-        for cluster in CLUSTERS:
+        for cluster in get_clusters_from_db():
             if cluster["id"] == cluster_id:
                 cluster_ip = cluster["host"]
                 break

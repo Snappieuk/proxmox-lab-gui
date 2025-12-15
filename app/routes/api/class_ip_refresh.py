@@ -56,13 +56,13 @@ def refresh_class_ips(class_id: int):
     
     # Get Proxmox connection
     from app.services.proxmox_service import get_proxmox_admin_for_cluster
-    from app.config import CLUSTERS
+    from app.services.proxmox_service import get_clusters_from_db
     
     cluster_ip = class_.template.cluster_ip if class_.template else None
     cluster_id = None
     
-    for cluster in CLUSTERS:
-        if cluster["host"] == (cluster_ip or CLUSTERS[0]["host"]):
+    for cluster in get_clusters_from_db():
+        if cluster["host"] == (cluster_ip or get_clusters_from_db()[0]["host"]):
             cluster_id = cluster["id"]
             break
     
@@ -134,7 +134,7 @@ def refresh_class_ips(class_id: int):
             logger.info(f"Running ARP scan for {len(vm_mac_map)} VMs...")
             
             from app.services.arp_scanner import discover_ips_via_arp
-            from app.config import ARP_SUBNETS
+            # ARP_SUBNETS now from settings_service.get_arp_subnets(cluster_dict)
             
             # Force immediate ARP scan (not background)
             arp_results = discover_ips_via_arp(vm_mac_map, subnets=ARP_SUBNETS, background=False)

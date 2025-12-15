@@ -163,12 +163,12 @@ def create_new_class():
     if not source_node:
         # No template or no node from template - get first available node from cluster
         try:
-            from app.config import CLUSTERS
+            from app.services.proxmox_service import get_clusters_from_db
             from app.services.proxmox_service import get_proxmox_admin_for_cluster
 
             # Find cluster by IP
             cluster_id = None
-            for cluster in CLUSTERS:
+            for cluster in get_clusters_from_db():
                 if cluster["host"] == "10.220.15.249":
                     cluster_id = cluster["id"]
                     break
@@ -424,11 +424,11 @@ def delete_class_route(class_id: int):
     # First, stop all running VMs in parallel (faster than sequential)
     logger.info(f"Stopping all running VMs for class {class_id}...")
     from app.services.proxmox_service import get_proxmox_admin_for_cluster
-    from app.config import CLUSTERS
+    from app.services.proxmox_service import get_clusters_from_db
     
     # Get cluster connection
     cluster_id = None
-    for cluster in CLUSTERS:
+    for cluster in get_clusters_from_db():
         if cluster["host"] == (cluster_ip or "10.220.15.249"):
             cluster_id = cluster["id"]
             break
@@ -630,8 +630,8 @@ def list_templates():
     
     if cluster_id_param:
         # Convert cluster_id to cluster_ip
-        from app.config import CLUSTERS
-        for cluster in CLUSTERS:
+        from app.services.proxmox_service import get_clusters_from_db
+        for cluster in get_clusters_from_db():
             if cluster['id'] == cluster_id_param:
                 cluster_ip = cluster['host']
                 break
@@ -646,8 +646,8 @@ def list_templates():
     db_templates = query.all()
     
     # Build cluster_ip to cluster_id lookup map
-    from app.config import CLUSTERS
-    cluster_map = {c['host']: c['id'] for c in CLUSTERS}
+    from app.services.proxmox_service import get_clusters_from_db
+    cluster_map = {c['host']: c['id'] for c in get_clusters_from_db()}
     
     # Convert to proxmox_templates format for backwards compatibility
     proxmox_templates = []

@@ -9,7 +9,7 @@ import logging
 
 from flask import Blueprint, redirect, render_template, request, session, url_for
 
-from app.config import CLUSTERS
+from app.services.proxmox_service import get_clusters_from_db
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +53,7 @@ def login():
             session["user"] = full_user
             # Initialize cluster selection (default to first cluster)
             if "cluster_id" not in session:
-                session["cluster_id"] = CLUSTERS[0]["id"]
+                session["cluster_id"] = get_clusters_from_db()[0]["id"]
             logger.info("user logged in: %s", full_user)
             next_url = request.args.get("next") or url_for("portal.portal")
             return redirect(next_url)

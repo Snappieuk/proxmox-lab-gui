@@ -10,7 +10,7 @@ import time
 from datetime import datetime, timedelta
 from threading import Thread
 
-from app.config import CLUSTERS
+from app.services.proxmox_service import get_clusters_from_db
 from app.models import Template, db
 from app.services.proxmox_service import get_proxmox_admin_for_cluster
 
@@ -41,7 +41,7 @@ def sync_templates_from_proxmox(full_sync=True):
     found_templates = set()
     
     # Sync each cluster
-    for cluster in CLUSTERS:
+    for cluster in get_clusters_from_db():
         cluster_id = cluster['id']
         cluster_ip = cluster['host']
         

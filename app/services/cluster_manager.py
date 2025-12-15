@@ -10,7 +10,7 @@ import logging
 import threading
 from typing import Any, Dict, List
 
-from app.config import CLUSTER_CONFIG_FILE, CLUSTERS
+from app.config import CLUSTER_CONFIG_FILE, get_clusters_from_db()
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ _cluster_cache_ts: Dict[str, float] = {}
 
 def get_cluster_config() -> List[Dict[str, Any]]:
     """Get current cluster configuration."""
-    return CLUSTERS
+    return get_clusters_from_db()
 
 
 def save_cluster_config(clusters: List[Dict[str, Any]]) -> None:
@@ -33,9 +33,9 @@ def save_cluster_config(clusters: List[Dict[str, Any]]) -> None:
     import app.config as config
 
     # Update runtime config
-    CLUSTERS.clear()
-    CLUSTERS.extend(clusters)
-    config.CLUSTERS = CLUSTERS
+    get_clusters_from_db().clear()
+    get_clusters_from_db().extend(clusters)
+    config.get_clusters_from_db() = get_clusters_from_db()
     
     # Write to JSON file for persistence
     try:

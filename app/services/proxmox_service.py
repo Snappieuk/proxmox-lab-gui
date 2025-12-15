@@ -21,8 +21,6 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 ssl._create_default_https_context = ssl._create_unverified_context
 
 
-from app.config import CLUSTERS  # noqa: E402 - import after SSL config
-
 logger = logging.getLogger(__name__)
 
 # Thread-safe lock for Proxmox connection
@@ -31,7 +29,7 @@ _proxmox_connections: Dict[str, Any] = {}
 
 
 def get_clusters_from_db():
-    """Load active clusters from database, fall back to config if database unavailable."""
+    """Load active clusters from database (database-first architecture)."""
     try:
         from app.models import Cluster
         from flask import has_app_context
@@ -40,11 +38,13 @@ def get_clusters_from_db():
             clusters = Cluster.query.filter_by(is_active=True).order_by(Cluster.priority.desc(), Cluster.name).all()
             if clusters:
                 return [c.to_dict() for c in clusters]
+        else:
+            logger.warning("get_clusters_from_db called outside app context")
     except Exception as e:
-        logger.debug(f"Could not load clusters from database: {e}")
+        logger.error(f"Could not load clusters from database: {e}", exc_info=True)
     
-    # Fallback to CLUSTERS from config
-    return CLUSTERS
+    # No fallback - database is required for database-first architecture
+    return []
 
 
 def get_current_cluster_id() -> str:
@@ -193,7 +193,11 @@ def create_proxmox_client() -> ProxmoxAPI:
 
 def probe_proxmox() -> Dict[str, Any]:
     """Return diagnostics information helpful for admin troubleshooting."""
-    from app.config import ADMIN_GROUP, ADMIN_USERS, VALID_NODES
+    from app.services.settings_service import get_all_admin_users, get_all_admin_groups
+    
+    # Get settings from database (aggregated from all clusters)
+    admin_users = get_all_admin_users()
+    admin_groups = get_all_admin_groups()
     
     info: Dict[str, Any] = {
         "ok": True,
@@ -201,9 +205,10 @@ def probe_proxmox() -> Dict[str, Any]:
         "nodes_count": 0,
         "resources_count": 0,
         "resources_sample": [],
-        "valid_nodes": VALID_NODES,
-        "admin_users": ADMIN_USERS,
-        "admin_group": ADMIN_GROUP,
+        "valid_nodes": [],  # No longer used - kept for backward compat
+        "admin_users": admin_users,
+        "admin_group": admin_groups[0] if admin_groups else None,  # Legacy single group
+        "admin_groups": admin_groups,  # New multi-group support
         "error": None,
     }
     try:

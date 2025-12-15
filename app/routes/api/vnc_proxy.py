@@ -11,7 +11,7 @@ from flask_sock import Sock
 from app.utils.decorators import login_required
 from app.services.user_manager import require_user
 from app.services.proxmox_service import get_proxmox_admin_for_cluster
-from app.config import CLUSTERS
+from app.services.proxmox_service import get_clusters_from_db
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +47,7 @@ def vnc_proxy_page(vmid: int):
         
         # Get cluster config
         cluster_config = None
-        for cluster in CLUSTERS:
+        for cluster in get_clusters_from_db():
             if cluster['id'] == cluster_id:
                 cluster_config = cluster
                 break
@@ -149,7 +149,7 @@ if sock:
             
             # Get cluster config
             cluster_config = None
-            for cluster in CLUSTERS:
+            for cluster in get_clusters_from_db():
                 if cluster['id'] == cluster_id:
                     cluster_config = cluster
                     break

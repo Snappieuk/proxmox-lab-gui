@@ -18,7 +18,7 @@ from typing import Optional, Dict, Any, Tuple
 
 from app.services.proxmox_service import get_proxmox_admin_for_cluster
 from app.services.ssh_executor import SSHExecutor, get_ssh_executor_from_config
-from app.config import CLUSTERS
+from app.services.proxmox_service import get_clusters_from_db
 
 logger = logging.getLogger(__name__)
 
@@ -100,7 +100,7 @@ def build_vm_from_scratch(
         
         # Get cluster config for SSH operations
         cluster_config = None
-        for cluster in CLUSTERS:
+        for cluster in get_clusters_from_db():
             if cluster['id'] == cluster_id:
                 cluster_config = cluster
                 break
