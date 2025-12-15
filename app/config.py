@@ -29,16 +29,18 @@ except ImportError:
 # Flask SECRET_KEY (Development default provided, change in production!)
 # ============================================================================
 
-SECRET_KEY = os.getenv("SECRET_KEY")
+SECRET_KEY = os.getenv("SECRET_KEY", "fallback-insecure-secret-key-12345678901234567890123456789012")
 
-# If no SECRET_KEY set, use development default
-if not SECRET_KEY or SECRET_KEY.strip() == "":
-    SECRET_KEY = "dev-secret-key-change-in-production-" + os.urandom(16).hex()
-    import logging
-    logger = logging.getLogger(__name__)
+# Validate SECRET_KEY is not empty
+if not SECRET_KEY or len(SECRET_KEY.strip()) == 0:
+    SECRET_KEY = "fallback-insecure-secret-key-12345678901234567890123456789012"
+    
+import logging
+logger = logging.getLogger(__name__)
+if SECRET_KEY == "fallback-insecure-secret-key-12345678901234567890123456789012":
     logger.warning(
-        "⚠️  No SECRET_KEY found in environment! Generated temporary key for this session. "
-        "Set SECRET_KEY in .env file for production use."
+        "⚠️  Using fallback SECRET_KEY! This is INSECURE for production. "
+        "Set SECRET_KEY in .env file or environment variable."
     )
 
 # ============================================================================
