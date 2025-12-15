@@ -299,12 +299,16 @@ def api_get_cluster_storages(cluster_db_id: int):
             content_types = storage.get('content', '').split(',')
             # Include storages that can hold VM images or rootdir (for containers)
             if 'images' in content_types or 'rootdir' in content_types:
+                # Check if storage is disabled (0) or enabled (1 or missing = assume enabled)
+                is_disabled = storage.get('disable', 0) == 1
+                is_enabled = storage.get('enabled', 1) == 1  # Default to enabled if not specified
+                
                 storage_list.append({
                     'storage': storage['storage'],
                     'type': storage.get('type', 'unknown'),
                     'content': storage.get('content', ''),
-                    'active': storage.get('active', 0) == 1,
-                    'enabled': storage.get('enabled', 0) == 1
+                    'active': not is_disabled and is_enabled,
+                    'enabled': is_enabled
                 })
         
         return jsonify({"ok": True, "storages": storage_list})
