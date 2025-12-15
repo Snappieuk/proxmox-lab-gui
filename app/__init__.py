@@ -12,7 +12,6 @@ import os
 from flask import Flask, session
 
 from app.config import SECRET_KEY
-from app.services.settings_service import get_secret_key
 
 # Initialize logging
 from app.utils.logging import configure_logging, get_logger

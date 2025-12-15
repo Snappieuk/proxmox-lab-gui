@@ -10,7 +10,7 @@ import logging
 import threading
 from typing import Any, Dict, List
 
-from app.config import CLUSTER_CONFIG_FILE, get_clusters_from_db()
+from app.services.proxmox_service import get_clusters_from_db
 
 logger = logging.getLogger(__name__)
 
@@ -26,34 +26,48 @@ def get_cluster_config() -> List[Dict[str, Any]]:
 
 
 def save_cluster_config(clusters: List[Dict[str, Any]]) -> None:
-    """Save cluster configuration to JSON file and update runtime config.
+    """Save cluster configuration to database.
     
-    Persists changes across restarts by writing to clusters.json.
+    DEPRECATED: This function is for backward compatibility only.
+    Use Cluster model directly for database-first architecture.
     """
-    import app.config as config
-
-    # Update runtime config
-    get_clusters_from_db().clear()
-    get_clusters_from_db().extend(clusters)
-    config.get_clusters_from_db() = get_clusters_from_db()
+    logger.warning("save_cluster_config() is deprecated - use Cluster model directly")
     
-    # Write to JSON file for persistence
     try:
-        with open(CLUSTER_CONFIG_FILE, "w", encoding="utf-8") as f:
-            json.dump(clusters, f, indent=2)
-        logger.info(f"Saved cluster configuration to {CLUSTER_CONFIG_FILE}")
+        from app.models import Cluster, db
+        
+        # Update existing clusters or create new ones
+        for cluster_data in clusters:
+            cluster_id = cluster_data.get("id")
+            if cluster_id:
+                cluster = Cluster.query.get(cluster_id)
+                if cluster:
+                    # Update existing
+                    for key, value in cluster_data.items():
+                        if hasattr(cluster, key) and key != 'id':
+                            setattr(cluster, key, value)
+                else:
+                    # Create new with specified ID
+                    cluster = Cluster(**cluster_data)
+                    db.session.add(cluster)
+            else:
+                # Create new (auto-generate ID)
+                cluster = Cluster(**{k: v for k, v in cluster_data.items() if k != 'id'})
+                db.session.add(cluster)
+        
+        db.session.commit()
+        logger.info(f"Saved {len(clusters)} clusters to database")
+        
+        # Clear all existing Proxmox connections to force reconnection with new config
+        from app.services import proxmox_service
+        proxmox_service._proxmox_connections.clear()
+        
+        # Also invalidate the cluster cache
+        invalidate_cluster_cache()
+        
     except Exception as e:
-        logger.error(f"Failed to write cluster config file: {e}")
+        logger.error(f"Failed to save cluster config: {e}", exc_info=True)
         raise
-    
-    # Clear all existing Proxmox connections to force reconnection with new config
-    from app.services import proxmox_service
-    proxmox_service._proxmox_connections.clear()
-    
-    # Also invalidate the cluster cache
-    invalidate_cluster_cache()
-    
-    logger.info(f"Updated cluster configuration with {len(clusters)} cluster(s)")
 
 
 def invalidate_cluster_cache() -> None:
