@@ -479,17 +479,7 @@ def _sync_isos_background(cluster_id: str, app=None):
             iso_count = 0
             nodes = proxmox.nodes.get()
             
-            logger.info(f"[ISO Sync] Scanning {len(nodes)} nodes for ISOs")
-            
-            # Get cluster configuration to check if specific ISO storage is configured
-            from app.models import Cluster
-            db_cluster = Cluster.query.filter_by(cluster_id=cluster_id).first()
-            iso_storage_only = db_cluster.iso_storage if db_cluster else None
-            
-            if iso_storage_only:
-                logger.info(f"[ISO Sync] Scanning only configured ISO storage: {iso_storage_only}")
-            else:
-                logger.info(f"[ISO Sync] No ISO storage configured, scanning all storages with ISO content")
+            logger.info(f"[ISO Sync] Scanning {len(nodes)} nodes for ISOs across all ISO-capable storages")
             
             for node in nodes:
                 node_name = node['node']
@@ -501,11 +491,6 @@ def _sync_isos_background(cluster_id: str, app=None):
                     
                     for storage in storages:
                         storage_name = storage['storage']
-                        
-                        # If iso_storage is configured, only scan that storage
-                        if iso_storage_only and storage_name != iso_storage_only:
-                            logger.debug(f"[ISO Sync] Skipping storage {storage_name} (not configured ISO storage {iso_storage_only})")
-                            continue
                         
                         # Check if storage supports ISO content
                         content_types = storage.get('content', '').split(',')
