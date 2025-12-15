@@ -3,7 +3,7 @@
 {% block content %}
 <div class="page-header">
     <div>
-        <h1><i class="bi bi-plus-circle"></i> Create New Class</h1>
+        <h1><i class="ti ti-circle-plus"></i> Create New Class</h1>
         <p class="page-subtitle">Set up a new lab class with a VM template</p>
     </div>
 </div>
@@ -87,7 +87,7 @@
         <div class="form-actions">
             <a href="{{ url_for('classes.classes_list') }}" class="btn-secondary">Cancel</a>
             <button type="submit" class="btn-primary">
-                <i class="bi bi-check-lg"></i> Create Class
+                <i class="ti ti-check"></i> Create Class
             </button>
         </div>
     </form>
@@ -319,7 +319,7 @@ async function selectTemplateById(templateId) {
             // Show success message
             const messageDiv = document.createElement('div');
             messageDiv.style.cssText = 'background: #d4edda; color: #155724; padding: 12px; border-radius: 4px; margin-bottom: 16px; border: 1px solid #c3e6cb;';
-            messageDiv.innerHTML = `<i class="bi bi-check-circle"></i> Template "${template.name}" has been pre-selected for your class.`;
+            messageDiv.innerHTML = `<i class="ti ti-circle-check"></i> Template "${template.name}" has been pre-selected for your class.`;
             document.querySelector('.form-card').insertBefore(messageDiv, document.querySelector('.form-card').firstChild);
             
             // Remove message after 5 seconds
@@ -487,7 +487,7 @@ document.getElementById('create-class-form').addEventListener('submit', async fu
     // Template is now optional
     const submitBtn = this.querySelector('button[type="submit"]');
     submitBtn.disabled = true;
-    submitBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Creating...';
+    submitBtn.innerHTML = '<i class="ti ti-hourglass"></i> Creating...';
     
     try {
         let templateId = null;
@@ -549,7 +549,7 @@ document.getElementById('create-class-form').addEventListener('submit', async fu
             progressDiv.style.cssText = 'position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 30px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 1000; text-align: center; min-width: 400px;';
             progressDiv.innerHTML = `
                 <div style="margin-bottom: 20px;">
-                    <i class="bi bi-arrow-repeat" style="font-size: 48px; animation: spin 2s linear infinite;"></i>
+                    <i class="ti ti-refresh" style="font-size: 48px; animation: spin 2s linear infinite;"></i>
                 </div>
                 <h3 style="margin: 0 0 10px 0;">Creating Class VMs</h3>
                 <p id="progress-status" style="margin: 0; color: #666;">Deploying ${poolSize > 0 ? poolSize + ' student VMs + ' : ''}teacher VM + template...</p>
@@ -624,13 +624,13 @@ document.getElementById('create-class-form').addEventListener('submit', async fu
         } else {
             alert('Failed to create class: ' + (data.error || 'Unknown error'));
             submitBtn.disabled = false;
-            submitBtn.innerHTML = '<i class="bi bi-check-lg"></i> Create Class';
+            submitBtn.innerHTML = '<i class="ti ti-check"></i> Create Class';
         }
     } catch (e) {
         console.error('Error creating class:', e);
         alert('Error creating class: ' + e.message);
         submitBtn.disabled = false;
-        submitBtn.innerHTML = '<i class="bi bi-check-lg"></i> Create Class';
+        submitBtn.innerHTML = '<i class="ti ti-check"></i> Create Class';
     }
 });
 </script>

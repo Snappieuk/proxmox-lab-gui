@@ -27,7 +27,7 @@
 <div class="summary-cards-compact">
     <div class="summary-card-compact">
         <div class="summary-card-icon windows-icon">
-            <i class="bi bi-windows"></i>
+            <i class="ti ti-brand-windows"></i>
         </div>
         <div class="summary-card-content">
             <div class="summary-card-value" id="windows-count">{{ windows_vms|length if windows_vms else 0 }}</div>
@@ -37,7 +37,7 @@
     </div>
     <div class="summary-card-compact">
         <div class="summary-card-icon linux-icon">
-            <i class="bi bi-terminal-fill"></i>
+            <i class="ti ti-terminal-2"></i>
         </div>
         <div class="summary-card-content">
             <div class="summary-card-value" id="linux-count">{{ linux_vms|length if linux_vms else 0 }}</div>
@@ -47,7 +47,7 @@
     </div>
     <div class="summary-card-compact">
         <div class="summary-card-icon lxc-icon">
-            <i class="bi bi-box"></i>
+            <i class="ti ti-box"></i>
         </div>
         <div class="summary-card-content">
             <div class="summary-card-value" id="lxc-count">{{ lxc_containers|length if lxc_containers else 0 }}</div>
@@ -60,7 +60,7 @@
 <!-- Unified Filter Bar -->
 <div class="filter-bar-unified">
     <div class="filter-group">
-        <i class="bi bi-search filter-icon"></i>
+        <i class="ti ti-search filter-icon"></i>
         <input type="text" 
                id="search-input"
                class="filter-input"
@@ -68,7 +68,7 @@
                value="{{ request.args.get('search', '') }}">
     </div>
     <div class="filter-group">
-        <i class="bi bi-funnel filter-icon"></i>
+        <i class="ti ti-filter filter-icon"></i>
         <select id="category-filter" class="filter-select">
             <option value="all">All OS Types</option>
             <option value="windows">Windows Only</option>
@@ -77,7 +77,7 @@
         </select>
     </div>
     <div class="filter-group">
-        <i class="bi bi-circle-fill filter-icon"></i>
+        <i class="ti ti-circle-filled filter-icon"></i>
         <select id="status-filter" class="filter-select">
             <option value="all">All Statuses</option>
             <option value="running">Running Only</option>
@@ -85,7 +85,7 @@
         </select>
     </div>
     <div class="filter-group">
-        <i class="bi bi-server filter-icon"></i>
+        <i class="ti ti-server filter-icon"></i>
         <select id="node-filter" class="filter-select">
             <option value="all">All Nodes</option>
         </select>
@@ -100,7 +100,7 @@
 <div id="vm-tables-container">
     <div id="loading-indicator" style="text-align: center; padding: 60px 20px; color: #6c757d;">
         <div style="font-size: 48px; margin-bottom: 16px;">
-            <i class="bi bi-hourglass-split"></i>
+            <i class="ti ti-hourglass"></i>
         </div>
         <p style="font-size: 16px; margin: 0;">Loading virtual machines...</p>
     </div>
@@ -111,8 +111,8 @@
 <div class="vm-section">
     <div class="vm-section-header" data-section="windows">
         <div class="vm-section-title">
-            <i class="bi bi-chevron-down section-toggle"></i>
-            <i class="bi bi-windows" style="margin-left: 8px;"></i>
+            <i class="ti ti-chevron-down section-toggle"></i>
+            <i class="ti ti-brand-windows" style="margin-left: 8px;"></i>
             Windows VMs
             <span class="vm-count-badge">{{ windows_vms|length }}</span>
         </div>
@@ -126,7 +126,7 @@
                     <th style="width: 120px;">Cluster</th>
                     <th style="width: 100px;">Node</th>
                     <th class="sortable-header" data-sort-state="none" style="width: 110px;">
-                        Status <i class="bi bi-funnel"></i>
+                        Status <i class="ti ti-filter"></i>
                     </th>
                     <th style="width: 140px;">IP Address</th>
                     <th style="width: 200px; text-align: right;">Actions</th>
@@ -137,7 +137,7 @@
                 <tr data-vmid="{{ vm.vmid }}" data-category="windows" data-node="{{ vm.node }}" data-status="{{ vm.status }}">
                     <td>
                         <div class="vm-name-cell">
-                            <i class="bi bi-windows os-icon"></i>
+                            <i class="ti ti-brand-windows os-icon"></i>
                             <strong>{{ vm.name }}</strong>
                         </div>
                     </td>
@@ -161,25 +161,25 @@
                                     data-action="start"
                                     title="Start VM"
                                     {% if vm.status == 'running' %}disabled{% endif %}>
-                                <i class="bi bi-play-fill"></i>
+                                <i class="ti ti-player-play-filled"></i>
                             </button>
                             <button class="btn-action btn-stop btn-power" 
                                     data-vmid="{{ vm.vmid }}" 
                                     data-action="stop"
                                     title="Stop VM"
                                     {% if vm.status == 'stopped' %}disabled{% endif %}>
-                                <i class="bi bi-stop-fill"></i>
+                                <i class="ti ti-player-stop-filled"></i>
                             </button>
                             <div class="dropdown-action">
                                 <button class="btn-action btn-more" title="More actions">
-                                    <i class="bi bi-three-dots-vertical"></i>
+                                    <i class="ti ti-dots-vertical"></i>
                                 </button>
                                 <div class="dropdown-menu">
                                     <button class="dropdown-item" onclick="openVMConsole({{ vm.vmid }})">
-                                        <i class="bi bi-window"></i> Web Console
+                                        <i class="ti ti-browser"></i> Web Console
                                     </button>
                                     <a class="dropdown-item" href="/rdp/{{ vm.vmid }}.rdp">
-                                        <i class="bi bi-download"></i> Download RDP
+                                        <i class="ti ti-download"></i> Download RDP
                                     </a>
                                 </div>
                             </div>
@@ -198,8 +198,8 @@
 <div class="vm-section">
     <div class="vm-section-header" data-section="linux">
         <div class="vm-section-title">
-            <i class="bi bi-chevron-down section-toggle"></i>
-            <i class="bi bi-ubuntu" style="margin-left: 8px;"></i>
+            <i class="ti ti-chevron-down section-toggle"></i>
+            <i class="ti ti-brand-ubuntu" style="margin-left: 8px;"></i>
             Linux VMs
             <span class="vm-count-badge">{{ linux_vms|length }}</span>
         </div>
@@ -213,7 +213,7 @@
                     <th style="width: 120px;">Cluster</th>
                     <th style="width: 100px;">Node</th>
                     <th class="sortable-header" data-sort-state="none" style="width: 110px;">
-                        Status <i class="bi bi-funnel"></i>
+                        Status <i class="ti ti-filter"></i>
                     </th>
                     <th style="width: 140px;">IP Address</th>
                     <th style="width: 200px; text-align: right;">Actions</th>
@@ -224,7 +224,7 @@
                 <tr data-vmid="{{ vm.vmid }}" data-category="linux" data-node="{{ vm.node }}" data-status="{{ vm.status }}">
                     <td>
                         <div class="vm-name-cell">
-                            <i class="bi bi-ubuntu os-icon"></i>
+                            <i class="ti ti-brand-ubuntu os-icon"></i>
                             <strong>{{ vm.name }}</strong>
                         </div>
                     </td>
@@ -248,39 +248,39 @@
                                     data-action="start"
                                     title="Start VM"
                                     {% if vm.status == 'running' %}disabled{% endif %}>
-                                <i class="bi bi-play-fill"></i>
+                                <i class="ti ti-player-play-filled"></i>
                             </button>
                             <button class="btn-action btn-stop btn-power" 
                                     data-vmid="{{ vm.vmid }}" 
                                     data-action="stop"
                                     title="Stop VM"
                                     {% if vm.status == 'stopped' %}disabled{% endif %}>
-                                <i class="bi bi-stop-fill"></i>
+                                <i class="ti ti-player-stop-filled"></i>
                             </button>
                             <div class="dropdown-action">
                                 <button class="btn-action btn-more" title="More actions">
-                                    <i class="bi bi-three-dots-vertical"></i>
+                                    <i class="ti ti-dots-vertical"></i>
                                 </button>
                                 <div class="dropdown-menu">
                                     <button class="dropdown-item" onclick="openVMConsole({{ vm.vmid }}, '{{ vm.cluster_id }}')">
-                                        <i class="bi bi-window"></i> Web Console
+                                        <i class="ti ti-browser"></i> Web Console
                                     </button>
                                     <button class="dropdown-item btn-ssh"
                                             data-vmid="{{ vm.vmid }}"
                                             data-ip="{{ vm.ip or '' }}"
                                             data-name="{{ vm.name }}"
                                             {% if not vm.ip %}disabled{% endif %}>
-                                        <i class="bi bi-terminal"></i> Web SSH
+                                        <i class="ti ti-terminal"></i> Web SSH
                                     </button>
                                     <button class="dropdown-item btn-ssh-copy" 
                                             data-vmid="{{ vm.vmid }}"
                                             data-ip="{{ vm.ip or '' }}"
                                             {% if not vm.ip %}disabled{% endif %}>
-                                        <i class="bi bi-clipboard"></i> Copy SSH Command
+                                        <i class="ti ti-clipboard"></i> Copy SSH Command
                                     </button>
                                     {% if vm.rdp_available %}
                                     <a class="dropdown-item" href="/rdp/{{ vm.vmid }}.rdp">
-                                        <i class="bi bi-download"></i> Download RDP
+                                        <i class="ti ti-download"></i> Download RDP
                                     </a>
                                     {% endif %}
                                 </div>
@@ -300,8 +300,8 @@
 <div class="vm-section">
     <div class="vm-section-header" data-section="lxc">
         <div class="vm-section-title">
-            <i class="bi bi-chevron-down section-toggle"></i>
-            <i class="bi bi-box" style="margin-left: 8px;"></i>
+            <i class="ti ti-chevron-down section-toggle"></i>
+            <i class="ti ti-box" style="margin-left: 8px;"></i>
             LXC Containers
             <span class="vm-count-badge">{{ lxc_containers|length }}</span>
         </div>
@@ -315,7 +315,7 @@
                     <th style="width: 120px;">Cluster</th>
                     <th style="width: 100px;">Node</th>
                     <th class="sortable-header" data-sort-state="none" style="width: 110px;">
-                        Status <i class="bi bi-funnel"></i>
+                        Status <i class="ti ti-filter"></i>
                     </th>
                     <th style="width: 140px;">IP Address</th>
                     <th style="width: 200px; text-align: right;">Actions</th>
@@ -326,7 +326,7 @@
                 <tr data-vmid="{{ vm.vmid }}" data-category="lxc" data-node="{{ vm.node }}" data-status="{{ vm.status }}">
                     <td>
                         <div class="vm-name-cell">
-                            <i class="bi bi-box os-icon"></i>
+                            <i class="ti ti-box os-icon"></i>
                             <strong>{{ vm.name }}</strong>
                         </div>
                     </td>
@@ -350,35 +350,35 @@
                                     data-action="start"
                                     title="Start Container"
                                     {% if vm.status == 'running' %}disabled{% endif %}>
-                                <i class="bi bi-play-fill"></i>
+                                <i class="ti ti-player-play-filled"></i>
                             </button>
                             <button class="btn-action btn-stop btn-power" 
                                     data-vmid="{{ vm.vmid }}" 
                                     data-action="stop"
                                     title="Stop Container"
                                     {% if vm.status == 'stopped' %}disabled{% endif %}>
-                                <i class="bi bi-stop-fill"></i>
+                                <i class="ti ti-player-stop-filled"></i>
                             </button>
                             <div class="dropdown-action">
                                 <button class="btn-action btn-more" title="More actions">
-                                    <i class="bi bi-three-dots-vertical"></i>
+                                    <i class="ti ti-dots-vertical"></i>
                                 </button>
                                 <div class="dropdown-menu">
                                     <button class="dropdown-item" onclick="openVMConsole({{ vm.vmid }})">
-                                        <i class="bi bi-window"></i> Web Console
+                                        <i class="ti ti-browser"></i> Web Console
                                     </button>
                                     <button class="dropdown-item btn-ssh-web" 
                                             data-vmid="{{ vm.vmid }}"
                                             data-ip="{{ vm.ip or '' }}"
                                             data-name="{{ vm.name }}"
                                             {% if not vm.ip %}disabled{% endif %}>
-                                        <i class="bi bi-terminal"></i> Web SSH
+                                        <i class="ti ti-terminal"></i> Web SSH
                                     </button>
                                     <button class="dropdown-item btn-ssh-copy" 
                                             data-vmid="{{ vm.vmid }}"
                                             data-ip="{{ vm.ip or '' }}"
                                             {% if not vm.ip %}disabled{% endif %}>
-                                        <i class="bi bi-clipboard"></i> Copy SSH Command
+                                        <i class="ti ti-clipboard"></i> Copy SSH Command
                                     </button>
                                 </div>
                             </div>
@@ -397,7 +397,7 @@
 {% if is_admin %}
 <div class="admin-actions">
     <button type="button" id="refresh-btn" class="btn-secondary" onclick="refreshVMs()">
-        <i class="bi bi-arrow-clockwise"></i> Refresh Cache
+        <i class="ti ti-refresh"></i> Refresh Cache
     </button>
     <small>Admin only: Force reload VM data from Proxmox server</small>
 </div>
@@ -413,12 +413,12 @@ document.querySelectorAll('.vm-section-header').forEach(header => {
         
         if (content.style.display === 'none') {
             content.style.display = 'block';
-            toggle.classList.remove('bi-chevron-right');
-            toggle.classList.add('bi-chevron-down');
+            toggle.classList.remove('ti-chevron-right');
+            toggle.classList.add('ti-chevron-down');
         } else {
             content.style.display = 'none';
-            toggle.classList.remove('bi-chevron-down');
-            toggle.classList.add('bi-chevron-right');
+            toggle.classList.remove('ti-chevron-down');
+            toggle.classList.add('ti-chevron-right');
         }
     });
 });
@@ -465,11 +465,11 @@ document.querySelectorAll('.sortable-header').forEach(header => {
         // Update icon
         const icon = this.querySelector('i');
         if (newState === 'none') {
-            icon.className = 'bi bi-funnel';
+            icon.className = 'ti ti-filter';
         } else if (newState === 'running-first') {
-            icon.className = 'bi bi-funnel-fill';
+            icon.className = 'ti ti-filter-filled';
         } else {
-            icon.className = 'bi bi-funnel-fill';
+            icon.className = 'ti ti-filter-filled';
         }
     });
 });
@@ -610,13 +610,13 @@ async function loadVMs() {
         
         // Create sections for each category
         if (categories.windows.length > 0) {
-            container.appendChild(createVMSection('windows', 'Windows VMs', categories.windows, 'bi-windows'));
+            container.appendChild(createVMSection('windows', 'Windows VMs', categories.windows, 'ti-brand-windows'));
         }
         if (categories.linux.length > 0) {
-            container.appendChild(createVMSection('linux', 'Linux VMs', categories.linux, 'bi-terminal-fill'));
+            container.appendChild(createVMSection('linux', 'Linux VMs', categories.linux, 'ti-terminal-2'));
         }
         if (categories.lxc.length > 0) {
-            container.appendChild(createVMSection('lxc', 'LXC Containers', categories.lxc, 'bi-box'));
+            container.appendChild(createVMSection('lxc', 'LXC Containers', categories.lxc, 'ti-box'));
         }
         
         // Update summary cards
@@ -647,7 +647,7 @@ function createVMSection(category, title, vms, iconClass) {
     section.innerHTML = `
         <div class="vm-section-header" data-section="${category}">
             <div class="vm-section-title">
-                <i class="bi bi-chevron-down section-toggle"></i>
+                <i class="ti ti-chevron-down section-toggle"></i>
                 <i class="${iconClass}" style="margin-left: 8px;"></i>
                 ${title}
                 <span class="vm-count-badge">${vms.length}</span>
@@ -662,7 +662,7 @@ function createVMSection(category, title, vms, iconClass) {
                         <th style="width: 120px;">Cluster</th>
                         <th style="width: 100px;">Node</th>
                         <th class="sortable-header" data-sort-state="none" style="width: 110px;">
-                            Status <i class="bi bi-funnel"></i>
+                            Status <i class="ti ti-filter"></i>
                         </th>
                         <th style="width: 140px;">IP Address</th>
                         <th style="width: 200px; text-align: right;">Actions</th>
@@ -679,7 +679,7 @@ function createVMSection(category, title, vms, iconClass) {
 
 function createVMRow(vm, category) {
     const statusClass = vm.status === 'running' ? 'pill-running' : vm.status === 'stopped' ? 'pill-stopped' : 'pill-unknown';
-    const iconClass = category === 'windows' ? 'bi-windows' : category === 'linux' ? 'bi-terminal-fill' : 'bi-box';
+    const iconClass = category === 'windows' ? 'ti-brand-windows' : category === 'linux' ? 'ti-terminal-2' : 'ti-box';
     const isRunning = vm.status === 'running';
     const isStopped = vm.status === 'stopped';
     const hasIp = vm.ip && vm.ip !== 'N/A';
@@ -690,39 +690,39 @@ function createVMRow(vm, category) {
     if (category === 'windows') {
         dropdownItems = `
             <button class="dropdown-item" onclick="openVMConsole(${vm.vmid}, '${vm.cluster_id}')">
-                <i class="bi bi-window"></i> Web Console
+                <i class="ti ti-browser"></i> Web Console
             </button>
             <button class="dropdown-item btn-rdp" 
                     data-vmid="${vm.vmid}"
                     data-ip="${vm.ip || ''}"
                     ${!hasIp || !hasRdp ? 'disabled' : ''}>
-                <i class="bi bi-pc-display"></i> Download RDP
+                <i class="ti ti-device-desktop"></i> Download RDP
             </button>
             <button class="dropdown-item btn-ssh" 
                     data-vmid="${vm.vmid}"
                     data-ip="${vm.ip || ''}"
                     data-name="${vm.name}"
                     ${!hasIp ? 'disabled' : ''}>
-                <i class="bi bi-terminal"></i> SSH
+                <i class="ti ti-terminal"></i> SSH
             </button>
         `;
     } else {
         dropdownItems = `
             <button class="dropdown-item" onclick="openVMConsole(${vm.vmid}, '${vm.cluster_id}')">
-                <i class="bi bi-window"></i> Web Console
+                <i class="ti ti-browser"></i> Web Console
             </button>
             <button class="dropdown-item btn-ssh" 
                     data-vmid="${vm.vmid}"
                     data-ip="${vm.ip || ''}"
                     data-name="${vm.name}"
                     ${!hasIp ? 'disabled' : ''}>
-                <i class="bi bi-terminal"></i> SSH
+                <i class="ti ti-terminal"></i> SSH
             </button>
             <button class="dropdown-item btn-rdp" 
                     data-vmid="${vm.vmid}"
                     data-ip="${vm.ip || ''}"
                     ${!hasIp || !hasRdp ? 'disabled' : ''}>
-                <i class="bi bi-pc-display"></i> RDP (if available)
+                <i class="ti ti-device-desktop"></i> RDP (if available)
             </button>
         `;
     }
@@ -749,18 +749,18 @@ function createVMRow(vm, category) {
                             data-action="start"
                             title="Start VM"
                             ${isRunning ? 'disabled' : ''}>
-                        <i class="bi bi-play-fill"></i>
+                        <i class="ti ti-player-play-filled"></i>
                     </button>
                     <button class="btn-action btn-stop btn-power" 
                             data-vmid="${vm.vmid}" 
                             data-action="stop"
                             title="Stop VM"
                             ${isStopped ? 'disabled' : ''}>
-                        <i class="bi bi-stop-fill"></i>
+                        <i class="ti ti-player-stop-filled"></i>
                     </button>
                     <div class="dropdown-action">
                         <button class="btn-action btn-more" title="More actions">
-                            <i class="bi bi-three-dots-vertical"></i>
+                            <i class="ti ti-dots-vertical"></i>
                         </button>
                         <div class="dropdown-menu">
                             ${dropdownItems}
@@ -816,7 +816,7 @@ function attachVMEventHandlers() {
             
             this.disabled = true;
             const originalText = this.innerHTML;
-            this.innerHTML = '<i class="bi bi-hourglass-split"></i>';
+            this.innerHTML = '<i class="ti ti-hourglass"></i>';
             
             try {
                 console.log(`Sending ${action} request to /api/vm/${vmid}/${action}`);
@@ -928,7 +928,7 @@ async function refreshVMs() {
         // Show loading state
         refreshBtn.disabled = true;
         icon.classList.add('spin');
-        refreshBtn.innerHTML = '<i class="bi bi-arrow-clockwise spin"></i> Refreshing...';
+        refreshBtn.innerHTML = '<i class="ti ti-refresh spin"></i> Refreshing...';
         
         // Trigger background sync
         const resp = await fetch('/api/sync/trigger?type=full', { method: 'POST' });
@@ -938,7 +938,7 @@ async function refreshVMs() {
         }
         
         // Show success briefly
-        refreshBtn.innerHTML = '<i class="bi bi-check-circle"></i> Cache Refreshed!';
+        refreshBtn.innerHTML = '<i class="ti ti-circle-check"></i> Cache Refreshed!';
         
         // Wait a moment for background sync to complete
         await new Promise(resolve => setTimeout(resolve, 2000));
@@ -955,7 +955,7 @@ async function refreshVMs() {
         
     } catch (error) {
         console.error('Refresh failed:', error);
-        refreshBtn.innerHTML = '<i class="bi bi-exclamation-triangle"></i> Refresh Failed';
+        refreshBtn.innerHTML = '<i class="ti ti-alert-triangle"></i> Refresh Failed';
         setTimeout(() => {
             refreshBtn.disabled = false;
             refreshBtn.innerHTML = originalText;

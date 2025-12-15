@@ -4,7 +4,7 @@
 <div class="join-container">
     <div class="join-card">
         <div class="join-icon">
-            <i class="bi bi-mortarboard"></i>
+            <i class="ti ti-school"></i>
         </div>
         <h1>Join Class</h1>
         <h2>{{ class_.name }}</h2>
@@ -15,18 +15,18 @@
         
         <div class="join-info">
             <div class="join-info-item">
-                <i class="bi bi-person"></i>
+                <i class="ti ti-user"></i>
                 <span>Teacher: {{ class_.teacher_name or 'Unknown' }}</span>
             </div>
             <div class="join-info-item">
-                <i class="bi bi-pc-display"></i>
+                <i class="ti ti-device-desktop"></i>
                 <span>{{ class_.unassigned_count }} VMs available</span>
             </div>
         </div>
         
         <form action="{{ url_for('classes.confirm_join_class', token=token) }}" method="POST">
             <button type="submit" class="btn-join">
-                <i class="bi bi-box-arrow-in-right"></i> Join Class
+                <i class="ti ti-login"></i> Join Class
             </button>
         </form>
         
@@ -36,12 +36,12 @@
         </p>
         {% else %}
         <p class="join-note join-note-warning">
-            <i class="bi bi-info-circle"></i> No VMs are currently available. You'll be added to the class and assigned a VM when one becomes available.
+            <i class="ti ti-info-circle"></i> No VMs are currently available. You'll be added to the class and assigned a VM when one becomes available.
         </p>
         {% endif %}
         
         <a href="{{ url_for('classes.classes_list') }}" class="back-link">
-            <i class="bi bi-arrow-left"></i> Back to Classes
+            <i class="ti ti-arrow-left"></i> Back to Classes
         </a>
     </div>
 </div>

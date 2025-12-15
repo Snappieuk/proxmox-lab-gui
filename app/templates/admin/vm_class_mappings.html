@@ -32,7 +32,7 @@
                 </div>
                 <div>
                     <button type="submit" class="btn btn-primary" style="margin-bottom: 0;">
-                        <i class="bi bi-plus-circle"></i> Add VM
+                        <i class="ti ti-circle-plus"></i> Add VM
                     </button>
                 </div>
             </form>
@@ -60,7 +60,7 @@
                 <tbody id="mappings-tbody">
                     <tr>
                         <td colspan="7" style="text-align: center; padding: 40px; color: #666;">
-                            <i class="bi bi-hourglass-split"></i> Loading...
+                            <i class="ti ti-hourglass"></i> Loading...
                         </td>
                     </tr>
                 </tbody>
@@ -271,7 +271,7 @@ async function loadMappings() {
                     <td>${new Date(m.created_at).toLocaleDateString()}</td>
                     <td>
                         <button class="btn btn-danger" onclick="removeMapping(${m.id}, ${m.vmid}, '${m.class_name}')">
-                            <i class="bi bi-trash"></i> Remove
+                            <i class="ti ti-trash"></i> Remove
                         </button>
                     </td>
                 </tr>

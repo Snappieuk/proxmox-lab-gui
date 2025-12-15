@@ -12,18 +12,18 @@
                 <p class="section-description">Add, edit, and manage your Proxmox clusters with deployment options.</p>
             </div>
             <button class="btn btn-primary" onclick="showAddClusterModal()">
-                <i class="bi bi-plus-circle"></i> Add Cluster
+                <i class="ti ti-circle-plus"></i> Add Cluster
             </button>
         </div>
         
         <div id="clusters-list" class="clusters-grid"></div>
         
         <div id="empty-state" class="empty-state" style="display: none;">
-            <i class="bi bi-server"></i>
+            <i class="ti ti-server"></i>
             <h3>No Clusters Configured</h3>
             <p>Add your first Proxmox cluster to get started</p>
             <button class="btn btn-primary" onclick="showAddClusterModal()">
-                <i class="bi bi-plus-circle"></i> Add First Cluster
+                <i class="ti ti-circle-plus"></i> Add First Cluster
             </button>
         </div>
     </div>
@@ -170,7 +170,7 @@
                                     <option value="">-- Select Storage --</option>
                                 </select>
                                 <button type="button" class="btn btn-sm btn-secondary" onclick="loadStorages()" title="Load available storages from cluster">
-                                    <i class="bi bi-arrow-clockwise"></i>
+                                    <i class="ti ti-refresh"></i>
                                 </button>
                             </div>
                             <small>Storage pool for VM disks (optional)</small>
@@ -182,7 +182,7 @@
                                     <option value="">-- Select Storage --</option>
                                 </select>
                                 <button type="button" class="btn btn-sm btn-secondary" onclick="loadStorages()" title="Load available storages from cluster">
-                                    <i class="bi bi-arrow-clockwise"></i>
+                                    <i class="ti ti-refresh"></i>
                                 </button>
                             </div>
                             <small>Storage for template exports (optional)</small>
@@ -194,7 +194,7 @@
                                     <option value="">-- Select Storage (scans all if empty) --</option>
                                 </select>
                                 <button type="button" class="btn btn-sm btn-secondary" onclick="loadStorages()" title="Load available storages from cluster">
-                                    <i class="bi bi-arrow-clockwise"></i>
+                                    <i class="ti ti-refresh"></i>
                                 </button>
                             </div>
                             <small>Storage pool to scan for ISO images (optional - scans all ISO storages if empty)</small>
@@ -208,12 +208,12 @@
                 
                 <div class="modal-actions">
                     <button type="button" class="btn btn-test" onclick="testConnection()">
-                        <i class="bi bi-plugin"></i> Test Connection
+                        <i class="ti ti-plug"></i> Test Connection
                     </button>
                     <div style="flex: 1;"></div>
                     <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
                     <button type="submit" class="btn btn-primary">
-                        <i class="bi bi-save"></i> Save Cluster
+                        <i class="ti ti-device-floppy"></i> Save Cluster
                     </button>
                 </div>
             </form>
@@ -798,10 +798,10 @@ function renderClusters() {
         
         // Build badges
         let badges = '';
-        if (cluster.is_default) badges += '<span class="badge badge-default"><i class="bi bi-star-fill"></i> Default</span>';
-        if (!cluster.is_active) badges += '<span class="badge"><i class="bi bi-pause-circle"></i> Inactive</span>';
-        if (cluster.allow_vm_deployment) badges += '<span class="badge"><i class="bi bi-hdd"></i> Deployable</span>';
-        if (cluster.auto_shutdown_enabled) badges += '<span class="badge"><i class="bi bi-power"></i> Auto-Shutdown</span>';
+        if (cluster.is_default) badges += '<span class="badge badge-default"><i class="ti ti-star-filled"></i> Default</span>';
+        if (!cluster.is_active) badges += '<span class="badge"><i class="ti ti-circle-pause"></i> Inactive</span>';
+        if (cluster.allow_vm_deployment) badges += '<span class="badge"><i class="ti ti-device-hard-drive"></i> Deployable</span>';
+        if (cluster.auto_shutdown_enabled) badges += '<span class="badge"><i class="ti ti-power"></i> Auto-Shutdown</span>';
         
         card.innerHTML = `
             <div class="cluster-header">
@@ -827,10 +827,10 @@ function renderClusters() {
             </div>
             <div class="cluster-actions">
                 <button class="btn-card" onclick="editCluster(${cluster.db_id})">
-                    <i class="bi bi-pencil"></i> Edit
+                    <i class="ti ti-pencil"></i> Edit
                 </button>
                 <button class="btn-card btn-danger" onclick="deleteCluster(${cluster.db_id}, '${escapeHtml(cluster.name)}')">
-                    <i class="bi bi-trash"></i> Delete
+                    <i class="ti ti-trash"></i> Delete
                 </button>
             </div>
         `;
@@ -918,7 +918,7 @@ async function loadStorages() {
     const button = event.target.closest('button');
     const originalHTML = button.innerHTML;
     button.disabled = true;
-    button.innerHTML = '<i class="bi bi-hourglass-split"></i> Loading...';
+    button.innerHTML = '<i class="ti ti-hourglass"></i> Loading...';
     
     try {
         let url;
@@ -1136,15 +1136,15 @@ function showAlert(message, type) {
     if (existing) existing.remove();
     
     const iconMap = {
-        success: 'check-circle-fill',
-        error: 'exclamation-triangle-fill',
-        info: 'info-circle-fill'
+        success: 'circle-check-filled',
+        error: 'alert-triangle-filled',
+        info: 'info-circle-filled'
     };
     
     const alert = document.createElement('div');
     alert.className = `alert alert-${type}`;
     alert.innerHTML = `
-        <i class="bi bi-${iconMap[type]}"></i>
+        <i class="ti ti-${iconMap[type]}"></i>
         <span>${message}</span>
     `;
     

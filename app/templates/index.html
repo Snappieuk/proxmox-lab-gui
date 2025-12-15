@@ -81,7 +81,7 @@
 <!-- Windows VMs Table -->
 {% if windows_vms %}
 <h4 class="section-header" style="cursor: pointer; user-select: none;" onclick="toggleSection('windows-table')">
-    <i class="bi bi-chevron-down" id="windows-table-icon"></i> Windows VMs
+    <i class="ti ti-chevron-down" id="windows-table-icon"></i> Windows VMs
 </h4>
 <table class="vm-table" id="windows-table">
     <thead>
@@ -99,7 +99,7 @@
         <tr data-vmid="{{ vm.vmid }}" data-category="windows" data-node="{{ vm.node }}" data-vm-name="{{ vm.name|lower }}" data-vm-ip="{{ vm.ip|lower if vm.ip else '' }}">
             <td>
                 <strong>{{ vm.name }}</strong>
-                {% if vm.rdp_available %}<i class="bi bi-pc-display" style="margin-left: 0.5rem; color: #0078d4;" title="RDP Available"></i>{% endif %}
+                {% if vm.rdp_available %}<i class="ti ti-device-desktop" style="margin-left: 0.5rem; color: #0078d4;" title="RDP Available"></i>{% endif %}
             </td>
             <td>{{ vm.vmid }}</td>
             <td>{{ vm.node }}</td>
@@ -116,24 +116,24 @@
                             data-action="start"
                             data-tooltip="Start VM"
                             {% if vm.status == 'running' %}disabled{% endif %}>
-                        <i class="bi bi-play-fill"></i>
+                        <i class="ti ti-player-play-filled"></i>
                     </button>
                     <button class="btn-icon btn-icon-danger btn-power" 
                             data-vmid="{{ vm.vmid }}" 
                             data-action="stop"
                             data-tooltip="Stop VM"
                             {% if vm.status == 'stopped' %}disabled{% endif %}>
-                        <i class="bi bi-stop-fill"></i>
+                        <i class="ti ti-player-stop-filled"></i>
                     </button>
                     <button class="btn-icon btn-icon-info"
                             onclick="openVMConsole({{ vm.vmid }}, '{{ vm.cluster_id }}')"
                             data-tooltip="Web Console">
-                        <i class="bi bi-window"></i>
+                        <i class="ti ti-browser"></i>
                     </button>
                     <a class="btn-icon btn-icon-primary" 
                        href="/rdp/{{ vm.vmid }}.rdp"
                        data-tooltip="Download RDP File">
-                        <i class="bi bi-file-earmark-arrow-down"></i>
+                        <i class="ti ti-file-download"></i>
                     </a>
                 </div>
             </td>
@@ -146,7 +146,7 @@
 <!-- Linux VMs Table -->
 {% if linux_vms %}
 <h4 class="section-header" style="cursor: pointer; user-select: none;" onclick="toggleSection('linux-table')">
-    <i class="bi bi-chevron-down" id="linux-table-icon"></i> Linux VMs
+    <i class="ti ti-chevron-down" id="linux-table-icon"></i> Linux VMs
 </h4>
 <table class="vm-table" id="linux-table">
     <thead>
@@ -164,7 +164,7 @@
         <tr data-vmid="{{ vm.vmid }}" data-category="linux" data-node="{{ vm.node }}" data-vm-name="{{ vm.name|lower }}" data-vm-ip="{{ vm.ip|lower if vm.ip else '' }}">
             <td>
                 <strong>{{ vm.name }}</strong>
-                {% if vm.rdp_available %}<i class="bi bi-pc-display" style="margin-left: 0.5rem; color: #0078d4;" title="RDP Available"></i>{% endif %}
+                {% if vm.rdp_available %}<i class="ti ti-device-desktop" style="margin-left: 0.5rem; color: #0078d4;" title="RDP Available"></i>{% endif %}
             </td>
             <td>{{ vm.vmid }}</td>
             <td>{{ vm.node }}</td>
@@ -181,14 +181,14 @@
                             data-action="start"
                             data-tooltip="Start VM"
                             {% if vm.status == 'running' %}disabled{% endif %}>
-                        <i class="bi bi-play-fill"></i>
+                        <i class="ti ti-player-play-filled"></i>
                     </button>
                     <button class="btn-icon btn-icon-danger btn-power" 
                             data-vmid="{{ vm.vmid }}" 
                             data-action="stop"
                             data-tooltip="Stop VM"
                             {% if vm.status == 'stopped' %}disabled{% endif %}>
-                        <i class="bi bi-stop-fill"></i>
+                        <i class="ti ti-player-stop-filled"></i>
                     </button>
                     <button class="btn-icon btn-icon-dark btn-ssh-web" 
                             data-vmid="{{ vm.vmid }}"
@@ -196,25 +196,25 @@
                             data-name="{{ vm.name }}"
                             data-tooltip="Open Web SSH Terminal"
                             {% if not vm.ip %}disabled{% endif %}>
-                        <i class="bi bi-terminal"></i>
+                        <i class="ti ti-terminal"></i>
                     </button>
                     <button class="btn-icon btn-icon-dark btn-ssh-copy" 
                             data-vmid="{{ vm.vmid }}"
                             data-ip="{{ vm.ip or '' }}"
                             data-tooltip="Copy SSH Command"
                             {% if not vm.ip %}disabled{% endif %}>
-                        <i class="bi bi-clipboard"></i>
+                        <i class="ti ti-clipboard"></i>
                     </button>
                     <button class="btn-icon btn-icon-info"
                             onclick="openVMConsole({{ vm.vmid }}, '{{ vm.cluster_id }}')"
                             data-tooltip="Web Console">
-                        <i class="bi bi-window"></i>
+                        <i class="ti ti-browser"></i>
                     </button>
                     {% if vm.rdp_available %}
                     <a class="btn-icon btn-icon-primary" 
                        href="/rdp/{{ vm.vmid }}.rdp"
                        data-tooltip="RDP File">
-                        <i class="bi bi-file-earmark-arrow-down"></i>
+                        <i class="ti ti-file-download"></i>
                     </a>
                     {% endif %}
                 </div>
@@ -228,7 +228,7 @@
 <!-- LXC Containers Table -->
 {% if lxc_containers %}
 <h4 class="section-header" style="cursor: pointer; user-select: none;" onclick="toggleSection('lxc-table')">
-    <i class="bi bi-chevron-down" id="lxc-table-icon"></i> LXC Containers
+    <i class="ti ti-chevron-down" id="lxc-table-icon"></i> LXC Containers
 </h4>
 <table class="vm-table" id="lxc-table">
     <thead>
@@ -260,14 +260,14 @@
                             data-action="start"
                             data-tooltip="Start Container"
                             {% if vm.status == 'running' %}disabled{% endif %}>
-                        <i class="bi bi-play-fill"></i>
+                        <i class="ti ti-player-play-filled"></i>
                     </button>
                     <button class="btn-icon btn-icon-danger btn-power" 
                             data-vmid="{{ vm.vmid }}" 
                             data-action="stop"
                             data-tooltip="Stop Container"
                             {% if vm.status == 'stopped' %}disabled{% endif %}>
-                        <i class="bi bi-stop-fill"></i>
+                        <i class="ti ti-player-stop-filled"></i>
                     </button>
                     <button class="btn-icon btn-icon-dark btn-ssh-web" 
                             data-vmid="{{ vm.vmid }}"
@@ -275,19 +275,19 @@
                             data-name="{{ vm.name }}"
                             data-tooltip="Open Web SSH Terminal"
                             {% if not vm.ip %}disabled{% endif %}>
-                        <i class="bi bi-terminal"></i>
+                        <i class="ti ti-terminal"></i>
                     </button>
                     <button class="btn-icon btn-icon-dark btn-ssh-copy" 
                             data-vmid="{{ vm.vmid }}"
                             data-ip="{{ vm.ip or '' }}"
                             data-tooltip="Copy SSH Command"
                             {% if not vm.ip %}disabled{% endif %}>
-                        <i class="bi bi-clipboard"></i>
+                        <i class="ti ti-clipboard"></i>
                     </button>
                     <button class="btn-icon btn-icon-info"
                             onclick="openVMConsole({{ vm.vmid }}, '{{ vm.cluster_id }}')"
                             data-tooltip="Web Console">
-                        <i class="bi bi-window"></i>
+                        <i class="ti ti-browser"></i>
                     </button>
                 </div>
             </td>
@@ -299,7 +299,7 @@
 
 {% if other_vms %}
 <h4 class="section-header" style="cursor: pointer; user-select: none;" onclick="toggleSection('other-table')">
-    <i class="bi bi-chevron-down" id="other-table-icon"></i> Other / Unknown
+    <i class="ti ti-chevron-down" id="other-table-icon"></i> Other / Unknown
 </h4>
 <table class="vm-table" id="other-table">
     <thead>
@@ -331,14 +331,14 @@
                             data-action="start"
                             data-tooltip="Start"
                             {% if vm.status == 'running' %}disabled{% endif %}>
-                        <i class="bi bi-play-fill"></i>
+                        <i class="ti ti-player-play-filled"></i>
                     </button>
                     <button class="btn-icon btn-icon-danger btn-power" 
                             data-vmid="{{ vm.vmid }}" 
                             data-action="stop"
                             data-tooltip="Stop"
                             {% if vm.status == 'stopped' %}disabled{% endif %}>
-                        <i class="bi bi-stop-fill"></i>
+                        <i class="ti ti-player-stop-filled"></i>
                     </button>
                 </div>
             </td>
@@ -354,7 +354,7 @@
 {% if is_admin %}
 <div style="margin-top: 3rem; padding: 2rem 0; border-top: 1px solid #e1dfdd; text-align: center;">
     <button type="button" id="refresh-btn" class="btn-secondary" style="padding: 0.75rem 2rem; font-size: 14px;">
-        <i class="bi bi-arrow-clockwise"></i> Refresh Cache
+        <i class="ti ti-refresh"></i> Refresh Cache
     </button>
     <p style="margin-top: 0.5rem; color: #605e5c; font-size: 12px;">Admin only: Force reload VM data from Proxmox server</p>
 </div>
@@ -370,7 +370,7 @@ window.refreshVMs = async function() {
     if (!btn) return;
     
     btn.disabled = true;
-    btn.innerHTML = '<i class="bi bi-arrow-clockwise spin"></i> Refreshing...';
+    btn.innerHTML = '<i class="ti ti-refresh spin"></i> Refreshing...';
     
     try {
         // Trigger force refresh
@@ -400,17 +400,17 @@ window.refreshVMs = async function() {
         console.log('Cache refreshed successfully, loaded', data.length, 'VMs');
         
         // Visual feedback
-        btn.innerHTML = '<i class="bi bi-check-circle"></i> Refreshed!';
+        btn.innerHTML = '<i class="ti ti-circle-check"></i> Refreshed!';
         setTimeout(() => {
-            btn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> Refresh Cache';
+            btn.innerHTML = '<i class="ti ti-refresh"></i> Refresh Cache';
         }, 2000);
         
     } catch (e) {
         console.error('Refresh failed:', e);
         alert('Failed to refresh cache: ' + e.message);
-        btn.innerHTML = '<i class="bi bi-x-circle"></i> Failed';
+        btn.innerHTML = '<i class="ti ti-circle-x"></i> Failed';
         setTimeout(() => {
-            btn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> Refresh Cache';
+            btn.innerHTML = '<i class="ti ti-refresh"></i> Refresh Cache';
         }, 2000);
     } finally {
         btn.disabled = false;
@@ -527,11 +527,11 @@ function toggleSection(tableId) {
     if (isVisible) {
         // Hide the tbody
         tbody.style.display = 'none';
-        if (icon) icon.className = 'bi bi-chevron-right';
+        if (icon) icon.className = 'ti ti-chevron-right';
     } else {
         // Show the tbody
         tbody.style.display = '';
-        if (icon) icon.className = 'bi bi-chevron-down';
+        if (icon) icon.className = 'ti ti-chevron-down';
     }
 }
 
@@ -731,7 +731,7 @@ function populateTables(vms) {
         header.onclick = () => toggleSection(`${cat}-table`);
         
         const icon = document.createElement('i');
-        icon.className = 'bi bi-chevron-down';
+        icon.className = 'ti ti-chevron-down';
         icon.id = `${cat}-table-icon`;
         
         header.appendChild(icon);
@@ -813,7 +813,7 @@ function createVMRow(vm, category) {
     // Add RDP icon if IP is available (desktop PC icon for VMs with RDP/IP)
     const hasValidIP = vm.ip && vm.ip !== 'N/A' && vm.ip !== 'Fetching...' && vm.ip.trim() !== '';
     console.log(`VM ${vm.name}: IP="${vm.ip}", hasValidIP=${hasValidIP}`); // Debug logging
-    const rdpIcon = hasValidIP ? ' <i class="bi bi-pc-display" style="margin-left: 0.5rem; color: #0078d4; font-size: 16px;" title="RDP Available"></i>' : '';
+    const rdpIcon = hasValidIP ? ' <i class="ti ti-device-desktop" style="margin-left: 0.5rem; color: #0078d4; font-size: 16px;" title="RDP Available"></i>' : '';
     
     row.innerHTML = `
         <td><strong>${vm.name}</strong>${rdpIcon}</td>
@@ -825,21 +825,21 @@ function createVMRow(vm, category) {
         </td>
         <td class="vm-ip"${vm.ip === 'Fetching...' ? ' style="font-style: italic; color: #858585;"' : ''}>${vm.ip || 'N/A'}</td>
         <td>
-            ${(window.isAdminView && vm.mapped_to) ? `<div style="font-size: 12px; color: #605e5c; margin-bottom: 6px;"><i class="bi bi-person"></i> Mapped to: <strong>${vm.mapped_to}</strong></div>` : ''}
+            ${(window.isAdminView && vm.mapped_to) ? `<div style="font-size: 12px; color: #605e5c; margin-bottom: 6px;"><i class="ti ti-user"></i> Mapped to: <strong>${vm.mapped_to}</strong></div>` : ''}
             <div class="action-buttons">
                 <button class="btn-icon btn-icon-success btn-power" 
                         data-vmid="${vm.vmid}" 
                         data-action="start"
                         data-tooltip="Start VM"
                         ${vm.status === 'running' ? 'disabled' : ''}>
-                    <i class="bi bi-power"></i>
+                    <i class="ti ti-power"></i>
                 </button>
                 <button class="btn-icon btn-icon-danger btn-power" 
                         data-vmid="${vm.vmid}" 
                         data-action="stop"
                         data-tooltip="Stop VM"
                         ${vm.status === 'stopped' ? 'disabled' : ''}>
-                    <i class="bi bi-stop-circle"></i>
+                    <i class="ti ti-circle-off"></i>
                 </button>
                 ${isLinux ? `
                 <button class="btn-icon btn-icon-dark btn-ssh-web" 
@@ -848,28 +848,28 @@ function createVMRow(vm, category) {
                         data-name="${vm.name}"
                         data-tooltip="SSH Terminal"
                         ${!vm.ip ? 'disabled' : ''}>
-                    <i class="bi bi-terminal-fill"></i>
+                    <i class="ti ti-terminal-2"></i>
                 </button>
                 <button class="btn-icon btn-icon-dark btn-ssh-copy" 
                         data-vmid="${vm.vmid}"
                         data-ip="${vm.ip || ''}"
                         data-tooltip="Copy SSH"
                         ${!vm.ip ? 'disabled' : ''}>
-                    <i class="bi bi-clipboard-data"></i>
+                    <i class="ti ti-clipboard-data"></i>
                 </button>
                 ` : ''}
                 ${vm.type === 'qemu' ? `
                 <button class="btn-icon btn-icon-info"
                         onclick="openVMConsole(${vm.vmid}, '${vm.cluster_id}')"
                         data-tooltip="Web Console (VNC)">
-                    <i class="bi bi-window"></i>
+                    <i class="ti ti-browser"></i>
                 </button>
                 ` : ''}
                 ${hasRdp ? `
                 <a class="btn-icon btn-icon-primary" 
                    href="/rdp/${vm.vmid}.rdp"
                    data-tooltip="RDP File">
-                    <i class="bi bi-file-earmark-arrow-down"></i>
+                    <i class="ti ti-file-download"></i>
                 </a>
                 ` : ''}
             </div>
@@ -1028,7 +1028,7 @@ async function sendPowerAction(vmid, action, btn) {
         // Set pending state (grey button with spinner)
         btn.disabled = true;
         btn.style.opacity = '0.5';
-        icon.className = 'bi bi-hourglass-split';
+        icon.className = 'ti ti-hourglass';
         
         const resp = await fetch(`/api/vm/${vmid}/${action}`, { 
             method: "POST",
@@ -1043,7 +1043,7 @@ async function sendPowerAction(vmid, action, btn) {
             // Show error state (red X)
             btn.classList.remove('btn-icon-success', 'btn-icon-danger');
             btn.classList.add('btn-icon-error');
-            icon.className = 'bi bi-x-circle-fill';
+            icon.className = 'ti ti-circle-x-filled';
             btn.style.opacity = '1';
             
             // Log error for debugging
@@ -1099,7 +1099,7 @@ async function sendPowerAction(vmid, action, btn) {
         // Show error state
         btn.classList.remove('btn-icon-success', 'btn-icon-danger');
         btn.classList.add('btn-icon-error');
-        icon.className = 'bi bi-x-circle-fill';
+        icon.className = 'ti ti-circle-x-filled';
         btn.style.opacity = '1';
         
         // Revert after 3 seconds
@@ -1205,9 +1205,9 @@ window.addEventListener("load", function () {
         const sshCommand = `ssh root@${ip}`;
         navigator.clipboard.writeText(sshCommand).then(() => {
             const icon = btn.querySelector('i');
-            icon.className = 'bi bi-check-lg';
+            icon.className = 'ti ti-check';
             setTimeout(() => {
-                icon.className = 'bi bi-clipboard';
+                icon.className = 'ti ti-clipboard';
             }, 2000);
         }).catch(() => {
             alert(`SSH command:\n${sshCommand}`);

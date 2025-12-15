@@ -4,7 +4,7 @@
 <div class="page-header">
     <div>
         <h1>
-            <i class="bi bi-mortarboard"></i> {{ class_.name }}
+            <i class="ti ti-school"></i> {{ class_.name }}
         </h1>
         <p class="page-subtitle">
             {% if class_.description %}
@@ -17,13 +17,13 @@
     <div class="header-actions">
         {% if can_manage %}
         <button class="btn-secondary" onclick="showInviteModal()">
-            <i class="bi bi-link-45deg"></i> Invite Link
+            <i class="ti ti-link"></i> Invite Link
         </button>
         <button class="btn-secondary" onclick="showAddVmsModal()">
-            <i class="bi bi-plus-circle"></i> Add VMs
+            <i class="ti ti-circle-plus"></i> Add VMs
         </button>
         <button class="btn-primary" onclick="pushUpdates()">
-            <i class="bi bi-cloud-upload"></i> Push Updates
+            <i class="ti ti-cloud-upload"></i> Push Updates
         </button>
         {% endif %}
     </div>
@@ -119,19 +119,19 @@
                                 onclick="startVm({{ vm.proxmox_vmid }}, '{{ vm.node }}')"
                                 data-tooltip="Start VM"
                                 title="Start VM">
-                            <i class="bi bi-play-fill"></i>
+                            <i class="ti ti-player-play-filled"></i>
                         </button>
                         <button class="btn btn-sm btn-danger" 
                                 onclick="stopVm({{ vm.proxmox_vmid }}, '{{ vm.node }}')"
                                 data-tooltip="Stop VM"
                                 title="Stop VM">
-                            <i class="bi bi-stop-fill"></i>
+                            <i class="ti ti-player-stop-filled"></i>
                         </button>
                         <button class="btn btn-sm btn-warning" 
                                 onclick="revertVm({{ vm.proxmox_vmid }}, '{{ vm.node }}')"
                                 data-tooltip="Revert to Baseline"
                                 title="Revert to Baseline">
-                            <i class="bi bi-arrow-counterclockwise"></i>
+                            <i class="ti ti-refresh"></i>
                         </button>
                         {% endif %}
                         {% if can_manage %}
@@ -139,13 +139,13 @@
                                 onclick="showAssignModal({{ vm.id }}, {{ vm.proxmox_vmid }})"
                                 data-tooltip="Assign User"
                                 title="Assign to User">
-                            <i class="bi bi-person-plus"></i>
+                            <i class="ti ti-user-plus"></i>
                         </button>
                         <button class="btn btn-sm btn-outline-danger" 
                                 onclick="deleteVm({{ vm.id }}, {{ vm.proxmox_vmid }})"
                                 data-tooltip="Delete VM"
                                 title="Delete VM">
-                            <i class="bi bi-trash"></i>
+                            <i class="ti ti-trash"></i>
                         </button>
                         {% endif %}
                     </div>
@@ -157,12 +157,12 @@
     </table>
     {% else %}
     <div class="empty-state">
-        <i class="bi bi-pc-display" style="font-size: 48px; color: #8a8886;"></i>
+        <i class="ti ti-device-desktop" style="font-size: 48px; color: #8a8886;"></i>
         <h3>No Virtual Machines</h3>
         {% if can_manage %}
             <p>Add VMs to this class to get started.</p>
             <button class="btn-primary" onclick="showAddVmsModal()">
-                <i class="bi bi-plus-circle"></i> Add VMs
+                <i class="ti ti-circle-plus"></i> Add VMs
             </button>
         {% else %}
             <p>No VMs have been assigned to you yet.</p>
@@ -187,13 +187,13 @@
                     <input type="text" id="invite-url" readonly 
                            value="{{ request.host_url }}classes/join/{{ class_.join_token }}">
                     <button class="btn-icon btn-icon-primary" onclick="copyInviteLink()">
-                        <i class="bi bi-clipboard"></i>
+                        <i class="ti ti-clipboard"></i>
                     </button>
                 </div>
                 {% if class_.token_never_expires %}
-                    <p class="invite-info"><i class="bi bi-infinity"></i> Never expires</p>
+                    <p class="invite-info"><i class="ti ti-infinity"></i> Never expires</p>
                 {% else %}
-                    <p class="invite-info"><i class="bi bi-clock"></i> Expires: {{ class_.token_expires_at }}</p>
+                    <p class="invite-info"><i class="ti ti-clock"></i> Expires: {{ class_.token_expires_at }}</p>
                 {% endif %}
             </div>
             {% else %}
@@ -205,11 +205,11 @@
                     <input type="checkbox" id="never-expires"> Never expires
                 </label>
                 <button class="btn-primary" onclick="generateInvite()">
-                    <i class="bi bi-arrow-repeat"></i> Generate New Link
+                    <i class="ti ti-refresh"></i> Generate New Link
                 </button>
                 {% if class_.token_valid %}
                 <button class="btn-danger" onclick="disableInvite()">
-                    <i class="bi bi-x-circle"></i> Disable Link
+                    <i class="ti ti-circle-x"></i> Disable Link
                 </button>
                 {% endif %}
             </div>
@@ -251,7 +251,7 @@
             <div class="form-actions">
                 <button class="btn-secondary" onclick="closeModal('add-vms-modal')">Cancel</button>
                 <button class="btn-primary" id="create-vms-btn" onclick="createVms()">
-                    <i class="bi bi-plus-circle"></i> Create VMs
+                    <i class="ti ti-circle-plus"></i> Create VMs
                 </button>
             </div>
         </div>
@@ -275,10 +275,10 @@
             </div>
             <div class="form-actions">
                 <button class="btn-secondary" onclick="unassignVm()">
-                    <i class="bi bi-person-x"></i> Unassign
+                    <i class="ti ti-user-x"></i> Unassign
                 </button>
                 <button class="btn-primary" onclick="assignVm()">
-                    <i class="bi bi-person-check"></i> Assign
+                    <i class="ti ti-user-check"></i> Assign
                 </button>
             </div>
         </div>
@@ -668,7 +668,7 @@ async function createVms() {
     
     progressDiv.style.display = 'block';
     createBtn.disabled = true;
-    createBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Creating...';
+    createBtn.innerHTML = '<i class="ti ti-hourglass"></i> Creating...';
     
     try {
         // Start clone operation
@@ -726,7 +726,7 @@ async function createVms() {
                         currentVmText.textContent = `Error: ${errorMsg}`;
                         alert('Clone operation failed: ' + errorMsg);
                         createBtn.disabled = false;
-                        createBtn.innerHTML = '<i class="bi bi-plus-circle"></i> Create VMs';
+                        createBtn.innerHTML = '<i class="ti ti-circle-plus"></i> Create VMs';
                     }
                 } catch (e) {
                     console.error('Progress check failed:', e);
@@ -735,13 +735,13 @@ async function createVms() {
         } else {
             alert('Failed to create VMs: ' + data.error);
             createBtn.disabled = false;
-            createBtn.innerHTML = '<i class="bi bi-plus-circle"></i> Create VMs';
+            createBtn.innerHTML = '<i class="ti ti-circle-plus"></i> Create VMs';
             progressDiv.style.display = 'none';
         }
     } catch (e) {
         alert('Error: ' + e.message);
         createBtn.disabled = false;
-        createBtn.innerHTML = '<i class="bi bi-plus-circle"></i> Create VMs';
+        createBtn.innerHTML = '<i class="ti ti-circle-plus"></i> Create VMs';
         progressDiv.style.display = 'none';
     }
 }

@@ -3,7 +3,7 @@
 {% block content %}
 <div class="page-header" style="margin-bottom: 16px;">
     <div>
-        <h1><i class="bi bi-plus-circle"></i> Create New Class</h1>
+        <h1><i class="ti ti-circle-plus"></i> Create New Class</h1>
         <p class="page-subtitle">Set up a new lab class with customized VMs</p>
     </div>
 </div>
@@ -15,7 +15,7 @@
             <!-- Section 1: Class Details -->
             <div class="form-card-section">
                 <div class="form-card-header">
-                    <h3 class="form-card-title"><i class="bi bi-info-circle"></i> Class Details</h3>
+                    <h3 class="form-card-title"><i class="ti ti-info-circle"></i> Class Details</h3>
                 </div>
                 <div class="form-card-body" style="padding: 12px 20px;">
                     <div class="form-group-compact">
@@ -37,7 +37,7 @@
             <!-- Section 2: Deployment Settings -->
             <div class="form-card-section">
                 <div class="form-card-header">
-                    <h3 class="form-card-title"><i class="bi bi-cloud-upload"></i> Deployment Settings</h3>
+                    <h3 class="form-card-title"><i class="ti ti-cloud-upload"></i> Deployment Settings</h3>
                 </div>
                 <div class="form-card-body" style="padding: 12px 20px;">
                     <div class="form-group-compact">
@@ -69,7 +69,7 @@
             <!-- Section 3: VM Configuration (hidden by default) -->
             <div class="form-card-section" id="vm-config-section" style="display: none;">
                 <div class="form-card-header">
-                    <h3 class="form-card-title"><i class="bi bi-cpu"></i> VM Configuration</h3>
+                    <h3 class="form-card-title"><i class="ti ti-cpu"></i> VM Configuration</h3>
                 </div>
                 <div class="form-card-body" style="padding: 12px 20px;">
                     <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px;">
@@ -108,7 +108,7 @@
             <!-- Section 4: Class Size -->
             <div class="form-card-section">
                 <div class="form-card-header">
-                    <h3 class="form-card-title"><i class="bi bi-people"></i> Class Size</h3>
+                    <h3 class="form-card-title"><i class="ti ti-users"></i> Class Size</h3>
                 </div>
                 <div class="form-card-body" style="padding: 12px 20px;">
                     <div class="form-group-compact">
@@ -123,7 +123,7 @@
             <div class="form-actions-right">
                 <a href="{{ url_for('classes.classes_list') }}" class="btn-secondary">Cancel</a>
                 <button type="submit" class="btn-primary">
-                    <i class="bi bi-check-lg"></i> Create Class
+                    <i class="ti ti-check"></i> Create Class
                 </button>
             </div>
         </form>
@@ -542,7 +542,7 @@ document.getElementById('create-class-form').addEventListener('submit', async fu
     
     const submitBtn = this.querySelector('button[type="submit"]');
     submitBtn.disabled = true;
-    submitBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Creating...';
+    submitBtn.innerHTML = '<i class="ti ti-hourglass"></i> Creating...';
     
     try {
         let templateId = null;
@@ -624,21 +624,21 @@ document.getElementById('create-class-form').addEventListener('submit', async fu
                     </p>
                     <div style="background: #f3f2f1; border-radius: 4px; padding: 16px; margin-bottom: 16px;">
                         <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px;">
-                            <i class="bi bi-hdd-stack" style="font-size: 20px; color: #0078d4;"></i>
+                            <i class="ti ti-database" style="font-size: 20px; color: #0078d4;"></i>
                             <div style="text-align: left; flex: 1;">
                                 <div style="font-weight: 600; color: #323130; font-size: 13px;">Exporting template disk</div>
                                 <div style="color: #8a8886; font-size: 12px;">Converting to QCOW2 format...</div>
                             </div>
                         </div>
                         <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px;">
-                            <i class="bi bi-cpu" style="font-size: 20px; color: #0078d4;"></i>
+                            <i class="ti ti-cpu" style="font-size: 20px; color: #0078d4;"></i>
                             <div style="text-align: left; flex: 1;">
                                 <div style="font-weight: 600; color: #323130; font-size: 13px;">Creating VM shells</div>
                                 <div style="color: #8a8886; font-size: 12px;">Allocating VMIDs and resources...</div>
                             </div>
                         </div>
                         <div style="display: flex; align-items: center; gap: 12px;">
-                            <i class="bi bi-arrow-repeat" style="font-size: 20px; color: #0078d4;"></i>
+                            <i class="ti ti-refresh" style="font-size: 20px; color: #0078d4;"></i>
                             <div style="text-align: left; flex: 1;">
                                 <div style="font-weight: 600; color: #323130; font-size: 13px;">Creating overlay disks</div>
                                 <div style="color: #8a8886; font-size: 12px;">Setting up copy-on-write layers...</div>
@@ -722,13 +722,13 @@ document.getElementById('create-class-form').addEventListener('submit', async fu
         } else {
             alert('Failed to create class: ' + (data.error || 'Unknown error'));
             submitBtn.disabled = false;
-            submitBtn.innerHTML = '<i class="bi bi-check-lg"></i> Create Class';
+            submitBtn.innerHTML = '<i class="ti ti-check"></i> Create Class';
         }
     } catch (e) {
         console.error('Error creating class:', e);
         alert('Error creating class: ' + e.message);
         submitBtn.disabled = false;
-        submitBtn.innerHTML = '<i class="bi bi-check-lg"></i> Create Class';
+        submitBtn.innerHTML = '<i class="ti ti-check"></i> Create Class';
     }
 });
 </script>

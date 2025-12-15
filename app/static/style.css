@@ -88,14 +88,14 @@ body {
     text-decoration: underline;
 }
 
-.topbar-link i.bi-person-circle {
+.topbar-link i.ti-user-circle {
     font-size: 1.5rem;
     vertical-align: middle;
     margin-right: 0.5rem;
     transition: transform 0.2s ease;
 }
 
-.topbar-link:hover i.bi-person-circle {
+.topbar-link:hover i.ti-user-circle {
     transform: scale(1.1);
 }
 
@@ -927,25 +927,9 @@ body {
     z-index: 1000;
 }
 
-/* Fallback for Bootstrap Icons when CDN is blocked */
-.bi::before {
-    font-family: Arial, sans-serif;
-    font-weight: normal;
-    font-style: normal;
-}
-
-.bi-play-fill::before { content: "▶"; }
-.bi-stop-fill::before { content: "■"; }
-.bi-download::before { content: "⬇"; }
-.bi-terminal::before { content: "⌨"; }
-.bi-clipboard::before { content: "📋"; }
-.bi-arrow-clockwise::before { content: "↻"; }
-.bi-trash::before { content: "🗑"; }
-.bi-plus-circle::before { content: "+"; font-size: 1em; }
-.bi-save::before { content: "💾"; }
-.bi-x-circle::before { content: "❌"; }
-.bi-check-circle-fill::before { content: "✓"; }
-.bi-exclamation-triangle-fill::before { content: "⚠"; }
+/* Tabler Icons - https://tabler.io/icons */
+/* Icons are loaded from CDN in base.html */
+/* All icons use .ti class prefix (e.g., ti-user, ti-settings, etc.) */
 
 /* Summary Cards (Compact) */
 .summary-cards-compact {

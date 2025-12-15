@@ -3,12 +3,12 @@
 {% block content %}
 <div class="page-header">
     <div>
-        <h1><i class="bi bi-people"></i> User Management</h1>
+        <h1><i class="ti ti-users"></i> User Management</h1>
         <p class="page-subtitle">Manage Proxmox and local user accounts</p>
     </div>
     <div>
         <button onclick="showCreateUserModal()" class="btn-primary">
-            <i class="bi bi-person-plus"></i> Create User
+            <i class="ti ti-user-plus"></i> Create User
         </button>
     </div>
 </div>
@@ -301,7 +301,7 @@ async function loadUsers() {
                         </select>
                     ` : `
                         <button class="action-btn" onclick="createLocalAccount('${user.username}')">
-                            <i class="bi bi-plus"></i> Create Local
+                            <i class="ti ti-plus"></i> Create Local
                         </button>
                     `}
                 </td>
@@ -314,7 +314,7 @@ async function loadUsers() {
                 <td>
                     ${user.has_local_account && user.local_role !== 'adminer' ? `
                         <button class="action-btn danger" onclick="deleteUser('${user.username}')">
-                            <i class="bi bi-trash"></i> Delete Local
+                            <i class="ti ti-trash"></i> Delete Local
                         </button>
                     ` : ''}
                 </td>

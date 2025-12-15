@@ -6,7 +6,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Segoe+UI:wght@400;600&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/dist/tabler-icons.min.css">
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
@@ -18,7 +18,7 @@
     <div class="topbar-right">
         {% if session.get("user") %}
             <a href="{{ url_for('portal.profile') }}" class="topbar-link" title="Profile Settings">
-                <i class="bi bi-person-circle"></i>
+                <i class="ti ti-user-circle"></i>
             </a>
             <span class="topbar-user">
                 {{ session.get("user") }}
@@ -36,7 +36,7 @@
         {% if session.get("user") and is_admin %}
         <div class="cluster-selector">
             <label for="cluster-select" class="cluster-label">
-                <i class="bi bi-hdd-rack"></i> Cluster
+                <i class="ti ti-server-2"></i> Cluster
             </label>
             <select id="cluster-select" class="cluster-dropdown" onchange="filterByCluster(this.value)">
                 <option value="all">All Clusters</option>
@@ -52,16 +52,16 @@
         {% if session.get("user") %}
             <a class="sidebar-link {% if request.endpoint == 'portal.portal' %}sidebar-link-active{% endif %}"
                href="{{ url_for('portal.portal') }}">
-                <i class="bi bi-pc-display"></i> My machines
+                <i class="ti ti-device-desktop"></i> My machines
             </a>
             <a class="sidebar-link {% if request.endpoint and 'classes' in request.endpoint %}sidebar-link-active{% endif %}"
                href="{{ url_for('classes.classes_list') }}">
-                <i class="bi bi-mortarboard"></i> Classes
+                <i class="ti ti-school"></i> Classes
             </a>
             {% if is_admin or (local_user and local_user.role in ['teacher', 'adminer']) %}
                 <a class="sidebar-link {% if request.endpoint == 'template_builder.template_builder_page' %}sidebar-link-active{% endif %}"
                    href="{{ url_for('template_builder.template_builder_page') }}">
-                    <i class="bi bi-tools"></i> Template Builder
+                    <i class="ti ti-tools"></i> Template Builder
                 </a>
             {% endif %}
             {% if is_admin %}
@@ -70,23 +70,23 @@
             {% if is_admin %}
                 <a class="sidebar-link {% if request.endpoint == 'admin_diagnostics.admin_view' %}sidebar-link-active{% endif %}"
                    href="{{ url_for('admin_diagnostics.admin_view') }}">
-                    <i class="bi bi-eye"></i> Admin view
+                    <i class="ti ti-eye"></i> Admin view
                 </a>
                 <a class="sidebar-link {% if request.endpoint == 'admin_users.users_management' %}sidebar-link-active{% endif %}"
                    href="{{ url_for('admin_users.users_management') }}">
-                    <i class="bi bi-people"></i> User management
+                    <i class="ti ti-users"></i> User management
                 </a>
                 <a class="sidebar-link {% if request.endpoint == 'admin_mappings.admin_mappings' %}sidebar-link-active{% endif %}"
                    href="{{ url_for('admin_mappings.admin_mappings') }}">
-                    <i class="bi bi-arrow-left-right"></i> Mappings
+                    <i class="ti ti-arrows-left-right"></i> Mappings
                 </a>
                 <a class="sidebar-link {% if request.endpoint == 'admin_vm_mappings.vm_class_mappings' %}sidebar-link-active{% endif %}"
                    href="{{ url_for('admin_vm_mappings.vm_class_mappings') }}">
-                    <i class="bi bi-diagram-3"></i> VM:Class Mappings
+                    <i class="ti ti-topology-star-3"></i> VM:Class Mappings
                 </a>
                 <a class="sidebar-link {% if request.endpoint == 'admin_diagnostics.admin_probe' %}sidebar-link-active{% endif %}"
                    href="{{ url_for('admin_diagnostics.admin_probe') }}">
-                    <i class="bi bi-activity"></i> Proxmox probe
+                    <i class="ti ti-activity"></i> Proxmox probe
                 </a>
                 
             {% endif %}
@@ -96,7 +96,7 @@
     <div class="sidebar-settings">
         <a class="sidebar-link sidebar-link-settings {% if request.endpoint == 'admin_clusters.admin_settings' %}sidebar-link-active{% endif %}"
            href="{{ url_for('admin_clusters.admin_settings') }}">
-            <i class="bi bi-gear-fill"></i> Settings
+            <i class="ti ti-settings-filled"></i> Settings
         </a>
     </div>
     {% endif %}

@@ -3,14 +3,14 @@
 {% block content %}
 <div class="page-header">
     <div>
-        <h1><i class="bi bi-person-circle"></i> Profile Settings</h1>
+        <h1><i class="ti ti-user-circle"></i> Profile Settings</h1>
         <p class="page-subtitle">Manage your account settings and password</p>
     </div>
 </div>
 
 <div class="content-card" style="max-width: 600px; margin: 0 auto;">
     <h2 style="margin-bottom: 1.5rem; font-size: 1.25rem; color: #323130;">
-        <i class="bi bi-person"></i> Account Information
+        <i class="ti ti-user"></i> Account Information
     </h2>
     
     <div class="info-row">
@@ -33,14 +33,14 @@
     
     {% if is_proxmox_user %}
     <div class="alert alert-info" style="margin-top: 1.5rem;">
-        <i class="bi bi-info-circle"></i>
+        <i class="ti ti-info-circle"></i>
         <strong>Proxmox Account:</strong> Your password is managed by Proxmox. You cannot change it here.
     </div>
     {% else %}
     <hr style="margin: 2rem 0; border: none; border-top: 1px solid #edebe9;">
     
     <h2 style="margin-bottom: 1.5rem; font-size: 1.25rem; color: #323130;">
-        <i class="bi bi-key"></i> Change Password
+        <i class="ti ti-key"></i> Change Password
     </h2>
     
     <form id="change-password-form" onsubmit="changePassword(event)">
@@ -79,10 +79,10 @@
         
         <div class="form-actions" style="margin-top: 1.5rem;">
             <button type="submit" class="btn-primary">
-                <i class="bi bi-check-circle"></i> Change Password
+                <i class="ti ti-circle-check"></i> Change Password
             </button>
             <a href="{{ url_for('portal.portal') }}" class="btn-secondary">
-                <i class="bi bi-x-circle"></i> Cancel
+                <i class="ti ti-circle-x"></i> Cancel
             </a>
         </div>
     </form>
@@ -248,13 +248,13 @@
 function showAlert(message, type = 'info') {
     const container = document.getElementById('alert-container');
     const alertClass = type === 'success' ? 'alert-success' : type === 'error' ? 'alert-error' : 'alert-info';
-    const icon = type === 'success' ? 'check-circle' : type === 'error' ? 'exclamation-circle' : 'info-circle';
+    const icon = type === 'success' ? 'circle-check' : type === 'error' ? 'exclamation-circle' : 'info-circle';
     
     const alert = document.createElement('div');
     alert.className = `alert ${alertClass}`;
     alert.style.marginBottom = '1rem';
     alert.innerHTML = `
-        <i class="bi bi-${icon}"></i>
+        <i class="ti ti-${icon}"></i>
         <span>${message}</span>
     `;
     

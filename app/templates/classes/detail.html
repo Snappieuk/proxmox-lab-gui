@@ -211,45 +211,45 @@
         <!-- Template Section (Teacher/Admin Only) -->
         {% if can_manage %}
             <a class="sidebar-link sidebar-link-active" href="#template" onclick="showSection('template'); return false;">
-                <i class="bi bi-box-seam"></i> Template
+                <i class="ti ti-package"></i> Template
             </a>
             <a class="sidebar-link" href="#vms" onclick="showSection('vms'); return false;">
-                <i class="bi bi-hdd-rack"></i> Virtual Machines
+                <i class="ti ti-server-2"></i> Virtual Machines
             </a>
             <a class="sidebar-link" href="#students" onclick="showSection('students'); return false;">
-                <i class="bi bi-people"></i> Students
+                <i class="ti ti-users"></i> Students
             </a>
             <a class="sidebar-link" href="#owners" onclick="showSection('owners'); return false;">
-                <i class="bi bi-person-badge"></i> Co-Owners
+                <i class="ti ti-user-shield"></i> Co-Owners
             </a>
             <a class="sidebar-link" href="#settings" onclick="showSection('settings'); return false;">
-                <i class="bi bi-gear"></i> Settings
+                <i class="ti ti-settings"></i> Settings
             </a>
         {% else %}
             <!-- Student View -->
             <a class="sidebar-link sidebar-link-active" href="#my-vm" onclick="showSection('my-vm'); return false;">
-                <i class="bi bi-pc-display"></i> My Machine
+                <i class="ti ti-device-desktop"></i> My Machine
             </a>
         {% endif %}
         
         <div class="sidebar-section-title" style="margin-top: 1rem;">Navigation</div>
         <a class="sidebar-link" href="{{ url_for('portal.portal') }}">
-            <i class="bi bi-house"></i> Portal Home
+            <i class="ti ti-home"></i> Portal Home
         </a>
         <a class="sidebar-link" href="{{ url_for('classes.classes_list') }}">
-            <i class="bi bi-arrow-left"></i> Back to Classes
+            <i class="ti ti-arrow-left"></i> Back to Classes
         </a>
         
         {% if can_manage %}
         <div class="sidebar-section-title" style="margin-top: 1rem;">Danger Zone</div>
         {% if is_owner or (user_role == 'adminer') %}
         <a class="sidebar-link" href="#" onclick="deleteClass(); return false;" style="color: #dc3545;">
-            <i class="bi bi-trash"></i> Delete Class
+            <i class="ti ti-trash"></i> Delete Class
         </a>
         {% endif %}
         {% if is_co_owner %}
         <div style="padding: 0.75rem 1rem; font-size: 0.85rem; color: #666; background: #f9f9f9; border-radius: 4px; margin: 0.5rem 0;">
-            <i class="bi bi-info-circle"></i> Co-owners cannot delete classes
+            <i class="ti ti-info-circle"></i> Co-owners cannot delete classes
         </div>
         {% endif %}
         {% endif %}
@@ -263,7 +263,7 @@
         <div id="template-section" class="content-section">
             <div class="page-header">
                 <div>
-                    <h1><i class="bi bi-box-seam"></i> Template Management</h1>
+                    <h1><i class="ti ti-package"></i> Template Management</h1>
                     <p class="page-subtitle">Manage the base template for this class</p>
                 </div>
             </div>
@@ -298,25 +298,25 @@
                         <div style="display: flex; align-items: center; gap: 0.75rem;">
                             <!-- Power Buttons -->
                             <button id="btn-start-template" onclick="handleStartTemplate()" class="btn-header" title="Start VM" style="display: none;">
-                                <i class="bi bi-play-fill"></i>
+                                <i class="ti ti-player-play-filled"></i>
                             </button>
                             <button id="btn-stop-template" onclick="handleStopTemplate()" class="btn-header" title="Stop VM" style="display: none;">
-                                <i class="bi bi-stop-fill"></i>
+                                <i class="ti ti-player-stop-filled"></i>
                             </button>
                             
                             <!-- SSH Button -->
                             <button id="btn-ssh-template" onclick="sshToTemplate()" class="btn-header" title="SSH Terminal">
-                                <i class="bi bi-terminal-fill"></i>
+                                <i class="ti ti-terminal-2"></i>
                             </button>
                             
                             <!-- Console Button -->
                             <button id="btn-console-template" onclick="consoleToTemplate()" class="btn-header" title="Web Console">
-                                <i class="bi bi-window"></i>
+                                <i class="ti ti-browser"></i>
                             </button>
                             
                             <!-- RDP Button -->
                             <button id="btn-rdp-template" onclick="rdpToTemplate()" class="btn-header" title="Download RDP">
-                                <i class="bi bi-file-earmark-arrow-down"></i>
+                                <i class="ti ti-file-download"></i>
                             </button>
                         </div>
                     </div>
@@ -324,17 +324,17 @@
                     <!-- Quick Actions Row -->
                     <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin-bottom: 2rem;">
                         <button onclick="reimageTemplate()" class="btn-action-large btn-gray">
-                            <i class="bi bi-arrow-counterclockwise"></i>
+                            <i class="ti ti-refresh"></i>
                             <span>Reimage</span>
                             <small>Reset to baseline</small>
                         </button>
                         <button onclick="saveTemplate()" class="btn-action-large btn-blue">
-                            <i class="bi bi-floppy"></i>
+                            <i class="ti ti-device-floppy"></i>
                             <span>Save Template</span>
                             <small>Save current state</small>
                         </button>
                         <button onclick="pushTemplate()" class="btn-action-large btn-orange">
-                            <i class="bi bi-arrow-repeat"></i>
+                            <i class="ti ti-refresh"></i>
                             <span>Push to VMs</span>
                             <small>Update all students</small>
                         </button>
@@ -343,7 +343,7 @@
                     <!-- Info Box -->
                     <div style="padding: 1rem; background: #e8f4fd; border-radius: 6px; border-left: 4px solid #0078d4;">
                         <div style="display: flex; align-items: start; gap: 0.75rem;">
-                            <i class="bi bi-info-circle" style="font-size: 1.25rem; color: #0078d4; margin-top: 0.1rem;"></i>
+                            <i class="ti ti-info-circle" style="font-size: 1.25rem; color: #0078d4; margin-top: 0.1rem;"></i>
                             <div style="font-size: 0.9rem; color: #323130;">
                                 <strong style="display: block; margin-bottom: 0.5rem;">Template Workflow</strong>
                                 <div style="line-height: 1.6;">
@@ -362,21 +362,21 @@
         <div id="vms-section" class="content-section" style="display: none;">
             <div class="page-header">
                 <div>
-                    <h1><i class="bi bi-hdd-rack"></i> Virtual Machines</h1>
+                    <h1><i class="ti ti-server-2"></i> Virtual Machines</h1>
                     <p class="page-subtitle">Manage student VMs for this class</p>
                 </div>
                 <div style="display: flex; gap: 0.5rem;">
                     <button onclick="bulkStartVMs()" class="btn-secondary" id="bulk-start-btn" style="display: none;">
-                        <i class="bi bi-power"></i> Start Selected
+                        <i class="ti ti-power"></i> Start Selected
                     </button>
                     <button onclick="bulkStopVMs()" class="btn-secondary" id="bulk-stop-btn" style="display: none;">
-                        <i class="bi bi-power"></i> Stop Selected
+                        <i class="ti ti-power"></i> Stop Selected
                     </button>
                     <button onclick="showAddVMsModal()" class="btn-secondary">
-                        <i class="bi bi-plus-circle"></i> Add VMs
+                        <i class="ti ti-circle-plus"></i> Add VMs
                     </button>
                     <button onclick="refreshVMs()" class="btn-primary">
-                        <i class="bi bi-arrow-clockwise"></i> Refresh
+                        <i class="ti ti-refresh"></i> Refresh
                     </button>
                 </div>
             </div>
@@ -439,32 +439,32 @@
                                     <button class="btn-icon btn-icon-success btn-start btn-power" 
                                             onclick="startVm({{ vm.proxmox_vmid }}, '{{ vm.node }}')"
                                             title="Start VM">
-                                        <i class="bi bi-play-fill"></i>
+                                        <i class="ti ti-player-play-filled"></i>
                                     </button>
                                     <button class="btn-icon btn-icon-danger btn-stop btn-power" 
                                             onclick="stopVm({{ vm.proxmox_vmid }}, '{{ vm.node }}')"
                                             title="Stop VM">
-                                        <i class="bi bi-stop-fill"></i>
+                                        <i class="ti ti-player-stop-filled"></i>
                                     </button>
                                     <button class="btn-icon btn-icon-dark" 
                                             onclick="revertVm({{ vm.proxmox_vmid }}, '{{ vm.node }}')"
                                             title="Revert to Baseline">
-                                        <i class="bi bi-arrow-counterclockwise"></i>
+                                        <i class="ti ti-refresh"></i>
                                     </button>
                                     <button class="btn-icon btn-icon-dark" 
                                             onclick="sshVm({{ vm.proxmox_vmid }}, '{{ vm.ip }}', '{{ vm.vm_name }}')"
                                             title="Open SSH Terminal">
-                                        <i class="bi bi-terminal-fill"></i>
+                                        <i class="ti ti-terminal-2"></i>
                                     </button>
                                     <button class="btn-icon btn-icon-info"
                                             onclick="consoleVm({{ vm.proxmox_vmid }})"
                                             title="Web Console">
-                                        <i class="bi bi-window"></i>
+                                        <i class="ti ti-browser"></i>
                                     </button>
                                     <a class="btn-icon btn-icon-primary" 
                                        href="/rdp/{{ vm.proxmox_vmid }}.rdp"
                                        title="Download RDP File">
-                                        <i class="bi bi-windows"></i>
+                                        <i class="ti ti-brand-windows"></i>
                                     </a>
                                 </div>
                             </td>
@@ -480,7 +480,7 @@
         <div id="students-section" class="content-section" style="display: none;">
             <div class="page-header">
                 <div>
-                    <h1><i class="bi bi-people"></i> Students</h1>
+                    <h1><i class="ti ti-users"></i> Students</h1>
                     <p class="page-subtitle">Manage student enrollment via invite links</p>
                 </div>
             </div>
@@ -510,12 +510,12 @@
         <div id="owners-section" class="content-section" style="display: none;">
             <div class="page-header">
                 <div>
-                    <h1><i class="bi bi-person-badge"></i> Class Co-Owners</h1>
+                    <h1><i class="ti ti-user-shield"></i> Class Co-Owners</h1>
                     <p class="page-subtitle">Manage who can co-teach and manage this class</p>
                 </div>
                 <div>
                     <button onclick="showAddCoOwnerModal()" class="btn-primary">
-                        <i class="bi bi-person-plus"></i> Add Co-Owner
+                        <i class="ti ti-user-plus"></i> Add Co-Owner
                     </button>
                 </div>
             </div>
@@ -523,7 +523,7 @@
             <div class="content-card">
                 <h3 style="margin: 0 0 1rem 0;">Primary Teacher</h3>
                 <div style="display: flex; align-items: center; gap: 1rem; padding: 1rem; background: #f5f5f5; border-radius: 6px; margin-bottom: 2rem;">
-                    <i class="bi bi-star-fill" style="font-size: 1.5rem; color: #ffc107;"></i>
+                    <i class="ti ti-star-filled" style="font-size: 1.5rem; color: #ffc107;"></i>
                     <div>
                         <div style="font-weight: 600; font-size: 1.1rem;" id="primary-teacher-name">{{ class_.teacher.username if class_.teacher else 'Unknown' }}</div>
                         <div style="color: #666; font-size: 0.9rem;">Creator and primary owner</div>
@@ -533,7 +533,7 @@
                 <h3 style="margin: 2rem 0 1rem 0;">Co-Owners</h3>
                 <div id="co-owners-list">
                     <p style="text-align: center; color: #666; padding: 2rem;">
-                        <i class="bi bi-hourglass-split"></i> Loading...
+                        <i class="ti ti-hourglass"></i> Loading...
                     </p>
                 </div>
             </div>
@@ -543,7 +543,7 @@
         <div id="settings-section" class="content-section" style="display: none;">
             <div class="page-header">
                 <div>
-                    <h1><i class="bi bi-gear"></i> Class Settings</h1>
+                    <h1><i class="ti ti-settings"></i> Class Settings</h1>
                     <p class="page-subtitle">Configure automation and behavior for this class</p>
                 </div>
             </div>
@@ -555,13 +555,13 @@
                 <div class="settings-card">
                     <div class="settings-card-header" onclick="toggleSection('auto-shutdown')">
                         <div style="display: flex; align-items: center; gap: 12px;">
-                            <i class="bi bi-power" style="font-size: 20px; color: #1e293b;"></i>
+                            <i class="ti ti-power" style="font-size: 20px; color: #1e293b;"></i>
                             <div>
                                 <h2 style="margin: 0; font-size: 17px; font-weight: 600; color: #1e293b;">Auto-Shutdown Configuration</h2>
                                 <p style="margin: 4px 0 0 0; font-size: 14px; color: #64748b;">Automatically shut down idle VMs to save resources</p>
                             </div>
                         </div>
-                        <i id="auto-shutdown-chevron" class="bi bi-chevron-down" style="font-size: 20px; color: #64748b; transition: transform 0.2s;"></i>
+                        <i id="auto-shutdown-chevron" class="ti ti-chevron-down" style="font-size: 20px; color: #64748b; transition: transform 0.2s;"></i>
                     </div>
                     
                     <div id="auto-shutdown-content" class="settings-card-content">
@@ -626,7 +626,7 @@
                         
                         <!-- Inline Info Callout -->
                         <div class="info-callout">
-                            <i class="bi bi-info-circle" style="font-size: 18px; color: #0284c7; flex-shrink: 0;"></i>
+                            <i class="ti ti-info-circle" style="font-size: 18px; color: #0284c7; flex-shrink: 0;"></i>
                             <div style="flex: 1;">
                                 <div style="font-weight: 600; font-size: 14px; color: #0c4a6e; margin-bottom: 8px;">How Auto-Shutdown Works</div>
                                 <div style="font-size: 14px; color: #075985; line-height: 1.5;">
@@ -641,13 +641,13 @@
                 <div class="settings-card">
                     <div class="settings-card-header" onclick="toggleSection('time-limits')">
                         <div style="display: flex; align-items: center; gap: 12px;">
-                            <i class="bi bi-clock-history" style="font-size: 20px; color: #1e293b;"></i>
+                            <i class="ti ti-clock" style="font-size: 20px; color: #1e293b;"></i>
                             <div>
                                 <h2 style="margin: 0; font-size: 17px; font-weight: 600; color: #1e293b;">Available Hours & Session Limits</h2>
                                 <p style="margin: 4px 0 0 0; font-size: 14px; color: #64748b;">Control when VMs can be used and for how long</p>
                             </div>
                         </div>
-                        <i id="time-limits-chevron" class="bi bi-chevron-down" style="font-size: 20px; color: #64748b; transition: transform 0.2s;"></i>
+                        <i id="time-limits-chevron" class="ti ti-chevron-down" style="font-size: 20px; color: #64748b; transition: transform 0.2s;"></i>
                     </div>
                     
                     <div id="time-limits-content" class="settings-card-content">
@@ -708,7 +708,7 @@
                         
                         <!-- Inline Warning Callout -->
                         <div class="warning-callout">
-                            <i class="bi bi-exclamation-triangle" style="font-size: 18px; color: #ea580c; flex-shrink: 0;"></i>
+                            <i class="ti ti-alert-triangle" style="font-size: 18px; color: #ea580c; flex-shrink: 0;"></i>
                             <div style="flex: 1;">
                                 <div style="font-weight: 600; font-size: 14px; color: #7c2d12; margin-bottom: 8px;">How Time Restrictions Work</div>
                                 <div style="font-size: 14px; color: #9a3412; line-height: 1.5;">
@@ -723,13 +723,13 @@
                 <div class="settings-card">
                     <div class="settings-card-header" onclick="toggleSection('vm-hardware')">
                         <div style="display: flex; align-items: center; gap: 12px;">
-                            <i class="bi bi-cpu" style="font-size: 20px; color: #1e293b;"></i>
+                            <i class="ti ti-cpu" style="font-size: 20px; color: #1e293b;"></i>
                             <div>
                                 <h2 style="margin: 0; font-size: 17px; font-weight: 600; color: #1e293b;">VM Hardware Specifications</h2>
                                 <p style="margin: 4px 0 0 0; font-size: 14px; color: #64748b;">Configure CPU and RAM for student VMs</p>
                             </div>
                         </div>
-                        <i id="vm-hardware-chevron" class="bi bi-chevron-down" style="font-size: 20px; color: #64748b; transition: transform 0.2s;"></i>
+                        <i id="vm-hardware-chevron" class="ti ti-chevron-down" style="font-size: 20px; color: #64748b; transition: transform 0.2s;"></i>
                     </div>
                     
                     <div id="vm-hardware-content" class="settings-card-content">
@@ -779,7 +779,7 @@
                         
                         <!-- Inline Warning Callout -->
                         <div class="warning-callout" style="background: #fef3c7; border-color: #fde047;">
-                            <i class="bi bi-exclamation-triangle-fill" style="font-size: 18px; color: #d97706; flex-shrink: 0;"></i>
+                            <i class="ti ti-alert-triangle-filled" style="font-size: 18px; color: #d97706; flex-shrink: 0;"></i>
                             <div style="flex: 1;">
                                 <div style="font-weight: 600; font-size: 14px; color: #78350f; margin-bottom: 8px;">Important: VM Spec Changes</div>
                                 <div style="font-size: 14px; color: #92400e; line-height: 1.5;">
@@ -804,11 +804,11 @@
             <div class="settings-footer">
                 <div style="max-width: 1200px; margin: 0 auto; display: flex; justify-content: space-between; align-items: center;">
                     <button type="button" class="btn-secondary" onclick="loadSettings()">
-                        <i class="bi bi-arrow-counterclockwise"></i> Reset to Saved
+                        <i class="ti ti-refresh"></i> Reset to Saved
                     </button>
                     <div style="display: flex; gap: 12px;">
                         <button type="button" class="btn-primary" onclick="saveAllSettings()">
-                            <i class="bi bi-check-circle"></i> Save Settings
+                            <i class="ti ti-circle-check"></i> Save Settings
                         </button>
                     </div>
                 </div>
@@ -1024,7 +1024,7 @@
         <div id="my-vm-section" class="content-section">
             <div class="page-header">
                 <div>
-                    <h1><i class="bi bi-pc-display"></i> My Virtual Machine</h1>
+                    <h1><i class="ti ti-device-desktop"></i> My Virtual Machine</h1>
                     <p class="page-subtitle">Your assigned VM for {{ class_.name }}</p>
                 </div>
             </div>
@@ -1043,7 +1043,7 @@
                         <div id="student-session-bar" style="height: 100%; background: linear-gradient(90deg, #107c10 0%, #ffc107 70%, #dc3545 100%); width: 0%; transition: width 0.3s ease;"></div>
                     </div>
                     <div id="student-session-warning" style="display: none; margin-top: 0.5rem; padding: 0.5rem; background: #fff3cd; border-left: 3px solid #ffc107; border-radius: 4px;">
-                        <i class="bi bi-exclamation-triangle" style="color: #856404;"></i>
+                        <i class="ti ti-alert-triangle" style="color: #856404;"></i>
                         <span id="student-session-warning-text" style="color: #856404; font-size: 0.85rem; margin-left: 0.5rem;"></span>
                     </div>
                     <div id="student-hours-info" style="margin-top: 0.75rem; padding: 0.75rem; background: #e6f4ff; border-radius: 4px; font-size: 0.85rem; color: #003d7a;"></div>
@@ -1073,35 +1073,35 @@
                             id="student-start-btn"
                             onclick="studentStartVM()"
                             {% if vm.status == 'running' %}disabled{% endif %}>
-                        <i class="bi bi-play-fill"></i> Start
+                        <i class="ti ti-player-play-filled"></i> Start
                     </button>
                     <button class="btn-secondary" 
                             id="student-stop-btn"
                             onclick="studentStopVM()"
                             {% if vm.status == 'stopped' %}disabled{% endif %}>
-                        <i class="bi bi-stop-fill"></i> Stop
+                        <i class="ti ti-player-stop-filled"></i> Stop
                     </button>
                     <button class="btn-primary" 
                             id="student-console-btn"
                             onclick="studentOpenConsole()">
-                        <i class="bi bi-window"></i> Web Console
+                        <i class="ti ti-browser"></i> Web Console
                     </button>
                     <button class="btn-primary" 
                             id="student-rdp-btn"
                             onclick="studentDownloadRDP()"
                             {% if not vm.ip_address %}disabled{% endif %}>
-                        <i class="bi bi-download"></i> RDP
+                        <i class="ti ti-download"></i> RDP
                     </button>
                     <button class="btn-secondary" 
                             id="student-ssh-btn"
                             onclick="studentOpenSSH()"
                             {% if not vm.ip_address %}disabled{% endif %}>
-                        <i class="bi bi-terminal"></i> SSH
+                        <i class="ti ti-terminal"></i> SSH
                     </button>
                 </div>
                 {% else %}
                 <div style="padding: 2rem; text-align: center; background: #fff3cd; border-radius: 6px; border-left: 4px solid #ffc107;">
-                    <i class="bi bi-hourglass-split" style="font-size: 2rem; color: #856404;"></i>
+                    <i class="ti ti-hourglass" style="font-size: 2rem; color: #856404;"></i>
                     <h3 style="margin: 1rem 0 0.5rem; color: #856404;">No VM Assigned Yet</h3>
                     <p style="color: #856404; margin: 0;">You're enrolled in this class, but no VM has been assigned yet.</p>
                     <p style="color: #856404; margin: 0.5rem 0 0;">Your teacher will assign a VM when available.</p>
@@ -2167,7 +2167,7 @@ async function refreshVMs() {
     
     if (refreshBtn) {
         refreshBtn.disabled = true;
-        refreshBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Discovering IPs...';
+        refreshBtn.innerHTML = '<i class="ti ti-hourglass"></i> Discovering IPs...';
     }
     
     try {
@@ -2187,7 +2187,7 @@ async function refreshVMs() {
             showAlert(data.error || 'Failed to refresh IPs', 'error');
             if (refreshBtn) {
                 refreshBtn.disabled = false;
-                refreshBtn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> Refresh';
+                refreshBtn.innerHTML = '<i class="ti ti-refresh"></i> Refresh';
             }
         }
     } catch (e) {
@@ -2195,7 +2195,7 @@ async function refreshVMs() {
         showAlert('Failed to refresh: ' + e.message, 'error');
         if (refreshBtn) {
             refreshBtn.disabled = false;
-            refreshBtn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> Refresh';
+            refreshBtn.innerHTML = '<i class="ti ti-refresh"></i> Refresh';
         }
     }
 }
@@ -2308,7 +2308,7 @@ async function studentStartVM() {
     const stopBtn = document.getElementById('student-stop-btn');
     
     startBtn.disabled = true;
-    startBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Starting...';
+    startBtn.innerHTML = '<i class="ti ti-hourglass"></i> Starting...';
     
     try {
         const resp = await fetch(`/api/vm/${vmid}/start`, { 
@@ -2323,12 +2323,12 @@ async function studentStartVM() {
         } else {
             showAlert('Failed to start VM: ' + (data.error || 'Unknown error'), 'error');
             startBtn.disabled = false;
-            startBtn.innerHTML = '<i class="bi bi-play-fill"></i> Start';
+            startBtn.innerHTML = '<i class="ti ti-player-play-filled"></i> Start';
         }
     } catch (e) {
         showAlert('Error starting VM: ' + e.message, 'error');
         startBtn.disabled = false;
-        startBtn.innerHTML = '<i class="bi bi-play-fill"></i> Start';
+        startBtn.innerHTML = '<i class="ti ti-player-play-filled"></i> Start';
     }
 }
 
@@ -2340,7 +2340,7 @@ async function studentStopVM() {
     if (!confirm('Stop your VM? Any unsaved work will be lost.')) return;
     
     stopBtn.disabled = true;
-    stopBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Stopping...';
+    stopBtn.innerHTML = '<i class="ti ti-hourglass"></i> Stopping...';
     
     try {
         const resp = await fetch(`/api/vm/${vmid}/stop`, { 
@@ -2355,12 +2355,12 @@ async function studentStopVM() {
         } else {
             showAlert('Failed to stop VM: ' + (data.error || 'Unknown error'), 'error');
             stopBtn.disabled = false;
-            stopBtn.innerHTML = '<i class="bi bi-stop-fill"></i> Stop';
+            stopBtn.innerHTML = '<i class="ti ti-player-stop-filled"></i> Stop';
         }
     } catch (e) {
         showAlert('Error stopping VM: ' + e.message, 'error');
         stopBtn.disabled = false;
-        stopBtn.innerHTML = '<i class="bi bi-stop-fill"></i> Stop';
+        stopBtn.innerHTML = '<i class="ti ti-player-stop-filled"></i> Stop';
     }
 }
 
@@ -2443,14 +2443,14 @@ async function updateStudentVM() {
             // Update buttons
             if (data.status === 'running') {
                 startBtn.disabled = true;
-                startBtn.innerHTML = '<i class="bi bi-play-fill"></i> Start';
+                startBtn.innerHTML = '<i class="ti ti-player-play-filled"></i> Start';
                 stopBtn.disabled = false;
-                stopBtn.innerHTML = '<i class="bi bi-stop-fill"></i> Stop';
+                stopBtn.innerHTML = '<i class="ti ti-player-stop-filled"></i> Stop';
             } else {
                 startBtn.disabled = false;
-                startBtn.innerHTML = '<i class="bi bi-play-fill"></i> Start';
+                startBtn.innerHTML = '<i class="ti ti-player-play-filled"></i> Start';
                 stopBtn.disabled = true;
-                stopBtn.innerHTML = '<i class="bi bi-stop-fill"></i> Stop';
+                stopBtn.innerHTML = '<i class="ti ti-player-stop-filled"></i> Stop';
             }
         }
     } catch (e) {
@@ -2709,7 +2709,7 @@ function displayInviteLink(url) {
             <div style="padding: 1.5rem; background: #f9f9f9; border-radius: 6px; text-align: center;">
                 <p style="color: #666; margin-bottom: 1rem;">No invite link created yet.</p>
                 <button onclick="generateInviteLink()" class="btn-primary" style="display: inline-flex; align-items: center; gap: 0.5rem;">
-                    <i class="bi bi-link-45deg"></i> Create Invite Link
+                    <i class="ti ti-link"></i> Create Invite Link
                 </button>
             </div>
         `;
@@ -2720,11 +2720,11 @@ function displayInviteLink(url) {
         <div class="invite-link-box">
             <input type="text" value="${url}" readonly onclick="this.select()">
             <button onclick="copyInviteLink('${url}')" style="background: #0078d4;">
-                <i class="bi bi-clipboard"></i> Copy
+                <i class="ti ti-clipboard"></i> Copy
             </button>
         </div>
         <div style="margin-top: 0.75rem; font-size: 0.85rem; color: #605e5c;">
-            <i class="bi bi-info-circle"></i> This link never expires and can be used by multiple students.
+            <i class="ti ti-info-circle"></i> This link never expires and can be used by multiple students.
         </div>
     `;
 }
@@ -2914,7 +2914,7 @@ function createAddVMsModal() {
                     <div class="form-actions">
                         <button class="btn-secondary" onclick="closeAddVMsModal()">Cancel</button>
                         <button class="btn-primary" onclick="createVMs()">
-                            <i class="bi bi-plus-circle"></i> Create VMs
+                            <i class="ti ti-circle-plus"></i> Create VMs
                         </button>
                     </div>
                 </div>
@@ -3091,14 +3091,14 @@ async function loadCoOwners() {
                 list.innerHTML = data.co_owners.map(co => `
                     <div style="display: flex; align-items: center; justify-content: space-between; padding: 1rem; border: 1px solid #e0e0e0; border-radius: 6px; margin-bottom: 0.5rem;">
                         <div style="display: flex; align-items: center; gap: 1rem;">
-                            <i class="bi bi-person-circle" style="font-size: 1.5rem; color: #0078d4;"></i>
+                            <i class="ti ti-user-circle" style="font-size: 1.5rem; color: #0078d4;"></i>
                             <div>
                                 <div style="font-weight: 600;">${co.username}</div>
                                 <div style="color: #666; font-size: 0.9rem;">${co.role}</div>
                             </div>
                         </div>
                         <button onclick="removeCoOwner(${co.id}, '${co.username}')" class="btn-secondary" style="background: #dc3545; color: white;">
-                            <i class="bi bi-trash"></i> Remove
+                            <i class="ti ti-trash"></i> Remove
                         </button>
                     </div>
                 `).join('');
@@ -3146,7 +3146,7 @@ function showAddCoOwnerModal() {
                         <div class="form-actions">
                             <button class="btn-secondary" onclick="closeAddCoOwnerModal()">Cancel</button>
                             <button class="btn-primary" onclick="addCoOwner()">
-                                <i class="bi bi-person-plus"></i> Add Co-Owner
+                                <i class="ti ti-user-plus"></i> Add Co-Owner
                             </button>
                         </div>
                     </div>
@@ -3485,16 +3485,16 @@ function updateStudentProgressUI(data) {
         const end = formatHour(data.hours_end);
         
         if (data.within_hours) {
-            hoursInfo.innerHTML = `<i class="bi bi-clock"></i> Available hours: ${start} - ${end} (currently allowed)`;
+            hoursInfo.innerHTML = `<i class="ti ti-clock"></i> Available hours: ${start} - ${end} (currently allowed)`;
             hoursInfo.style.background = '#e6f4ff';
             hoursInfo.style.borderLeft = '3px solid #0078d4';
         } else {
-            hoursInfo.innerHTML = `<i class="bi bi-clock-history"></i> VMs can only run ${start} - ${end} (outside hours now)`;
+            hoursInfo.innerHTML = `<i class="ti ti-clock"></i> VMs can only run ${start} - ${end} (outside hours now)`;
             hoursInfo.style.background = '#fff3cd';
             hoursInfo.style.borderLeft = '3px solid #ffc107';
         }
     } else if (data.max_session_minutes > 0) {
-        hoursInfo.innerHTML = `<i class="bi bi-hourglass-split"></i> Maximum session: ${formatMinutes(data.max_session_minutes)}`;
+        hoursInfo.innerHTML = `<i class="ti ti-hourglass"></i> Maximum session: ${formatMinutes(data.max_session_minutes)}`;
     } else {
         hoursInfo.style.display = 'none';
     }
@@ -3562,7 +3562,7 @@ studentProgressInterval = setInterval(loadStudentSessionProgress, 30000);
             <div class="form-actions">
                 <button class="btn-secondary" onclick="closeAssignVMModal()">Cancel</button>
                 <button class="btn-primary" onclick="confirmAssignVM()">
-                    <i class="bi bi-check-circle"></i> Assign VM
+                    <i class="ti ti-circle-check"></i> Assign VM
                 </button>
             </div>
         </div>
