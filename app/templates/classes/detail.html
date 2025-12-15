@@ -254,11 +254,13 @@
                         
                         <!-- Right: Controls -->
                         <div style="display: flex; align-items: center; gap: 0.75rem;">
-                            <!-- Power Toggle -->
-                            <label class="toggle-switch" title="Power On/Off">
-                                <input type="checkbox" id="power-toggle" onclick="togglePower(event)">
-                                <span class="toggle-slider"></span>
-                            </label>
+                            <!-- Power Buttons -->
+                            <button id="btn-start-template" onclick="handleStartTemplate()" class="btn-header" title="Start VM" style="display: none;">
+                                <i class="bi bi-play-fill"></i>
+                            </button>
+                            <button id="btn-stop-template" onclick="handleStopTemplate()" class="btn-header" title="Stop VM" style="display: none;">
+                                <i class="bi bi-stop-fill"></i>
+                            </button>
                             
                             <!-- SSH Button -->
                             <button id="btn-ssh-template" onclick="sshToTemplate()" class="btn-header" title="SSH Terminal">
@@ -1805,6 +1807,15 @@ function updateTemplateDisplay() {
         }
     }
     
+    // Update power buttons based on VM status
+    const startBtn = document.getElementById('btn-start-template');
+    const stopBtn = document.getElementById('btn-stop-template');
+    if (startBtn && stopBtn) {
+        const isRunning = currentTemplateInfo.status === 'running';
+        startBtn.style.display = isRunning ? 'none' : 'inline-flex';
+        stopBtn.style.display = isRunning ? 'inline-flex' : 'none';
+    }
+    
     // RDP button: enable if VM has IP address
     const rdpBtn = document.getElementById('btn-rdp-template');
     if (currentTemplateInfo.ip) {
@@ -1892,6 +1903,39 @@ async function togglePower(event) {
     } finally {
         // Re-enable toggle
         powerToggle.disabled = false;
+    }
+}
+
+// Simple start/stop handlers
+async function handleStartTemplate() {
+    const btn = document.getElementById('btn-start-template');
+    btn.disabled = true;
+    try {
+        await startTemplate();
+        // Refresh status after a delay
+        setTimeout(async () => {
+            await refreshTemplateInfo();
+        }, 2000);
+    } catch (e) {
+        console.error('Start failed:', e);
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+async function handleStopTemplate() {
+    const btn = document.getElementById('btn-stop-template');
+    btn.disabled = true;
+    try {
+        await stopTemplate();
+        // Refresh status after a delay
+        setTimeout(async () => {
+            await refreshTemplateInfo();
+        }, 2000);
+    } catch (e) {
+        console.error('Stop failed:', e);
+    } finally {
+        btn.disabled = false;
     }
 }
 
