@@ -1939,6 +1939,19 @@ async function handleStopTemplate() {
     }
 }
 
+async function refreshTemplateInfo() {
+    try {
+        const resp = await fetch(`/api/classes/${classId}/template/info?v=${Date.now()}`);
+        const data = await resp.json();
+        if (data.ok && data.template) {
+            currentTemplateInfo = data.template;
+            updateTemplateDisplay();
+        }
+    } catch (e) {
+        console.error('Failed to refresh template info:', e);
+    }
+}
+
 function sshToTemplate() {
     if (!currentTemplateInfo) return;
     window.open(`/ssh/${currentTemplateInfo.proxmox_vmid}`, '_blank');
