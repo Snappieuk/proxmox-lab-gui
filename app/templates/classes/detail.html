@@ -1854,7 +1854,16 @@ function updateTemplateDisplay() {
     // Update power toggle based on current status
     const powerToggle = document.getElementById('power-toggle');
     if (powerToggle) {
-        const isRunning = currentTemplateInfo.status === 'running';
+        // Extract actual status string
+        let statusStr = 'stopped';
+        if (currentTemplateInfo.status) {
+            if (typeof currentTemplateInfo.status === 'object' && currentTemplateInfo.status.status) {
+                statusStr = String(currentTemplateInfo.status.status).toLowerCase();
+            } else {
+                statusStr = String(currentTemplateInfo.status).toLowerCase();
+            }
+        }
+        const isRunning = statusStr === 'running';
         
         // Don't update toggle during power transition (user just toggled it)
         if (!window.vmPowerTransition) {
@@ -1863,7 +1872,7 @@ function updateTemplateDisplay() {
             // unless Proxmox reports a different state
             if (powerToggle.checked !== isRunning) {
                 powerToggle.checked = isRunning;
-                console.log('🔌 Power toggle updated to match Proxmox: status=' + currentTemplateInfo.status + ', checked=' + isRunning);
+                console.log('🔌 Power toggle updated to match Proxmox: status=' + statusStr + ', checked=' + isRunning);
             }
         } else {
             console.log('🔌 Skipping toggle update during transition');
@@ -1874,7 +1883,17 @@ function updateTemplateDisplay() {
     const startBtn = document.getElementById('btn-start-template');
     const stopBtn = document.getElementById('btn-stop-template');
     if (startBtn && stopBtn) {
-        const isRunning = currentTemplateInfo.status === 'running';
+        // Extract actual status string
+        let statusStr = 'stopped';
+        if (currentTemplateInfo.status) {
+            if (typeof currentTemplateInfo.status === 'object' && currentTemplateInfo.status.status) {
+                statusStr = String(currentTemplateInfo.status.status).toLowerCase();
+            } else {
+                statusStr = String(currentTemplateInfo.status).toLowerCase();
+            }
+        }
+        const isRunning = statusStr === 'running';
+        console.log('🔌 Updating buttons: status=' + statusStr + ', isRunning=' + isRunning);
         startBtn.style.display = isRunning ? 'none' : 'inline-flex';
         stopBtn.style.display = isRunning ? 'inline-flex' : 'none';
     }
