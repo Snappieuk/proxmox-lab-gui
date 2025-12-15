@@ -1822,10 +1822,22 @@ function updateTemplateDisplay() {
     
     // Update power status badge
     const powerBadge = document.getElementById('template-power-status');
-    if (powerBadge && currentTemplateInfo.status) {
-        const status = String(currentTemplateInfo.status).toLowerCase();
-        powerBadge.className = 'power-badge power-badge-' + status;
-        powerBadge.textContent = status.charAt(0).toUpperCase() + status.slice(1);
+    if (powerBadge) {
+        // Debug: log the status to see what we're getting
+        console.log('Template status:', currentTemplateInfo.status, typeof currentTemplateInfo.status);
+        
+        let statusText = 'unknown';
+        if (currentTemplateInfo.status) {
+            // Handle if status is an object with a status property
+            if (typeof currentTemplateInfo.status === 'object' && currentTemplateInfo.status.status) {
+                statusText = String(currentTemplateInfo.status.status).toLowerCase();
+            } else {
+                statusText = String(currentTemplateInfo.status).toLowerCase();
+            }
+        }
+        
+        powerBadge.className = 'power-badge power-badge-' + statusText;
+        powerBadge.textContent = statusText.charAt(0).toUpperCase() + statusText.slice(1);
     }
     
     const ipEl = document.getElementById('template-ip');
