@@ -109,8 +109,6 @@ def get_all_vm_ids_and_names() -> List[Dict[str, Any]]:
                         continue
                     
                     node = vm.get("node")
-                    if VALID_NODES and node not in VALID_NODES:
-                        continue
                     
                     results.append({
                         "vmid": int(vm["vmid"]),
@@ -127,10 +125,6 @@ def get_all_vm_ids_and_names() -> List[Dict[str, Any]]:
             nodes = proxmox.nodes.get() or []
             for node_data in nodes:
                 node_name = node_data["node"]
-                
-                # Skip nodes not in VALID_NODES filter
-                if VALID_NODES and node_name not in VALID_NODES:
-                    continue
                 
                 # Get QEMU VMs
                 try:

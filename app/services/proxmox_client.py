@@ -215,12 +215,6 @@ def save_cluster_config(clusters: List[Dict[str, Any]]) -> None:
     except Exception as e:
         logger.error(f"Failed to save cluster config: {e}", exc_info=True)
         raise
-        with open(CLUSTER_CONFIG_FILE, "w", encoding="utf-8") as f:
-            json.dump(clusters, f, indent=2)
-        logger.info(f"Saved cluster configuration to {CLUSTER_CONFIG_FILE}")
-    except Exception as e:
-        logger.error(f"Failed to write cluster config file: {e}")
-        raise
     
     # Clear all existing connections to force reconnection with new config
     global _proxmox_connections
@@ -338,34 +332,10 @@ def _save_vm_cache() -> None:
     if _vm_cache_data.get(cache_key) is None:
         return
     
-    # Load existing data for all clusters
-    all_data = {}
-    if os.path.exists(VM_CACHE_FILE):
-        try:
-            with open(VM_CACHE_FILE, "r", encoding="utf-8") as f:
-                all_data = json.load(f)
-            # Check if on-disk cache is already up-to-date
-            disk_cluster_data = all_data.get(cache_key, {})
-            disk_ts = disk_cluster_data.get("timestamp", 0.0)
-            if disk_ts == _vm_cache_ts.get(cache_key, 0.0):
-                logger.debug("Skipping VM cache write: disk timestamp matches in-memory (%.1f)", disk_ts)
-                return
-        except Exception:
-            # If we can't read the file, proceed with write
-            pass
-    
-    try:
-        # Update cluster-specific data
-        all_data[cache_key] = {
-            "vms": _vm_cache_data[cache_key],
-            "timestamp": _vm_cache_ts.get(cache_key, time.time())
-        }
-        with open(VM_CACHE_FILE, "w", encoding="utf-8") as f:
-            json.dump(all_data, f, indent=2)
-        cache_count = len(_vm_cache_data.get(cache_key) or [])
-        logger.debug("Saved VM cache with %d VMs", cache_count)
-    except Exception as e:
-        logger.warning("Failed to save VM cache: %s", e)
+    # VM cache file persistence disabled (database-first architecture)
+    # All VM data now stored in VMInventory table via background_sync
+    # This function remains as a no-op for backwards compatibility
+    logger.debug("VM cache file writes disabled - using database-first architecture")
 
 def _invalidate_vm_cache() -> None:
     """Invalidate VM cache for all clusters."""
