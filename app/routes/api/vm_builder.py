@@ -292,7 +292,7 @@ def api_clone_from_template():
                 }), 500
         
         try:
-            # Clone the template using Proxmox API
+            # Clone the template using Proxmox API - START ASYNC
             # Full clone with target storage
             clone_params = {
                 'newid': new_vmid,
@@ -304,110 +304,114 @@ def api_clone_from_template():
             
             logger.info(f"Cloning template {template_vmid} to VM {new_vmid} with params: {clone_params}")
             
+            # Start clone task
             task_upid = proxmox.nodes(target_node).qemu(template_vmid).clone.post(**clone_params)
             logger.info(f"Clone task started: {task_upid}")
             
-            # Wait for clone to complete (can take a few minutes)
-            import time
-            max_wait = 300  # 5 minutes
-            wait_interval = 2
-            elapsed = 0
-            
-            while elapsed < max_wait:
-                try:
-                    task_status = proxmox.nodes(target_node).tasks(task_upid).status.get()
-                    status = task_status.get('status')
-                    
-                    if status == 'stopped':
-                        exitstatus = task_status.get('exitstatus')
-                        if exitstatus == 'OK':
-                            logger.info(f"Clone completed successfully: {task_upid}")
-                            break
-                        else:
-                            error_msg = f"Clone task failed with status: {exitstatus}"
-                            logger.error(error_msg)
-                            return jsonify({
-                                "ok": False,
-                                "error": error_msg
-                            }), 500
-                except Exception as e:
-                    logger.warning(f"Failed to check task status: {e}")
+            # Return immediately - clone will continue in background
+            # Spawn background thread to handle post-clone tasks
+            def background_clone_completion():
+                """Background task to wait for clone completion and create assignments."""
+                from flask import current_app
+                app = current_app._get_current_object()
                 
-                time.sleep(wait_interval)
-                elapsed += wait_interval
-            
-            if elapsed >= max_wait:
-                return jsonify({
-                    "ok": False,
-                    "error": "Clone operation timed out (5 minutes)"
-                }), 500
-            
-            # Convert to template if requested
-            if convert_to_template:
-                logger.info(f"Converting VM {new_vmid} to template")
-                proxmox.nodes(target_node).qemu(new_vmid).template.post()
-                message = f"VM {new_vmid} cloned and converted to template successfully"
-            else:
-                message = f"VM {new_vmid} cloned successfully"
-            
-            # Get MAC address for inventory
-            mac_address = None
-            try:
-                vm_config = proxmox.nodes(target_node).qemu(new_vmid).config.get()
-                net0 = vm_config.get('net0', '')
-                if net0:
-                    for part in net0.split(','):
-                        if '=' in part:
-                            key, value = part.split('=', 1)
-                            if key.strip().lower() in ['macaddr', 'hwaddr']:
-                                mac_address = value.strip()
-                                break
-            except Exception as e:
-                logger.warning(f"Failed to get MAC address: {e}")
-            
-            # Trigger immediate background sync
-            try:
-                logger.info("Triggering immediate background sync for VMInventory update")
-                trigger_immediate_sync()
-                time.sleep(1)  # Give sync a moment to process
-            except Exception as sync_err:
-                logger.warning(f"Failed to trigger sync: {sync_err}")
-            
-            # Create VM assignment for builder VM
-            if local_user:
-                try:
-                    # Query VMInventory for node if not yet populated
-                    node = target_node
-                    if not node:
+                with app.app_context():
+                    try:
+                        logger.info(f"[Background] Monitoring clone task: {task_upid}")
+                        
+                        # Wait for clone to complete
+                        max_wait = 1800  # 30 minutes for large disk transfers
+                        wait_interval = 5
+                        elapsed = 0
+                        
+                        while elapsed < max_wait:
+                            try:
+                                task_status = proxmox.nodes(target_node).tasks(task_upid).status.get()
+                                status = task_status.get('status')
+                                
+                                if status == 'stopped':
+                                    exitstatus = task_status.get('exitstatus')
+                                    if exitstatus == 'OK':
+                                        logger.info(f"[Background] Clone completed successfully: {task_upid}")
+                                        break
+                                    else:
+                                        logger.error(f"[Background] Clone task failed with status: {exitstatus}")
+                                        return
+                            except Exception as e:
+                                logger.warning(f"[Background] Failed to check task status: {e}")
+                            
+                            time.sleep(wait_interval)
+                            elapsed += wait_interval
+                        
+                        if elapsed >= max_wait:
+                            logger.error(f"[Background] Clone operation timed out after {max_wait} seconds")
+                            return
+                        
+                        # Convert to template if requested
+                        if convert_to_template:
+                            logger.info(f"[Background] Converting VM {new_vmid} to template")
+                            proxmox.nodes(target_node).qemu(new_vmid).template.post()
+                            
+                            # Update VMInventory to mark as template
+                            from app.services.inventory_service import update_vm_inventory
+                            update_vm_inventory(cluster_id, new_vmid, {'is_template': True})
+                        
+                        # Get MAC address for inventory
+                        mac_address = None
                         try:
-                            resources = proxmox.cluster.resources.get(type='vm')
-                            for r in resources:
-                                if int(r.get('vmid', -1)) == int(new_vmid):
-                                    node = r.get('node')
-                                    logger.info(f"Found node {node} for VM {new_vmid} via cluster resources")
-                                    break
-                        except Exception as node_err:
-                            logger.warning(f"Failed to query node for VM {new_vmid}: {node_err}")
-                    
-                    assignment = VMAssignment(
-                        proxmox_vmid=new_vmid,
-                        vm_name=vm_name,
-                        assigned_user_id=local_user.id,
-                        status='available',
-                        mac_address=mac_address,
-                        node=node,
-                        class_id=None  # Direct assignment = builder VM
-                    )
-                    db.session.add(assignment)
-                    db.session.commit()
-                    logger.info(f"Created VM assignment for user {local_user.username} -> VM {new_vmid}")
-                except Exception as e:
-                    logger.warning(f"Failed to create VM assignment: {e}")
+                            vm_config = proxmox.nodes(target_node).qemu(new_vmid).config.get()
+                            net0 = vm_config.get('net0', '')
+                            if net0:
+                                for part in net0.split(','):
+                                    if '=' in part:
+                                        key, value = part.split('=', 1)
+                                        if key.strip().lower() in ['macaddr', 'hwaddr']:
+                                            mac_address = value.strip()
+                                            break
+                        except Exception as e:
+                            logger.warning(f"[Background] Failed to get MAC address: {e}")
+                        
+                        # Trigger immediate background sync
+                        try:
+                            logger.info("[Background] Triggering immediate background sync for VMInventory update")
+                            trigger_immediate_sync()
+                            time.sleep(2)  # Give sync a moment to process
+                        except Exception as sync_err:
+                            logger.warning(f"[Background] Failed to trigger sync: {sync_err}")
+                        
+                        # Create VM assignment for builder VM
+                        if local_user:
+                            try:
+                                assignment = VMAssignment(
+                                    proxmox_vmid=new_vmid,
+                                    vm_name=vm_name,
+                                    assigned_user_id=local_user.id,
+                                    status='available',
+                                    mac_address=mac_address,
+                                    node=target_node,
+                                    class_id=None  # Direct assignment = builder VM
+                                )
+                                db.session.add(assignment)
+                                db.session.commit()
+                                logger.info(f"[Background] Created VM assignment for user {local_user.username} -> VM {new_vmid}")
+                            except Exception as e:
+                                logger.error(f"[Background] Failed to create VM assignment: {e}")
+                        
+                        logger.info(f"[Background] Clone operation completed for VM {new_vmid}")
+                        
+                    except Exception as bg_error:
+                        logger.error(f"[Background] Clone completion failed: {bg_error}", exc_info=True)
             
+            # Start background thread
+            thread = threading.Thread(target=background_clone_completion, daemon=True)
+            thread.start()
+            logger.info(f"Started background thread for clone completion monitoring")
+            
+            # Return immediately with success
             return jsonify({
                 "ok": True,
                 "vmid": new_vmid,
-                "message": message
+                "message": f"VM cloning started in background. VMID: {new_vmid}. This may take several minutes for large disk transfers."
             })
             
         except Exception as clone_error:
