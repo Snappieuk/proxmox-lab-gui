@@ -51,9 +51,13 @@ def login():
         
         if full_user:
             session["user"] = full_user
-            # Initialize cluster selection (default to first cluster)
+            # Initialize cluster selection (default to first cluster if available)
             if "cluster_id" not in session:
-                session["cluster_id"] = get_clusters_from_db()[0]["id"]
+                clusters = get_clusters_from_db()
+                if clusters:
+                    session["cluster_id"] = clusters[0]["id"]
+                else:
+                    logger.warning("No clusters configured in database")
             logger.info("user logged in: %s", full_user)
             next_url = request.args.get("next") or url_for("portal.portal")
             return redirect(next_url)
