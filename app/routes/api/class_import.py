@@ -205,9 +205,9 @@ def _analyze_vm_naming_patterns(vms: List[Dict]) -> List[Dict]:
     """Analyze VM names to find potential class groupings.
     
     Looks for patterns:
-    - Prefix + "00-01", "00-02" etc (student VMs)
-    - Prefix + "-teacher" or "teacher" (teacher VM)
-    - Prefix + "-base" or "base" (base VM)
+    - {3digits}{01-99}-{classname}-student{01-99} (e.g., 12301-networking-student01)
+    - {3digits}-{classname}-teacher (e.g., 123-networking-teacher)
+    - {3digits}-{classname}-base (e.g., 123-networking-base)
     
     Args:
         vms: List of VM dictionaries from inventory
@@ -215,15 +215,21 @@ def _analyze_vm_naming_patterns(vms: List[Dict]) -> List[Dict]:
     Returns:
         List of potential class groups with metadata
     """
-    # Pattern: 3+ letters/numbers, then optional separator, then digits or role
-    # Examples: ABC00-01, ABC-00-01, CYB00-teacher, NET-base
+    # Pattern for your naming convention: {3digits}{01-99}-{classname}-{role}
+    # Examples: 
+    #   12301-networking-student01, 12302-networking-student02
+    #   123-networking-teacher
+    #   123-networking-base
     patterns = {
-        'student': re.compile(r'^([A-Z0-9]{3,})[_-]?(\d{2})[_-](\d{2})$', re.IGNORECASE),
-        'teacher': re.compile(r'^([A-Z0-9]{3,})[_-]?(teacher)$', re.IGNORECASE),
-        'base': re.compile(r'^([A-Z0-9]{3,})[_-]?(base|class-base)$', re.IGNORECASE),
+        # Student VMs: {3 digits}{2 digits}-{classname}-student{01-99}
+        'student': re.compile(r'^(\d{3})(\d{2})-([^-]+)-student(\d+)$', re.IGNORECASE),
+        # Teacher VM: {3 digits}-{classname}-teacher
+        'teacher': re.compile(r'^(\d{3})-([^-]+)-teacher$', re.IGNORECASE),
+        # Base VM: {3 digits}-{classname}-base
+        'base': re.compile(r'^(\d{3})-([^-]+)-(base|class-base)$', re.IGNORECASE),
     }
     
-    # Group VMs by prefix
+    # Group VMs by prefix (3-digit code + classname)
     groups = {}
     
     for vm in vms:
@@ -236,15 +242,19 @@ def _analyze_vm_naming_patterns(vms: List[Dict]) -> List[Dict]:
         # Try to match student VM pattern
         match = patterns['student'].match(vm_name)
         if match:
-            prefix = match.group(1).upper()
-            if prefix not in groups:
-                groups[prefix] = {
+            prefix = match.group(1)  # 3-digit code (e.g., "123")
+            classname = match.group(3)  # class name (e.g., "networking")
+            group_key = f"{prefix}-{classname}"
+            
+            if group_key not in groups:
+                groups[group_key] = {
                     'prefix': prefix,
+                    'classname': classname,
                     'teacher_vm': None,
                     'base_vm': None,
                     'student_vms': []
                 }
-            groups[prefix]['student_vms'].append({
+            groups[group_key]['student_vms'].append({
                 'vmid': vmid,
                 'name': vm_name,
                 'node': vm.get('node'),
@@ -255,15 +265,19 @@ def _analyze_vm_naming_patterns(vms: List[Dict]) -> List[Dict]:
         # Try to match teacher VM pattern
         match = patterns['teacher'].match(vm_name)
         if match:
-            prefix = match.group(1).upper()
-            if prefix not in groups:
-                groups[prefix] = {
+            prefix = match.group(1)
+            classname = match.group(2)
+            group_key = f"{prefix}-{classname}"
+            
+            if group_key not in groups:
+                groups[group_key] = {
                     'prefix': prefix,
+                    'classname': classname,
                     'teacher_vm': None,
                     'base_vm': None,
                     'student_vms': []
                 }
-            groups[prefix]['teacher_vm'] = {
+            groups[group_key]['teacher_vm'] = {
                 'vmid': vmid,
                 'name': vm_name,
                 'node': vm.get('node'),
@@ -274,15 +288,19 @@ def _analyze_vm_naming_patterns(vms: List[Dict]) -> List[Dict]:
         # Try to match base VM pattern
         match = patterns['base'].match(vm_name)
         if match:
-            prefix = match.group(1).upper()
-            if prefix not in groups:
-                groups[prefix] = {
+            prefix = match.group(1)
+            classname = match.group(2)
+            group_key = f"{prefix}-{classname}"
+            
+            if group_key not in groups:
+                groups[group_key] = {
                     'prefix': prefix,
+                    'classname': classname,
                     'teacher_vm': None,
                     'base_vm': None,
                     'student_vms': []
                 }
-            groups[prefix]['base_vm'] = {
+            groups[group_key]['base_vm'] = {
                 'vmid': vmid,
                 'name': vm_name,
                 'node': vm.get('node'),
@@ -292,12 +310,13 @@ def _analyze_vm_naming_patterns(vms: List[Dict]) -> List[Dict]:
     
     # Convert to list and filter out groups with no student VMs
     result = []
-    for prefix, group in groups.items():
+    for group_key, group in groups.items():
         if len(group['student_vms']) > 0:
             # Sort student VMs by name
             group['student_vms'].sort(key=lambda x: x['name'])
             group['student_count'] = len(group['student_vms'])
-            group['suggested_name'] = f"{prefix} Class"
+            # Use classname as suggested name (capitalize first letter)
+            group['suggested_name'] = group['classname'].replace('-', ' ').replace('_', ' ').title()
             result.append(group)
     
     # Sort by prefix

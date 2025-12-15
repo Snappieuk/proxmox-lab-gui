@@ -424,14 +424,19 @@ def trigger_iso_sync_all_clusters():
     
     try:
         clusters = Cluster.query.filter_by(is_active=True).all()
+        
+        if not clusters:
+            logger.warning("No active clusters configured - skipping ISO sync. Please add a cluster via /setup")
+            return
+        
         logger.info(f"Triggering ISO sync for {len(clusters)} active clusters")
         
         # Get app instance to pass to threads
         app = current_app._get_current_object()
         
         for cluster in clusters:
-            threading.Thread(target=_sync_isos_background, args=(cluster.id, app), daemon=True).start()
-            logger.info(f"Started ISO sync thread for cluster {cluster.name} (ID: {cluster.id})")
+            threading.Thread(target=_sync_isos_background, args=(cluster.cluster_id, app), daemon=True).start()
+            logger.info(f"Started ISO sync thread for cluster {cluster.name} (cluster_id: {cluster.cluster_id})")
     except Exception as e:
         logger.error(f"Failed to trigger ISO sync on startup: {e}")
 

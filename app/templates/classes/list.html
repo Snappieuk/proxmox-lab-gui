@@ -352,7 +352,7 @@ async function scanForClasses() {
         }
         
         if (data.potential_classes.length === 0) {
-            container.innerHTML = '<p style="padding: 2rem; text-align: center;">No importable classes found.<br><br>Expected naming patterns:<br>• <strong>ABC00-01</strong> (student VMs)<br>• <strong>ABC-teacher</strong> (teacher VM)<br>• <strong>ABC-base</strong> (base VM)</p>';
+            container.innerHTML = '<p style="padding: 2rem; text-align: center;">No importable classes found.<br><br>Expected naming patterns:<br>• <strong>12301-networking-student01</strong>, <strong>12302-networking-student02</strong> (student VMs)<br>• <strong>123-networking-teacher</strong> (teacher VM)<br>• <strong>123-networking-base</strong> (base VM)</p>';
             return;
         }
         
@@ -366,7 +366,7 @@ async function scanForClasses() {
                         <div>
                             <h4 style="margin: 0 0 0.5rem 0;">${cls.suggested_name}</h4>
                             <div style="font-size: 12px; color: #605e5c;">
-                                <strong>Prefix:</strong> ${cls.prefix} | <strong>Students:</strong> ${cls.student_count}
+                                <strong>Code:</strong> ${cls.prefix} | <strong>Name:</strong> ${cls.classname} | <strong>Students:</strong> ${cls.student_count}
                                 ${cls.teacher_vm ? ' | ✓ Teacher VM' : ''}
                                 ${cls.base_vm ? ' | ✓ Base VM' : ''}
                             </div>

@@ -441,10 +441,10 @@ def api_list_isos():
         logger.info(f"Listing ISOs for cluster_id: {cluster_id}")
         
         if not cluster_id:
-            logger.error("No cluster_id provided in request or session")
+            logger.error("No cluster_id provided in request or session - user may not have configured a cluster yet")
             return jsonify({
                 "ok": False,
-                "error": "Missing required parameter: cluster_id"
+                "error": "No cluster configured. Please configure a cluster via /setup or /admin/settings first."
             }), 400
         
         logger.info(f"Calling list_available_isos for cluster {cluster_id}")
