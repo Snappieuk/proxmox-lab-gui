@@ -493,16 +493,22 @@ def _sync_isos_background(cluster_id: str, app=None):
                     # Get storages available on THIS specific node (not cluster-wide)
                     storages = proxmox.nodes(node_name).storage.get()
                     
+                    logger.info(f"[ISO Sync] Node {node_name} has {len(storages)} storages")
+                    
                     for storage in storages:
                         storage_name = storage['storage']
                         
                         # If iso_storage is configured, only scan that storage
                         if iso_storage_only and storage_name != iso_storage_only:
+                            logger.debug(f"[ISO Sync] Skipping storage {storage_name} (not configured ISO storage {iso_storage_only})")
                             continue
                         
                         # Check if storage supports ISO content
                         content_types = storage.get('content', '').split(',')
+                        logger.debug(f"[ISO Sync] Storage {storage_name} content types: {content_types}")
+                        
                         if 'iso' not in content_types:
+                            logger.debug(f"[ISO Sync] Skipping storage {storage_name} (no ISO content type)")
                             continue
                         
                         # Skip if storage is explicitly disabled (but allow if status is missing)
@@ -510,6 +516,8 @@ def _sync_isos_background(cluster_id: str, app=None):
                         if status and status == 'unavailable':
                             logger.debug(f"Storage {storage_name} is unavailable on {node_name}, skipping")
                             continue
+                        
+                        logger.info(f"[ISO Sync] Scanning storage {storage_name} on node {node_name} for ISOs")
                         
                         try:
                             # List ISO files in this storage on this node
