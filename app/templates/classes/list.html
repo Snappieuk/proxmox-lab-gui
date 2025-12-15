@@ -346,13 +346,33 @@ async function scanForClasses() {
         const resp = await fetch('/api/class-import/scan');
         const data = await resp.json();
         
+        console.log('Scan results:', data);
+        console.log('Total VMs scanned:', data.total_vms_scanned);
+        console.log('Potential classes found:', data.total_groups);
+        console.log('Sample VM names:', data.sample_vm_names);
+        console.log('Unmatched VMs:', data.unmatched_count, data.unmatched_samples);
+        
         if (!data.ok) {
             container.innerHTML = `<p style="color: #a4262c; padding: 2rem;">${data.error}</p>`;
             return;
         }
         
         if (data.potential_classes.length === 0) {
-            container.innerHTML = '<p style="padding: 2rem; text-align: center;">No importable classes found.<br><br>Expected naming patterns:<br>• <strong>12301-networking-student01</strong>, <strong>12302-networking-student02</strong> (student VMs)<br>• <strong>123-networking-teacher</strong> (teacher VM)<br>• <strong>123-networking-base</strong> (base VM)</p>';
+            let unmatchedHtml = '';
+            if (data.unmatched_samples && data.unmatched_samples.length > 0) {
+                unmatchedHtml = `<br><br><strong>Sample VM names found (not matching pattern):</strong><br>` +
+                    data.unmatched_samples.map(name => `• <code>${name}</code>`).join('<br>');
+            }
+            container.innerHTML = `<p style="padding: 2rem; text-align: center;">
+                No importable classes found.<br><br>
+                <strong>Expected naming pattern:</strong><br>
+                • Student VMs: <code>12301-networking-student01</code>, <code>12302-networking-student02</code><br>
+                • Teacher VM: <code>123-networking-teacher</code><br>
+                • Base VM: <code>123-networking-base</code><br><br>
+                (Scanned ${data.total_vms_scanned} VMs, ${data.unmatched_count} didn't match pattern)
+                ${unmatchedHtml}
+                <br><br><em>Check browser console (F12) for full VM list</em>
+            </p>`;
             return;
         }
         
@@ -437,12 +457,7 @@ async function importClass(prefix, suggestedName, teacherVmid, baseVmid, student
             <button onclick="closeImportModal()" style="background: none; border: none; font-size: 24px; cursor: pointer;">&times;</button>
         </div>
         <p style="color: #605e5c; margin-bottom: 1.5rem;">
-            Scan Proxmox for VMs matching class naming conventions:<br>
-            <strong>Format:</strong> <code>{3digits}{01-99}-{classname}-{role}</code><br>
-            <strong>Examples:</strong><br>
-            • Student VMs: <code>12301-networking-student01</code>, <code>12302-networking-student02</code><br>
-            • Teacher VM: <code>123-networking-teacher</code><br>
-            • Base VM: <code>123-networking-base</code>
+            Scan Proxmox for VMs matching class naming conventions.
         </p>
         <div id="importable-classes"></div>
     </div>

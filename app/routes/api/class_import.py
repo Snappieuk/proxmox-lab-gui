@@ -57,7 +57,7 @@ def api_scan_importable_classes():
             logger.info(f"Sample VM names: {[vm.get('name') for vm in vms[:5]]}")
         
         # Group VMs by potential class prefix
-        potential_classes = _analyze_vm_naming_patterns(vms)
+        potential_classes, unmatched = _analyze_vm_naming_patterns(vms)
         
         logger.info(f"Found {len(potential_classes)} potential class groups")
         
@@ -65,7 +65,10 @@ def api_scan_importable_classes():
             "ok": True,
             "potential_classes": potential_classes,
             "total_groups": len(potential_classes),
-            "total_vms_scanned": len(vms)
+            "total_vms_scanned": len(vms),
+            "sample_vm_names": [vm.get('name') for vm in vms[:10]],
+            "unmatched_count": len(unmatched),
+            "unmatched_samples": [vm['name'] for vm in unmatched[:10]]
         })
         
     except Exception as e:
@@ -208,7 +211,7 @@ def api_import_class():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
-def _analyze_vm_naming_patterns(vms: List[Dict]) -> List[Dict]:
+def _analyze_vm_naming_patterns(vms: List[Dict]) -> Tuple[List[Dict], List[Dict]]:
     """Analyze VM names to find potential class groupings.
     
     Looks for patterns:
@@ -220,7 +223,7 @@ def _analyze_vm_naming_patterns(vms: List[Dict]) -> List[Dict]:
         vms: List of VM dictionaries from inventory
         
     Returns:
-        List of potential class groups with metadata
+        Tuple of (potential_classes, unmatched_vms)
     """
     # Pattern for your naming convention: {3digits}{01-99}-{classname}-{role}
     # Examples: 
@@ -345,4 +348,4 @@ def _analyze_vm_naming_patterns(vms: List[Dict]) -> List[Dict]:
     if unmatched_vms:
         logger.info(f"Found {len(unmatched_vms)} VMs that didn't match naming pattern: {[vm['name'] for vm in unmatched_vms][:10]}")
     
-    return result
+    return result, unmatched_vms
