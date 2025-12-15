@@ -210,16 +210,28 @@ def is_admin_user(user: str) -> bool:
 
 
 def get_admin_group_members() -> List[str]:
-    """Get list of users in the admin group."""
-    return _get_admin_group_members_cached()
+    """Get list of users in all configured admin groups (aggregated across clusters)."""
+    from app.services.settings_service import get_all_admin_groups
+    admin_groups = get_all_admin_groups()
+    
+    if not admin_groups:
+        return []
+    
+    # Aggregate members from all admin groups (deduplicated)
+    all_members = set()
+    for admin_group in admin_groups:
+        members = _get_admin_group_members_cached(admin_group)
+        all_members.update(members)
+    
+    return list(all_members)
 
 
 def _invalidate_admin_group_cache() -> None:
     """Invalidate the admin group cache to force a refresh on next access."""
     global _admin_group_cache, _admin_group_ts
     with _admin_group_lock:
-        _admin_group_cache = None
-        _admin_group_ts = 0.0
+        _admin_group_cache.clear()
+        _admin_group_ts.clear()
     logger.debug("Invalidated admin group cache")
 
 
