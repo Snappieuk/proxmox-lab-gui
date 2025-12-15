@@ -1746,10 +1746,6 @@ def get_all_vms(skip_ips: bool = False, force_refresh: bool = False) -> List[Dic
                 if vm.get("template") == 1:
                     continue
                 
-                # Filter by VALID_NODES if configured
-                if VALID_NODES and vm.get("node") not in VALID_NODES:
-                    continue
-                
                 # Add cluster info to raw VM data for IP caching
                 vm["cluster_id"] = cluster_id
                 vm["cluster_name"] = cluster_name
@@ -1767,8 +1763,6 @@ def get_all_vms(skip_ips: bool = False, force_refresh: bool = False) -> List[Dic
 
             for n in nodes:
                 node = n["node"]
-                if VALID_NODES and node not in VALID_NODES:
-                    continue
                 
                 try:
                     # Get QEMU VMs
