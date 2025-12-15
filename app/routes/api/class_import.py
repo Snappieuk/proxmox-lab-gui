@@ -161,7 +161,7 @@ def api_import_class():
                 mac_address=vm.get('mac'),
                 assigned_user_id=teacher_id,
                 status='assigned',
-                vm_role='teacher'
+                is_teacher_vm=True
             )
             db.session.add(assignment)
             assignments_created += 1
@@ -177,7 +177,7 @@ def api_import_class():
                 mac_address=vm.get('mac'),
                 assigned_user_id=None,
                 status='available',
-                vm_role='base'
+                is_template_vm=True
             )
             db.session.add(assignment)
             assignments_created += 1
@@ -194,7 +194,8 @@ def api_import_class():
                     mac_address=vm.get('mac'),
                     assigned_user_id=None,
                     status='available',
-                    vm_role='student'
+                    is_teacher_vm=False,
+                    is_template_vm=False
                 )
                 db.session.add(assignment)
                 assignments_created += 1
