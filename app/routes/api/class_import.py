@@ -109,10 +109,10 @@ def api_import_class():
         teacher_vmid = data.get("teacher_vmid")
         base_vmid = data.get("base_vmid")
         student_vmids = data.get("student_vmids", [])
-        cluster_id = data.get("cluster_id")
+        cluster_id = data.get("cluster_id")  # Can be None - will use current cluster
         
-        if not all([class_name, prefix, cluster_id]):
-            return jsonify({"ok": False, "error": "Missing required fields"}), 400
+        if not class_name or not prefix:
+            return jsonify({"ok": False, "error": "Missing required fields: class_name and prefix"}), 400
         
         # Get teacher user ID
         teacher_id = local_user.id if local_user else None
