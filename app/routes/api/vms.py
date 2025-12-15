@@ -650,10 +650,50 @@ def api_vm_update_config(vmid: int):
         except (ValueError, TypeError):
             return jsonify({"ok": False, "error": "Invalid cores or memory value"}), 400
         
-        # Get VM from database for validation
+        # Get VM from database for validation - try current cluster first, then all clusters
         vm = get_vm_from_inventory(cluster_id, vmid)
+        
         if not vm:
-            return jsonify({"ok": False, "error": "VM not found"}), 404
+            # VM not in current cluster, try to find it in any cluster
+            logger.info(f"VM {vmid} not found in cluster {cluster_id}, searching all clusters")
+            from app.models import VMInventory
+            vm_record = VMInventory.query.filter_by(vmid=vmid).first()
+            
+            if vm_record:
+                # Found in different cluster, update cluster_id
+                cluster_id = vm_record.cluster_id
+                logger.info(f"Found VM {vmid} in cluster {cluster_id}")
+                vm = {
+                    'vmid': vm_record.vmid,
+                    'node': vm_record.node,
+                    'status': vm_record.status,
+                    'is_template': vm_record.is_template,
+                    'cluster_id': vm_record.cluster_id
+                }
+            else:
+                # Still not found - VM might not be synced to database yet
+                # Try to get it directly from Proxmox
+                logger.warning(f"VM {vmid} not in VMInventory, attempting direct Proxmox lookup")
+                try:
+                    proxmox = get_proxmox_admin_for_cluster(cluster_id)
+                    # Try to find VM in cluster resources
+                    resources = proxmox.cluster.resources.get(type='vm')
+                    for res in resources:
+                        if res.get('vmid') == vmid:
+                            vm = {
+                                'vmid': vmid,
+                                'node': res.get('node'),
+                                'status': res.get('status', 'unknown'),
+                                'is_template': res.get('template', 0) == 1,
+                                'cluster_id': cluster_id
+                            }
+                            logger.info(f"Found VM {vmid} via Proxmox API on node {vm['node']}")
+                            break
+                except Exception as lookup_err:
+                    logger.error(f"Failed to lookup VM via Proxmox API: {lookup_err}")
+                
+                if not vm:
+                    return jsonify({"ok": False, "error": f"VM {vmid} not found in any cluster"}), 404
         
         # Check access permissions
         if not is_admin_user(user):
@@ -674,8 +714,21 @@ def api_vm_update_config(vmid: int):
             try:
                 # Remove template flag
                 proxmox.nodes(node).qemu(vmid).config.put(template=0)
+                
+                # Wait for template flag to be removed (verify it's actually changed)
                 import time
-                time.sleep(1)  # Wait for change to apply
+                max_wait = 30
+                waited = 0
+                while waited < max_wait:
+                    time.sleep(1)
+                    waited += 1
+                    config = proxmox.nodes(node).qemu(vmid).config.get()
+                    if config.get('template') != 1:
+                        logger.info(f"Template converted to VM after {waited} seconds")
+                        break
+                else:
+                    logger.warning(f"Template flag still set after {max_wait} seconds")
+                    
             except Exception as e:
                 logger.error(f"Failed to convert template to VM: {e}")
                 return jsonify({"ok": False, "error": f"Failed to convert template to VM: {str(e)}"}), 500
@@ -687,6 +740,21 @@ def api_vm_update_config(vmid: int):
         # Update hardware via Proxmox API
         try:
             proxmox.nodes(node).qemu(vmid).config.put(cores=cores, memory=memory)
+            
+            # Verify the config was actually updated
+            import time
+            max_wait = 30
+            waited = 0
+            while waited < max_wait:
+                time.sleep(1)
+                waited += 1
+                config = proxmox.nodes(node).qemu(vmid).config.get()
+                if config.get('cores') == cores and config.get('memory') == memory:
+                    logger.info(f"VM config updated successfully after {waited} seconds")
+                    break
+            else:
+                logger.warning(f"Config may not be fully applied after {max_wait} seconds")
+            
             logger.info(f"Updated VM {vmid} config: {cores} cores, {memory}MB RAM (user: {user})")
         except Exception as e:
             logger.error(f"Failed to update VM config: {e}")
@@ -702,10 +770,22 @@ def api_vm_update_config(vmid: int):
         if is_template:
             try:
                 import time
-                time.sleep(1)  # Wait for config change to apply
                 proxmox.nodes(node).qemu(vmid).template.post()
-                logger.info(f"Converted VM {vmid} back to template")
-                time.sleep(1)  # Wait for conversion
+                
+                # Wait for conversion back to template and verify
+                max_wait = 30
+                waited = 0
+                while waited < max_wait:
+                    time.sleep(1)
+                    waited += 1
+                    config = proxmox.nodes(node).qemu(vmid).config.get()
+                    if config.get('template') == 1:
+                        logger.info(f"Converted back to template after {waited} seconds")
+                        break
+                else:
+                    logger.error(f"Failed to verify template conversion after {max_wait} seconds")
+                    return jsonify({"ok": False, "error": "Config updated but template conversion not verified"}), 500
+                    
             except Exception as e:
                 logger.error(f"Failed to convert back to template: {e}")
                 return jsonify({"ok": False, "error": f"Config updated but failed to convert back to template: {str(e)}"}), 500
