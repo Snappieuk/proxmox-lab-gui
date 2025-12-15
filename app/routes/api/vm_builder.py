@@ -253,7 +253,7 @@ def api_clone_from_template():
             logger.info(f"Target node: {target_node}")
         
         from app.services.proxmox_service import get_proxmox_admin_for_cluster
-        from app.services.vm_utils import get_next_available_vmid
+        from app.services.vm_utils import get_next_available_vmid_api
         from app.models import VMAssignment, db
         from app.services.background_sync import trigger_immediate_sync
         import time
@@ -266,7 +266,7 @@ def api_clone_from_template():
             }), 500
         
         # Get next available VMID
-        new_vmid = get_next_available_vmid(proxmox)
+        new_vmid = get_next_available_vmid_api(proxmox)
         logger.info(f"Allocated VMID: {new_vmid}")
         
         # If no target node specified, find the node where template exists
