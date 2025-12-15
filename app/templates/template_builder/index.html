@@ -998,6 +998,7 @@ async function submitEditVM(event) {
             alert('✅ VM hardware updated successfully!');
             closeEditVMModal();
             loadMyVMs(); // Refresh VM list
+            loadTemplates(); // Refresh template list (in case it was a template)
         } else {
             alert(`❌ Failed to update VM: ${data.error || 'Unknown error'}`);
         }
