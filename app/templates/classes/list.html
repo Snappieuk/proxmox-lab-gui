@@ -365,10 +365,11 @@ async function scanForClasses() {
             }
             container.innerHTML = `<p style="padding: 2rem; text-align: center;">
                 No importable classes found.<br><br>
-                <strong>Expected naming pattern:</strong><br>
-                • Teacher VM: <code>12300-networking-teacher</code> (00 suffix)<br>
-                • Base VM: <code>12399-networking-base</code> (99 suffix)<br>
-                • Student VMs: <code>12301-networking-student01</code>, <code>12302-networking-student02</code> (01-98 suffix)<br><br>
+                <strong>Expected VMID pattern (VM names are separate):</strong><br>
+                • Teacher VM: VMID ends in <code>00</code> (e.g., 12300, 45600)<br>
+                • Base VM: VMID ends in <code>99</code> (e.g., 12399, 45699)<br>
+                • Student VMs: VMID ends in <code>01-98</code> (e.g., 12301, 12302, 45601, 45602)<br><br>
+                <em>VMs must have 5-digit VMIDs: {3 random digits}{2-digit identifier}</em><br><br>
                 (Scanned ${data.total_vms_scanned} VMs, ${data.unmatched_count} didn't match pattern)
                 ${unmatchedHtml}
                 <br><br><em>Check browser console (F12) for full VM list</em>
