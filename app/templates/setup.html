@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+
+{% block title %}Initial Setup - Proxmox Lab Portal{% endblock %}
+
+{% block content %}
+<div class="container mt-5">
+    <div class="row justify-content-center">
+        <div class="col-md-8">
+            <div class="card shadow">
+                <div class="card-header bg-primary text-white">
+                    <h4 class="mb-0">🚀 Welcome to Proxmox Lab Portal</h4>
+                </div>
+                <div class="card-body">
+                    <div class="alert alert-info">
+                        <strong>First-Time Setup Required</strong><br>
+                        No Proxmox clusters are configured yet. Please add your first cluster to get started.
+                    </div>
+
+                    {% if error %}
+                    <div class="alert alert-danger">{{ error }}</div>
+                    {% endif %}
+
+                    {% if success %}
+                    <div class="alert alert-success">
+                        {{ success }}<br>
+                        <a href="{{ url_for('auth.login') }}" class="btn btn-primary mt-2">Go to Login</a>
+                    </div>
+                    {% else %}
+
+                    <form method="POST">
+                        <h5 class="mb-3">Proxmox Cluster Configuration</h5>
+
+                        <div class="mb-3">
+                            <label for="cluster_id" class="form-label">Cluster ID *</label>
+                            <input type="text" class="form-control" id="cluster_id" name="cluster_id" 
+                                   placeholder="e.g., pve1" required>
+                            <small class="form-text text-muted">Short identifier for this cluster</small>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="name" class="form-label">Cluster Name *</label>
+                            <input type="text" class="form-control" id="name" name="name" 
+                                   placeholder="e.g., Production PVE" required>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="host" class="form-label">Proxmox Host *</label>
+                            <input type="text" class="form-control" id="host" name="host" 
+                                   placeholder="e.g., 10.220.15.249 or pve.example.com" required>
+                            <small class="form-text text-muted">IP address or hostname of your Proxmox server</small>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="port" class="form-label">Port</label>
+                            <input type="number" class="form-control" id="port" name="port" 
+                                   value="8006" required>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="user" class="form-label">Admin Username *</label>
+                            <input type="text" class="form-control" id="user" name="user" 
+                                   placeholder="e.g., root@pam" required>
+                            <small class="form-text text-muted">Proxmox admin user (e.g., root@pam)</small>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="password" class="form-label">Admin Password *</label>
+                            <input type="password" class="form-control" id="password" name="password" required>
+                        </div>
+
+                        <div class="mb-3 form-check">
+                            <input type="checkbox" class="form-check-input" id="verify_ssl" name="verify_ssl">
+                            <label class="form-check-label" for="verify_ssl">
+                                Verify SSL Certificate (uncheck for self-signed certificates)
+                            </label>
+                        </div>
+
+                        <hr>
+
+                        <h5 class="mb-3">Optional Settings</h5>
+
+                        <div class="mb-3">
+                            <label for="qcow2_template_path" class="form-label">QCOW2 Template Path</label>
+                            <input type="text" class="form-control" id="qcow2_template_path" name="qcow2_template_path" 
+                                   value="/mnt/pve/templates">
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="qcow2_images_path" class="form-label">QCOW2 Images Path</label>
+                            <input type="text" class="form-control" id="qcow2_images_path" name="qcow2_images_path" 
+                                   value="/mnt/pve/images">
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="admin_group" class="form-label">Admin Group</label>
+                            <input type="text" class="form-control" id="admin_group" name="admin_group" 
+                                   value="adminers">
+                            <small class="form-text text-muted">Proxmox group for admin users</small>
+                        </div>
+
+                        <button type="submit" class="btn btn-primary btn-lg w-100">
+                            <i class="bi bi-check-circle"></i> Complete Setup
+                        </button>
+                    </form>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

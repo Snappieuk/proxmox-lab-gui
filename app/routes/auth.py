@@ -22,6 +22,11 @@ def login():
     from app.services.user_manager import authenticate_proxmox_user
     from app.utils.decorators import current_user
     
+    # Check if initial setup is needed
+    clusters = get_clusters_from_db()
+    if not clusters:
+        return redirect(url_for("auth.setup"))
+    
     if current_user():
         # Already logged in — redirect to portal
         return redirect(url_for("portal.portal"))
@@ -95,6 +100,72 @@ def register():
                 error = error_msg or "Failed to create account"
 
     return render_template("register.html", error=error, success=success)
+
+
+@auth_bp.route("/setup", methods=["GET", "POST"])
+def setup():
+    """First-time setup page - add initial cluster configuration."""
+    from app.models import db, Cluster
+    
+    # Check if clusters already exist
+    clusters = get_clusters_from_db()
+    if clusters:
+        # Already configured, redirect to login
+        return redirect(url_for("auth.login"))
+    
+    error = None
+    success = None
+    
+    if request.method == "POST":
+        try:
+            cluster_id = request.form.get("cluster_id", "").strip()
+            name = request.form.get("name", "").strip()
+            host = request.form.get("host", "").strip()
+            port = request.form.get("port", "8006")
+            user = request.form.get("user", "").strip()
+            password = request.form.get("password", "")
+            verify_ssl = request.form.get("verify_ssl") == "on"
+            
+            # Optional settings
+            qcow2_template_path = request.form.get("qcow2_template_path", "/mnt/pve/templates").strip()
+            qcow2_images_path = request.form.get("qcow2_images_path", "/mnt/pve/images").strip()
+            admin_group = request.form.get("admin_group", "adminers").strip()
+            
+            # Validate required fields
+            if not all([cluster_id, name, host, user, password]):
+                error = "Please fill in all required fields."
+            else:
+                # Create cluster
+                cluster = Cluster(
+                    cluster_id=cluster_id,
+                    name=name,
+                    host=host,
+                    port=int(port),
+                    user=user,
+                    password=password,
+                    verify_ssl=verify_ssl,
+                    is_default=True,  # First cluster is always default
+                    is_active=True,
+                    qcow2_template_path=qcow2_template_path,
+                    qcow2_images_path=qcow2_images_path,
+                    admin_group=admin_group,
+                    enable_ip_lookup=True,
+                    enable_ip_persistence=False,
+                    vm_cache_ttl=300,
+                )
+                
+                db.session.add(cluster)
+                db.session.commit()
+                
+                logger.info(f"Initial cluster setup completed: {name}")
+                success = f"Cluster '{name}' configured successfully! You can now login with your Proxmox credentials."
+                
+        except Exception as e:
+            db.session.rollback()
+            logger.error(f"Setup failed: {e}", exc_info=True)
+            error = f"Failed to save cluster configuration: {str(e)}"
+    
+    return render_template("setup.html", error=error, success=success)
 
 
 @auth_bp.route("/logout")
