@@ -77,6 +77,14 @@
         </select>
     </div>
     <div class="filter-group">
+        <i class="bi bi-circle-fill filter-icon"></i>
+        <select id="status-filter" class="filter-select">
+            <option value="all">All Statuses</option>
+            <option value="running">Running Only</option>
+            <option value="stopped">Stopped Only</option>
+        </select>
+    </div>
+    <div class="filter-group">
         <i class="bi bi-server filter-icon"></i>
         <select id="node-filter" class="filter-select">
             <option value="all">All Nodes</option>
@@ -494,18 +502,21 @@ let allVMs = [];
 function applyFilters() {
     const searchTerm = document.getElementById('search-input').value.toLowerCase();
     const categoryFilter = document.getElementById('category-filter').value;
+    const statusFilter = document.getElementById('status-filter').value;
     const nodeFilter = document.getElementById('node-filter').value;
     
     document.querySelectorAll('.vm-table-improved tbody tr').forEach(row => {
         const category = row.dataset.category;
+        const status = row.dataset.status;
         const node = row.dataset.node;
         const text = row.textContent.toLowerCase();
         
         const matchesSearch = !searchTerm || text.includes(searchTerm);
         const matchesCategory = categoryFilter === 'all' || category === categoryFilter;
+        const matchesStatus = statusFilter === 'all' || status === statusFilter;
         const matchesNode = nodeFilter === 'all' || node === nodeFilter;
         
-        row.style.display = (matchesSearch && matchesCategory && matchesNode) ? '' : 'none';
+        row.style.display = (matchesSearch && matchesCategory && matchesStatus && matchesNode) ? '' : 'none';
     });
     
     // Hide empty sections
@@ -521,6 +532,7 @@ function initializeFilters() {
     // Remove any existing listeners to avoid duplicates
     const searchInput = document.getElementById('search-input');
     const categoryFilter = document.getElementById('category-filter');
+    const statusFilter = document.getElementById('status-filter');
     const nodeFilter = document.getElementById('node-filter');
     
     if (searchInput) {
@@ -530,6 +542,10 @@ function initializeFilters() {
     if (categoryFilter) {
         categoryFilter.removeEventListener('change', applyFilters);
         categoryFilter.addEventListener('change', applyFilters);
+    }
+    if (statusFilter) {
+        statusFilter.removeEventListener('change', applyFilters);
+        statusFilter.addEventListener('change', applyFilters);
     }
     if (nodeFilter) {
         nodeFilter.removeEventListener('change', applyFilters);

@@ -731,6 +731,17 @@ body {
     border-radius: 4px;
     font-size: 13px;
     background: white;
+    cursor: pointer;
+}
+
+.filter-select:hover {
+    border-color: #323130;
+}
+
+.filter-select:focus {
+    outline: none;
+    border-color: #0078d4;
+    box-shadow: 0 0 0 2px rgba(0, 120, 212, 0.1);
 }
 
 /* VM Tables */
@@ -2140,6 +2151,24 @@ body {
 
 .btn-stop i {
     color: #d13438 !important;
+}
+
+/* Fix filter dropdowns to work properly */
+.filter-select {
+    cursor: pointer !important;
+    appearance: auto !important;
+    -webkit-appearance: menulist !important;
+    -moz-appearance: menulist !important;
+}
+
+.filter-select:hover {
+    border-color: #323130 !important;
+}
+
+.filter-select:focus {
+    outline: none !important;
+    border-color: #0078d4 !important;
+    box-shadow: 0 0 0 2px rgba(0, 120, 212, 0.1) !important;
 }
 
 
