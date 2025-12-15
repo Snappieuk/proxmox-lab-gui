@@ -3,22 +3,22 @@
 {% block content %}
 <div class="page-header">
     <h1 class="page-title">
-        <i class="bi bi-tools"></i> Template Builder
+        <i class="bi bi-tools"></i> VM Builder
     </h1>
-    <p class="page-subtitle">Create and manage VM templates for your classes</p>
+    <p class="page-subtitle">Create VMs and templates for your classes</p>
 </div>
 
 <div class="content-container">
-    <!-- Template Creation Section -->
+    <!-- VM Creation Section -->
     <div class="card">
         <div class="card-header">
             <h2 style="font-size: 1.3rem; margin: 0;">
-                <i class="bi bi-plus-circle"></i> Create New Template
+                <i class="bi bi-plus-circle"></i> Create New VM
             </h2>
         </div>
         <div class="card-body">
             <p style="color: #666; margin-bottom: 1.5rem;">
-                Build a new VM template from scratch or convert an existing VM into a template.
+                Build a new VM from scratch or clone from an existing template. Optionally convert to template.
             </p>
             
             <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.25rem;">
@@ -27,7 +27,7 @@
                         <i class="bi bi-file-earmark-plus" style="font-size: 2.5rem; color: #0078d4;"></i>
                     </div>
                     <h3 style="font-size: 1.15rem; margin: 1rem 0 0.5rem; font-weight: 600;">Build from Scratch</h3>
-                    <p style="color: #666; font-size: 0.9rem; margin: 0;">Create a new VM and configure it as a template</p>
+                    <p style="color: #666; font-size: 0.9rem; margin: 0;">Create a new VM from ISO (regular VM or template)</p>
                 </div>
                 
                 <div class="option-card" id="btn-convert-existing" style="cursor: pointer;">
@@ -35,7 +35,7 @@
                         <i class="bi bi-arrow-repeat" style="font-size: 2.5rem; color: #107c10;"></i>
                     </div>
                     <h3 style="font-size: 1.15rem; margin: 1rem 0 0.5rem; font-weight: 600;">Convert Existing VM</h3>
-                    <p style="color: #666; font-size: 0.9rem; margin: 0;">Turn an existing VM into a reusable template</p>
+                    <p style="color: #666; font-size: 0.9rem; margin: 0;">Turn an existing VM into a template</p>
                 </div>
             </div>
         </div>
@@ -45,10 +45,13 @@
     <div class="card" style="margin-top: 1.5rem;">
         <div class="card-header">
             <h2 style="font-size: 1.3rem; margin: 0;">
-                <i class="bi bi-pc-display"></i> My Template VMs
+                <i class="bi bi-pc-display"></i> My VMs
             </h2>
         </div>
         <div class="card-body">
+            <p style="color: #666; margin-bottom: 1rem; font-size: 0.9rem;">
+                VMs you've created. Install OS, configure, then optionally convert to template for class use.
+            </p>
             <div id="vms-loading" style="text-align: center; padding: 2rem; color: #666;">
                 <i class="bi bi-hourglass-split"></i> Loading VMs...
             </div>
@@ -66,6 +69,9 @@
             </h2>
         </div>
         <div class="card-body">
+            <p style="color: #666; margin-bottom: 1rem; font-size: 0.9rem;">
+                Templates ready to use in classes. These can be cloned but not started directly.
+            </p>
             <div id="templates-loading" style="text-align: center; padding: 2rem; color: #666;">
                 <i class="bi bi-hourglass-split"></i> Loading templates...
             </div>
@@ -171,13 +177,17 @@
 
                 <!-- Template Options -->
                 <div class="form-section">
-                    <div class="section-label">Options</div>
+                    <div class="section-label">VM Type</div>
                     <div class="form-row">
                         <div class="form-col">
-                            <label for="build-convert-template" class="compact-label" style="display: flex; align-items: center; gap: 0.5rem;">
+                            <label class="compact-label" style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem;">
                                 <input type="checkbox" id="build-convert-template">
-                                Convert to template after creation
+                                <span>Convert to template after creation</span>
                             </label>
+                            <small style="color: #666; display: block; margin-left: 1.5rem;">
+                                <strong>Unchecked:</strong> Creates a regular VM you can start and use<br>
+                                <strong>Checked:</strong> Creates a template for class deployment (cannot be started directly)
+                            </small>
                         </div>
                     </div>
                 </div>
@@ -235,6 +245,57 @@
         </div>
         <div class="modal-body" style="padding: 0; height: calc(95vh - 80px);">
             <iframe id="console-frame" style="width: 100%; height: 100%; border: none;" frameborder="0"></iframe>
+        </div>
+    </div>
+</div>
+
+<!-- Edit VM Modal -->
+<div id="edit-vm-modal" class="modal" style="display: none;">
+    <div class="modal-content" style="max-width: 500px; width: 90%;">
+        <div class="modal-header">
+            <h2 style="font-size: 1.25rem; font-weight: 600; margin: 0;">
+                <i class="bi bi-pencil" style="margin-right: 0.5rem;"></i>Edit VM Hardware
+            </h2>
+            <button class="btn-close" onclick="closeEditVMModal()">&times;</button>
+        </div>
+        <div class="modal-body" style="padding: 1.25rem 1.5rem;">
+            <form id="edit-vm-form" onsubmit="submitEditVM(event)">
+                <input type="hidden" id="edit-vm-id">
+                
+                <div class="form-section">
+                    <div class="form-row">
+                        <div class="form-col">
+                            <label class="compact-label">VM Name</label>
+                            <input type="text" id="edit-vm-name-display" class="form-control compact-input" disabled>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-col">
+                            <label for="edit-vm-cores" class="compact-label">CPU Cores</label>
+                            <input type="number" id="edit-vm-cores" class="form-control compact-input" min="1" max="64" required>
+                        </div>
+                        <div class="form-col">
+                            <label for="edit-vm-memory" class="compact-label">Memory (MB)</label>
+                            <input type="number" id="edit-vm-memory" class="form-control compact-input" min="512" max="65536" step="512" required>
+                        </div>
+                    </div>
+                </div>
+                
+                <div style="background: #fef3c7; padding: 1rem; border-radius: 0.5rem; margin-bottom: 1rem; border-left: 4px solid #f59e0b;">
+                    <div style="font-size: 0.875rem; color: #92400e;">
+                        <strong>⚠️ Note:</strong> VM must be stopped to change hardware specs. Changes will be applied via Proxmox API.
+                    </div>
+                </div>
+                
+                <div class="modal-actions">
+                    <button type="button" onclick="closeEditVMModal()" class="btn-cancel">
+                        Cancel
+                    </button>
+                    <button type="submit" class="btn-migrate">
+                        <i class="bi bi-check-circle" style="margin-right: 0.5rem;"></i>Save Changes
+                    </button>
+                </div>
+            </form>
         </div>
     </div>
 </div>
@@ -895,7 +956,59 @@ async function confirmConvertVM(vmid, vmname) {
 
 function closeConvertExistingModal() {
     document.getElementById('convert-existing-modal').style.display = 'none';
-};
+}
+
+// Edit VM hardware specs
+function editVM(vmid, vmname, cores, memory) {
+    document.getElementById('edit-vm-id').value = vmid;
+    document.getElementById('edit-vm-name-display').value = vmname;
+    document.getElementById('edit-vm-cores').value = cores;
+    document.getElementById('edit-vm-memory').value = memory;
+    document.getElementById('edit-vm-modal').style.display = 'flex';
+}
+
+function closeEditVMModal() {
+    document.getElementById('edit-vm-modal').style.display = 'none';
+}
+
+async function submitEditVM(event) {
+    event.preventDefault();
+    
+    const vmid = document.getElementById('edit-vm-id').value;
+    const cores = parseInt(document.getElementById('edit-vm-cores').value);
+    const memory = parseInt(document.getElementById('edit-vm-memory').value);
+    
+    const submitBtn = event.target.querySelector('button[type="submit"]');
+    const originalText = submitBtn.innerHTML;
+    
+    try {
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Saving...';
+        
+        // Call Proxmox API to update VM config
+        const response = await fetch(`/api/vm/${vmid}/config`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ cores, memory })
+        });
+        
+        const data = await response.json();
+        
+        if (data.ok || response.ok) {
+            alert('✅ VM hardware updated successfully!');
+            closeEditVMModal();
+            loadMyVMs(); // Refresh VM list
+        } else {
+            alert(`❌ Failed to update VM: ${data.error || 'Unknown error'}`);
+        }
+    } catch (error) {
+        console.error('Error updating VM:', error);
+        alert(`❌ Failed to update VM: ${error.message}`);
+    } finally {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = originalText;
+    }
+}
 
 console.log('✅ Functions defined VERSION v5 - attached to window');
 console.log('✅ Window functions:', typeof window.showCreateFromScratch, typeof window.showConvertExisting);
@@ -1104,6 +1217,9 @@ async function loadMyVMs() {
                 <div class="template-actions">
                     <button class="btn-icon" onclick="openConsole(${vm.vmid}, '${vm.name}')" title="Open Console">
                         <i class="bi bi-terminal"></i> Console
+                    </button>
+                    <button class="btn-icon btn-secondary" onclick="editVM(${vm.vmid}, '${vm.name}', ${vm.cores || 2}, ${vm.memory || 2048})" title="Edit Hardware Specs">
+                        <i class="bi bi-pencil"></i> Edit
                     </button>
                     <button class="btn-icon btn-secondary" onclick="ejectISO(${vm.vmid})" title="Eject Installation Media">
                         <i class="bi bi-eject"></i> Eject ISO

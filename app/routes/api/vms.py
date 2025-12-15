@@ -608,3 +608,90 @@ def api_vm_convert_to_template(vmid: int):
         logger.exception(f"Failed to convert VM {vmid} to template")
         return jsonify({"ok": False, "error": str(e)}), 500
 
+
+@api_vms_bp.route("/vm/<int:vmid>/config", methods=["PUT"])
+@login_required
+def api_vm_update_config(vmid: int):
+    """Update VM hardware configuration (CPU cores and memory).
+    
+    Request body:
+    {
+        "cores": 4,
+        "memory": 4096
+    }
+    """
+    from app.services.inventory_service import get_vm_from_inventory
+    from app.services.proxmox_service import get_proxmox_admin_for_cluster
+    from app.services.user_manager import is_admin_user, require_user
+    
+    user = require_user()
+    cluster_id = session.get("cluster_id", get_clusters_from_db()[0]["id"])
+    
+    try:
+        # Get request data
+        if not request.is_json:
+            return jsonify({"ok": False, "error": "Content-Type must be application/json"}), 400
+        
+        data = request.json
+        cores = data.get('cores')
+        memory = data.get('memory')
+        
+        if not cores or not memory:
+            return jsonify({"ok": False, "error": "Both 'cores' and 'memory' are required"}), 400
+        
+        # Validate values
+        try:
+            cores = int(cores)
+            memory = int(memory)
+            if cores < 1 or cores > 64:
+                return jsonify({"ok": False, "error": "Cores must be between 1 and 64"}), 400
+            if memory < 512 or memory > 65536:
+                return jsonify({"ok": False, "error": "Memory must be between 512MB and 65536MB"}), 400
+        except (ValueError, TypeError):
+            return jsonify({"ok": False, "error": "Invalid cores or memory value"}), 400
+        
+        # Get VM from database for validation
+        vm = get_vm_from_inventory(cluster_id, vmid)
+        if not vm:
+            return jsonify({"ok": False, "error": "VM not found"}), 404
+        
+        # Check access permissions
+        if not is_admin_user(user):
+            owned_vmids = _resolve_user_owned_vmids(user)
+            if vmid not in owned_vmids:
+                return jsonify({"ok": False, "error": "VM not accessible"}), 403
+        
+        # VM must be stopped to change hardware
+        if vm['status'] == 'running':
+            return jsonify({"ok": False, "error": "VM must be stopped to change hardware configuration"}), 400
+        
+        # Update via Proxmox API
+        proxmox = get_proxmox_admin_for_cluster(cluster_id)
+        node = vm['node']
+        
+        proxmox.nodes(node).qemu(vmid).config.put(cores=cores, memory=memory)
+        
+        logger.info(f"Updated VM {vmid} config: {cores} cores, {memory}MB RAM (user: {user})")
+        
+        # Update VMInventory database
+        try:
+            from app.models import VMInventory, db
+            vm_record = VMInventory.query.filter_by(cluster_id=cluster_id, vmid=vmid).first()
+            if vm_record:
+                vm_record.cores = cores
+                vm_record.memory = memory
+                db.session.commit()
+                logger.info(f"Updated VMInventory for VM {vmid}")
+        except Exception as db_err:
+            logger.warning(f"Failed to update VMInventory: {db_err}")
+        
+        return jsonify({
+            "ok": True,
+            "message": f"VM hardware updated: {cores} cores, {memory}MB RAM"
+        })
+        
+    except Exception as e:
+        logger.exception(f"Failed to update VM {vmid} config")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
