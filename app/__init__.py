@@ -37,8 +37,8 @@ def create_app(config=None):
                 template_folder=template_folder,
                 static_folder=static_folder)
     
-    # Configure secret key
-    app.secret_key = SECRET_KEY
+    # Configure secret key (required for sessions)
+    app.config['SECRET_KEY'] = SECRET_KEY
     
     # Configure file upload limits (10GB max for ISOs)
     app.config['MAX_CONTENT_LENGTH'] = 10 * 1024 * 1024 * 1024  # 10GB
