@@ -282,14 +282,17 @@ api/
   
 **Utility scripts**:
 - `migrate_db.py` – Database migration script (creates tables, adds columns, migrates clusters.json to database)
-- `debug_vminventory.py` – Query VMInventory table directly (for debugging sync issues)
-- `fix_vminventory.py` – Repair VMInventory table (remove stale records, fix sync errors)
 
 **Removed/deprecated**:
 - `terraform/` directory – Removed, Terraform deployment strategy no longer used
 - `app/services/terraform_service.py` – Deleted, functionality replaced by disk copy approach
 - `app/services/qcow2_bulk_cloner.py` – Deleted, refactored into `ssh_executor.py` (SSH wrapper only)
 - `tests/test_qcow2_bulk_cloner.py` – Deleted, tested non-existent module
+- `add_cluster.py` – Removed, clusters now managed via web UI at `/admin/clusters`
+- `check_mac_addresses.py` – Removed, functionality replaced by VMInventory database queries
+- `migrate_config_imports.py` – Removed, one-time migration completed
+- `debug_vminventory.py` – Removed, use database queries or `/api/sync/status` instead
+- `fix_vminventory.py` – Removed, background sync handles inventory repairs automatically
 
 **Code deduplication completed (2024)**:
 - Removed 100-line duplicate `export_template_to_qcow2()` from `class_vm_service.py` → now imports from `vm_template`
@@ -405,7 +408,7 @@ git add . && git commit -m "Changes" && git push
 - Admin access issues: verify `is_admin_user(userid)` returns True, check logs for "inject_admin_flag" entries
 - Cache debugging: check `_vm_cache_data` age, manually call `_invalidate_vm_cache()` if stale
 - ARP scanner: verify nmap installed, run with `sudo` for ARP probe access, check `_arp_cache` status
-- VMInventory issues: run `python3 debug_vminventory.py` to query table directly, `python3 fix_vminventory.py` to repair
+- VMInventory issues: query database directly or visit `/api/sync/status` to see last sync times and stats
 - Background sync status: visit `/api/sync/status` to see last sync times and stats
 
 **Testing without Proxmox** (no test suite exists):
@@ -517,13 +520,13 @@ print(result)  # Should return "student1@pve" or None
 ## Key troubleshooting patterns
 
 **VM not appearing in portal**:
-1. Check VMInventory: `python3 debug_vminventory.py` - is VM in database?
+1. Check VMInventory: Query database or visit `/api/sync/status` - is VM in database?
 2. Check VMAssignment: Does user have assignment record? Query `VMAssignment.query.filter_by(assigned_user_id=user.id).all()`
 3. Force sync: Visit `/api/sync/trigger?type=full` to trigger background sync
 4. Check cluster: Is VM on active cluster? Session has correct `cluster_id`?
 
 **IP not showing for VM**:
-1. Check VMInventory: `python3 debug_vminventory.py` - is IP in database?
+1. Check VMInventory: Query database or visit `/api/sync/status` - is IP in database?
 2. Guest agent: QEMU VMs need guest agent installed and running
 3. ARP scan: Background sync uses ARP as fallback - check `nmap` installed, has root access
 4. Force discovery: Start VM, wait 15 seconds for boot, background sync triggers IP discovery
