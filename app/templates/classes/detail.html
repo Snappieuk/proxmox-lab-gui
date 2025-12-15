@@ -1822,8 +1822,8 @@ function updateTemplateDisplay() {
     
     // Update power status badge
     const powerBadge = document.getElementById('template-power-status');
-    if (powerBadge) {
-        const status = currentTemplateInfo.status || 'stopped';
+    if (powerBadge && currentTemplateInfo.status) {
+        const status = String(currentTemplateInfo.status).toLowerCase();
         powerBadge.className = 'power-badge power-badge-' + status;
         powerBadge.textContent = status.charAt(0).toUpperCase() + status.slice(1);
     }
