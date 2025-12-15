@@ -190,26 +190,36 @@ def create_app(config=None):
     
     # Ensure templates are replicated across all nodes at startup (disabled by default)
     # Check SystemSettings for enable_template_replication (database-first)
-    from app.models import SystemSettings
-    enable_template_replication = SystemSettings.get('enable_template_replication', 'false') == 'true'
-    
-    if enable_template_replication:
-        def _replicate_templates_startup():
-            import time
-            time.sleep(2)
-            try:
-                with app.app_context():
-                    from app.services.proxmox_operations import (
-                        replicate_templates_to_all_nodes,
-                    )
-                    logger.info("Starting template replication check across nodes...")
-                    replicate_templates_to_all_nodes()
-                    logger.info("Template replication check completed")
-            except Exception as e:
-                logger.warning(f"Template replication startup failed: {e}")
+    def check_template_replication():
+        """Check if template replication is enabled and start if needed."""
+        try:
+            from app.models import SystemSettings
+            with app.app_context():
+                enable_template_replication = SystemSettings.get('enable_template_replication', 'false') == 'true'
+                
+                if enable_template_replication:
+                    def _replicate_templates_startup():
+                        import time
+                        time.sleep(2)
+                        try:
+                            with app.app_context():
+                                from app.services.proxmox_operations import (
+                                    replicate_templates_to_all_nodes,
+                                )
+                                logger.info("Starting template replication check across nodes...")
+                                replicate_templates_to_all_nodes()
+                                logger.info("Template replication check completed")
+                        except Exception as e:
+                            logger.warning(f"Template replication startup failed: {e}")
 
-        import threading
-        threading.Thread(target=_replicate_templates_startup, daemon=True).start()
+                    import threading
+                    threading.Thread(target=_replicate_templates_startup, daemon=True).start()
+        except Exception as e:
+            logger.debug(f"Could not check template replication setting: {e}")
+    
+    # Check template replication in background to avoid blocking startup
+    import threading
+    threading.Thread(target=check_template_replication, daemon=True).start()
     else:
         logger.info("Template replication at startup disabled")
     
