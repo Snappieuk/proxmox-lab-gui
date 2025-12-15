@@ -55,6 +55,7 @@ CRITICAL_MIGRATIONS = [
     ('clusters', 'priority', 'INTEGER', '50'),
     ('clusters', 'default_storage', 'VARCHAR(100)', 'NULL'),
     ('clusters', 'template_storage', 'VARCHAR(100)', 'NULL'),
+    ('clusters', 'iso_storage', 'VARCHAR(100)', 'NULL'),
     ('clusters', 'qcow2_template_path', 'VARCHAR(512)', 'NULL'),
     ('clusters', 'qcow2_images_path', 'VARCHAR(512)', 'NULL'),
     ('clusters', 'admin_group', 'VARCHAR(100)', 'NULL'),

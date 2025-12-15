@@ -63,6 +63,7 @@ class Cluster(db.Model):
     # Storage configuration
     default_storage = db.Column(db.String(100), nullable=True)  # Default storage pool for VMs (e.g., 'local-lvm')
     template_storage = db.Column(db.String(100), nullable=True)  # Storage for template exports
+    iso_storage = db.Column(db.String(100), nullable=True)  # Storage pool for ISO images (e.g., 'local')
     qcow2_template_path = db.Column(db.String(512), nullable=True)  # Path for QCOW2 templates (e.g., '/mnt/pve/TRUENAS-NFS/images')
     qcow2_images_path = db.Column(db.String(512), nullable=True)  # Path for VM overlay images
     

@@ -155,6 +155,7 @@ def api_create_cluster():
             priority=data.get("priority", 50),
             default_storage=data.get("default_storage"),
             template_storage=data.get("template_storage"),
+            iso_storage=data.get("iso_storage"),
             qcow2_template_path=data.get("qcow2_template_path"),
             qcow2_images_path=data.get("qcow2_images_path"),
             admin_group=data.get("admin_group"),
@@ -236,6 +237,8 @@ def api_update_cluster(cluster_db_id: int):
             cluster.default_storage = data["default_storage"]
         if "template_storage" in data:
             cluster.template_storage = data["template_storage"]
+        if "iso_storage" in data:
+            cluster.iso_storage = data["iso_storage"]
         if "qcow2_template_path" in data:
             cluster.qcow2_template_path = data["qcow2_template_path"]
         if "qcow2_images_path" in data:

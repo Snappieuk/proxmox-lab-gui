@@ -125,7 +125,7 @@ if [ "$UPDATE_AVAILABLE" = true ]; then
     # Run database migrations
     echo -e "${BLUE}→ Running database migrations...${NC}"
     python3 migrate_db.py
-    echo -e "${GREEN}✓ Database migrated${NC}"
+    echo -e "${GREEN}✓ Database schema updated (non-destructive)${NC}"
 else
     echo -e "${BLUE}→ Checking dependencies anyway...${NC}"
     source "${VENV_DIR}/bin/activate"

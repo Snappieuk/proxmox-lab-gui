@@ -188,6 +188,18 @@
                             <small>Storage for template exports (optional)</small>
                         </div>
                         <div class="form-group form-group-full">
+                            <label for="iso-storage">ISO Storage</label>
+                            <div class="input-with-button">
+                                <select id="iso-storage" class="storage-select">
+                                    <option value="">-- Select Storage (scans all if empty) --</option>
+                                </select>
+                                <button type="button" class="btn btn-sm btn-secondary" onclick="loadStorages()" title="Load available storages from cluster">
+                                    <i class="bi bi-arrow-clockwise"></i>
+                                </button>
+                            </div>
+                            <small>Storage pool to scan for ISO images (optional - scans all ISO storages if empty)</small>
+                        </div>
+                        <div class="form-group form-group-full">
                             <label for="description">Description</label>
                             <textarea id="description" rows="3" placeholder="Optional notes about this cluster"></textarea>
                         </div>
@@ -879,6 +891,7 @@ function editCluster(dbId) {
     document.getElementById('priority').value = cluster.priority || 50;
     document.getElementById('default-storage').value = cluster.default_storage || '';
     document.getElementById('template-storage').value = cluster.template_storage || '';
+    document.getElementById('iso-storage').value = cluster.iso_storage || '';
     document.getElementById('description').value = cluster.description || '';
     
     showModal();
@@ -923,13 +936,15 @@ async function loadStorages() {
         const data = await resp.json();
         
         if (data.ok) {
-            // Populate both dropdowns
+            // Populate all three dropdowns
             const defaultSelect = document.getElementById('default-storage');
             const templateSelect = document.getElementById('template-storage');
+            const isoSelect = document.getElementById('iso-storage');
             
             // Save current selections
             const currentDefault = defaultSelect.value;
             const currentTemplate = templateSelect.value;
+            const currentIso = isoSelect.value;
             
             // Clear and repopulate
             [defaultSelect, templateSelect].forEach(select => {
@@ -948,9 +963,27 @@ async function loadStorages() {
                 });
             });
             
+            // ISO storage dropdown - filter for storages with 'iso' content
+            isoSelect.innerHTML = '<option value="">-- Select Storage (scans all if empty) --</option>';
+            data.storages.forEach(storage => {
+                // Only show storages that support ISO content
+                const contentTypes = storage.content ? storage.content.split(',') : [];
+                if (contentTypes.includes('iso')) {
+                    const option = document.createElement('option');
+                    option.value = storage.storage;
+                    option.textContent = `${storage.storage} (${storage.type})`;
+                    if (!storage.active) {
+                        option.textContent += ' [inactive]';
+                        option.disabled = true;
+                    }
+                    isoSelect.appendChild(option);
+                }
+            });
+            
             // Restore selections if they still exist
             if (currentDefault) defaultSelect.value = currentDefault;
             if (currentTemplate) templateSelect.value = currentTemplate;
+            if (currentIso) isoSelect.value = currentIso;
             
             showAlert(`Loaded ${data.storages.length} storage(s) from cluster`, 'success');
         } else {
@@ -987,6 +1020,7 @@ async function saveCluster(event) {
         priority: parseInt(document.getElementById('priority').value),
         default_storage: document.getElementById('default-storage').value || null,
         template_storage: document.getElementById('template-storage').value || null,
+        iso_storage: document.getElementById('iso-storage').value || null,
         description: document.getElementById('description').value || null
     };
     

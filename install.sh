@@ -149,14 +149,15 @@ if [ ! -f "${APP_DIR}/.env" ]; then
         # Replace placeholder with actual random key
         sed -i "s/change-me-to-random-string-in-production/${SECRET_KEY}/" "${APP_DIR}/.env"
         echo -e "${GREEN}✓ .env file created with random secret key${NC}"
-    else
+    else:
         # Create minimal .env
         cat > "${APP_DIR}/.env" <<EOF
 # Flask Configuration
 SECRET_KEY=${SECRET_KEY}
 FLASK_ENV=production
 
-# Note: Proxmox clusters are configured via /admin/settings UI
+# All cluster configurations are managed via the database
+# Use the web UI at /setup or /admin/settings to configure clusters
 EOF
         echo -e "${GREEN}✓ .env file created${NC}"
     fi
@@ -196,7 +197,7 @@ echo -e "${BLUE}Initial Cluster Configuration${NC}"
 echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
 echo -e "${BLUE}To get started, let's configure your first Proxmox cluster.${NC}"
-echo -e "${YELLOW}(You can add more clusters later via the web UI at /admin/settings)${NC}"
+echo -e "${YELLOW}(Storage pools and advanced settings can be configured via web UI at /setup)${NC}"
 echo ""
 
 read -p "Enter Proxmox host IP or hostname: " CLUSTER_HOST
@@ -327,12 +328,12 @@ echo -e "  Status:   ${YELLOW}systemctl status ${SERVICE_NAME}${NC}"
 echo -e "  Logs:     ${YELLOW}journalctl -u ${SERVICE_NAME} -f${NC}"
 echo ""
 echo -e "${BLUE}Configuration:${NC}"
-echo -e "  Edit:     ${YELLOW}nano ${APP_DIR}/.env${NC}"
-echo -e "  Clusters: ${YELLOW}http://${IP_ADDR}:8080/admin/settings${NC}"
+echo -e "  Clusters: ${YELLOW}http://${IP_ADDR}:8080/setup${NC} (first-time setup)"
+echo -e "  Settings: ${YELLOW}http://${IP_ADDR}:8080/admin/settings${NC} (manage clusters/storage)"
 echo ""
 echo -e "${BLUE}Next Steps:${NC}"
-echo -e "  1. Login with your Proxmox credentials (${CLUSTER_USER})"
-echo -e "  2. Add more clusters at http://${IP_ADDR}:8080/admin/settings (optional)"
+echo -e "  1. Visit http://${IP_ADDR}:8080/setup to configure your first cluster"
+echo -e "  2. Configure storage pools (default, template, ISO) for optimal performance"
 echo -e "  3. Create teacher/student accounts via /admin/users"
 echo -e "  4. Create classes and deploy VMs"
 echo ""
