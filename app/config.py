@@ -17,6 +17,14 @@ Set SECRET_KEY in .env file or environment variable.
 
 import os
 
+# Load environment variables from .env file
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    # python-dotenv not installed, will use os.environ only
+    pass
+
 # ============================================================================
 # Flask SECRET_KEY (Development default provided, change in production!)
 # ============================================================================

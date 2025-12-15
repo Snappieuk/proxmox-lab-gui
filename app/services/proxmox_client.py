@@ -1421,7 +1421,12 @@ def _enrich_vms_with_arp_ips(vms: List[Dict[str, Any]], force_sync: bool = False
     # Run ARP scan (sync or async based on force_sync parameter)
     # force_sync=True blocks until scan completes (used by background sync for database persistence)
     # force_sync=False runs in background thread (used by web requests for fast response)
-    discovered_ips = discover_ips_via_arp(vm_mac_map, subnets=ARP_SUBNETS, background=not force_sync)
+    # Get ARP subnets from first available cluster (background sync uses all clusters)
+    from app.services.settings_service import get_arp_subnets
+    from app.services.proxmox_service import get_clusters_from_db
+    clusters = get_clusters_from_db()
+    subnets = get_arp_subnets(clusters[0]) if clusters else []
+    discovered_ips = discover_ips_via_arp(vm_mac_map, subnets=subnets, background=not force_sync)
     
     # Update VMs with discovered IPs (from cache only, background scan will update later)
     # IMPORTANT: Only update VMs that have IPs in discovered_ips

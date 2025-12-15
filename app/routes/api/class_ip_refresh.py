@@ -134,10 +134,15 @@ def refresh_class_ips(class_id: int):
             logger.info(f"Running ARP scan for {len(vm_mac_map)} VMs...")
             
             from app.services.arp_scanner import discover_ips_via_arp
-            # ARP_SUBNETS now from settings_service.get_arp_subnets(cluster_dict)
+            from app.services.settings_service import get_arp_subnets
+            from app.services.proxmox_service import get_clusters_from_db
+            
+            # Get ARP subnets from cluster configuration
+            clusters = get_clusters_from_db()
+            subnets = get_arp_subnets(clusters[0]) if clusters else []
             
             # Force immediate ARP scan (not background)
-            arp_results = discover_ips_via_arp(vm_mac_map, subnets=ARP_SUBNETS, background=False)
+            arp_results = discover_ips_via_arp(vm_mac_map, subnets=subnets, background=False)
             
             for composite_key, ip in arp_results.items():
                 if ip:

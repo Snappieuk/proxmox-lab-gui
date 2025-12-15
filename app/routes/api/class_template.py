@@ -215,16 +215,20 @@ def get_template_info(class_id: int):
                 # Fallback: ARP scan if guest agent failed
                 if not ip_address and mac_address:
                     logger.info(f"Attempting ARP scan for VM {vmid} with MAC {mac_address}")
-                    # ARP_SUBNETS now from settings_service.get_arp_subnets(cluster_dict), get_clusters_from_db()
+                    # Get ARP subnets from cluster configuration
                     from app.services.arp_scanner import discover_ips_via_arp
+                    from app.services.settings_service import get_arp_subnets
                     cluster_id = None
+                    cluster_dict = None
                     for c in get_clusters_from_db():
                         if c['host'] == cluster_ip:
                             cluster_id = c['id']
+                            cluster_dict = c
                             break
-                    if cluster_id:
+                    if cluster_id and cluster_dict:
                         composite_key = f"{cluster_id}:{vmid}"
-                        discovered = discover_ips_via_arp({composite_key: mac_address}, subnets=ARP_SUBNETS, background=False)
+                        subnets = get_arp_subnets(cluster_dict)
+                        discovered = discover_ips_via_arp({composite_key: mac_address}, subnets=subnets, background=False)
                         ip_address = discovered.get(composite_key)
                         if ip_address:
                             logger.info(f"Found IP via ARP scan for VM {vmid}: {ip_address}")
