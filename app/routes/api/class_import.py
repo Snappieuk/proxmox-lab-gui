@@ -54,7 +54,7 @@ def api_scan_importable_classes():
         
         logger.info(f"Scanning {len(vms)} VMs for importable classes")
         if vms:
-            logger.info(f"Sample VM names: {[vm.get('name') for vm in vms[:5]]}")
+            logger.info(f"Sample VMs (VMID: Name): {[(vm.get('vmid'), vm.get('name')) for vm in vms[:5]]}")
         
         # Group VMs by potential class prefix
         potential_classes, unmatched = _analyze_vm_naming_patterns(vms)
@@ -66,9 +66,9 @@ def api_scan_importable_classes():
             "potential_classes": potential_classes,
             "total_groups": len(potential_classes),
             "total_vms_scanned": len(vms),
-            "sample_vm_names": [vm.get('name') for vm in vms[:10]],
+            "sample_vms": [{"vmid": vm.get('vmid'), "name": vm.get('name')} for vm in vms[:10]],
             "unmatched_count": len(unmatched),
-            "unmatched_samples": [vm['name'] for vm in unmatched[:10]]
+            "unmatched_samples": [{"vmid": vm['vmid'], "name": vm['name']} for vm in unmatched[:10]]
         })
         
     except Exception as e:

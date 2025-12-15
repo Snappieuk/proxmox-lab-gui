@@ -349,7 +349,7 @@ async function scanForClasses() {
         console.log('Scan results:', data);
         console.log('Total VMs scanned:', data.total_vms_scanned);
         console.log('Potential classes found:', data.total_groups);
-        console.log('Sample VM names:', data.sample_vm_names);
+        console.log('Sample VMs (VMID: Name):', data.sample_vms);
         console.log('Unmatched VMs:', data.unmatched_count, data.unmatched_samples);
         
         if (!data.ok) {
@@ -360,8 +360,8 @@ async function scanForClasses() {
         if (data.potential_classes.length === 0) {
             let unmatchedHtml = '';
             if (data.unmatched_samples && data.unmatched_samples.length > 0) {
-                unmatchedHtml = `<br><br><strong>Sample VM names found (not matching pattern):</strong><br>` +
-                    data.unmatched_samples.map(name => `• <code>${name}</code>`).join('<br>');
+                unmatchedHtml = `<br><br><strong>Sample VMs found (not matching pattern):</strong><br>` +
+                    data.unmatched_samples.map(vm => `• VMID <code>${vm.vmid}</code>: ${vm.name}`).join('<br>');
             }
             container.innerHTML = `<p style="padding: 2rem; text-align: center;">
                 No importable classes found.<br><br>
