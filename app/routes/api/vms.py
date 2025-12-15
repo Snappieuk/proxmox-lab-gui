@@ -661,17 +661,54 @@ def api_vm_update_config(vmid: int):
             if vmid not in owned_vmids:
                 return jsonify({"ok": False, "error": "VM not accessible"}), 403
         
-        # VM must be stopped to change hardware
-        if vm['status'] == 'running':
-            return jsonify({"ok": False, "error": "VM must be stopped to change hardware configuration"}), 400
-        
-        # Update via Proxmox API
+        # Get Proxmox connection
         proxmox = get_proxmox_admin_for_cluster(cluster_id)
         node = vm['node']
         
-        proxmox.nodes(node).qemu(vmid).config.put(cores=cores, memory=memory)
+        # Check if it's a template - templates need special handling
+        is_template = vm.get('is_template', False)
         
-        logger.info(f"Updated VM {vmid} config: {cores} cores, {memory}MB RAM (user: {user})")
+        if is_template:
+            # For templates, we need to convert to VM, update, then convert back
+            logger.info(f"VM {vmid} is a template, converting to VM temporarily")
+            try:
+                # Remove template flag
+                proxmox.nodes(node).qemu(vmid).config.put(template=0)
+                import time
+                time.sleep(1)  # Wait for change to apply
+            except Exception as e:
+                logger.error(f"Failed to convert template to VM: {e}")
+                return jsonify({"ok": False, "error": f"Failed to convert template to VM: {str(e)}"}), 500
+        
+        # VM must be stopped to change hardware (templates are always stopped)
+        if not is_template and vm['status'] == 'running':
+            return jsonify({"ok": False, "error": "VM must be stopped to change hardware configuration"}), 400
+        
+        # Update hardware via Proxmox API
+        try:
+            proxmox.nodes(node).qemu(vmid).config.put(cores=cores, memory=memory)
+            logger.info(f"Updated VM {vmid} config: {cores} cores, {memory}MB RAM (user: {user})")
+        except Exception as e:
+            logger.error(f"Failed to update VM config: {e}")
+            # If it was a template, try to convert back
+            if is_template:
+                try:
+                    proxmox.nodes(node).qemu(vmid).template.post()
+                except:
+                    pass
+            return jsonify({"ok": False, "error": f"Failed to update VM config: {str(e)}"}), 500
+        
+        # If it was a template, convert back to template
+        if is_template:
+            try:
+                import time
+                time.sleep(1)  # Wait for config change to apply
+                proxmox.nodes(node).qemu(vmid).template.post()
+                logger.info(f"Converted VM {vmid} back to template")
+                time.sleep(1)  # Wait for conversion
+            except Exception as e:
+                logger.error(f"Failed to convert back to template: {e}")
+                return jsonify({"ok": False, "error": f"Config updated but failed to convert back to template: {str(e)}"}), 500
         
         # Update VMInventory database
         try:

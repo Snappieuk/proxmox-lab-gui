@@ -1093,14 +1093,14 @@ async function loadTemplates() {
                     <div class="template-meta">
                         VMID: ${template.proxmox_vmid} | 
                         Node: ${template.node || 'N/A'} | 
-                        ${template.cpu_cores || 2} cores, ${template.memory_mb || 2048}MB RAM
+                        ${template.cores || template.cpu_cores || 2} cores, ${template.memory || template.memory_mb || 2048}MB RAM
                     </div>
                 </div>
                 <div class="template-actions">
                     <button class="btn-icon" onclick="useTemplate(${template.id})">
                         <i class="bi bi-play-circle"></i> Use in Class
                     </button>
-                    <button class="btn-icon btn-secondary" onclick="editTemplate(${template.id})">
+                    <button class="btn-icon btn-secondary" onclick="editTemplate(${template.proxmox_vmid}, '${(template.name || 'VM ' + template.proxmox_vmid).replace(/'/g, "\\'")}', ${template.cores || template.cpu_cores || 2}, ${template.memory || template.memory_mb || 2048})">
                         <i class="bi bi-pencil"></i> Edit
                     </button>
                 </div>
@@ -1123,8 +1123,10 @@ function useTemplate(templateId) {
     window.location.href = `/classes/create?template=${templateId}`;
 }
 
-function editTemplate(templateId) {
-    alert(`Edit Template ${templateId} - Feature coming soon!`);
+function editTemplate(vmid, vmname, cores, memory) {
+    // Templates are just VMs that have been marked as templates
+    // Use the same edit modal as regular VMs
+    editVM(vmid, vmname, cores, memory);
 }
 
 // Load My VMs (non-template VMs created via builder)
