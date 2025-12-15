@@ -29,6 +29,10 @@ def create_app(config=None):
     Returns:
         Configured Flask application instance
     """
+    # Validate SECRET_KEY before creating Flask app
+    if not SECRET_KEY:
+        raise RuntimeError("SECRET_KEY is not set! Check app/config.py")
+    
     # Create Flask app with template/static from app directory
     template_folder = os.path.join(os.path.dirname(__file__), 'templates')
     static_folder = os.path.join(os.path.dirname(__file__), 'static')
@@ -37,13 +41,13 @@ def create_app(config=None):
                 template_folder=template_folder,
                 static_folder=static_folder)
     
-    # Configure secret key (required for sessions)
-    # Flask checks both app.secret_key and app.config['SECRET_KEY']
-    if not SECRET_KEY:
-        raise RuntimeError("SECRET_KEY is not set! Check app/config.py")
-    
-    app.secret_key = SECRET_KEY  # Flask sessions check this attribute
-    app.config['SECRET_KEY'] = SECRET_KEY  # Standard Flask config
+    # Configure secret key IMMEDIATELY (required for sessions)
+    # Set both attributes that Flask checks
+    app.secret_key = SECRET_KEY
+    app.config['SECRET_KEY'] = SECRET_KEY
+    app.config['SESSION_COOKIE_SECURE'] = False  # Allow HTTP for dev
+    app.config['SESSION_COOKIE_HTTPONLY'] = True
+    app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
     logger.info(f"SECRET_KEY configured (length: {len(SECRET_KEY)})")
     
     # Configure file upload limits (10GB max for ISOs)
