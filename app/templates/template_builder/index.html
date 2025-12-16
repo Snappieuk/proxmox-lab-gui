@@ -1946,6 +1946,7 @@ async function submitUploadISO(event) {
     // Show progress bar
     progressDiv.style.display = 'block';
     progressBar.style.width = '0%';
+    progressBar.style.transition = 'width 0.3s ease';
     progressText.textContent = 'Preparing upload...';
     
     try {
@@ -1990,20 +1991,37 @@ async function submitUploadISO(event) {
                 
                 console.log(`Upload progress: ${percentComplete.toFixed(1)}% (${loadedMB}/${totalMB} MB)`);
                 
-                progressBar.style.width = percentComplete + '%';
+                // Scale progress to 0-50% for upload phase
+                progressBar.style.width = (percentComplete / 2) + '%';
                 progressText.textContent = 
-                    `Uploading: ${Math.round(percentComplete)}% (${loadedMB}MB / ${totalMB}MB) - ${speedMBps.toFixed(2)} MB/s`;
+                    `Step 1/2: Uploading to server ${Math.round(percentComplete)}% (${loadedMB}/${totalMB} MB) - ${speedMBps.toFixed(2)} MB/s`;
             }
         });
         
         xhr.upload.addEventListener('loadend', () => {
             console.log('📤 Upload to Flask complete, server now transferring to Proxmox...');
-            progressText.textContent = 'Upload complete. Server transferring to Proxmox storage...';
-            progressBar.style.width = '100%';
+            progressBar.style.width = '50%';
+            progressText.textContent = 'Step 2/2: Server transferring to Proxmox storage...';
+            submitBtn.innerHTML = '<i class="ti ti-loader-2 rotating"></i> Transferring to Proxmox...';
+            
+            // Simulate progress for server-side transfer (since we can't track it)
+            let fakeProgress = 50;
+            const progressInterval = setInterval(() => {
+                if (fakeProgress < 95) {
+                    fakeProgress += 0.5;
+                    progressBar.style.width = fakeProgress + '%';
+                }
+            }, 1000);
+            
+            // Store interval ID so we can clear it on completion
+            xhr._progressInterval = progressInterval;
         });
         
         xhr.addEventListener('load', async () => {
             clearInterval(keepAliveInterval);
+            if (xhr._progressInterval) {
+                clearInterval(xhr._progressInterval);
+            }
             console.log('📥 Upload completed. Status:', xhr.status);
             console.log('📥 Response headers:', xhr.getAllResponseHeaders());
             console.log('📥 Response text length:', xhr.responseText?.length);
@@ -2015,16 +2033,19 @@ async function submitUploadISO(event) {
                     if (data.ok) {
                         progressText.textContent = 'Upload complete! ISO saved to Proxmox.';
                         progressBar.style.width = '100%';
+                        submitBtn.innerHTML = '<i class="ti ti-check"></i> Complete!';
                         
                         // Show success notification
-                        alert(`✅ ISO uploaded successfully!\n\n` +
-                              `File: ${file.name}\n` +
-                              `Location: ${storage} on ${node}\n\n` +
-                              `The ISO is now available for VM creation.`);
-                        
-                        closeUploadISOModal();
-                        // Reload ISOs to show the newly uploaded file
-                        await loadBuildOptions();
+                        setTimeout(() => {
+                            alert(`✅ ISO uploaded successfully!\n\n` +
+                                  `File: ${file.name}\n` +
+                                  `Location: ${storage} on ${node}\n\n` +
+                                  `The ISO is now available for VM creation.`);
+                            
+                            closeUploadISOModal();
+                            // Reload ISOs to show the newly uploaded file
+                            loadBuildOptions();
+                        }, 500);
                     } else {
                         console.error('Server returned error:', data.error);
                         alert(`❌ Upload failed: ${data.error || 'Unknown error'}\n\nCheck server logs for details.`);
@@ -2057,6 +2078,9 @@ async function submitUploadISO(event) {
         
         xhr.addEventListener('error', (e) => {
             clearInterval(keepAliveInterval);
+            if (xhr._progressInterval) {
+                clearInterval(xhr._progressInterval);
+            }
             console.error('❌ Upload error event:', e);
             console.error('XHR state:', xhr.readyState, 'Status:', xhr.status);
             console.error('Response text:', xhr.responseText);
