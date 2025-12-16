@@ -1970,6 +1970,7 @@ async function submitUploadISO(event) {
         
         // Keep-alive mechanism to prevent connection timeout
         let lastProgressTime = Date.now();
+        const uploadStartTime = Date.now();
         const keepAliveInterval = setInterval(() => {
             const now = Date.now();
             if (now - lastProgressTime > 30000) {
@@ -1984,7 +1985,7 @@ async function submitUploadISO(event) {
                 const loadedMB = (e.loaded / 1048576).toFixed(1);
                 const totalMB = (e.total / 1048576).toFixed(1);
                 const elapsedSeconds = (Date.now() - uploadStartTime) / 1000;
-                const speedMBps = (e.loaded / 1048576) / elapsedSeconds;
+                const speedMBps = elapsedSeconds > 0 ? (e.loaded / 1048576) / elapsedSeconds : 0;
                 
                 progressBar.style.width = percentComplete + '%';
                 progressText.textContent = 
