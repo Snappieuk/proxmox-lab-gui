@@ -815,6 +815,12 @@ def api_upload_iso():
         
         logger.info(f"Uploading ISO {file.filename} to {node}:{storage}")
         
+        # Get file size before streaming
+        file.stream.seek(0, 2)  # Seek to end
+        file_size = file.stream.tell()  # Get size
+        file.stream.seek(0)  # Seek back to start
+        logger.info(f"ISO file size: {file_size} bytes ({file_size / 1048576:.2f} MB)")
+        
         # Stream upload to Proxmox without buffering in memory
         try:
             from app.models import Cluster
@@ -830,31 +836,16 @@ def api_upload_iso():
             upload_url = f"https://{cluster.host}:{cluster.port}/api2/json/nodes/{node}/storage/{storage}/upload"
             logger.info(f"Streaming upload to Proxmox: {upload_url}")
             
-            # Create a generator to stream file chunks (avoids loading entire file into memory)
-            def file_generator():
-                while True:
-                    chunk = file.stream.read(8192)  # Read 8KB chunks
-                    if not chunk:
-                        break
-                    yield chunk
-            
-            # Prepare multipart form data manually to avoid buffering
-            import io
-            from requests_toolbelt import MultipartEncoder
-            
-            # Use requests-toolbelt for streaming multipart upload
-            multipart_data = MultipartEncoder(
-                fields={
-                    'content': 'iso',
-                    'filename': (file.filename, file.stream, 'application/octet-stream')
-                }
-            )
+            # Use standard requests streaming upload (matches Proxmox API pattern)
+            # requests will stream the file object; Werkzeug provides a file-like stream
+            files = {"filename": (file.filename, file.stream, "application/octet-stream")}
+            data = {"content": "iso"}
             
             response = requests.post(
                 upload_url,
                 auth=(cluster.user, cluster.password),
-                data=multipart_data,
-                headers={'Content-Type': multipart_data.content_type},
+                data=data,
+                files=files,
                 verify=cluster.verify_ssl,
                 timeout=(30, 7200),  # 2 hour timeout for very large ISOs
             )

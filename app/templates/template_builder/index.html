@@ -359,7 +359,7 @@
                     <div class="form-row">
                         <div class="form-col" style="grid-column: 1 / -1;">
                             <label for="upload-storage" class="compact-label">Target Storage</label>
-                            <select id="upload-storage" class="form-control compact-input" required>
+                            <select id="upload-storage" class="form-control compact-input" required onchange="verifyUploadStorage()">
                                 <option value="">Select storage...</option>
                             </select>
                             <div id="storage-verification" style="margin-top: 0.5rem; padding: 0.5rem; border-radius: 0.375rem; display: none;">
