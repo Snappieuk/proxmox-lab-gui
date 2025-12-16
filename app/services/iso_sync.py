@@ -229,7 +229,8 @@ def _iso_sync_daemon(app):
     """
     logger.info("ISO sync daemon started")
     
-    last_full_sync = datetime.min
+    # Set to None to trigger immediate first sync
+    last_full_sync = None
     last_quick_sync = datetime.min
     
     FULL_SYNC_INTERVAL = timedelta(minutes=30)
@@ -241,8 +242,8 @@ def _iso_sync_daemon(app):
             
             # Run within app context
             with app.app_context():
-                # Full sync every 30 minutes
-                if now - last_full_sync >= FULL_SYNC_INTERVAL:
+                # Full sync every 30 minutes (or immediately on first run)
+                if last_full_sync is None or (now - last_full_sync >= FULL_SYNC_INTERVAL):
                     logger.info("Running scheduled full ISO sync")
                     sync_isos_from_proxmox(full_sync=True)
                     last_full_sync = now
@@ -273,3 +274,28 @@ def start_iso_sync_daemon(app):
     thread.start()
     logger.info("ISO sync daemon thread started")
     return thread
+
+
+def trigger_immediate_iso_sync():
+    """
+    Trigger an immediate full ISO sync (can be called from API endpoints).
+    Runs in background thread to avoid blocking the request.
+    """
+    from flask import current_app
+    import threading
+    
+    try:
+        app = current_app._get_current_object()
+        
+        def _run_sync():
+            with app.app_context():
+                logger.info("Manual ISO sync triggered")
+                sync_isos_from_proxmox(full_sync=True)
+        
+        thread = threading.Thread(target=_run_sync, daemon=True)
+        thread.start()
+        logger.info("Manual ISO sync thread started")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to trigger manual ISO sync: {e}")
+        return False

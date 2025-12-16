@@ -198,15 +198,20 @@ def trigger_iso_sync():
     Returns:
         JSON with sync results
     """
-    from app.services.iso_sync import sync_isos_from_proxmox
+    from app.services.iso_sync import trigger_immediate_iso_sync
     
     try:
-        stats = sync_isos_from_proxmox(full_sync=True)
-        return jsonify({
-            'ok': True,
-            'stats': stats,
-            'message': f"ISO sync complete: {stats['isos_found']} found, {stats['isos_added']} added, {stats['isos_updated']} updated"
-        })
+        success = trigger_immediate_iso_sync()
+        if success:
+            return jsonify({
+                'ok': True,
+                'message': 'ISO sync triggered in background - check logs for progress'
+            })
+        else:
+            return jsonify({
+                'ok': False,
+                'error': 'Failed to trigger ISO sync'
+            }), 500
     except Exception as e:
         logger.exception("Failed to trigger ISO sync")
         return jsonify({
