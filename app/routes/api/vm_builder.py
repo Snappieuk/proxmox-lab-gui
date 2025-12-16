@@ -717,7 +717,7 @@ def api_upload_iso():
             import requests
             
             # Get cluster config for direct Proxmox upload
-            cluster = Cluster.query.filter_by(id=cluster_id).first()
+            cluster = Cluster.query.filter_by(cluster_id=cluster_id).first()
             if not cluster:
                 raise Exception("Cluster configuration not found")
             

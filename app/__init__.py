@@ -186,36 +186,21 @@ def create_app(config=None):
     except Exception as e:
         logger.error(f"Failed to start auto-shutdown daemon: {e}", exc_info=True)
     
-    # Trigger initial ISO sync for all clusters on startup
-    try:
-        from app.services.vm_deployment_service import trigger_iso_sync_all_clusters
-        trigger_iso_sync_all_clusters()
-        logger.info("Initial ISO sync triggered for all clusters")
-    except Exception as e:
-        logger.error(f"Failed to trigger ISO sync: {e}", exc_info=True)
-    
-    # Register cleanup handler for SSH connection pool
-    try:
-        import atexit
-        from app.services.ssh_executor import _connection_pool
-        
-        def cleanup_ssh_pool():
-            """Close all SSH connections on app shutdown."""
-            logger.info("Closing SSH connection pool...")
-            _connection_pool.close_all()
-        
-        atexit.register(cleanup_ssh_pool)
-        logger.info("SSH connection pool cleanup handler registered")
-    except Exception as e:
-        logger.error(f"Failed to register SSH cleanup handler: {e}", exc_info=True)
-    
-    # Start background template sync (database-first architecture)
+    # Start background template sync daemon (database-first architecture)
     try:
         from app.services.template_sync import start_template_sync_daemon
         start_template_sync_daemon(app)
-        logger.info("Background template sync started")
+        logger.info("Background template sync daemon started")
     except Exception as e:
         logger.error(f"Failed to start template sync daemon: {e}", exc_info=True)
+    
+    # Start background ISO sync daemon (database-first architecture)
+    try:
+        from app.services.iso_sync import start_iso_sync_daemon
+        start_iso_sync_daemon(app)
+        logger.info("Background ISO sync daemon started")
+    except Exception as e:
+        logger.error(f"Failed to start ISO sync daemon: {e}", exc_info=True)
     
     # Ensure templates are replicated across all nodes at startup (disabled by default)
     # Check SystemSettings for enable_template_replication (database-first)

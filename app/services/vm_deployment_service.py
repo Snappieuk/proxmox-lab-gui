@@ -376,41 +376,21 @@ def _deploy_vm_with_iso(
 
 
 def list_available_isos(cluster_id: str) -> Tuple[bool, list, str]:
-    """List available ISO images across all nodes in the cluster (DATABASE-FIRST architecture).
+    """List available ISO images from database cache (DATABASE-FIRST architecture).
     
-    Returns cached ISOs from database immediately. If cache is empty or stale (>5min),
-    triggers background sync but still returns current database state.
+    Returns cached ISOs from database immediately. Background ISO sync daemon keeps
+    the cache fresh (full sync every 30min, quick verification every 5min).
     """
-    from app.models import ISOImage, db
-    from app.services.proxmox_service import get_proxmox_admin_for_cluster
-    from datetime import datetime, timedelta
-    import threading
+    from app.models import ISOImage
     
     try:
-        # ALWAYS return from database first (database-first architecture)
+        # ALWAYS return from database (database-first architecture)
         all_cached_isos = ISOImage.query.filter_by(cluster_id=cluster_id).all()
         
         # Filter out container templates - only return actual ISO files
         actual_isos = [iso for iso in all_cached_isos if iso.name.lower().endswith('.iso')]
         
-        # Check if cache is stale (>5 minutes old)
-        five_minutes_ago = datetime.utcnow() - timedelta(minutes=5)
-        fresh_isos = [iso for iso in actual_isos if iso.last_seen >= five_minutes_ago]
-        
-        if not fresh_isos and actual_isos:
-            logger.info(f"ISO cache is stale for cluster {cluster_id}, triggering background refresh")
-            # Get app instance to pass to background thread
-            from flask import current_app
-            app = current_app._get_current_object()
-            threading.Thread(target=_sync_isos_background, args=(cluster_id, app), daemon=True).start()
-        elif not actual_isos:
-            logger.info(f"No cached ISOs for cluster {cluster_id}, triggering immediate sync in background")
-            # Get app instance to pass to background thread
-            from flask import current_app
-            app = current_app._get_current_object()
-            threading.Thread(target=_sync_isos_background, args=(cluster_id, app), daemon=True).start()
-        
-        # Return whatever we have in database (even if empty or stale)
+        # Return whatever we have in database
         iso_list = [iso.to_dict() for iso in actual_isos]
         logger.info(f"Returning {len(iso_list)} ISO files from database for cluster {cluster_id}")
         return True, iso_list, f"Found {len(iso_list)} ISO images"

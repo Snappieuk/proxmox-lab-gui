@@ -188,3 +188,78 @@ def template_sync_status():
             'ok': False,
             'error': str(e)
         }), 500
+
+
+@sync_bp.route('/isos/trigger', methods=['POST'])
+@admin_required
+def trigger_iso_sync():
+    """Trigger an immediate ISO sync (admin only).
+    
+    Returns:
+        JSON with sync results
+    """
+    from app.services.iso_sync import sync_isos_from_proxmox
+    
+    try:
+        stats = sync_isos_from_proxmox(full_sync=True)
+        return jsonify({
+            'ok': True,
+            'stats': stats,
+            'message': f"ISO sync complete: {stats['isos_found']} found, {stats['isos_added']} added, {stats['isos_updated']} updated"
+        })
+    except Exception as e:
+        logger.exception("Failed to trigger ISO sync")
+        return jsonify({
+            'ok': False,
+            'error': str(e)
+        }), 500
+
+
+@sync_bp.route('/isos/status', methods=['GET'])
+@login_required
+def iso_sync_status():
+    """Get ISO database statistics.
+    
+    Returns:
+        JSON with ISO counts by cluster, node, storage, etc.
+    """
+    from sqlalchemy import func
+
+    from app.models import ISOImage, db
+    
+    try:
+        # Count by cluster
+        by_cluster = db.session.query(
+            ISOImage.cluster_id,
+            func.count(ISOImage.id).label('count')
+        ).group_by(ISOImage.cluster_id).all()
+        
+        # Count by node
+        by_node = db.session.query(
+            ISOImage.node,
+            func.count(ISOImage.id).label('count')
+        ).group_by(ISOImage.node).all()
+        
+        # Count by storage
+        by_storage = db.session.query(
+            ISOImage.storage,
+            func.count(ISOImage.id).label('count')
+        ).group_by(ISOImage.storage).all()
+        
+        # Calculate total size
+        total_size = db.session.query(func.sum(ISOImage.size)).scalar() or 0
+        
+        return jsonify({
+            'ok': True,
+            'total_isos': ISOImage.query.count(),
+            'by_cluster': {c: count for c, count in by_cluster},
+            'by_node': {n: count for n, count in by_node},
+            'by_storage': {s: count for s, count in by_storage},
+            'total_size_bytes': total_size,
+        })
+    except Exception as e:
+        logger.exception("Failed to get ISO sync status")
+        return jsonify({
+            'ok': False,
+            'error': str(e)
+        }), 500
