@@ -1952,7 +1952,7 @@ async function submitUploadISO(event) {
         progressText.textContent = `Uploading ${file.name} directly to Proxmox...`;
         
         // Get upload credentials from Flask
-        const ticketResponse = await fetch('/api/vm-builder/upload-ticket', {
+        const ticketResponse = await fetch('/api/vm-builder/upload-iso-ticket', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
