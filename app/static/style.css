@@ -2155,4 +2155,15 @@ body {
     box-shadow: 0 0 0 2px rgba(0, 120, 212, 0.1) !important;
 }
 
+/* VM Status Transitioning State */
+.pill-transitioning {
+    background: #fff4ce;
+    color: #ca5010;
+    animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
+}
 

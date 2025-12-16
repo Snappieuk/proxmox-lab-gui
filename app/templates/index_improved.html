@@ -818,6 +818,16 @@ function attachVMEventHandlers() {
             const originalText = this.innerHTML;
             this.innerHTML = '<i class="ti ti-hourglass"></i>';
             
+            // Update status badge immediately to show intermediate state
+            const row = this.closest('tr');
+            const statusBadge = row.querySelector('.pill-status');
+            const originalStatus = statusBadge ? statusBadge.textContent : '';
+            
+            if (statusBadge) {
+                statusBadge.className = 'pill-status pill-transitioning';
+                statusBadge.textContent = action === 'start' ? 'Starting...' : 'Stopping...';
+            }
+            
             try {
                 console.log(`Sending ${action} request to /api/vm/${vmid}/${action}`);
                 const resp = await fetch(`/api/vm/${vmid}/${action}`, { method: 'POST' });
@@ -826,18 +836,86 @@ function attachVMEventHandlers() {
                 console.log(`${action} response:`, result);
                 
                 if (result.ok) {
-                    console.log(`VM ${vmid} ${action} successful, reloading in 2s`);
-                    setTimeout(() => loadVMs(), 2000);
+                    console.log(`VM ${vmid} ${action} successful, refreshing status...`);
+                    
+                    // Poll for status updates every 2 seconds for up to 30 seconds
+                    let pollCount = 0;
+                    const maxPolls = 15;
+                    const pollInterval = setInterval(async () => {
+                        pollCount++;
+                        try {
+                            const statusResp = await fetch(`/api/vm/${vmid}/status`);
+                            const statusData = await statusResp.json();
+                            
+                            if (statusData.ok && statusData.status) {
+                                const newStatus = statusData.status;
+                                
+                                // Update status badge
+                                if (statusBadge) {
+                                    if (newStatus === 'running') {
+                                        statusBadge.className = 'pill-status pill-running';
+                                        statusBadge.textContent = 'Running';
+                                    } else if (newStatus === 'stopped') {
+                                        statusBadge.className = 'pill-status pill-stopped';
+                                        statusBadge.textContent = 'Stopped';
+                                    }
+                                }
+                                
+                                // Update buttons based on new status
+                                const startBtn = row.querySelector('[data-action="start"]');
+                                const stopBtn = row.querySelector('[data-action="stop"]');
+                                
+                                if (newStatus === 'running') {
+                                    if (startBtn) {
+                                        startBtn.disabled = true;
+                                        startBtn.innerHTML = '<i class="ti ti-player-play-filled"></i>';
+                                    }
+                                    if (stopBtn) {
+                                        stopBtn.disabled = false;
+                                        stopBtn.innerHTML = '<i class="ti ti-player-stop-filled"></i>';
+                                    }
+                                    clearInterval(pollInterval);
+                                } else if (newStatus === 'stopped') {
+                                    if (startBtn) {
+                                        startBtn.disabled = false;
+                                        startBtn.innerHTML = '<i class="ti ti-player-play-filled"></i>';
+                                    }
+                                    if (stopBtn) {
+                                        stopBtn.disabled = true;
+                                        stopBtn.innerHTML = '<i class="ti ti-player-stop-filled"></i>';
+                                    }
+                                    clearInterval(pollInterval);
+                                }
+                            }
+                            
+                            if (pollCount >= maxPolls) {
+                                clearInterval(pollInterval);
+                                // Final reload to get accurate state
+                                loadVMs();
+                            }
+                        } catch (err) {
+                            console.error('Status poll error:', err);
+                        }
+                    }, 2000);
+                    
                 } else {
                     alert(`Failed to ${action} VM: ${result.error || 'Unknown error'}`);
                     this.disabled = false;
                     this.innerHTML = originalText;
+                    if (statusBadge) {
+                        statusBadge.className = 'pill-status ' + (originalStatus.includes('Running') ? 'pill-running' : 'pill-stopped');
+                        statusBadge.textContent = originalStatus;
+                    }
                 }
             } catch (e) {
                 console.error(`Failed to ${action} VM:`, e);
                 alert(`Failed to ${action} VM: ${e.message}`);
                 this.disabled = false;
                 this.innerHTML = originalText;
+                if (statusBadge) {
+                    statusBadge.className = 'pill-status ' + (originalStatus.includes('Running') ? 'pill-running' : 'pill-stopped');
+                    statusBadge.textContent = originalStatus;
+                }
             }
         });
     });
