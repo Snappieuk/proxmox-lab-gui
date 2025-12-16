@@ -815,10 +815,11 @@ def api_upload_iso():
         
         logger.info(f"Uploading ISO {file.filename} to {node}:{storage}")
         
-        # Use streaming upload to avoid loading entire file into memory
+        # Stream upload to Proxmox without buffering in memory
         try:
             from app.models import Cluster
             import requests
+            from werkzeug.datastructures import FileStorage
             
             # Get cluster config for direct Proxmox upload
             cluster = Cluster.query.filter_by(cluster_id=cluster_id).first()
@@ -827,20 +828,35 @@ def api_upload_iso():
             
             # Build Proxmox upload URL
             upload_url = f"https://{cluster.host}:{cluster.port}/api2/json/nodes/{node}/storage/{storage}/upload"
-            logger.info(f"Proxying upload directly to Proxmox: {upload_url}")
+            logger.info(f"Streaming upload to Proxmox: {upload_url}")
             
-            # Stream the file directly to Proxmox without loading into memory
-            files = {'filename': (file.filename, file.stream, 'application/octet-stream')}
-            data = {'content': 'iso'}
+            # Create a generator to stream file chunks (avoids loading entire file into memory)
+            def file_generator():
+                while True:
+                    chunk = file.stream.read(8192)  # Read 8KB chunks
+                    if not chunk:
+                        break
+                    yield chunk
+            
+            # Prepare multipart form data manually to avoid buffering
+            import io
+            from requests_toolbelt import MultipartEncoder
+            
+            # Use requests-toolbelt for streaming multipart upload
+            multipart_data = MultipartEncoder(
+                fields={
+                    'content': 'iso',
+                    'filename': (file.filename, file.stream, 'application/octet-stream')
+                }
+            )
             
             response = requests.post(
                 upload_url,
                 auth=(cluster.user, cluster.password),
-                files=files,
-                data=data,
+                data=multipart_data,
+                headers={'Content-Type': multipart_data.content_type},
                 verify=cluster.verify_ssl,
-                timeout=(30, 3600),  # 1 hour timeout for large ISOs
-                stream=False
+                timeout=(30, 7200),  # 2 hour timeout for very large ISOs
             )
             
             if response.status_code != 200:
@@ -850,7 +866,6 @@ def api_upload_iso():
             
             result = response.json()
             logger.info(f"Upload successful: {result}")
-            file_size = file.stream.tell()  # Get uploaded size
             
             # Cache the uploaded ISO in database immediately
             try:
