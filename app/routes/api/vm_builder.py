@@ -712,10 +712,117 @@ def api_get_upload_ticket():
         }), 500
 
 
+@vm_builder_bp.route("/upload-ticket", methods=["POST"])
+@login_required
+def api_get_upload_ticket():
+    """Get a Proxmox upload ticket for direct browser-to-Proxmox ISO upload."""
+    logger.info(f"=== ISO UPLOAD TICKET REQUEST ===")
+    
+    try:
+        user = require_user()
+        logger.info(f"Upload ticket request from user: {user}")
+        
+        # Check if user is teacher or admin
+        is_admin = is_admin_user(user)
+        username = user.split('@')[0] if '@' in user else user
+        local_user = get_user_by_username(username)
+        
+        if not is_admin and (not local_user or local_user.role not in ['teacher', 'adminer']):
+            return jsonify({
+                "ok": False,
+                "error": "Access denied. Only teachers and administrators can upload ISOs."
+            }), 403
+        
+        data = request.get_json()
+        node = data.get('node')
+        storage = data.get('storage', 'local')
+        
+        if not node:
+            return jsonify({
+                "ok": False,
+                "error": "Missing node parameter"
+            }), 400
+        
+        from app.services.proxmox_service import get_proxmox_admin_for_cluster
+        from app.models import Cluster
+        
+        cluster_id = data.get('cluster_id') or session.get('cluster_id')
+        
+        if not cluster_id:
+            return jsonify({
+                "ok": False,
+                "error": "No cluster selected"
+            }), 400
+        
+        # Get cluster config
+        cluster = Cluster.query.filter_by(cluster_id=cluster_id).first()
+        if not cluster:
+            return jsonify({
+                "ok": False,
+                "error": "Cluster configuration not found"
+            }), 404
+        
+        proxmox = get_proxmox_admin_for_cluster(cluster_id)
+        if not proxmox:
+            return jsonify({
+                "ok": False,
+                "error": "Failed to connect to cluster"
+            }), 500
+        
+        # Verify storage exists and supports ISO content
+        try:
+            storages = proxmox.nodes(node).storage.get()
+            storage_found = False
+            for s in storages:
+                if s['storage'] == storage:
+                    status = s.get('status')
+                    if status and status == 'unavailable':
+                        continue
+                    storage_found = True
+                    if 'iso' not in s.get('content', '').split(','):
+                        return jsonify({
+                            "ok": False,
+                            "error": f"Storage '{storage}' does not support ISO content"
+                        }), 400
+                    break
+            
+            if not storage_found:
+                return jsonify({
+                    "ok": False,
+                    "error": f"Storage '{storage}' is not available on node '{node}'"
+                }), 400
+        except Exception as e:
+            logger.error(f"Failed to verify storage: {e}")
+            return jsonify({
+                "ok": False,
+                "error": f"Failed to verify storage availability: {str(e)}"
+            }), 500
+        
+        # Return upload URL and credentials for direct browser upload
+        upload_url = f"https://{cluster.host}:{cluster.port}/api2/json/nodes/{node}/storage/{storage}/upload"
+        
+        return jsonify({
+            "ok": True,
+            "upload_url": upload_url,
+            "username": cluster.user,
+            "password": cluster.password,
+            "verify_ssl": cluster.verify_ssl,
+            "node": node,
+            "storage": storage
+        })
+        
+    except Exception as e:
+        logger.error(f"Failed to get upload ticket: {e}", exc_info=True)
+        return jsonify({
+            "ok": False,
+            "error": str(e)
+        }), 500
+
+
 @vm_builder_bp.route("/upload-iso", methods=["POST"])
 @login_required
 def api_upload_iso():
-    """Upload an ISO file to Proxmox storage."""
+    """Upload an ISO file to Proxmox storage via Flask proxy (legacy/fallback)."""
     logger.info(f"=== ISO UPLOAD ENDPOINT HIT === Method: {request.method}")
     
     try:
@@ -841,14 +948,19 @@ def api_upload_iso():
             files = {"filename": (file.filename, file.stream, "application/octet-stream")}
             data = {"content": "iso"}
             
+            logger.info(f"Starting upload: {file.filename} ({file_size} bytes) to {upload_url}")
+            
             response = requests.post(
                 upload_url,
                 auth=(cluster.user, cluster.password),
                 data=data,
                 files=files,
                 verify=cluster.verify_ssl,
-                timeout=(30, 7200),  # 2 hour timeout for very large ISOs
+                timeout=(600, 7200),  # 10 min connection timeout, 2 hour read timeout
+                stream=False  # Don't stream response (we need to wait for completion)
             )
+            
+            logger.info(f"Upload POST completed with status: {response.status_code}")
             
             if response.status_code != 200:
                 error_text = response.text[:500]

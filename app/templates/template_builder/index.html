@@ -1949,24 +1949,42 @@ async function submitUploadISO(event) {
     progressText.textContent = 'Preparing upload...';
     
     try {
-        progressText.textContent = `Uploading ${file.name} to Proxmox via Flask proxy...`;
+        progressText.textContent = `Uploading ${file.name} directly to Proxmox...`;
         
-        // Create FormData for Flask upload (Flask will stream to Proxmox)
-        const formData = new FormData();
-        formData.append('content', file);  // The actual file
-        formData.append('node', node);
-        formData.append('storage', storage);
-        formData.append('cluster_id', clusterId);
+        // Get upload credentials from Flask
+        const ticketResponse = await fetch('/api/vm-builder/upload-ticket', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                cluster_id: clusterId,
+                node: node,
+                storage: storage
+            })
+        });
+        
+        const ticketData = await ticketResponse.json();
+        
+        if (!ticketData.ok) {
+            throw new Error(ticketData.error || 'Failed to get upload ticket');
+        }
         
         console.log('📤 Upload parameters:', {
             filename: file.name,
             size: (file.size / 1048576).toFixed(2) + ' MB',
             cluster_id: clusterId,
             node: node,
-            storage: storage
+            storage: storage,
+            url: ticketData.upload_url
         });
         
-        // Upload with progress tracking using XHR
+        // Create FormData for direct Proxmox upload
+        const formData = new FormData();
+        formData.append('content', 'iso');
+        formData.append('filename', file);
+        
+        // Upload directly to Proxmox with progress tracking
         const xhr = new XMLHttpRequest();
         
         // Keep-alive mechanism to prevent connection timeout
@@ -1988,10 +2006,18 @@ async function submitUploadISO(event) {
                 const elapsedSeconds = (Date.now() - uploadStartTime) / 1000;
                 const speedMBps = elapsedSeconds > 0 ? (e.loaded / 1048576) / elapsedSeconds : 0;
                 
+                console.log(`Upload progress: ${percentComplete.toFixed(1)}% (${loadedMB}/${totalMB} MB)`);
+                
                 progressBar.style.width = percentComplete + '%';
                 progressText.textContent = 
                     `${Math.round(percentComplete)}% (${loadedMB}MB / ${totalMB}MB) - ${speedMBps.toFixed(2)} MB/s`;
             }
+        });
+        
+        xhr.upload.addEventListener('loadend', () => {
+            console.log('📤 Upload to Proxmox complete, waiting for confirmation...');
+            progressText.textContent = 'Upload complete. Processing...';
+            progressBar.style.width = '100%';
         });
         
         xhr.addEventListener('load', async () => {
@@ -2050,7 +2076,9 @@ async function submitUploadISO(event) {
         xhr.addEventListener('error', (e) => {
             clearInterval(keepAliveInterval);
             console.error('❌ Upload error event:', e);
-            alert('Upload failed: Network error. Connection was interrupted.\n\nCheck server logs and network connectivity.');
+            console.error('XHR state:', xhr.readyState, 'Status:', xhr.status);
+            console.error('Response text:', xhr.responseText);
+            alert('Upload failed: Network error. Connection was interrupted.\n\nCheck server logs and network connectivity.\n\nThis often means a timeout in nginx or Flask.');
             submitBtn.disabled = false;
             submitBtn.innerHTML = '<i class="ti ti-upload"></i> Upload ISO';
             progressDiv.style.display = 'none';
@@ -2074,12 +2102,16 @@ async function submitUploadISO(event) {
             progressDiv.style.display = 'none';
         });
         
-        console.log('📡 Uploading to Flask proxy:', '/api/vm-builder/upload-iso');
+        console.log('📡 Uploading directly to Proxmox:', ticketData.upload_url);
         
-        xhr.open('POST', '/api/vm-builder/upload-iso');
+        // Set up Basic Auth with Proxmox credentials
+        const auth = btoa(`${ticketData.username}:${ticketData.password}`);
+        
+        xhr.open('POST', ticketData.upload_url);
+        xhr.setRequestHeader('Authorization', `Basic ${auth}`);
         xhr.timeout = 7200000; // 2 hour timeout for large ISOs
         
-        console.log('📤 Starting upload:', file.name, 'Size:', (file.size / 1048576).toFixed(2), 'MB');
+        console.log('📤 Starting direct upload:', file.name, 'Size:', (file.size / 1048576).toFixed(2), 'MB');
         
         xhr.send(formData);
         
