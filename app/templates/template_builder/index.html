@@ -1948,61 +1948,44 @@ async function submitUploadISO(event) {
     progressText.textContent = 'Preparing upload...';
     
     try {
-        // Test if server is reachable first
-        console.log('Testing server connectivity...');
-        try {
-            const testResp = await fetch('/api/vm-builder/test');
-            const testData = await testResp.json();
-            console.log('✅ Server test response:', testData);
-        } catch (testError) {
-            console.error('❌ Server test failed:', testError);
-            alert('Cannot reach server. Please check if Flask is running.');
-            throw new Error('Server unreachable');
+        progressText.textContent = 'Getting upload credentials...';
+        
+        // Get upload ticket from Flask (credentials for direct Proxmox upload)
+        const ticketResponse = await fetch('/api/vm-builder/upload-iso-ticket', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                cluster_id: clusterId,
+                node: node,
+                storage: storage
+            })
+        });
+        
+        const ticketData = await ticketResponse.json();
+        
+        if (!ticketData.ok) {
+            throw new Error(ticketData.error || 'Failed to get upload credentials');
         }
-        
-        // Test upload endpoint specifically
-        console.log('Testing upload endpoint accessibility...');
-        try {
-            const uploadTestResp = await fetch('/api/vm-builder/upload-iso', {
-                method: 'OPTIONS'
-            });
-            console.log('✅ Upload endpoint test - Status:', uploadTestResp.status);
-            console.log('✅ Upload endpoint headers:', uploadTestResp.headers);
-        } catch (uploadTestError) {
-            console.error('❌ Upload endpoint test failed:', uploadTestError);
-            alert('Upload endpoint is not accessible. Check server logs.');
-        }
-        
-        progressText.textContent = `Uploading ${file.name} directly to Proxmox storage...`;
-        
-        // Create FormData
-        const formData = new FormData();
-        formData.append('content', file);  // The actual file
-        formData.append('node', node);
-        formData.append('storage', storage);
-        formData.append('cluster_id', clusterId);
         
         console.log('📤 Upload parameters:', {
             filename: file.name,
             size: (file.size / 1048576).toFixed(2) + ' MB',
-            cluster_id: clusterId,
             node: node,
-            storage: storage
+            storage: storage,
+            upload_url: ticketData.upload_url
         });
         
-        // Upload with progress tracking using fetch with ReadableStream
-        const xhr = new XMLHttpRequest();
+        progressText.textContent = `Uploading ${file.name} directly to Proxmox...`;
         
-        // Track state changes
-        xhr.onreadystatechange = function() {
-            console.log('🔄 XHR readyState changed:', xhr.readyState, {
-                0: 'UNSENT',
-                1: 'OPENED', 
-                2: 'HEADERS_RECEIVED',
-                3: 'LOADING',
-                4: 'DONE'
-            }[xhr.readyState], 'Status:', xhr.status);
-        };
+        // Create FormData for Proxmox upload
+        const formData = new FormData();
+        formData.append('content', 'iso');  // Content type
+        formData.append('filename', file);  // The actual file
+        
+        // Upload directly to Proxmox using XHR for progress tracking
+        const xhr = new XMLHttpRequest();
         
         // Keep-alive mechanism to prevent connection timeout
         let lastProgressTime = Date.now();
@@ -2038,22 +2021,24 @@ async function submitUploadISO(event) {
             if (xhr.status === 200) {
                 try {
                     const data = JSON.parse(xhr.responseText);
-                    if (data.ok) {
+                    if (data.data) {
                         progressText.textContent = 'Upload complete! ISO saved to Proxmox.';
                         progressBar.style.width = '100%';
                         
                         // Show success notification
                         alert(`✅ ISO uploaded successfully!\n\n` +
-                              `File: ${data.filename || file.name}\n` +
+                              `File: ${file.name}\n` +
                               `Location: ${storage} on ${node}\n\n` +
                               `The ISO has been uploaded directly to Proxmox storage and is now available for VM creation.`);
                         
                         closeUploadISOModal();
+                        // Trigger ISO sync to update database
+                        await fetch('/api/sync/isos/trigger', { method: 'POST' }).catch(() => {});
                         // Reload ISOs to show the newly uploaded file
                         await loadBuildOptions();
                     } else {
-                        console.error('Server returned error:', data.error);
-                        alert(`❌ Upload failed: ${data.error || 'Unknown error'}\n\nThe file may not have been uploaded to Proxmox. Check server logs for details.`);
+                        console.error('Proxmox returned error:', data);
+                        alert(`❌ Upload failed: ${data.errors || 'Unknown error from Proxmox'}\n\nCheck Proxmox logs for details.`);
                         submitBtn.disabled = false;
                         submitBtn.innerHTML = '<i class="ti ti-upload"></i> Upload ISO';
                         progressDiv.style.display = 'none';
@@ -2069,13 +2054,13 @@ async function submitUploadISO(event) {
             } else if (xhr.status === 0) {
                 // Status 0 typically means network error or CORS issue
                 console.error('XHR status is 0 - connection failed or was aborted');
-                alert('Upload failed: Connection lost.\n\nThis usually means:\n• Reverse proxy timeout (nginx/Apache)\n• Network interruption\n• Server crashed\n\nCheck that your reverse proxy has these settings:\n  client_max_body_size 10G;\n  proxy_read_timeout 1800s;\n  proxy_request_buffering off;');
+                alert('Upload failed: Connection lost.\n\nThis usually means:\n• Network interruption\n• CORS/SSL certificate issue\n• Proxmox server unreachable\n\nCheck that you can access Proxmox directly from your browser.');
                 submitBtn.disabled = false;
                 submitBtn.innerHTML = '<i class="ti ti-upload"></i> Upload ISO';
                 progressDiv.style.display = 'none';
             } else {
                 console.error('Upload failed with status:', xhr.status, xhr.responseText);
-                alert(`Upload failed: HTTP ${xhr.status}\n\n${xhr.responseText || 'Check server logs for details.'}`);
+                alert(`Upload failed: HTTP ${xhr.status}\n\n${xhr.responseText || 'Check Proxmox logs for details.'}`);
                 submitBtn.disabled = false;
                 submitBtn.innerHTML = '<i class="ti ti-upload"></i> Upload ISO';
                 progressDiv.style.display = 'none';
@@ -2087,7 +2072,7 @@ async function submitUploadISO(event) {
             console.error('❌ Upload error event:', e);
             console.error('❌ XHR state:', xhr.readyState, 'Status:', xhr.status);
             console.error('❌ Response text:', xhr.responseText);
-            alert('Upload failed: Network error. The connection was interrupted. This may be due to:\n- Nginx/Apache proxy timeout\n- Network instability\n- Server resource limits\n\nCheck server logs for details.');
+            alert('Upload failed: Network error. The connection was interrupted. This may be due to:\n- Network instability\n- Proxmox server unreachable\n- SSL certificate issues\n\nTry accessing Proxmox web UI directly to verify connectivity.');
             submitBtn.disabled = false;
             submitBtn.innerHTML = '<i class="ti ti-upload"></i> Upload ISO';
             progressDiv.style.display = 'none';
@@ -2104,36 +2089,24 @@ async function submitUploadISO(event) {
         
         xhr.addEventListener('timeout', () => {
             clearInterval(keepAliveInterval);
-            console.error('Upload timeout after 30 minutes');
-            alert('Upload timed out after 30 minutes. File may be too large or connection too slow.');
+            console.error('Upload timeout after 1 hour');
+            alert('Upload timed out after 1 hour. File may be too large or connection too slow.');
             submitBtn.disabled = false;
             submitBtn.innerHTML = '<i class="ti ti-upload"></i> Upload ISO';
             progressDiv.style.display = 'none';
         });
         
-        const uploadStartTime = Date.now();
-        const uploadUrl = '/api/vm-builder/upload-iso';
+        console.log('📡 Uploading directly to Proxmox:', ticketData.upload_url);
         
-        console.log('📡 Opening XHR connection to:', uploadUrl);
-        console.log('📡 Current page URL:', window.location.href);
-        console.log('📡 Resolved upload URL:', new URL(uploadUrl, window.location.href).href);
+        xhr.open('POST', ticketData.upload_url);
+        xhr.timeout = 3600000; // 1 hour timeout for large ISOs
         
-        xhr.open('POST', uploadUrl);
-        xhr.timeout = 1800000; // 30 minute timeout
+        // Set Proxmox authentication
+        xhr.setRequestHeader('Authorization', 'Basic ' + btoa(ticketData.username + ':' + ticketData.password));
         
-        console.log('📤 Starting upload:', file.name, 'Size:', (file.size / 1048576).toFixed(2), 'MB');
-        console.log('📤 FormData contents:', {
-            node: formData.get('node'),
-            storage: formData.get('storage'),
-            cluster_id: formData.get('cluster_id'),
-            fileSize: file.size
-        });
-        console.log('📤 XHR state before send:', xhr.readyState);
-        console.log('📤 Calling xhr.send() now...');
+        console.log('📤 Starting direct upload to Proxmox:', file.name, 'Size:', (file.size / 1048576).toFixed(2), 'MB');
         
         xhr.send(formData);
-        
-        console.log('📤 XHR state after send:', xhr.readyState);
         
     } catch (error) {
         console.error('Upload failed:', error);
