@@ -351,7 +351,7 @@
                         </div>
                         <div class="form-col">
                             <label for="upload-node" class="compact-label">Target Node</label>
-                            <select id="upload-node" class="form-control compact-input" required onchange="verifyUploadStorage()">
+                            <select id="upload-node" class="form-control compact-input" required onchange="loadUploadStorages()">
                                 <option value="">Select Node...</option>
                             </select>
                         </div>
@@ -359,8 +359,8 @@
                     <div class="form-row">
                         <div class="form-col" style="grid-column: 1 / -1;">
                             <label for="upload-storage" class="compact-label">Target Storage</label>
-                            <select id="upload-storage" class="form-control compact-input" required disabled>
-                                <option value="TRUENAS-NFS" selected>TRUENAS-NFS (Global Storage)</option>
+                            <select id="upload-storage" class="form-control compact-input" required>
+                                <option value="">Select storage...</option>
                             </select>
                             <div id="storage-verification" style="margin-top: 0.5rem; padding: 0.5rem; border-radius: 0.375rem; display: none;">
                                 <!-- Status will be inserted here -->
@@ -1723,15 +1723,18 @@ async function loadUploadClusters() {
 async function loadUploadNodes() {
     const clusterId = document.getElementById('upload-cluster').value;
     const nodeSelect = document.getElementById('upload-node');
+    const storageSelect = document.getElementById('upload-storage');
     const storageVerification = document.getElementById('storage-verification');
     
     if (!clusterId) {
         nodeSelect.innerHTML = '<option value="">Select cluster first...</option>';
+        storageSelect.innerHTML = '<option value="">Select node first...</option>';
         storageVerification.style.display = 'none';
         return;
     }
     
     nodeSelect.innerHTML = '<option value="">Loading nodes...</option>';
+    storageSelect.innerHTML = '<option value="">Select node first...</option>';
     
     try {
         const response = await fetch(`/api/vm-builder/nodes?cluster_id=${clusterId}`);
@@ -1751,7 +1754,7 @@ async function loadUploadNodes() {
             const firstOnline = data.nodes.find(n => n.status === 'online');
             if (firstOnline) {
                 nodeSelect.value = firstOnline.node;
-                await verifyUploadStorage();
+                await loadUploadStorages();
             }
         } else {
             nodeSelect.innerHTML = '<option value="">No nodes available</option>';
@@ -1759,6 +1762,80 @@ async function loadUploadNodes() {
     } catch (error) {
         console.error('Failed to load nodes:', error);
         nodeSelect.innerHTML = '<option value="">Error loading nodes</option>';
+    }
+}
+
+async function loadUploadStorages() {
+    const clusterId = document.getElementById('upload-cluster').value;
+    const node = document.getElementById('upload-node').value;
+    const storageSelect = document.getElementById('upload-storage');
+    const verificationDiv = document.getElementById('storage-verification');
+    
+    if (!clusterId || !node) {
+        storageSelect.innerHTML = '<option value="">Select node first...</option>';
+        verificationDiv.style.display = 'none';
+        return;
+    }
+    
+    storageSelect.innerHTML = '<option value="">Loading storages...</option>';
+    verificationDiv.style.display = 'none';
+    
+    try {
+        // Add timeout to request (5 seconds max)
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
+        
+        const response = await fetch(`/api/vm-builder/storages?cluster_id=${clusterId}&node=${node}`, {
+            signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+        
+        const data = await response.json();
+        
+        storageSelect.innerHTML = '<option value="">Select storage...</option>';
+        
+        if (data.ok && data.storages) {
+            // Filter storages that support ISO content
+            const isoStorages = data.storages.filter(s => 
+                s.node === node && 
+                s.content && 
+                s.content.includes('iso')
+            );
+            
+            if (isoStorages.length > 0) {
+                isoStorages.forEach(storage => {
+                    const option = document.createElement('option');
+                    option.value = storage.storage;
+                    const availSpace = storage.avail ? ` - ${storage.avail} free` : '';
+                    option.textContent = `${storage.storage}${availSpace}`;
+                    storageSelect.appendChild(option);
+                });
+                
+                // Auto-select first storage
+                storageSelect.value = isoStorages[0].storage;
+                await verifyUploadStorage();
+            } else {
+                storageSelect.innerHTML = '<option value="">No ISO storages available</option>';
+                verificationDiv.style.display = 'block';
+                verificationDiv.innerHTML = `
+                    <div style="color: #856404; background: #fff3cd; padding: 0.5rem; border-radius: 0.375rem;">
+                        ⚠️ No storages with ISO support found on ${node}
+                    </div>
+                `;
+            }
+        } else {
+            storageSelect.innerHTML = '<option value="">Error loading storages</option>';
+        }
+    } catch (error) {
+        console.error('Failed to load storages:', error);
+        const errorMsg = error.name === 'AbortError' ? 'Request timed out' : error.message;
+        storageSelect.innerHTML = '<option value="">Error loading storages</option>';
+        verificationDiv.style.display = 'block';
+        verificationDiv.innerHTML = `
+            <div style="color: #856404; background: #fff3cd; padding: 0.5rem; border-radius: 0.375rem;">
+                ⚠️ Could not load storages (${errorMsg})
+            </div>
+        `;
     }
 }
 
