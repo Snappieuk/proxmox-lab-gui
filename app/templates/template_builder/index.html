@@ -1959,14 +1959,6 @@ async function submitUploadISO(event) {
         formData.append('storage', storage);
         formData.append('cluster_id', clusterId);
         
-        console.log('📤 Upload parameters:', {
-            filename: file.name,
-            size: (file.size / 1048576).toFixed(2) + ' MB',
-            cluster_id: clusterId,
-            node: node,
-            storage: storage
-        });
-        
         // Upload with progress tracking using XHR
         const xhr = new XMLHttpRequest();
         
@@ -1974,10 +1966,6 @@ async function submitUploadISO(event) {
         let lastProgressTime = Date.now();
         const uploadStartTime = Date.now();
         const keepAliveInterval = setInterval(() => {
-            const now = Date.now();
-            if (now - lastProgressTime > 30000) {
-                console.warn('No progress for 30 seconds, connection may have stalled');
-            }
         }, 5000);
         
         xhr.upload.addEventListener('progress', (e) => {
@@ -1989,8 +1977,6 @@ async function submitUploadISO(event) {
                 const elapsedSeconds = (Date.now() - uploadStartTime) / 1000;
                 const speedMBps = elapsedSeconds > 0 ? (e.loaded / 1048576) / elapsedSeconds : 0;
                 
-                console.log(`Upload progress: ${percentComplete.toFixed(1)}% (${loadedMB}/${totalMB} MB)`);
-                
                 // Scale progress to 0-50% for upload phase
                 progressBar.style.width = (percentComplete / 2) + '%';
                 progressText.textContent = 
@@ -1999,7 +1985,6 @@ async function submitUploadISO(event) {
         });
         
         xhr.upload.addEventListener('loadend', () => {
-            console.log('📤 Upload to Flask complete, server now transferring to Proxmox...');
             progressBar.style.width = '50%';
             progressText.textContent = 'Step 2/2: Server transferring to Proxmox storage...';
             submitBtn.innerHTML = '<i class="ti ti-loader-2 rotating"></i> Transferring to Proxmox...';
@@ -2022,10 +2007,6 @@ async function submitUploadISO(event) {
             if (xhr._progressInterval) {
                 clearInterval(xhr._progressInterval);
             }
-            console.log('📥 Upload completed. Status:', xhr.status);
-            console.log('📥 Response headers:', xhr.getAllResponseHeaders());
-            console.log('📥 Response text length:', xhr.responseText?.length);
-            console.log('📥 Response preview:', xhr.responseText?.substring(0, 500));
             
             if (xhr.status === 200) {
                 try {
@@ -2081,9 +2062,6 @@ async function submitUploadISO(event) {
             if (xhr._progressInterval) {
                 clearInterval(xhr._progressInterval);
             }
-            console.error('❌ Upload error event:', e);
-            console.error('XHR state:', xhr.readyState, 'Status:', xhr.status);
-            console.error('Response text:', xhr.responseText);
             alert('Upload failed: Network error. Connection was interrupted.\n\nCheck server logs and network connectivity.\n\nThis often means a timeout in nginx or Flask.');
             submitBtn.disabled = false;
             submitBtn.innerHTML = '<i class="ti ti-upload"></i> Upload ISO';
@@ -2092,7 +2070,6 @@ async function submitUploadISO(event) {
         
         xhr.addEventListener('abort', () => {
             clearInterval(keepAliveInterval);
-            console.log('Upload aborted');
             alert('Upload was cancelled');
             submitBtn.disabled = false;
             submitBtn.innerHTML = '<i class="ti ti-upload"></i> Upload ISO';
@@ -2101,19 +2078,14 @@ async function submitUploadISO(event) {
         
         xhr.addEventListener('timeout', () => {
             clearInterval(keepAliveInterval);
-            console.error('Upload timeout after 2 hours');
             alert('Upload timed out after 2 hours. File may be too large or connection too slow.');
             submitBtn.disabled = false;
             submitBtn.innerHTML = '<i class="ti ti-upload"></i> Upload ISO';
             progressDiv.style.display = 'none';
         });
         
-        console.log('📡 Uploading via Flask proxy to Proxmox');
-        
         xhr.open('POST', '/api/vm-builder/upload-iso');
         xhr.timeout = 7200000; // 2 hour timeout for large ISOs
-        
-        console.log('📤 Starting upload:', file.name, 'Size:', (file.size / 1048576).toFixed(2), 'MB');
         
         xhr.send(formData);
         
