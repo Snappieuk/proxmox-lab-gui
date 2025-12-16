@@ -815,8 +815,9 @@ function attachVMEventHandlers() {
             console.log(`Power button clicked: VMID=${vmid}, Action=${action}`);
             
             this.disabled = true;
+            this.classList.add('btn-loading');
             const originalText = this.innerHTML;
-            this.innerHTML = '<i class="ti ti-hourglass"></i>';
+            this.innerHTML = '<i class="ti ti-loader-2"></i>';
             
             // Update status badge immediately to show intermediate state
             const row = this.closest('tr');
@@ -868,20 +869,24 @@ function attachVMEventHandlers() {
                                 if (newStatus === 'running') {
                                     if (startBtn) {
                                         startBtn.disabled = true;
+                                        startBtn.classList.remove('btn-loading');
                                         startBtn.innerHTML = '<i class="ti ti-player-play-filled"></i>';
                                     }
                                     if (stopBtn) {
                                         stopBtn.disabled = false;
+                                        stopBtn.classList.remove('btn-loading');
                                         stopBtn.innerHTML = '<i class="ti ti-player-stop-filled"></i>';
                                     }
                                     clearInterval(pollInterval);
                                 } else if (newStatus === 'stopped') {
                                     if (startBtn) {
                                         startBtn.disabled = false;
+                                        startBtn.classList.remove('btn-loading');
                                         startBtn.innerHTML = '<i class="ti ti-player-play-filled"></i>';
                                     }
                                     if (stopBtn) {
                                         stopBtn.disabled = true;
+                                        stopBtn.classList.remove('btn-loading');
                                         stopBtn.innerHTML = '<i class="ti ti-player-stop-filled"></i>';
                                     }
                                     clearInterval(pollInterval);
@@ -901,6 +906,7 @@ function attachVMEventHandlers() {
                 } else {
                     alert(`Failed to ${action} VM: ${result.error || 'Unknown error'}`);
                     this.disabled = false;
+                    this.classList.remove('btn-loading');
                     this.innerHTML = originalText;
                     if (statusBadge) {
                         statusBadge.className = 'pill-status ' + (originalStatus.includes('Running') ? 'pill-running' : 'pill-stopped');
@@ -911,6 +917,7 @@ function attachVMEventHandlers() {
                 console.error(`Failed to ${action} VM:`, e);
                 alert(`Failed to ${action} VM: ${e.message}`);
                 this.disabled = false;
+                this.classList.remove('btn-loading');
                 this.innerHTML = originalText;
                 if (statusBadge) {
                     statusBadge.className = 'pill-status ' + (originalStatus.includes('Running') ? 'pill-running' : 'pill-stopped');

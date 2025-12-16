@@ -2167,3 +2167,21 @@ body {
     50% { opacity: 0.6; }
 }
 
+/* Button Loading State - Depressed/Pressed Appearance */
+.btn-action.btn-loading {
+    opacity: 1 !important;
+    background: #e1dfdd !important;
+    box-shadow: inset 0 2px 4px rgba(0,0,0,0.15) !important;
+    transform: scale(0.95);
+    pointer-events: none;
+    border-color: #605e5c !important;
+}
+
+.btn-action.btn-loading i {
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
