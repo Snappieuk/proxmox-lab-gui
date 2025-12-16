@@ -586,6 +586,7 @@ def api_list_storages():
         for storage in storages:
             if storage.get('enabled', True):
                 storage_list.append({
+                    'node': node,  # Add node field for frontend verification
                     'storage': storage['storage'],
                     'type': storage.get('type'),
                     'content': storage.get('content', '').split(','),

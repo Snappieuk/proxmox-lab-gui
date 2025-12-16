@@ -1797,7 +1797,6 @@ async function loadUploadStorages() {
         if (data.ok && data.storages) {
             // Filter storages that support ISO content
             const isoStorages = data.storages.filter(s => 
-                s.node === node && 
                 s.content && 
                 s.content.includes('iso')
             );
