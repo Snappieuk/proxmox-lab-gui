@@ -1810,9 +1810,10 @@ async function loadUploadStorages() {
                     storageSelect.appendChild(option);
                 });
                 
-                // Auto-select first storage
+                // Auto-select first storage (onchange will trigger verification)
                 storageSelect.value = isoStorages[0].storage;
-                await verifyUploadStorage();
+                // Manually trigger change event to ensure verification runs
+                storageSelect.dispatchEvent(new Event('change'));
             } else {
                 storageSelect.innerHTML = '<option value="">No ISO storages available</option>';
                 verificationDiv.style.display = 'block';

@@ -126,11 +126,23 @@ def trigger_template_sync():
     
     try:
         stats = sync_templates_from_proxmox(full_sync=True)
-        return jsonify({
-            'ok': True,
-            'stats': stats,
-            'message': f"Template sync complete: {stats['templates_found']} found, {stats['templates_added']} added, {stats['templates_updated']} updated"
-        })
+        
+        # Return success even if there were node-level errors
+        # (we still synced the reachable nodes)
+        if stats.get('errors'):
+            logger.warning(f"Template sync completed with errors: {stats['errors']}")
+            return jsonify({
+                'ok': True,
+                'stats': stats,
+                'message': f"Template sync complete with {len(stats['errors'])} error(s): {stats['templates_found']} found, {stats['templates_added']} added, {stats['templates_updated']} updated",
+                'warnings': stats['errors']
+            })
+        else:
+            return jsonify({
+                'ok': True,
+                'stats': stats,
+                'message': f"Template sync complete: {stats['templates_found']} found, {stats['templates_added']} added, {stats['templates_updated']} updated"
+            })
     except Exception as e:
         logger.exception("Failed to trigger template sync")
         return jsonify({

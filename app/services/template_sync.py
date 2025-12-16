@@ -61,7 +61,12 @@ def sync_templates_from_proxmox(full_sync=True):
                 continue
             
             # Get all nodes in this cluster
-            nodes = proxmox.nodes.get()
+            try:
+                nodes = proxmox.nodes.get()
+            except Exception as e:
+                logger.warning(f"Failed to get nodes for cluster {cluster_id}: {e}")
+                stats['errors'].append(f"Failed to get nodes: {cluster_id} - {str(e)}")
+                continue
             
             for node_data in nodes:
                 node_name = node_data['node']
