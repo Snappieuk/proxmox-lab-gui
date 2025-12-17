@@ -369,10 +369,35 @@
                     </div>
                     <div class="form-row">
                         <div class="form-col" style="grid-column: 1 / -1;">
+                            <label class="compact-label">Upload Method</label>
+                            <div style="display: flex; gap: 1rem; margin-bottom: 1rem;">
+                                <label style="display: flex; align-items: center; cursor: pointer;">
+                                    <input type="radio" name="upload-method" value="file" checked onchange="toggleUploadMethod()">
+                                    <span style="margin-left: 0.5rem;">From Computer</span>
+                                </label>
+                                <label style="display: flex; align-items: center; cursor: pointer;">
+                                    <input type="radio" name="upload-method" value="url" onchange="toggleUploadMethod()">
+                                    <span style="margin-left: 0.5rem;">From URL</span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="upload-file-section" class="form-row">
+                        <div class="form-col" style="grid-column: 1 / -1;">
                             <label for="upload-iso-file" class="compact-label">ISO File</label>
-                            <input type="file" id="upload-iso-file" class="form-control compact-input" accept=".iso" required>
+                            <input type="file" id="upload-iso-file" class="form-control compact-input" accept=".iso">
                             <small style="color: #666; margin-top: 0.5rem; display: block;">
                                 Select an ISO file from your computer. Large files may take several minutes to upload.
+                            </small>
+                        </div>
+                    </div>
+                    <div id="upload-url-section" class="form-row" style="display: none;">
+                        <div class="form-col" style="grid-column: 1 / -1;">
+                            <label for="upload-iso-url" class="compact-label">ISO URL</label>
+                            <input type="url" id="upload-iso-url" class="form-control compact-input" placeholder="https://example.com/debian-12.iso">
+                            <small style="color: #666; margin-top: 0.5rem; display: block;">
+                                <i class="ti ti-info-circle" style="vertical-align: middle;"></i>
+                                Proxmox will download the ISO directly (faster, more reliable for large files).
                             </small>
                         </div>
                     </div>
@@ -1911,6 +1936,28 @@ async function verifyUploadStorage() {
 // Global variable to track active upload
 let activeUploadXHR = null;
 
+function toggleUploadMethod() {
+    const method = document.querySelector('input[name="upload-method"]:checked').value;
+    const fileSection = document.getElementById('upload-file-section');
+    const urlSection = document.getElementById('upload-url-section');
+    const fileInput = document.getElementById('upload-iso-file');
+    const urlInput = document.getElementById('upload-iso-url');
+    
+    if (method === 'file') {
+        fileSection.style.display = '';
+        urlSection.style.display = 'none';
+        fileInput.required = true;
+        urlInput.required = false;
+        urlInput.value = '';
+    } else {
+        fileSection.style.display = 'none';
+        urlSection.style.display = '';
+        fileInput.required = false;
+        urlInput.required = true;
+        fileInput.value = '';
+    }
+}
+
 function closeUploadISOModal() {
     const modal = document.getElementById('upload-iso-modal');
     
@@ -1935,6 +1982,24 @@ function closeUploadISOModal() {
 async function submitUploadISO(event) {
     event.preventDefault();
     
+    const method = document.querySelector('input[name="upload-method"]:checked').value;
+    const clusterId = document.getElementById('upload-cluster').value;
+    const node = document.getElementById('upload-node').value;
+    const storage = document.getElementById('upload-storage').value;
+    
+    if (!clusterId || !node || !storage) {
+        alert('Please select cluster, node, and storage');
+        return;
+    }
+    
+    if (method === 'file') {
+        await submitFileUpload();
+    } else {
+        await submitURLDownload();
+    }
+}
+
+async function submitFileUpload() {
     const fileInput = document.getElementById('upload-iso-file');
     const file = fileInput.files[0];
     const clusterId = document.getElementById('upload-cluster').value;
@@ -1943,11 +2008,6 @@ async function submitUploadISO(event) {
     
     if (!file) {
         alert('Please select an ISO file');
-        return;
-    }
-    
-    if (!clusterId || !node || !storage) {
-        alert('Please select cluster, node, and storage');
         return;
     }
     
@@ -2088,6 +2148,125 @@ async function submitUploadISO(event) {
         
         xhr.addEventListener('error', (e) => {
             clearInterval(keepAliveInterval);
+            activeUploadXHR = null;
+            console.error('Network error during upload:', e);
+            alert('Network error during upload.\n\nPlease check your connection and try again.');
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = '<i class="ti ti-upload"></i> Upload ISO';
+            progressDiv.style.display = 'none';
+        });
+        
+        xhr.addEventListener('abort', () => {
+            clearInterval(keepAliveInterval);
+            activeUploadXHR = null;
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = '<i class="ti ti-upload"></i> Upload ISO';
+            progressDiv.style.display = 'none';
+        });
+        
+        // Track this XHR for cancellation
+        activeUploadXHR = xhr;
+        
+        xhr.send(formData);
+    } catch (error) {
+        console.error('Upload error:', error);
+        alert(`Upload failed: ${error.message}`);
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = '<i class="ti ti-upload"></i> Upload ISO';
+        progressDiv.style.display = 'none';
+        activeUploadXHR = null;
+    }
+}
+
+async function submitURLDownload() {
+    const urlInput = document.getElementById('upload-iso-url');
+    const url = urlInput.value.trim();
+    const clusterId = document.getElementById('upload-cluster').value;
+    const node = document.getElementById('upload-node').value;
+    const storage = document.getElementById('upload-storage').value;
+    
+    if (!url) {
+        alert('Please enter an ISO URL');
+        return;
+    }
+    
+    // Extract filename from URL
+    let filename;
+    try {
+        const urlObj = new URL(url);
+        filename = urlObj.pathname.split('/').pop();
+        if (!filename || !filename.toLowerCase().endsWith('.iso')) {
+            filename = prompt('Enter filename for the ISO:', 'download.iso');
+            if (!filename) return;
+            if (!filename.toLowerCase().endsWith('.iso')) {
+                filename += '.iso';
+            }
+        }
+    } catch (e) {
+        alert('Invalid URL format');
+        return;
+    }
+    
+    const submitBtn = document.getElementById('upload-iso-btn');
+    const progressDiv = document.getElementById('upload-progress');
+    const progressBar = document.getElementById('upload-progress-bar');
+    const progressText = document.getElementById('upload-progress-text');
+    
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = '<i class="ti ti-hourglass"></i> Downloading...';
+    
+    // Show progress bar
+    progressDiv.style.display = 'block';
+    progressBar.style.width = '0%';
+    progressText.textContent = 'Initiating download on Proxmox server...';
+    
+    try {
+        const response = await fetch('/api/vm-builder/download-iso', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                cluster_id: clusterId,
+                node: node,
+                storage: storage,
+                url: url,
+                filename: filename
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (data.ok) {
+            progressBar.style.width = '100%';
+            progressText.textContent = 'Download initiated successfully!';
+            
+            setTimeout(() => {
+                alert(`✅ Download started on Proxmox!\n\n` +
+                      `File: ${filename}\n` +
+                      `Location: ${storage} on ${node}\n` +
+                      `URL: ${url}\n\n` +
+                      `The download is running in the background on Proxmox.\n` +
+                      `You can check the task list in Proxmox for progress.`);
+                
+                closeUploadISOModal();
+                // Reload ISOs after a delay to allow download to progress
+                setTimeout(() => loadBuildOptions(), 3000);
+            }, 500);
+        } else {
+            alert(`❌ Download failed: ${data.error || 'Unknown error'}\n\nCheck server logs for details.`);
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = '<i class="ti ti-upload"></i> Upload ISO';
+            progressDiv.style.display = 'none';
+        }
+    } catch (error) {
+        console.error('Download error:', error);
+        alert(`Download failed: ${error.message}`);
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = '<i class="ti ti-upload"></i> Upload ISO';
+        progressDiv.style.display = 'none';
+    }
+}
             if (xhr._progressInterval) {
                 clearInterval(xhr._progressInterval);
             }

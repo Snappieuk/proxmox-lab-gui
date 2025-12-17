@@ -10,6 +10,8 @@ from app.utils.decorators import login_required
 from app.services.user_manager import require_user, is_admin_user
 from app.services.class_service import get_user_by_username
 from app.services.vm_deployment_service import build_vm_from_scratch, list_available_isos
+from app.models import Cluster
+from app.services.proxmox_service import get_proxmox_admin_for_cluster
 
 logger = logging.getLogger(__name__)
 
@@ -934,6 +936,114 @@ def api_upload_iso():
         
     except Exception as e:
         logger.error(f"Failed to upload ISO: {e}", exc_info=True)
+        return jsonify({
+            "ok": False,
+            "error": str(e)
+        }), 500
+
+
+@vm_builder_bp.route("/download-iso", methods=["POST"])
+@login_required
+def api_download_iso():
+    """Trigger Proxmox to download an ISO from a URL (server-side download)."""
+    logger.info("=== ISO DOWNLOAD ENDPOINT HIT ===")
+    
+    try:
+        user = require_user()
+        logger.info(f"ISO download request from user: {user}")
+        
+        # Check if user is teacher or admin
+        is_admin = is_admin_user(user)
+        username = user.split('@')[0] if '@' in user else user
+        local_user = get_user_by_username(username)
+        
+        if not is_admin and (not local_user or local_user.role not in ['teacher', 'adminer']):
+            return jsonify({
+                "ok": False,
+                "error": "Access denied. Only teachers and administrators can download ISOs."
+            }), 403
+        
+        # Get parameters from JSON body
+        data = request.get_json()
+        if not data:
+            return jsonify({
+                "ok": False,
+                "error": "Invalid request body"
+            }), 400
+        
+        cluster_id = data.get('cluster_id')
+        node = data.get('node')
+        storage = data.get('storage', 'local')
+        url = data.get('url')
+        filename = data.get('filename')
+        
+        if not all([cluster_id, node, url, filename]):
+            return jsonify({
+                "ok": False,
+                "error": "Missing required parameters: cluster_id, node, url, filename"
+            }), 400
+        
+        # Validate URL format
+        if not url.startswith(('http://', 'https://')):
+            return jsonify({
+                "ok": False,
+                "error": "URL must start with http:// or https://"
+            }), 400
+        
+        # Validate filename ends with .iso
+        if not filename.lower().endswith('.iso'):
+            return jsonify({
+                "ok": False,
+                "error": "Filename must end with .iso"
+            }), 400
+        
+        # Get cluster configuration
+        cluster = Cluster.query.get(cluster_id)
+        if not cluster:
+            return jsonify({
+                "ok": False,
+                "error": f"Cluster {cluster_id} not found"
+            }), 404
+        
+        # Get Proxmox API connection for this cluster
+        proxmox = get_proxmox_admin_for_cluster(cluster_id)
+        if not proxmox:
+            return jsonify({
+                "ok": False,
+                "error": f"Could not connect to cluster {cluster.name}"
+            }), 500
+        
+        logger.info(f"Initiating download on {cluster.name}/{node}/{storage}: {url} -> {filename}")
+        
+        # Call Proxmox API to download from URL
+        # POST /api2/json/nodes/{node}/storage/{storage}/download-url
+        try:
+            response = proxmox.nodes(node).storage(storage).post(
+                'download-url',
+                url=url,
+                filename=filename,
+                content='iso'
+            )
+            
+            logger.info(f"Proxmox download task started: {response}")
+            
+            return jsonify({
+                "ok": True,
+                "message": f"Download started for {filename}",
+                "task": response,
+                "url": url,
+                "filename": filename
+            })
+            
+        except Exception as proxmox_error:
+            logger.error(f"Proxmox download failed: {proxmox_error}", exc_info=True)
+            return jsonify({
+                "ok": False,
+                "error": f"Proxmox download failed: {str(proxmox_error)}"
+            }), 500
+        
+    except Exception as e:
+        logger.error(f"Failed to initiate ISO download: {e}", exc_info=True)
         return jsonify({
             "ok": False,
             "error": str(e)
