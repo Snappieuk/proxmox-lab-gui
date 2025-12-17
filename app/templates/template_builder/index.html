@@ -2314,6 +2314,95 @@ async function submitURLDownload() {
     }
 }
 
-async function submitURLDownload() {</script>
+async function submitURLDownload() {
+    const urlInput = document.getElementById('upload-iso-url');
+    const url = urlInput.value.trim();
+    const clusterId = document.getElementById('upload-cluster').value;
+    const node = document.getElementById('upload-node').value;
+    const storage = document.getElementById('upload-storage').value;
+    
+    if (!url) {
+        alert('Please enter an ISO URL');
+        return;
+    }
+    
+    // Extract filename from URL
+    let filename;
+    try {
+        const urlObj = new URL(url);
+        filename = urlObj.pathname.split('/').pop();
+        if (!filename || !filename.toLowerCase().endsWith('.iso')) {
+            filename = prompt('Enter filename for the ISO:', 'download.iso');
+            if (!filename) return;
+            if (!filename.toLowerCase().endsWith('.iso')) {
+                filename += '.iso';
+            }
+        }
+    } catch (e) {
+        alert('Invalid URL format');
+        return;
+    }
+    
+    const submitBtn = document.getElementById('upload-iso-btn');
+    const progressDiv = document.getElementById('upload-progress');
+    const progressBar = document.getElementById('upload-progress-bar');
+    const progressText = document.getElementById('upload-progress-text');
+    
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = '<i class="ti ti-hourglass"></i> Downloading...';
+    
+    // Show progress bar
+    progressDiv.style.display = 'block';
+    progressBar.style.width = '0%';
+    progressText.textContent = 'Initiating download on Proxmox server...';
+    
+    try {
+        const response = await fetch('/api/vm-builder/download-iso', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                cluster_id: clusterId,
+                node: node,
+                storage: storage,
+                url: url,
+                filename: filename
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (data.ok) {
+            progressBar.style.width = '100%';
+            progressText.textContent = 'Download initiated successfully!';
+            
+            setTimeout(() => {
+                alert(`✅ Download started on Proxmox!\n\n` +
+                      `File: ${filename}\n` +
+                      `Location: ${storage} on ${node}\n` +
+                      `URL: ${url}\n\n` +
+                      `The download is running in the background on Proxmox.\n` +
+                      `You can check the task list in Proxmox for progress.`);
+                
+                closeUploadISOModal();
+                // Reload ISOs after a delay to allow download to progress
+                setTimeout(() => loadBuildOptions(), 3000);
+            }, 500);
+        } else {
+            alert(`❌ Download failed: ${data.error || 'Unknown error'}\n\nCheck server logs for details.`);
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = '<i class="ti ti-upload"></i> Upload ISO';
+            progressDiv.style.display = 'none';
+        }
+    } catch (error) {
+        console.error('Download error:', error);
+        alert(`Download failed: ${error.message}`);
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = '<i class="ti ti-upload"></i> Upload ISO';
+        progressDiv.style.display = 'none';
+    }
+}
+</script>
 
 {% endblock %}
