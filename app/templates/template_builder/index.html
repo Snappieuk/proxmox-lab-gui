@@ -1908,12 +1908,28 @@ async function verifyUploadStorage() {
     }
 }
 
+// Global variable to track active upload
+let activeUploadXHR = null;
+
 function closeUploadISOModal() {
     const modal = document.getElementById('upload-iso-modal');
+    
+    // If upload is in progress, confirm cancellation
+    if (activeUploadXHR) {
+        if (confirm('Upload is in progress. Are you sure you want to cancel?')) {
+            activeUploadXHR.abort();
+            activeUploadXHR = null;
+        } else {
+            return; // Don't close modal
+        }
+    }
+    
     modal.style.display = 'none';
     modal.style.visibility = 'hidden';
     document.getElementById('upload-iso-form').reset();
     document.getElementById('upload-progress').style.display = 'none';
+    document.getElementById('upload-iso-btn').disabled = false;
+    document.getElementById('upload-iso-btn').innerHTML = '<i class="ti ti-upload"></i> Upload ISO';
 }
 
 async function submitUploadISO(event) {
@@ -1961,6 +1977,7 @@ async function submitUploadISO(event) {
         
         // Upload with progress tracking using XHR
         const xhr = new XMLHttpRequest();
+        activeUploadXHR = xhr; // Track for cancellation
         
         // Keep-alive mechanism to prevent connection timeout
         let lastProgressTime = Date.now();
@@ -1989,12 +2006,23 @@ async function submitUploadISO(event) {
             progressText.textContent = 'Step 2/2: Server transferring to Proxmox storage...';
             submitBtn.innerHTML = '<i class="ti ti-loader-2 rotating"></i> Transferring to Proxmox...';
             
-            // Simulate progress for server-side transfer (since we can't track it)
+            // Estimate server-side transfer time based on file size
+            // Rough estimate: 50-100 MB/s transfer speed to Proxmox
+            const fileSizeMB = file.size / 1048576;
+            const estimatedSeconds = Math.max(5, fileSizeMB / 75); // Assume ~75 MB/s
+            const progressStep = 45 / estimatedSeconds; // Fill 50% to 95% over estimated time
+            
             let fakeProgress = 50;
             const progressInterval = setInterval(() => {
                 if (fakeProgress < 95) {
-                    fakeProgress += 0.5;
+                    fakeProgress = Math.min(95, fakeProgress + progressStep);
                     progressBar.style.width = fakeProgress + '%';
+                    
+                    // Update text with estimate
+                    const remaining = Math.ceil(estimatedSeconds * (95 - fakeProgress) / 45);
+                    if (remaining > 0) {
+                        progressText.textContent = `Step 2/2: Server transferring to Proxmox (~${remaining}s remaining)...`;
+                    }
                 }
             }, 1000);
             
@@ -2007,6 +2035,7 @@ async function submitUploadISO(event) {
             if (xhr._progressInterval) {
                 clearInterval(xhr._progressInterval);
             }
+            activeUploadXHR = null; // Clear active upload
             
             if (xhr.status === 200) {
                 try {
@@ -2062,6 +2091,7 @@ async function submitUploadISO(event) {
             if (xhr._progressInterval) {
                 clearInterval(xhr._progressInterval);
             }
+            activeUploadXHR = null; // Clear active upload
             alert('Upload failed: Network error. Connection was interrupted.\n\nCheck server logs and network connectivity.\n\nThis often means a timeout in nginx or Flask.');
             submitBtn.disabled = false;
             submitBtn.innerHTML = '<i class="ti ti-upload"></i> Upload ISO';
@@ -2070,7 +2100,10 @@ async function submitUploadISO(event) {
         
         xhr.addEventListener('abort', () => {
             clearInterval(keepAliveInterval);
-            alert('Upload was cancelled');
+            if (xhr._progressInterval) {
+                clearInterval(xhr._progressInterval);
+            }
+            activeUploadXHR = null; // Clear active upload
             submitBtn.disabled = false;
             submitBtn.innerHTML = '<i class="ti ti-upload"></i> Upload ISO';
             progressDiv.style.display = 'none';
@@ -2078,6 +2111,10 @@ async function submitUploadISO(event) {
         
         xhr.addEventListener('timeout', () => {
             clearInterval(keepAliveInterval);
+            if (xhr._progressInterval) {
+                clearInterval(xhr._progressInterval);
+            }
+            activeUploadXHR = null; // Clear active upload
             alert('Upload timed out after 2 hours. File may be too large or connection too slow.');
             submitBtn.disabled = false;
             submitBtn.innerHTML = '<i class="ti ti-upload"></i> Upload ISO';

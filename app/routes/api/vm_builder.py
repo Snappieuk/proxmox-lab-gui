@@ -715,7 +715,7 @@ def api_get_upload_ticket():
 @vm_builder_bp.route("/upload-iso", methods=["POST"])
 @login_required
 def api_upload_iso():
-    """Upload an ISO file to Proxmox storage via Flask proxy (legacy/fallback)."""
+    """Upload an ISO file to Proxmox storage via Flask proxy."""
     logger.info(f"=== ISO UPLOAD ENDPOINT HIT === Method: {request.method}")
     
     try:
