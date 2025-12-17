@@ -37,6 +37,9 @@ def sync_templates_from_proxmox(full_sync=True):
         'errors': []
     }
     
+    # Disable autoflush to prevent premature commits during iteration
+    db.session.autoflush = False
+    
     # Track all templates found in Proxmox (cluster_ip, node, vmid tuples)
     found_templates = set()
     
@@ -142,14 +145,30 @@ def sync_templates_from_proxmox(full_sync=True):
                 db.session.delete(template)
                 stats['templates_removed'] += 1
     
-    # Commit all changes
-    try:
-        db.session.commit()
-        logger.info(f"Template sync complete: {stats}")
-    except Exception as e:
-        logger.error(f"Failed to commit template sync: {e}")
-        db.session.rollback()
-        stats['errors'].append(f"Database commit failed: {str(e)}")
+    # Commit all changes with retry logic for database locks
+    max_retries = 3
+    retry_count = 0
+    while retry_count < max_retries:
+        try:
+            db.session.commit()
+            logger.info(f"Template sync complete: {stats}")
+            break
+        except Exception as e:
+            retry_count += 1
+            db.session.rollback()
+            
+            if "database is locked" in str(e).lower() and retry_count < max_retries:
+                import time
+                wait_time = retry_count * 0.5  # Progressive backoff: 0.5s, 1s, 1.5s
+                logger.warning(f"Database locked, retrying in {wait_time}s (attempt {retry_count}/{max_retries})")
+                time.sleep(wait_time)
+            else:
+                logger.error(f"Failed to commit template sync: {e}")
+                stats['errors'].append(f"Database commit failed: {str(e)}")
+                break
+    
+    # Re-enable autoflush
+    db.session.autoflush = True
     
     return stats
 
