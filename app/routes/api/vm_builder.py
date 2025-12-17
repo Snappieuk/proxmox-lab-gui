@@ -844,19 +844,35 @@ def api_upload_iso():
             logger.info(f"Starting upload: {file.filename} ({file_size} bytes) to {upload_url}")
             logger.info(f"SSL verification: {cluster.verify_ssl}")
             
-            # Disable SSL warnings if verification is disabled
-            if not cluster.verify_ssl:
-                import urllib3
-                urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+            # Create a session with custom SSL adapter to handle self-signed certs
+            import ssl
+            import urllib3
+            from requests.adapters import HTTPAdapter
+            from urllib3.poolmanager import PoolManager
             
-            response = requests.post(
+            # Disable SSL warnings
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+            
+            # Custom adapter that doesn't verify SSL
+            class SSLAdapter(HTTPAdapter):
+                def init_poolmanager(self, *args, **kwargs):
+                    context = ssl.create_default_context()
+                    context.check_hostname = False
+                    context.verify_mode = ssl.CERT_NONE
+                    kwargs['ssl_context'] = context
+                    return super().init_poolmanager(*args, **kwargs)
+            
+            # Create session with custom adapter
+            upload_session = requests.Session()
+            upload_session.mount('https://', SSLAdapter())
+            
+            response = upload_session.post(
                 upload_url,
                 auth=(cluster.user, cluster.password),
                 data=data,
                 files=files,
-                verify=cluster.verify_ssl if cluster.verify_ssl else False,
+                verify=False,
                 timeout=(600, 7200),  # 10 min connection timeout, 2 hour read timeout
-                stream=False  # Don't stream response (we need to wait for completion)
             )
             
             logger.info(f"Upload POST completed with status: {response.status_code}")
