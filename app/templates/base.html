@@ -81,10 +81,6 @@
                    href="{{ url_for('admin_vm_mappings.vm_class_mappings') }}">
                     <i class="ti ti-topology-star-3"></i> VM:Class Mappings
                 </a>
-                <a class="sidebar-link {% if request.endpoint == 'admin_diagnostics.admin_probe' %}sidebar-link-active{% endif %}"
-                   href="{{ url_for('admin_diagnostics.admin_probe') }}">
-                    <i class="ti ti-activity"></i> Proxmox probe
-                </a>
                 
             {% endif %}
     {% endif %}
