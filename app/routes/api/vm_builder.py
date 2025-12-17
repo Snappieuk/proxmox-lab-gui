@@ -998,7 +998,7 @@ def api_download_iso():
             }), 400
         
         # Get cluster configuration
-        cluster = Cluster.query.get(cluster_id)
+        cluster = Cluster.query.filter_by(cluster_id=cluster_id).first()
         if not cluster:
             return jsonify({
                 "ok": False,
