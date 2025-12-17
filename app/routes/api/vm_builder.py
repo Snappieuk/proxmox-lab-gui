@@ -842,13 +842,19 @@ def api_upload_iso():
             data = {"content": "iso"}
             
             logger.info(f"Starting upload: {file.filename} ({file_size} bytes) to {upload_url}")
+            logger.info(f"SSL verification: {cluster.verify_ssl}")
+            
+            # Disable SSL warnings if verification is disabled
+            if not cluster.verify_ssl:
+                import urllib3
+                urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
             
             response = requests.post(
                 upload_url,
                 auth=(cluster.user, cluster.password),
                 data=data,
                 files=files,
-                verify=cluster.verify_ssl,
+                verify=cluster.verify_ssl if cluster.verify_ssl else False,
                 timeout=(600, 7200),  # 10 min connection timeout, 2 hour read timeout
                 stream=False  # Don't stream response (we need to wait for completion)
             )
