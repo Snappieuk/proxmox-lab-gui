@@ -668,6 +668,12 @@ document.getElementById('create-class-form').addEventListener('submit', async fu
             async function pollTeacherVM() {
                 pollAttempts++;
                 
+                // Guard against null classId
+                if (!classId || classId === 'null') {
+                    console.error('Cannot poll teacher VM: classId is null');
+                    return;
+                }
+                
                 try {
                     const resp = await fetch(`/api/classes/${classId}/template/info?v=${Date.now()}`);
                     const data = await resp.json();
