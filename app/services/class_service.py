@@ -6,12 +6,35 @@ Handles class CRUD, template management, VM pool operations, and invite links.
 """
 
 import logging
+import time
 from datetime import datetime
 from typing import List, Optional, Tuple
 
 from app.models import Class, Template, User, VMAssignment, db
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Database Helper Functions
+# ---------------------------------------------------------------------------
+
+def _commit_with_retry(max_retries=3):
+    """Commit database session with retry logic for SQLite lock issues."""
+    retry_count = 0
+    while retry_count < max_retries:
+        try:
+            db.session.commit()
+            return
+        except Exception as e:
+            retry_count += 1
+            db.session.rollback()
+            if "database is locked" in str(e).lower() and retry_count < max_retries:
+                wait_time = retry_count * 0.5
+                logger.warning(f"Database locked, retrying commit in {wait_time}s (attempt {retry_count}/{max_retries})")
+                time.sleep(wait_time)
+            else:
+                raise
 
 
 # ---------------------------------------------------------------------------
@@ -191,12 +214,29 @@ def create_class(name: str, teacher_id: int, description: str = None,
             deployment_cluster=deployment_cluster  # Optional: target cluster
         )
         db.session.add(class_)
-        db.session.flush()
+        
+        # Flush with retry logic for database locks
+        max_retries = 3
+        retry_count = 0
+        while retry_count < max_retries:
+            try:
+                db.session.flush()
+                break
+            except Exception as e:
+                retry_count += 1
+                if "database is locked" in str(e).lower() and retry_count < max_retries:
+                    import time
+                    wait_time = retry_count * 0.5
+                    logger.warning(f"Database locked during class creation, retrying in {wait_time}s (attempt {retry_count}/{max_retries})")
+                    time.sleep(wait_time)
+                else:
+                    raise
 
         # Auto-generate join token (7-day default) if none
         class_.generate_join_token(expires_in_days=7)
 
-        db.session.commit()
+        _commit_with_retry()
+        
         logger.info("Created class: %s by teacher %s (template_id=%s)", 
                    name, teacher.username, template_id)
         
