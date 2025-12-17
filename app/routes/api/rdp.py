@@ -39,7 +39,7 @@ def rdp_file(vmid: int):
         # Check if user has access to this VM
         from flask import has_app_context
 
-        from app.models import User, VMAssignment
+        from app.models import User, VMAssignment, Class
         
         accessible = False
         
@@ -64,7 +64,17 @@ def rdp_file(vmid: int):
                         proxmox_vmid=vmid,
                         assigned_user_id=local_user.id
                     ).first()
-                    accessible = assignment is not None
+                    
+                    if assignment:
+                        accessible = True
+                    else:
+                        # Check if user is co-owner of any class that contains this VM
+                        vm_assignment = VMAssignment.query.filter_by(proxmox_vmid=vmid).first()
+                        if vm_assignment and vm_assignment.class_id:
+                            class_obj = Class.query.get(vm_assignment.class_id)
+                            if class_obj and class_obj.is_owner(local_user):
+                                accessible = True
+                                logger.info(f"rdp_file: user {user} accessing VM {vmid} as co-owner of class {class_obj.name}")
             except Exception as e:
                 logger.warning("rdp_file: failed to check VM assignment for user %s: %s", user, e)
         
