@@ -58,7 +58,7 @@
             {% if is_admin or (local_user and local_user.role in ['teacher', 'adminer']) %}
                 <a class="sidebar-link {% if request.endpoint == 'template_builder.template_builder_page' %}sidebar-link-active{% endif %}"
                    href="{{ url_for('template_builder.template_builder_page') }}">
-                    <i class="ti ti-tools"></i> Template Builder
+                    <i class="ti ti-tools"></i> VM Builder
                 </a>
             {% endif %}
             {% if is_admin %}

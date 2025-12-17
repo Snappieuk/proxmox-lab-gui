@@ -1249,9 +1249,11 @@ async function loadMyVMs() {
                     <button class="btn-icon btn-secondary" onclick="editVM(${vm.vmid}, '${vm.name}', ${vm.cores || 2}, ${vm.memory || 2048})" title="Edit Hardware Specs">
                         <i class="ti ti-pencil"></i> Edit
                     </button>
+                    ${vm.has_iso || vm.cdrom ? `
                     <button class="btn-icon btn-secondary" onclick="ejectISO(${vm.vmid})" title="Eject Installation Media">
                         <i class="ti ti-player-eject"></i> Eject ISO
                     </button>
+                    ` : ''}
                     ${vm.status !== 'running' ? `
                     <button class="btn-icon btn-secondary" onclick="startVM(${vm.vmid})">
                         <i class="ti ti-player-play-filled"></i> Start
@@ -2167,6 +2169,9 @@ async function submitFileUpload() {
         // Track this XHR for cancellation
         activeUploadXHR = xhr;
         
+        // Open connection and send
+        xhr.open('POST', '/api/vm-builder/upload-iso');
+        xhr.timeout = 7200000; // 2 hour timeout for large ISOs
         xhr.send(formData);
     } catch (error) {
         console.error('Upload error:', error);
@@ -2299,20 +2304,16 @@ async function submitURLDownload() {
             submitBtn.innerHTML = '<i class="ti ti-upload"></i> Upload ISO';
             progressDiv.style.display = 'none';
         });
-        
-        xhr.open('POST', '/api/vm-builder/upload-iso');
-        xhr.timeout = 7200000; // 2 hour timeout for large ISOs
-        
-        xhr.send(formData);
-        
     } catch (error) {
-        console.error('Upload failed:', error);
-        document.getElementById('upload-progress').style.display = 'none';
-        alert('Upload failed: ' + error.message);
+        console.error('Upload error:', error);
+        alert(`Upload failed: ${error.message}`);
         submitBtn.disabled = false;
         submitBtn.innerHTML = '<i class="ti ti-upload"></i> Upload ISO';
+        progressDiv.style.display = 'none';
+        activeUploadXHR = null;
     }
 }
-</script>
+
+async function submitURLDownload() {</script>
 
 {% endblock %}
