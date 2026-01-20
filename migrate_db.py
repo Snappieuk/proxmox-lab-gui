@@ -34,6 +34,8 @@ CRITICAL_MIGRATIONS = [
     ('vm_assignments', 'vm_name', 'TEXT', 'NULL'),
     ('vm_assignments', 'usage_hours', 'REAL', '0.0'),  # Cumulative hours VM has been used
     ('vm_assignments', 'usage_last_reset', 'TIMESTAMP', 'NULL'),  # When usage was last reset by teacher
+    ('vm_assignments', 'hostname_configured', 'BOOLEAN', '0'),  # True if hostname has been set (prevents rename loops)
+    ('vm_assignments', 'target_hostname', 'VARCHAR(63)', 'NULL'),  # Intended hostname for this VM (for auto-rename)
     # Make class_id nullable for direct assignments (builder VMs)
     ('vm_assignments', 'class_id_nullable', 'INTEGER', 'NULL'),  # Placeholder for nullable class_id migration
     # Template spec caching columns

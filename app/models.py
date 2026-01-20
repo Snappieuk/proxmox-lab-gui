@@ -538,6 +538,8 @@ class VMAssignment(db.Model):
     is_template_vm = db.Column(db.Boolean, default=False)  # True if this is the class template VM (master copy)
     is_teacher_vm = db.Column(db.Boolean, default=False)  # True if this is the teacher's personal VM
     manually_added = db.Column(db.Boolean, default=False)  # True if VM was manually added (don't auto-assign)
+    hostname_configured = db.Column(db.Boolean, default=False)  # True if hostname has been set (prevents rename loops)
+    target_hostname = db.Column(db.String(63), nullable=True)  # Intended hostname for this VM (for auto-rename)
     usage_hours = db.Column(db.Float, default=0.0)  # Cumulative hours this VM has been used by student
     usage_last_reset = db.Column(db.DateTime, nullable=True)  # When usage was last reset by teacher
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
