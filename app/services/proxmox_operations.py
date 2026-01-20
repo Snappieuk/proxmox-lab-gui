@@ -1923,6 +1923,26 @@ def delete_vm(vmid: int, node: str, cluster_ip: str = None) -> Tuple[bool, str]:
         )
         
         if exit_code != 0:
+            # Check if VM truly doesn't exist vs wrong node
+            if "does not exist" in stderr.lower() or "configuration file" in stderr.lower():
+                # VM might be on a different node - this is still a failure that needs investigation
+                logger.warning(f"VM {vmid} not found on node {node} - may have been migrated or already deleted")
+                # Try to find it on other nodes by querying cluster
+                try:
+                    resources = proxmox.cluster.resources.get(type="vm")
+                    for r in resources:
+                        if int(r.get('vmid', -1)) == int(vmid):
+                            actual_node = r.get('node')
+                            logger.warning(f"Found VM {vmid} on node {actual_node} instead of {node}!")
+                            ssh_executor.disconnect()
+                            return False, f"VM exists on node {actual_node}, not {node}"
+                    # VM truly doesn't exist anywhere
+                    logger.info(f"VM {vmid} confirmed not in cluster, considering deletion successful")
+                    ssh_executor.disconnect()
+                    return True, "VM does not exist (already deleted)"
+                except Exception as e:
+                    logger.error(f"Failed to verify VM location: {e}")
+            
             error_msg = f"Failed to delete VM {vmid}: {stderr.strip()}"
             logger.error(error_msg)
             ssh_executor.disconnect()

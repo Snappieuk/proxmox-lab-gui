@@ -454,18 +454,32 @@ def delete_class_route(class_id: int):
             
             # FIRST: Query actual nodes for all VMs (they may have been migrated)
             logger.info(f"Querying actual nodes for {len(vm_assignments_to_delete)} VMs...")
+            nodes_updated = 0
             try:
                 resources = proxmox.cluster.resources.get(type="vm")
+                logger.info(f"Found {len(resources)} total VMs in cluster")
+                
                 for vm_info in vm_assignments_to_delete:
+                    found = False
                     for r in resources:
                         if int(r.get('vmid', -1)) == int(vm_info['vmid']):
                             actual_node = r.get('node')
                             if actual_node != vm_info['node']:
-                                logger.info(f"VM {vm_info['vmid']} migrated from {vm_info['node']} to {actual_node}, updating...")
+                                logger.warning(f"VM {vm_info['vmid']} found on {actual_node}, NOT {vm_info['node']} (database outdated), correcting...")
                                 vm_info['node'] = actual_node
+                                nodes_updated += 1
+                            else:
+                                logger.info(f"VM {vm_info['vmid']} confirmed on node {actual_node}")
+                            found = True
                             break
+                    
+                    if not found:
+                        logger.error(f"VM {vm_info['vmid']} not found in cluster resources! Will attempt deletion on stored node {vm_info['node']}")
+                
+                logger.info(f"Node validation complete: {nodes_updated} nodes corrected")
             except Exception as e:
-                logger.warning(f"Failed to query cluster resources for node validation: {e}")
+                logger.error(f"Failed to query cluster resources for node validation: {e}", exc_info=True)
+                logger.warning("Proceeding with deletion using database node info (may fail if VMs migrated)")
             
             # SECOND: Stop all running VMs and wait for them to stop
             logger.info(f"Stopping and waiting for {len(vm_assignments_to_delete)} VMs...")
