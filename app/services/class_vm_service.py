@@ -571,7 +571,8 @@ def recreate_student_vms_from_template(
                 
                 # Schedule automatic hostname rename after boot (runs in background)
                 from app.services.hostname_service import auto_rename_vm_after_boot
-                auto_rename_vm_after_boot(vmid, hostname, template_node)
+                from flask import current_app
+                auto_rename_vm_after_boot(vmid, hostname, template_node, app=current_app._get_current_object())
                 
             except Exception as e:
                 logger.exception(f"Error creating student VM: {e}")

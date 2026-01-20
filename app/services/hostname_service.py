@@ -23,7 +23,7 @@ MAX_RENAME_ATTEMPTS = 3
 RETRY_COOLDOWN_MINUTES = 5
 
 
-def auto_rename_vm_after_boot(vmid: int, hostname: str, node: str, cluster_id: str = None):
+def auto_rename_vm_after_boot(vmid: int, hostname: str, node: str, cluster_id: str = None, app=None):
     """
     Automatically rename VM after it boots using QEMU Guest Agent.
     Runs in background thread with loop prevention.
@@ -33,14 +33,21 @@ def auto_rename_vm_after_boot(vmid: int, hostname: str, node: str, cluster_id: s
         hostname: Target hostname to set
         node: Proxmox node name
         cluster_id: Cluster identifier (optional)
+        app: Flask app instance (required for app context in background thread)
     """
+    if not app:
+        logger.error(f"Cannot auto-rename VM {vmid} - Flask app instance not provided")
+        return
+    
     def rename_job():
-        try:
-            # Check if this VM has already been renamed
-            assignment = VMAssignment.query.filter_by(proxmox_vmid=vmid).first()
-            if assignment and assignment.hostname_configured:
-                logger.debug(f"VM {vmid} already renamed, skipping")
-                return
+        # Background threads need Flask app context for database operations
+        with app.app_context():
+            try:
+                # Check if this VM has already been renamed
+                assignment = VMAssignment.query.filter_by(proxmox_vmid=vmid).first()
+                if assignment and assignment.hostname_configured:
+                    logger.debug(f"VM {vmid} already renamed, skipping")
+                    return
             
             # Check retry limits
             if vmid in _rename_attempts:
@@ -150,8 +157,9 @@ def auto_rename_vm_after_boot(vmid: int, hostname: str, node: str, cluster_id: s
             if vmid in _rename_attempts:
                 del _rename_attempts[vmid]
                 
-        except Exception as e:
-            logger.error(f"Failed to auto-rename VM {vmid}: {e}", exc_info=True)
+            except Exception as e:
+                logger.error(f"Failed to auto-rename VM {vmid}: {e}", exc_info=True)
+                db.session.rollback()
     
     # Run in background thread so it doesn't block VM creation
     thread = threading.Thread(target=rename_job, daemon=True, name=f"HostnameRename-{vmid}")
@@ -159,16 +167,24 @@ def auto_rename_vm_after_boot(vmid: int, hostname: str, node: str, cluster_id: s
     logger.debug(f"Started background thread to rename VM {vmid} to {hostname}")
 
 
-def check_and_retry_pending_renames():
+def check_and_retry_pending_renames(app=None):
     """
     Check for VMs that need hostname configuration and retry them.
     This can be called periodically by a background daemon.
+    
+    Args:
+        app: Flask app instance (required for app context)
     """
-    try:
-        # Find VMs that need renaming
-        pending = VMAssignment.query.filter_by(hostname_configured=False).filter(
-            VMAssignment.target_hostname.isnot(None)
-        ).all()
+    if not app:
+        logger.error("Cannot check pending renames - Flask app instance not provided")
+        return
+    
+    with app.app_context():
+        try:
+            # Find VMs that need renaming
+            pending = VMAssignment.query.filter_by(hostname_configured=False).filter(
+                VMAssignment.target_hostname.isnot(None)
+            ).all()
         
         if not pending:
             return
@@ -189,11 +205,12 @@ def check_and_retry_pending_renames():
             auto_rename_vm_after_boot(
                 assignment.proxmox_vmid,
                 assignment.target_hostname,
-                assignment.node or "pve"
+                assignment.node or "pve",
+                app=app
             )
             
-    except Exception as e:
-        logger.error(f"Error checking pending renames: {e}", exc_info=True)
+        except Exception as e:
+            logger.error(f"Error checking pending renames: {e}", exc_info=True)
 
 
 def mark_vm_as_renamed(vmid: int, hostname: str = None):
