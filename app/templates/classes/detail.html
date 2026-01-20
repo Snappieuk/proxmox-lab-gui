@@ -369,6 +369,9 @@
                     <button onclick="bulkStopVMs()" class="btn-secondary" id="bulk-stop-btn" style="display: none;">
                         <i class="ti ti-power"></i> Stop Selected
                     </button>
+                    <button onclick="showLoadBalanceModal()" class="btn-secondary" title="Load balance VMs across nodes">
+                        <i class="ti ti-load-balancer"></i> Load Balance
+                    </button>
                     <button onclick="showAddVMsModal()" class="btn-secondary">
                         <i class="ti ti-circle-plus"></i> Add VMs
                     </button>
@@ -3565,6 +3568,268 @@ studentProgressInterval = setInterval(loadStudentSessionProgress, 30000);
         </div>
     </div>
 </div>
+
+<!-- Load Balance Modal -->
+<div id="load-balance-modal" class="modal" style="display: none;">
+    <div class="modal-content" style="max-width: 700px;">
+        <div class="modal-header">
+            <h3><i class="ti ti-load-balancer"></i> Load Balance VMs</h3>
+            <button class="modal-close" onclick="closeLoadBalanceModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <p style="margin-bottom: 1.5rem; color: #666;">
+                Analyzes resource usage across cluster nodes and migrates <strong>stopped VMs only</strong> to balance RAM (70%) and CPU (30%) usage.
+                Running VMs are never migrated to avoid disrupting students.
+            </p>
+            
+            <div id="load-balance-analysis" style="display: none; margin-bottom: 1.5rem;">
+                <h4 style="margin-bottom: 1rem; font-size: 1rem;">Current Node Status</h4>
+                <div id="node-stats-container" style="margin-bottom: 1rem;"></div>
+                <div id="migration-plan-container"></div>
+            </div>
+            
+            <div id="load-balance-progress" style="display: none; margin-bottom: 1rem;">
+                <div class="spinner" style="margin: 0 auto 1rem;"></div>
+                <p id="load-balance-status-text" style="text-align: center;">Analyzing cluster...</p>
+            </div>
+            
+            <div id="load-balance-results" style="display: none;"></div>
+            
+            <div class="form-actions">
+                <button class="btn-secondary" onclick="closeLoadBalanceModal()">Cancel</button>
+                <button id="btn-preview-balance" class="btn-secondary" onclick="previewLoadBalance()" style="display: none;">
+                    <i class="ti ti-eye"></i> Preview Plan
+                </button>
+                <button id="btn-execute-balance" class="btn-primary" onclick="executeLoadBalance()" style="display: none;">
+                    <i class="ti ti-load-balancer"></i> Execute Load Balance
+                </button>
+                <button id="btn-force-balance" class="btn-primary" onclick="executeLoadBalance(true)" style="display: none;">
+                    <i class="ti ti-load-balancer"></i> Force Balance
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// Load Balance Functions
+function showLoadBalanceModal() {
+    const modal = document.getElementById('load-balance-modal');
+    modal.style.display = 'flex';
+    
+    // Reset modal state
+    document.getElementById('load-balance-analysis').style.display = 'none';
+    document.getElementById('load-balance-progress').style.display = 'block';
+    document.getElementById('load-balance-results').style.display = 'none';
+    document.getElementById('btn-preview-balance').style.display = 'inline-block';
+    document.getElementById('btn-execute-balance').style.display = 'none';
+    document.getElementById('btn-force-balance').style.display = 'none';
+    
+    // Auto-preview on open
+    previewLoadBalance();
+}
+
+function closeLoadBalanceModal() {
+    document.getElementById('load-balance-modal').style.display = 'none';
+}
+
+async function previewLoadBalance() {
+    document.getElementById('load-balance-progress').style.display = 'block';
+    document.getElementById('load-balance-analysis').style.display = 'none';
+    document.getElementById('load-balance-results').style.display = 'none';
+    document.getElementById('load-balance-status-text').textContent = 'Analyzing cluster resources...';
+    
+    try {
+        const response = await fetch(`/api/classes/{{ class_.id }}/load-balance?dry_run=true`, {
+            method: 'POST'
+        });
+        
+        const data = await response.json();
+        
+        document.getElementById('load-balance-progress').style.display = 'none';
+        
+        if (data.ok) {
+            displayLoadBalanceAnalysis(data);
+        } else {
+            showAlert(data.error || 'Failed to analyze load balance', 'error');
+            closeLoadBalanceModal();
+        }
+    } catch (error) {
+        console.error('Load balance preview error:', error);
+        document.getElementById('load-balance-progress').style.display = 'none';
+        showAlert('Failed to analyze load balance', 'error');
+        closeLoadBalanceModal();
+    }
+}
+
+function displayLoadBalanceAnalysis(data) {
+    document.getElementById('load-balance-analysis').style.display = 'block';
+    
+    // Display node stats
+    const nodeStatsHtml = Object.entries(data.node_stats || {}).map(([nodeName, stats]) => `
+        <div style="background: #f8f9fa; padding: 1rem; border-radius: 6px; margin-bottom: 0.5rem;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                <strong>${nodeName}</strong>
+                <span style="font-weight: 600; color: ${stats.score > data.avg_score ? '#28a745' : '#dc3545'};">
+                    Score: ${stats.score.toFixed(3)}
+                </span>
+            </div>
+            <div style="display: flex; gap: 1rem; font-size: 0.9rem; color: #666;">
+                <span>RAM: ${(stats.mem_free_pct * 100).toFixed(1)}% free</span>
+                <span>CPU: ${(stats.cpu_free_pct * 100).toFixed(1)}% free</span>
+                <span>Class VMs: ${stats.class_vm_count} / ${stats.vm_count}</span>
+            </div>
+        </div>
+    `).join('');
+    
+    document.getElementById('node-stats-container').innerHTML = nodeStatsHtml;
+    
+    // Display migration plan
+    const migrations = data.migrations || [];
+    let migrationHtml = '';
+    
+    if (migrations.length === 0) {
+        migrationHtml = `
+            <div style="background: #d4edda; border: 1px solid #c3e6cb; color: #155724; padding: 1rem; border-radius: 6px;">
+                <i class="ti ti-circle-check"></i> <strong>Nodes are already well-balanced!</strong><br>
+                <span style="font-size: 0.9rem;">No migrations needed. Variance: ${data.score_variance.toFixed(6)}</span>
+            </div>
+        `;
+        document.getElementById('btn-execute-balance').style.display = 'none';
+        document.getElementById('btn-force-balance').style.display = 'inline-block';
+    } else {
+        migrationHtml = `
+            <h4 style="margin-bottom: 1rem; font-size: 1rem;">Proposed Migrations (${migrations.length})</h4>
+            <div style="max-height: 300px; overflow-y: auto;">
+                ${migrations.map(m => `
+                    <div style="background: #e7f3ff; 
+                                border: 1px solid #90c9f9; 
+                                padding: 0.75rem; border-radius: 6px; margin-bottom: 0.5rem;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                            <div style="font-weight: 600;">
+                                ${m.name} (VMID: ${m.vmid})
+                            </div>
+                            <span style="font-size: 0.85rem; padding: 2px 8px; border-radius: 12px; 
+                                       background: #6c757d; 
+                                       color: white;">
+                                stopped
+                            </span>
+                        </div>
+                        <div style="font-size: 0.9rem; color: #666; margin-bottom: 0.25rem;">
+                            <i class="ti ti-arrow-right"></i> ${m.from_node} → ${m.to_node}
+                        </div>
+                        <div style="font-size: 0.85rem; color: #666; margin-bottom: 0.25rem;">
+                            Resources: ${m.maxmem_gb.toFixed(2)} GB RAM, ${m.maxcpu} CPU cores
+                        </div>
+                        <div style="font-size: 0.85rem; color: #0056b3;">
+                            ${m.reason}
+                        </div>
+                        <div style="font-size: 0.8rem; color: #666; margin-top: 0.25rem; font-style: italic;">⚡ Offline migration (faster, no disruption)</div>
+                    </div>
+                `).join('')}
+            </div>
+        `;
+        document.getElementById('btn-execute-balance').style.display = 'inline-block';
+        document.getElementById('btn-force-balance').style.display = 'none';
+    }
+    
+    document.getElementById('migration-plan-container').innerHTML = migrationHtml;
+}
+
+async function executeLoadBalance(force = false) {
+    // Hide buttons during execution
+    document.getElementById('btn-execute-balance').style.display = 'none';
+    document.getElementById('btn-force-balance').style.display = 'none';
+    document.getElementById('load-balance-analysis').style.display = 'none';
+    document.getElementById('load-balance-progress').style.display = 'block';
+    document.getElementById('load-balance-status-text').textContent = 'Executing load balance...';
+    
+    try {
+        const url = `/api/classes/{{ class_.id }}/load-balance${force ? '?force=true' : ''}`;
+        const response = await fetch(url, { method: 'POST' });
+        const data = await response.json();
+        
+        document.getElementById('load-balance-progress').style.display = 'none';
+        document.getElementById('load-balance-results').style.display = 'block';
+        
+        if (data.ok) {
+            const successCount = data.successful_migrations?.length || 0;
+            const failedCount = data.failed_migrations?.length || 0;
+            
+            let resultsHtml = `
+                <div style="background: ${successCount > 0 ? '#d4edda' : '#d1ecf1'}; 
+                            border: 1px solid ${successCount > 0 ? '#c3e6cb' : '#bee5eb'}; 
+                            color: ${successCount > 0 ? '#155724' : '#0c5460'}; 
+                            padding: 1rem; border-radius: 6px; margin-bottom: 1rem;">
+                    <strong>${data.message}</strong>
+                </div>
+            `;
+            
+            if (successCount > 0) {
+                resultsHtml += `
+                    <h4 style="margin-bottom: 0.5rem; font-size: 1rem; color: #28a745;">
+                        <i class="ti ti-circle-check"></i> Successful Migrations (${successCount})
+                    </h4>
+                    <div style="max-height: 200px; overflow-y: auto; margin-bottom: 1rem;">
+                        ${data.successful_migrations.map(m => `
+                            <div style="background: #f8f9fa; padding: 0.5rem; border-radius: 4px; margin-bottom: 0.25rem; font-size: 0.9rem;">
+                                ${m.name} (${m.vmid}): ${m.from_node} → ${m.to_node}
+                            </div>
+                        `).join('')}
+                    </div>
+                `;
+            }
+            
+            if (failedCount > 0) {
+                resultsHtml += `
+                    <h4 style="margin-bottom: 0.5rem; font-size: 1rem; color: #dc3545;">
+                        <i class="ti ti-circle-x"></i> Failed Migrations (${failedCount})
+                    </h4>
+                    <div style="max-height: 200px; overflow-y: auto;">
+                        ${data.failed_migrations.map(m => `
+                            <div style="background: #f8d7da; padding: 0.5rem; border-radius: 4px; margin-bottom: 0.25rem; font-size: 0.9rem;">
+                                ${m.name} (${m.vmid}): ${m.error}
+                            </div>
+                        `).join('')}
+                    </div>
+                `;
+            }
+            
+            document.getElementById('load-balance-results').innerHTML = resultsHtml;
+            
+            // Refresh VM list after successful migrations
+            if (successCount > 0) {
+                setTimeout(() => {
+                    refreshVMs();
+                }, 2000);
+            }
+        } else {
+            document.getElementById('load-balance-results').innerHTML = `
+                <div style="background: #f8d7da; border: 1px solid #f5c6cb; color: #721c24; padding: 1rem; border-radius: 6px;">
+                    <strong>Error:</strong> ${data.error}
+                </div>
+            `;
+        }
+    } catch (error) {
+        console.error('Load balance execution error:', error);
+        document.getElementById('load-balance-progress').style.display = 'none';
+        document.getElementById('load-balance-results').style.display = 'block';
+        document.getElementById('load-balance-results').innerHTML = `
+            <div style="background: #f8d7da; border: 1px solid #f5c6cb; color: #721c24; padding: 1rem; border-radius: 6px;">
+                <strong>Error:</strong> Failed to execute load balance
+            </div>
+        `;
+    }
+}
+
+// Close modal when clicking outside
+window.addEventListener('click', function(event) {
+    const modal = document.getElementById('load-balance-modal');
+    if (event.target === modal) {
+        closeLoadBalanceModal();
+    }
+});
+</script>
 
 </body>
 </html>

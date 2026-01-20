@@ -1514,3 +1514,338 @@ def assign_vm_to_student(class_id):
         db.session.rollback()
         logger.exception(f"Failed to assign VM {vmid} to user {user_id}: {e}")
         return jsonify({"ok": False, "error": str(e)}), 500
+
+
+# ---------------------------------------------------------------------------
+# Load Balancing
+# ---------------------------------------------------------------------------
+
+@api_classes_bp.route("/<int:class_id>/load-balance", methods=["POST"])
+@login_required
+def load_balance_class_vms(class_id: int):
+    """Load balance class VMs across cluster nodes.
+    
+    Analyzes current node resource usage and migrates VMs to balance:
+    - RAM allocation (70% weight)
+    - CPU usage (30% weight)
+    
+    Query params:
+    - dry_run=true: Return migration plan without executing
+    - force=true: Migrate even if nodes are already balanced
+    
+    Only accessible by class owner or admins.
+    """
+    user, error = require_teacher_or_adminer()
+    if error:
+        return jsonify(error[0]), error[1]
+    
+    class_ = get_class_by_id(class_id)
+    if not class_:
+        return jsonify({"ok": False, "error": "Class not found"}), 404
+    
+    # Ownership check
+    if not user.is_adminer and not class_.is_owner(user):
+        return jsonify({"ok": False, "error": "Access denied"}), 403
+    
+    # Get query params
+    dry_run = request.args.get('dry_run', 'false').lower() == 'true'
+    force = request.args.get('force', 'false').lower() == 'true'
+    
+    # Get cluster connection
+    from app.services.proxmox_service import get_clusters_from_db, get_proxmox_admin_for_cluster
+    
+    cluster_ip = None
+    if class_.template and class_.template.cluster_ip:
+        cluster_ip = class_.template.cluster_ip
+    else:
+        cluster_ip = "10.220.15.249"  # Default fallback
+    
+    # Find cluster by IP
+    cluster_id = None
+    for cluster in get_clusters_from_db():
+        if cluster["host"] == cluster_ip:
+            cluster_id = cluster["id"]
+            break
+    
+    if not cluster_id:
+        return jsonify({"ok": False, "error": "Cluster not found"}), 500
+    
+    try:
+        proxmox = get_proxmox_admin_for_cluster(cluster_id)
+        
+        # Get all class VMs
+        assignments = get_vm_assignments_for_class(class_id)
+        class_vms = {a.proxmox_vmid: a for a in assignments}
+        
+        if not class_vms:
+            return jsonify({"ok": False, "error": "No VMs in class"}), 400
+        
+        # Get node stats
+        nodes = proxmox.nodes.get()
+        node_stats = {}
+        
+        for node in nodes:
+            if node.get('status') != 'online':
+                continue
+            
+            node_name = node['node']
+            
+            try:
+                mem_total = float(node.get('maxmem', 1))
+                mem_used = float(node.get('mem', 0))
+                cpu_total = float(node.get('maxcpu', 1))
+                cpu_used = float(node.get('cpu', 0))
+            except (ValueError, TypeError):
+                logger.warning(f"Invalid resource values for node {node_name}, skipping")
+                continue
+            
+            mem_free_pct = (mem_total - mem_used) / mem_total if mem_total > 0 else 0
+            cpu_free_pct = (1 - cpu_used) if cpu_used < 1 else 0
+            
+            # Score: 70% RAM + 30% CPU (higher = more available)
+            score = (mem_free_pct * 0.7) + (cpu_free_pct * 0.3)
+            
+            node_stats[node_name] = {
+                'mem_total': mem_total,
+                'mem_used': mem_used,
+                'mem_free_pct': mem_free_pct,
+                'cpu_total': cpu_total,
+                'cpu_used': cpu_used,
+                'cpu_free_pct': cpu_free_pct,
+                'score': score,
+                'vm_count': 0,
+                'class_vm_count': 0
+            }
+        
+        if not node_stats:
+            return jsonify({"ok": False, "error": "No online nodes found"}), 500
+        
+        # Count current VM distribution and add simulated resource usage for stopped VMs
+        resources = proxmox.cluster.resources.get(type="vm")
+        
+        # Build VM details map for better resource tracking
+        vm_details = {}
+        for r in resources:
+            vmid = int(r.get('vmid', -1))
+            node_name = r.get('node')
+            
+            if node_name in node_stats:
+                node_stats[node_name]['vm_count'] += 1
+                
+                if vmid in class_vms:
+                    vm_status = r.get('status', 'unknown')
+                    vm_maxmem = r.get('maxmem', 0)  # Allocated RAM
+                    vm_maxcpu = r.get('maxcpu', 0)  # Allocated CPU cores
+                    
+                    node_stats[node_name]['class_vm_count'] += 1
+                    
+                    # For STOPPED VMs: Add their allocated resources to simulated usage
+                    # This accounts for the resources they would consume when started
+                    if vm_status == 'stopped':
+                        try:
+                            simulated_mem = float(vm_maxmem)
+                            simulated_cpu = float(vm_maxcpu)
+                            
+                            # Add to current usage for proper accounting
+                            node_stats[node_name]['mem_used'] += simulated_mem
+                            # CPU is a ratio (0-1), so add as fraction of total cores
+                            if node_stats[node_name]['cpu_total'] > 0:
+                                node_stats[node_name]['cpu_used'] += simulated_cpu / node_stats[node_name]['cpu_total']
+                            
+                            # Recalculate percentages with simulated resources
+                            mem_total = node_stats[node_name]['mem_total']
+                            mem_used = node_stats[node_name]['mem_used']
+                            cpu_used = node_stats[node_name]['cpu_used']
+                            
+                            node_stats[node_name]['mem_free_pct'] = (mem_total - mem_used) / mem_total if mem_total > 0 else 0
+                            node_stats[node_name]['cpu_free_pct'] = (1 - cpu_used) if cpu_used < 1 else 0
+                            node_stats[node_name]['score'] = (node_stats[node_name]['mem_free_pct'] * 0.7) + (node_stats[node_name]['cpu_free_pct'] * 0.3)
+                            
+                            logger.debug(f"Added simulated resources for stopped VM {vmid}: RAM={simulated_mem/1024/1024/1024:.2f}GB, CPU={simulated_cpu} cores")
+                        except (ValueError, TypeError) as e:
+                            logger.warning(f"Failed to add simulated resources for VM {vmid}: {e}")
+                    
+                    # Store VM details for migration planning
+                    vm_details[vmid] = {
+                        'vmid': vmid,
+                        'name': r.get('name', f'VM-{vmid}'),
+                        'status': vm_status,
+                        'node': node_name,
+                        'maxmem': vm_maxmem,
+                        'maxcpu': vm_maxcpu,
+                        'can_migrate': vm_status in ['running', 'stopped']
+                    }
+        
+        # Calculate average score (after simulated resource additions)
+        avg_score = sum(n['score'] for n in node_stats.values()) / len(node_stats)
+        score_variance = sum((n['score'] - avg_score) ** 2 for n in node_stats.values()) / len(node_stats)
+        
+        logger.info(f"Load balance analysis for class {class_id} (with simulated stopped VM resources):")
+        for node_name, stats in node_stats.items():
+            logger.info(f"  {node_name}: score={stats['score']:.3f}, "
+                       f"RAM={stats['mem_free_pct']*100:.1f}% free, "
+                       f"CPU={stats['cpu_free_pct']*100:.1f}% free, "
+                       f"VMs={stats['class_vm_count']}/{stats['vm_count']}")
+        logger.info(f"  Average score: {avg_score:.3f}, variance: {score_variance:.6f}")
+        
+        # Check if balancing is needed
+        if not force and score_variance < 0.01:  # Nodes are already balanced
+            return jsonify({
+                "ok": True,
+                "message": "Nodes are already well-balanced (variance < 0.01)",
+                "node_stats": node_stats,
+                "avg_score": avg_score,
+                "score_variance": score_variance,
+                "migrations": []
+            })
+        
+        # Generate migration plan with simulated resource tracking
+        migrations = []
+        
+        # Create a copy of node_stats for simulation
+        simulated_stats = {node: dict(stats) for node, stats in node_stats.items()}
+        
+        # Sort nodes by score (best to worst)
+        sorted_nodes = sorted(simulated_stats.items(), key=lambda x: x[1]['score'], reverse=True)
+        
+        # Get VMs from overloaded nodes (below average score)
+        for node_name, stats in sorted_nodes:
+            if stats['score'] >= avg_score:
+                continue  # Node is above average, skip
+            
+            # Find STOPPED VMs on this node that can be migrated
+            # Only migrate stopped VMs to avoid disrupting students
+            node_vms = [vm for vm in vm_details.values() 
+                       if vm['node'] == node_name and vm['status'] == 'stopped']
+            
+            # Sort VMs by resource usage (larger VMs first for better balance impact)
+            node_vms.sort(key=lambda x: x['maxmem'], reverse=True)
+            
+            # Try to migrate VMs to better nodes
+            for vm in node_vms:
+                # Find best target node (highest score after accounting for VM resources)
+                best_target = None
+                best_score_after = stats['score']
+                
+                for target_name, target_stats in sorted_nodes:
+                    if target_name == node_name:
+                        continue
+                    
+                    # Calculate target node score AFTER adding this VM's resources
+                    vm_mem = float(vm['maxmem'])
+                    vm_cpu = float(vm['maxcpu'])
+                    
+                    # Simulate adding VM resources to target node
+                    target_mem_total = target_stats['mem_total']
+                    target_mem_used = target_stats['mem_used'] + vm_mem
+                    target_cpu_total = target_stats['cpu_total']
+                    target_cpu_used = target_stats['cpu_used'] + (vm_cpu / target_cpu_total if target_cpu_total > 0 else 0)
+                    
+                    simulated_mem_free_pct = (target_mem_total - target_mem_used) / target_mem_total if target_mem_total > 0 else 0
+                    simulated_cpu_free_pct = (1 - target_cpu_used) if target_cpu_used < 1 else 0
+                    simulated_target_score = (simulated_mem_free_pct * 0.7) + (simulated_cpu_free_pct * 0.3)
+                    
+                    # Target is good if it's still better than source AFTER getting the VM
+                    if simulated_target_score > best_score_after:
+                        best_target = target_name
+                        best_score_after = simulated_target_score
+                
+                if best_target:
+                    migrations.append({
+                        'vmid': vm['vmid'],
+                        'name': vm['name'],
+                        'status': vm['status'],
+                        'from_node': node_name,
+                        'to_node': best_target,
+                        'maxmem_gb': vm['maxmem'] / 1024 / 1024 / 1024,
+                        'maxcpu': vm['maxcpu'],
+                        'reason': f"Balance: {node_name} score={stats['score']:.3f} → {best_target} score={best_score_after:.3f} (after migration)"
+                    })
+                    
+                    # Update simulated stats for next iteration
+                    # Remove resources from source node
+                    simulated_stats[node_name]['mem_used'] -= vm['maxmem']
+                    simulated_stats[node_name]['cpu_used'] -= (vm['maxcpu'] / simulated_stats[node_name]['cpu_total'] if simulated_stats[node_name]['cpu_total'] > 0 else 0)
+                    simulated_stats[node_name]['mem_free_pct'] = (simulated_stats[node_name]['mem_total'] - simulated_stats[node_name]['mem_used']) / simulated_stats[node_name]['mem_total']
+                    simulated_stats[node_name]['cpu_free_pct'] = 1 - simulated_stats[node_name]['cpu_used']
+                    simulated_stats[node_name]['score'] = (simulated_stats[node_name]['mem_free_pct'] * 0.7) + (simulated_stats[node_name]['cpu_free_pct'] * 0.3)
+                    
+                    # Add resources to target node
+                    simulated_stats[best_target]['mem_used'] += vm['maxmem']
+                    simulated_stats[best_target]['cpu_used'] += (vm['maxcpu'] / simulated_stats[best_target]['cpu_total'] if simulated_stats[best_target]['cpu_total'] > 0 else 0)
+                    simulated_stats[best_target]['mem_free_pct'] = (simulated_stats[best_target]['mem_total'] - simulated_stats[best_target]['mem_used']) / simulated_stats[best_target]['mem_total']
+                    simulated_stats[best_target]['cpu_free_pct'] = 1 - simulated_stats[best_target]['cpu_used']
+                    simulated_stats[best_target]['score'] = (simulated_stats[best_target]['mem_free_pct'] * 0.7) + (simulated_stats[best_target]['cpu_free_pct'] * 0.3)
+                    
+                    # Re-sort after update
+                    sorted_nodes = sorted(simulated_stats.items(), key=lambda x: x[1]['score'], reverse=True)
+                    
+                    # Stop if source node is now balanced
+                    if simulated_stats[node_name]['score'] >= avg_score:
+                        break
+        
+        if not migrations:
+            return jsonify({
+                "ok": True,
+                "message": "No beneficial migrations found",
+                "node_stats": node_stats,
+                "avg_score": avg_score,
+                "score_variance": score_variance,
+                "migrations": []
+            })
+        
+        # Dry run - return plan without executing
+        if dry_run:
+            return jsonify({
+                "ok": True,
+                "message": f"Load balance plan: {len(migrations)} migrations (dry run)",
+                "node_stats": node_stats,
+                "avg_score": avg_score,
+                "score_variance": score_variance,
+                "migrations": migrations
+            })
+        
+        # Execute migrations
+        logger.info(f"Executing {len(migrations)} migrations for class {class_id}")
+        
+        successful_migrations = []
+        failed_migrations = []
+        
+        for migration in migrations:
+            try:
+                logger.info(f"Migrating stopped VM {migration['vmid']} from {migration['from_node']} to {migration['to_node']}")
+                
+                # Offline migration for stopped VMs (faster, no downtime concern)
+                # Note: We only migrate stopped VMs to avoid disrupting students
+                proxmox.nodes(migration['from_node']).qemu(migration['vmid']).migrate.post(
+                    target=migration['to_node'],
+                    online=0  # Offline migration
+                )
+                
+                successful_migrations.append(migration)
+                logger.info(f"Successfully migrated VM {migration['vmid']}")
+                
+                # Update VMAssignment node in database
+                assignment = class_vms.get(migration['vmid'])
+                if assignment:
+                    assignment.node = migration['to_node']
+                    db.session.commit()
+                
+            except Exception as e:
+                logger.exception(f"Failed to migrate VM {migration['vmid']}: {e}")
+                migration['error'] = str(e)
+                failed_migrations.append(migration)
+        
+        return jsonify({
+            "ok": True,
+            "message": f"Load balance complete: {len(successful_migrations)} successful, {len(failed_migrations)} failed",
+            "node_stats": node_stats,
+            "avg_score": avg_score,
+            "score_variance": score_variance,
+            "successful_migrations": successful_migrations,
+            "failed_migrations": failed_migrations
+        })
+        
+    except Exception as e:
+        logger.exception(f"Load balance failed for class {class_id}: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500

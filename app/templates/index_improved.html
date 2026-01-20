@@ -498,6 +498,7 @@ document.addEventListener('click', function() {
 
 // Filter functionality
 let allVMs = [];
+let filtersInitialized = false;
 
 function applyFilters() {
     const searchTerm = document.getElementById('search-input').value.toLowerCase();
@@ -529,26 +530,27 @@ function applyFilters() {
 
 // Initialize filters - called after VMs are loaded
 function initializeFilters() {
-    // Remove any existing listeners to avoid duplicates
+    // Only initialize once to prevent duplicate event listeners
+    if (filtersInitialized) {
+        return;
+    }
+    filtersInitialized = true;
+    
     const searchInput = document.getElementById('search-input');
     const categoryFilter = document.getElementById('category-filter');
     const statusFilter = document.getElementById('status-filter');
     const nodeFilter = document.getElementById('node-filter');
     
     if (searchInput) {
-        searchInput.removeEventListener('input', applyFilters);
         searchInput.addEventListener('input', applyFilters);
     }
     if (categoryFilter) {
-        categoryFilter.removeEventListener('change', applyFilters);
         categoryFilter.addEventListener('change', applyFilters);
     }
     if (statusFilter) {
-        statusFilter.removeEventListener('change', applyFilters);
         statusFilter.addEventListener('change', applyFilters);
     }
     if (nodeFilter) {
-        nodeFilter.removeEventListener('change', applyFilters);
         nodeFilter.addEventListener('change', applyFilters);
     }
 }

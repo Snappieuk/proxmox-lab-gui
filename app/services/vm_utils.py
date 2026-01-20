@@ -60,8 +60,12 @@ def get_optimal_node(ssh_executor, proxmox=None, vm_memory_mb=2048, simulated_vm
                     
                 # Calculate availability score (higher is better)
                 # Weight RAM more heavily than CPU (RAM is usually the bottleneck)
-                mem_total = float(node.get('maxmem', 1))
-                mem_used = float(node.get('mem', 0))
+                try:
+                    mem_total = float(node.get('maxmem', 1))
+                    mem_used = float(node.get('mem', 0))
+                except (ValueError, TypeError):
+                    logger.debug(f"Node {node_name}: Invalid memory values, skipping")
+                    continue
                 
                 # Add simulated memory usage from VMs being created
                 simulated_count = simulated_vms_per_node.get(node_name, 0)
@@ -70,8 +74,14 @@ def get_optimal_node(ssh_executor, proxmox=None, vm_memory_mb=2048, simulated_vm
                 
                 mem_free_pct = (mem_total - mem_used) / mem_total if mem_total > 0 else 0
                 
-                cpu_total = float(node.get('maxcpu', 1))
-                cpu_used = float(node.get('cpu', 0))
+                try:
+                    cpu_total = float(node.get('maxcpu', 1))
+                    cpu_used = float(node.get('cpu', 0))
+                except (ValueError, TypeError):
+                    logger.debug(f"Node {node_name}: Invalid CPU values, using defaults")
+                    cpu_total = 1
+                    cpu_used = 0
+                    
                 cpu_free_pct = (1 - cpu_used) if cpu_used < 1 else 0
                 
                 # Score: 70% RAM + 30% CPU

@@ -220,6 +220,14 @@ def migrate_vm_to_node(ssh_executor: SSHExecutor, vmid: int, target_node: str, t
         if exit_code != 0:
             return False, f"Failed to get VM status: {stderr}"
         
+        # Get current node from VM config
+        current_node = get_vm_current_node(ssh_executor, vmid)
+        
+        # Check if target is the same as current node
+        if current_node and current_node.lower() == target_node.lower():
+            logger.info(f"VM {vmid} is already on {target_node}, skipping migration")
+            return True, ""  # Not an error - VM is already where we want it
+        
         # Online migration without shared storage (--online flag not needed for offline migration)
         # Since VMs have no disk attached yet, this should be very fast
         exit_code, stdout, stderr = ssh_executor.execute(
