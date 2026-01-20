@@ -3571,12 +3571,12 @@ studentProgressInterval = setInterval(loadStudentSessionProgress, 30000);
 
 <!-- Load Balance Modal -->
 <div id="load-balance-modal" class="modal" style="display: none;">
-    <div class="modal-content" style="max-width: 700px;">
+    <div class="modal-content" style="max-width: 700px; max-height: 90vh; display: flex; flex-direction: column;">
         <div class="modal-header">
             <h3><i class="ti ti-load-balancer"></i> Load Balance VMs</h3>
             <button class="modal-close" onclick="closeLoadBalanceModal()">&times;</button>
         </div>
-        <div class="modal-body">
+        <div class="modal-body" style="overflow-y: auto; flex: 1;">
             <p style="margin-bottom: 1.5rem; color: #666;">
                 Analyzes resource usage across cluster nodes and migrates <strong>stopped VMs only</strong> to balance RAM (70%) and CPU (30%) usage.
                 Running VMs are never migrated to avoid disrupting students.
