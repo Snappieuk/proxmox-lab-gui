@@ -11,7 +11,7 @@ import uuid
 
 from flask import Blueprint, jsonify, request
 
-from app.models import VMAssignment
+from app.models import VMAssignment, db
 from app.services.class_service import (  # Class management; Invite management; Template management
     assign_vm_to_user,
     auto_assign_vms_to_waiting_students,
