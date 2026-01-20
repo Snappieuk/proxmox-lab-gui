@@ -1811,6 +1811,9 @@ def load_balance_class_vms(class_id: int):
         successful_migrations = []
         failed_migrations = []
         
+        # Track assignments to update (batch update at end)
+        assignments_to_update = []
+        
         for migration in migrations:
             try:
                 logger.info(f"Migrating stopped VM {migration['vmid']} from {migration['from_node']} to {migration['to_node']}")
@@ -1825,16 +1828,25 @@ def load_balance_class_vms(class_id: int):
                 successful_migrations.append(migration)
                 logger.info(f"Successfully migrated VM {migration['vmid']}")
                 
-                # Update VMAssignment node in database
+                # Track assignment for batch update
                 assignment = class_vms.get(migration['vmid'])
                 if assignment:
                     assignment.node = migration['to_node']
-                    db.session.commit()
+                    assignments_to_update.append(assignment)
                 
             except Exception as e:
                 logger.exception(f"Failed to migrate VM {migration['vmid']}: {e}")
                 migration['error'] = str(e)
                 failed_migrations.append(migration)
+        
+        # Batch commit all database updates at once
+        if assignments_to_update:
+            try:
+                db.session.commit()
+                logger.info(f"Updated {len(assignments_to_update)} VM assignments in database")
+            except Exception as db_error:
+                logger.exception(f"Failed to update VM assignments: {db_error}")
+                db.session.rollback()
         
         return jsonify({
             "ok": True,
@@ -1848,4 +1860,5 @@ def load_balance_class_vms(class_id: int):
         
     except Exception as e:
         logger.exception(f"Load balance failed for class {class_id}: {e}")
+        db.session.rollback()  # Rollback on any exception
         return jsonify({"ok": False, "error": str(e)}), 500
