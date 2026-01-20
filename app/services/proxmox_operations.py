@@ -1866,100 +1866,77 @@ def delete_vm(vmid: int, node: str, cluster_ip: str = None) -> Tuple[bool, str]:
         
         proxmox = get_proxmox_admin_for_cluster(cluster_id)
         
-        # Get SSH executor for status checking and deletion
-        from app.services.ssh_executor import get_pooled_ssh_executor_from_config
-        ssh_executor = get_pooled_ssh_executor_from_config()
-        # Pooled executor is already connected
-        
-        # Check current VM status using SSH
+        # Use Proxmox API to delete VM (handles node routing automatically)
         try:
-            exit_code, stdout, stderr = ssh_executor.execute(
-                f"qm status {vmid}",
-                check=False,
-                timeout=10
-            )
+            # Check if VM exists on this node via API
+            logger.info(f"Attempting to delete VM {vmid} from node {node} via Proxmox API...")
             
-            if exit_code == 0 and 'running' in stdout.lower():
-                # VM is running - need to stop it
-                logger.info(f"VM {vmid} is running, stopping it before deletion...")
+            # Check current status
+            try:
+                status = proxmox.nodes(node).qemu(vmid).status.current.get()
+                current_status = status.get('status', 'unknown')
+                logger.info(f"VM {vmid} status: {current_status}")
                 
-                try:
-                    # Use Proxmox API to stop VM (better than SSH)
-                    proxmox.nodes(node).qemu(vmid).status.shutdown.post()
-                    logger.info(f"Stop command sent for VM {vmid} via Proxmox API")
-                except Exception as e:
-                    logger.warning(f"Proxmox API stop failed, trying SSH: {e}")
-                    # Fallback to SSH if API fails
-                    ssh_executor.execute(f"qm stop {vmid}", check=False, timeout=10)
+                # If running, stop it first
+                if current_status == 'running':
+                    logger.info(f"Stopping VM {vmid} before deletion...")
+                    try:
+                        proxmox.nodes(node).qemu(vmid).status.shutdown.post()
+                        # Wait for shutdown (max 60 seconds)
+                        import time
+                        for _ in range(30):
+                            time.sleep(2)
+                            try:
+                                check_status = proxmox.nodes(node).qemu(vmid).status.current.get()
+                                if check_status.get('status') == 'stopped':
+                                    logger.info(f"VM {vmid} stopped successfully")
+                                    break
+                            except Exception:
+                                break
+                        else:
+                            logger.warning(f"VM {vmid} did not stop gracefully, forcing stop...")
+                            proxmox.nodes(node).qemu(vmid).status.stop.post()
+                            time.sleep(3)
+                    except Exception as e:
+                        logger.warning(f"Failed to stop VM {vmid}: {e}, attempting deletion anyway")
+                        
+            except Exception as e:
+                # VM might not exist on this node
+                logger.warning(f"Could not get status for VM {vmid} on node {node}: {e}")
+            
+            # Delete the VM via API
+            try:
+                proxmox.nodes(node).qemu(vmid).delete()
+                logger.info(f"Successfully deleted VM {vmid} from node {node} via Proxmox API")
+                return True, "VM deleted successfully"
+            except Exception as delete_error:
+                error_str = str(delete_error)
                 
-                # Wait for VM to be fully stopped (timeout 120 seconds)
-                logger.info(f"Waiting for VM {vmid} to be fully stopped...")
-                stopped = wait_for_vm_stopped(ssh_executor, vmid, timeout=120)
-                if not stopped:
-                    # CRITICAL: Proxmox won't delete running VMs - must fail here
-                    error_msg = f"VM {vmid} did not stop within 120 seconds - cannot delete running VM"
-                    logger.error(error_msg)
-                    return False, error_msg
+                # Check if VM doesn't exist
+                if "does not exist" in error_str.lower() or "not found" in error_str.lower() or "500" in error_str:
+                    # VM might be on a different node - try to find it
+                    logger.warning(f"VM {vmid} not found on node {node}, searching other nodes...")
+                    try:
+                        resources = proxmox.cluster.resources.get(type="vm")
+                        for r in resources:
+                            if int(r.get('vmid', -1)) == int(vmid):
+                                actual_node = r.get('node')
+                                logger.error(f"Found VM {vmid} on node {actual_node}, not {node}!")
+                                return False, f"VM exists on node {actual_node}, not {node}"
+                        # VM truly doesn't exist anywhere
+                        logger.info(f"VM {vmid} not found in cluster, already deleted")
+                        return True, "VM does not exist (already deleted)"
+                    except Exception as search_error:
+                        logger.error(f"Failed to search for VM: {search_error}")
+                        return False, f"VM not found on node {node} and search failed: {search_error}"
                 
-                logger.info(f"VM {vmid} confirmed stopped")
-            else:
-                # VM is already stopped or doesn't exist
-                logger.info(f"VM {vmid} is already stopped or doesn't exist, proceeding with deletion")
-        
+                # Other error
+                logger.error(f"Failed to delete VM {vmid} via API: {delete_error}")
+                return False, f"Proxmox API delete failed: {error_str}"
+                
         except Exception as e:
-            logger.warning(f"Error checking VM {vmid} status: {e}, attempting deletion anyway")
-        
-        # Ensure SSH connection is still active before deletion
-        # If connection was lost, reconnect
-        if ssh_executor._client is None:
-            logger.info("SSH connection was lost, reconnecting...")
-            ssh_executor.connect()
-        
-        # Delete the VM using SSH command (only if stopped)
-        exit_code, stdout, stderr = ssh_executor.execute(
-            f"qm destroy {vmid}",
-            check=False,
-            timeout=30
-        )
-        
-        if exit_code != 0:
-            # Check if VM truly doesn't exist vs wrong node
-            if "does not exist" in stderr.lower() or "configuration file" in stderr.lower():
-                # VM might be on a different node - this is still a failure that needs investigation
-                logger.warning(f"VM {vmid} not found on node {node} - may have been migrated or already deleted")
-                # Try to find it on other nodes by querying cluster
-                try:
-                    resources = proxmox.cluster.resources.get(type="vm")
-                    for r in resources:
-                        if int(r.get('vmid', -1)) == int(vmid):
-                            actual_node = r.get('node')
-                            logger.warning(f"Found VM {vmid} on node {actual_node} instead of {node}!")
-                            ssh_executor.disconnect()
-                            return False, f"VM exists on node {actual_node}, not {node}"
-                    # VM truly doesn't exist anywhere
-                    logger.info(f"VM {vmid} confirmed not in cluster, considering deletion successful")
-                    ssh_executor.disconnect()
-                    return True, "VM does not exist (already deleted)"
-                except Exception as e:
-                    logger.error(f"Failed to verify VM location: {e}")
-            
-            error_msg = f"Failed to delete VM {vmid}: {stderr.strip()}"
-            logger.error(error_msg)
-            ssh_executor.disconnect()
-            return False, error_msg
-        
-        logger.info(f"Deleted VM {vmid} successfully")
-        ssh_executor.disconnect()
-        return True, "VM deleted successfully"
-        
-    except Exception as e:
-        logger.exception(f"Failed to delete VM {vmid}: {e}")
-        # Ensure cleanup on error
-        try:
-            ssh_executor.disconnect()
-        except Exception:
-            pass
-        return False, f"Delete failed: {str(e)}"
+            logger.exception(f"Failed to delete VM {vmid}: {e}")
+            return False, f"Delete failed: {str(e)}"
 
 
 def convert_vm_to_template(vmid: int, node: str, cluster_ip: str = None) -> Tuple[bool, str]:
