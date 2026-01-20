@@ -706,12 +706,14 @@ def init_db(app):
     if 'SQLALCHEMY_DATABASE_URI' not in app.config:
         db_path = os.path.join(os.path.dirname(__file__), 'lab_portal.db')
         app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{db_path}'
-        # Improve SQLite concurrency: allow cross-thread access and increase lock timeout
+        # Improve SQLite concurrency: allow cross-thread access and increase lock timeout to 60s
         app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
             'connect_args': {
                 'check_same_thread': False,
-                'timeout': 15,
-            }
+                'timeout': 60,  # 60 second timeout for write locks (handles background thread contention)
+            },
+            'pool_pre_ping': True,  # Verify connections are alive
+            'pool_recycle': 3600,  # Recycle connections after 1 hour
         }
     
     # Disable modification tracking (not needed and impacts performance)
@@ -723,9 +725,11 @@ def init_db(app):
     # Create tables if they don't exist
     with app.app_context():
         # Enable WAL journal mode to reduce write-lock contention
+        # WAL allows multiple concurrent readers with one writer
         try:
             db.session.execute("PRAGMA journal_mode=WAL;")
-            db.session.execute("PRAGMA busy_timeout=15000;")
+            db.session.execute("PRAGMA busy_timeout=60000;")  # 60 second busy timeout in milliseconds
+            db.session.execute("PRAGMA synchronous=NORMAL;")  # Faster writes, still crash-safe with WAL
             db.session.commit()
         except Exception:
             db.session.rollback()

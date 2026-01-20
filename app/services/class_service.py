@@ -363,16 +363,32 @@ def delete_class(class_id: int) -> Tuple[bool, str, List[int]]:
     # Collect VMIDs that need to be deleted from Proxmox
     vmids_to_delete = [vm.proxmox_vmid for vm in class_.vm_assignments]
     
-    try:
-        # Delete class (cascades to VM assignments)
-        db.session.delete(class_)
-        db.session.commit()
-        logger.info("Deleted class: %s (VMIDs to clean: %s)", class_.name, vmids_to_delete)
-        return True, "Class deleted successfully", vmids_to_delete
-    except Exception as e:
-        db.session.rollback()
-        logger.exception("Failed to delete class %s: %s", class_id, e)
-        return False, f"Failed to delete class: {str(e)}", []
+    # Retry deletion up to 3 times if database is locked
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            # Delete class (cascades to VM assignments)
+            db.session.delete(class_)
+            db.session.commit()
+            logger.info("Deleted class: %s (VMIDs to clean: %s)", class_.name, vmids_to_delete)
+            return True, "Class deleted successfully", vmids_to_delete
+        except Exception as e:
+            db.session.rollback()
+            
+            # Check if it's a database lock error
+            if "database is locked" in str(e).lower() and attempt < max_retries - 1:
+                import time
+                wait_time = (attempt + 1) * 2  # Wait 2s, 4s, 6s
+                logger.warning(f"Database locked while deleting class {class_id}, retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})")
+                time.sleep(wait_time)
+                continue
+            
+            # Final failure or non-lock error
+            logger.exception("Failed to delete class %s: %s", class_id, e)
+            return False, f"Failed to delete class: {str(e)}", []
+    
+    # Should never reach here, but handle it anyway
+    return False, "Failed to delete class after multiple retries (database locked)", []
 
 
 # ---------------------------------------------------------------------------
