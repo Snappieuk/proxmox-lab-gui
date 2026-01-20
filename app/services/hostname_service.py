@@ -152,6 +152,9 @@ def auto_rename_vm_after_boot(vmid: int, hostname: str, node: str, cluster_id: s
                 assignment.target_hostname = hostname
                 db.session.commit()
                 logger.info(f"Marked VM {vmid} as hostname_configured in database")
+                
+                # Immediately close the session to release any locks
+                db.session.close()
             
             # Clear retry tracking
             if vmid in _rename_attempts:
@@ -160,6 +163,7 @@ def auto_rename_vm_after_boot(vmid: int, hostname: str, node: str, cluster_id: s
             except Exception as e:
                 logger.error(f"Failed to auto-rename VM {vmid}: {e}", exc_info=True)
                 db.session.rollback()
+                db.session.close()  # Release lock even on error
     
     # Run in background thread so it doesn't block VM creation
     thread = threading.Thread(target=rename_job, daemon=True, name=f"HostnameRename-{vmid}")

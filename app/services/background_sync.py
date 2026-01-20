@@ -125,6 +125,7 @@ def _perform_full_sync():
         
         if updated_nodes > 0:
             db.session.commit()
+            db.session.close()  # Release lock immediately
             logger.info(f"Updated {updated_nodes} VMAssignment nodes after migration")
         
         # Update stats
@@ -187,6 +188,7 @@ def _perform_quick_sync():
         
         if updated > 0:
             db.session.commit()
+            db.session.close()  # Release lock immediately
             logger.info(f"Quick sync: {updated}/{len(active_vms)} VMs updated")
         
         _sync_stats['last_quick_sync'] = datetime.utcnow()

@@ -151,11 +151,13 @@ def sync_templates_from_proxmox(full_sync=True):
     while retry_count < max_retries:
         try:
             db.session.commit()
+            db.session.close()  # Release lock immediately
             logger.info(f"Template sync complete: {stats}")
             break
         except Exception as e:
             retry_count += 1
             db.session.rollback()
+            db.session.close()  # Release lock even on error
             
             if "database is locked" in str(e).lower() and retry_count < max_retries:
                 import time
