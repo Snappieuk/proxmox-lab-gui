@@ -433,8 +433,23 @@ def delete_class_route(class_id: int):
             cluster_id = cluster["id"]
             break
     
-    if cluster_id:
-        try:
+    if not cluster_id:
+        # Fallback: use first active cluster if template cluster not found
+        clusters = get_clusters_from_db()
+        if clusters:
+            cluster_id = clusters[0]["id"]
+            logger.warning(f"Template cluster not found, using default cluster: {clusters[0]['name']}")
+        else:
+            logger.error("No clusters available for VM deletion!")
+            return jsonify({
+                "ok": False,
+                "error": "Class deleted from database, but no Proxmox clusters available to delete VMs. Please delete VMs manually.",
+                "deleted_vms": [],
+                "failed_vms": [{"vmid": vm["vmid"], "error": "No cluster connection"} for vm in vm_assignments_to_delete]
+            }), 500
+    
+    # Now proceed with VM deletion
+    try:
             proxmox = get_proxmox_admin_for_cluster(cluster_id)
             
             # FIRST: Query actual nodes for all VMs (they may have been migrated)
@@ -495,8 +510,9 @@ def delete_class_route(class_id: int):
                 except Exception as e:
                     logger.warning(f"Error during VM {vm_info['vmid']} stop: {e}")
                     
-        except Exception as e:
-            logger.warning(f"Error during VM stop phase: {e}")
+    except Exception as e:
+        logger.error(f"Error during VM stop/deletion phase: {e}", exc_info=True)
+        # Continue with deletion anyway
     
     # Delete VMs from Proxmox (best effort, class already deleted)
     deleted_vms = []

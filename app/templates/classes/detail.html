@@ -2859,7 +2859,14 @@ async function confirmAssignVM() {
 
 async function deleteClass() {
     const className = '{{ class_.name }}';
-    const confirmation = prompt(`WARNING: This will delete the class from the database.\n\nVMs in Proxmox will NOT be deleted (clean them up manually if needed).\n\nType "${className}" to confirm deletion:`);
+    const confirmation = prompt(`⚠️ WARNING: This will permanently delete the class AND all VMs!\n\n` +
+        `This will:\n` +
+        `• Stop and delete all student VMs\n` +
+        `• Delete the teacher VM\n` +
+        `• Delete the class-base template\n` +
+        `• Remove all student assignments\n` +
+        `• Cannot be undone!\n\n` +
+        `Type "${className}" to confirm deletion:`);
     
     if (confirmation !== className) {
         if (confirmation !== null) {
@@ -2868,24 +2875,34 @@ async function deleteClass() {
         return;
     }
     
+    showAlert('Deleting class and VMs... This may take several minutes.', 'info');
+    
     try {
-        // Delete from database only (skip VM deletion from Proxmox)
-        const resp = await fetch(`/api/classes/${classId}?force=true`, {
+        // Full deletion (stops and deletes all VMs from Proxmox)
+        const resp = await fetch(`/api/classes/${classId}`, {
             method: 'DELETE'
         });
         
         const data = await resp.json();
         
         if (data.ok) {
-            showAlert('Class deleted successfully. Redirecting...', 'success');
+            const deletedCount = data.deleted_vms?.length || 0;
+            const failedCount = data.failed_vms?.length || 0;
+            
+            let message = `Class deleted successfully. ${deletedCount} VMs deleted`;
+            if (failedCount > 0) {
+                message += `, ${failedCount} VMs failed to delete (check logs)`;
+            }
+            
+            showAlert(message, 'success');
             setTimeout(() => {
                 window.location.href = '/classes';
-            }, 2000);
+            }, 3000);
         } else {
             showAlert(data.error || 'Failed to delete class', 'error');
         }
     } catch (e) {
-        showAlert('Failed to delete class', 'error');
+        showAlert('Failed to delete class: ' + e.message, 'error');
     }
 }
 

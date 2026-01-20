@@ -500,22 +500,12 @@ def recreate_student_vms_from_template(
                     logger.error(f"Failed to create VM shell {vmid}: {stderr}")
                     continue
                 
-                # Set cloud-init hostname if cloud-init is available
-                # This will customize the hostname on first boot
-                ssh_executor.execute(
-                    f"qm set {vmid} --ciuser root --cipassword proxmox --ipconfig0 ip=dhcp --nameserver 8.8.8.8",
-                    check=False  # Don't fail if cloud-init not supported
-                )
-                ssh_executor.execute(
-                    f"qm set {vmid} --searchdomain local",
-                    check=False
-                )
-                # Set unique hostname via cloud-init
-                ssh_executor.execute(
-                    f"qm set {vmid} --name {hostname}",  # This sets both VM name and cloud-init hostname
-                    check=False
-                )
-                logger.info(f"Configured VM {vmid} with hostname: {hostname}")
+                # DISABLED: Cloud-init and hostname auto-config can cause boot issues
+                # Only enable this if your templates have cloud-init installed
+                # ssh_executor.execute(
+                #     f"qm set {vmid} --ciuser root --cipassword proxmox --ipconfig0 ip=dhcp --nameserver 8.8.8.8",
+                #     check=False  # Don't fail if cloud-init not supported
+                # )
                 
                 # Create overlay disk
                 overlay_path = f"{DEFAULT_VM_IMAGES_PATH}/{vmid}/vm-{vmid}-disk-0.qcow2"
@@ -569,10 +559,11 @@ def recreate_student_vms_from_template(
                 created_vmids.append(vmid)
                 logger.info(f"Created student VM {vmid} ({student_name}) with MAC {student_mac}")
                 
-                # Schedule automatic hostname rename after boot (runs in background)
-                from app.services.hostname_service import auto_rename_vm_after_boot
-                from flask import current_app
-                auto_rename_vm_after_boot(vmid, hostname, template_node, app=current_app._get_current_object())
+                # DISABLED: Automatic hostname rename can cause boot issues
+                # Enable this only if QEMU Guest Agent is installed in your templates
+                # from app.services.hostname_service import auto_rename_vm_after_boot
+                # from flask import current_app
+                # auto_rename_vm_after_boot(vmid, hostname, template_node, app=current_app._get_current_object())
                 
             except Exception as e:
                 logger.exception(f"Error creating student VM: {e}")
