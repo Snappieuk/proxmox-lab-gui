@@ -641,21 +641,52 @@ def create_class_vms(
     optimal_node = None
     proxmox = None
     try:
-        # Get the template to find which cluster it's on
+        # Get the template to find which node it's on
         from app.models import Template
         template_obj = None
+        template_cluster_ip = None
+        template_node_name = None
+        
         if template_vmid:
             template_obj = Template.query.filter_by(proxmox_vmid=template_vmid).first()
             if template_obj:
-                logger.info(f"Template {template_vmid} is on cluster {template_obj.cluster_ip}, node {template_obj.node}")
+                template_cluster_ip = template_obj.cluster_ip
+                template_node_name = template_obj.node
+                logger.info(f"Template {template_vmid} is on cluster {template_cluster_ip}, node {template_node_name}")
             else:
-                logger.warning(f"Template {template_vmid} not found in database, using default cluster")
+                logger.warning(f"Template {template_vmid} not found in database - cannot determine cluster/node!")
+                result.error = f"Template {template_vmid} not found in database. Please register the template first."
+                return result
         
-        # Use cached SSH executor to reuse connection
-        # Connect to the cluster where the template exists (if known)
-        ssh_executor = get_cached_ssh_executor()
+        # Create SSH executor connecting to the SPECIFIC NODE where template exists
+        if template_cluster_ip and template_node_name:
+            # Find cluster config by IP
+            from app.config import CLUSTERS
+            cluster_config = None
+            for cluster in CLUSTERS:
+                if cluster.get('host') == template_cluster_ip:
+                    cluster_config = cluster
+                    break
+            
+            if not cluster_config:
+                logger.error(f"No cluster config found for IP {template_cluster_ip}")
+                result.error = f"Cluster {template_cluster_ip} not configured"
+                return result
+            
+            # Connect to the SPECIFIC NODE where the template is located
+            # Use node name as hostname (assumes node names are resolvable hostnames)
+            ssh_executor = SSHExecutor(
+                host=template_node_name,  # Connect to specific node, not cluster IP
+                username=cluster_config.get('ssh_user', 'root'),
+                password=cluster_config.get('ssh_password', cluster_config.get('password')),
+            )
+            logger.info(f"Creating SSH connection to template's node: {template_node_name} (cluster {template_cluster_ip})")
+        else:
+            # No template - use cached executor (default cluster)
+            ssh_executor = get_cached_ssh_executor()
+        
         ssh_executor.connect()
-        logger.info(f"SSH connected to {ssh_executor.host}")
+        logger.info(f"✓ SSH connected to {ssh_executor.host}")
         
         # Get Proxmox API connection for resource queries
         try:
