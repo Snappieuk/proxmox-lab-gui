@@ -950,9 +950,9 @@ def _lookup_vm_ip_thread_safe(node: str, vmid: int, vmtype: str) -> Optional[str
     """
     Thread-safe IP lookup using a new Proxmox client per call.
     
-    Handles LXC containers via network interfaces API.
-    Returns None if container uses DHCP but no IP assigned yet (needs ARP scan).
-    QEMU VMs use ARP scanning instead (no guest agent dependency).
+    - QEMU VMs: Try guest agent network-get-interfaces API (requires running VM + guest agent)
+    - LXC containers: Use network interfaces API (works even when stopped)
+    Returns None if IP not found (will fall back to ARP scan).
     
     Used by ThreadPoolExecutor workers for parallel IP lookups.
     Creates a short-lived client to avoid thread-safety issues with ProxmoxAPI.
@@ -962,39 +962,57 @@ def _lookup_vm_ip_thread_safe(node: str, vmid: int, vmtype: str) -> Optional[str
     if not enable_ip_lookup:
         return None
     
-    # Only handle LXC containers - QEMU VMs use ARP scanning
-    if vmtype != "lxc":
-        return None
-    
     try:
         client = _create_proxmox_client()
         
+        # QEMU VMs - try guest agent
+        if vmtype == "qemu":
+            try:
+                result = client.nodes(node).qemu(vmid).agent('network-get-interfaces').get()
+                if result and 'result' in result:
+                    interfaces = result['result']
+                    # Look for first non-loopback IPv4 address
+                    for iface in interfaces:
+                        if iface.get('name') in ('lo', 'loopback'):
+                            continue
+                        ip_addresses = iface.get('ip-addresses', [])
+                        for addr in ip_addresses:
+                            if addr.get('ip-address-type') == 'ipv4':
+                                found_ip = addr.get('ip-address')
+                                if found_ip and not found_ip.startswith('127.'):
+                                    logger.debug(f"QEMU {vmid}: Found IP via guest agent: {found_ip}")
+                                    return found_ip
+            except Exception as e:
+                logger.debug(f"QEMU {vmid}: Guest agent network lookup failed: {e}")
+                return None
+        
         # LXC containers - use network interfaces API
-        try:
-            interfaces = client.nodes(node).lxc(vmid).interfaces.get()
-            if interfaces:
-                for iface in interfaces:
-                    # Prefer eth0/veth0 interfaces
-                    if iface.get("name") in ("eth0", "veth0"):
+        elif vmtype == "lxc":
+            try:
+                interfaces = client.nodes(node).lxc(vmid).interfaces.get()
+                if interfaces:
+                    for iface in interfaces:
+                        # Prefer eth0/veth0 interfaces
+                        if iface.get("name") in ("eth0", "veth0"):
+                            inet = iface.get("inet")
+                            if inet:
+                                ip = inet.split("/")[0] if "/" in inet else inet
+                                if ip and not ip.startswith("127."):
+                                    return ip
+                        # Fall back to any interface with IP
                         inet = iface.get("inet")
                         if inet:
                             ip = inet.split("/")[0] if "/" in inet else inet
                             if ip and not ip.startswith("127."):
                                 return ip
-                    # Fall back to any interface with IP
-                    inet = iface.get("inet")
-                    if inet:
-                        ip = inet.split("/")[0] if "/" in inet else inet
-                        if ip and not ip.startswith("127."):
-                            return ip
-                
-                # If we get here, container is running but no IP found in interfaces
-                # This happens with DHCP when IP not yet assigned - needs ARP scan
-                logger.debug("LXC %d has no IP in interfaces (likely DHCP), will use ARP scan", vmid)
+                    
+                    # If we get here, container is running but no IP found in interfaces
+                    # This happens with DHCP when IP not yet assigned - needs ARP scan
+                    logger.debug("LXC %d has no IP in interfaces (likely DHCP), will use ARP scan", vmid)
+                    return None
+            except Exception as e:
+                logger.debug("lxc interface call failed for %s/%s: %s", node, vmid, e)
                 return None
-        except Exception as e:
-            logger.debug("lxc interface call failed for %s/%s: %s", node, vmid, e)
-            return None
     except Exception as e:
         logger.debug("Thread-safe IP lookup failed for %s/%s: %s", node, vmid, e)
     

@@ -496,6 +496,12 @@ def recreate_student_vms_from_template(
         # Create student VMs as overlays using prefix-based VMID allocation
         from app.services.vm_template import create_overlay_vm
         
+        # Student VMs should use class-base VM's disk as backing file, NOT the original base QCOW2
+        # This creates proper 3-tier hierarchy: template → class-base → student VMs
+        class_base_vmid = class_.vmid_prefix * 100 + 99  # e.g., 732 * 100 + 99 = 73299
+        class_base_disk_path = f"/mnt/pve/{qcow2_storage}/images/{class_base_vmid}/vm-{class_base_vmid}-disk-0.qcow2"
+        logger.info(f"Student VMs will use class-base backing file: {class_base_disk_path}")
+        
         for i in range(count):
             try:
                 # Student VMs use indices 1-99 (index 0 is teacher VM)
@@ -504,11 +510,12 @@ def recreate_student_vms_from_template(
                 hostname = f"{class_prefix}-s{i+1}"  # Short hostname (e.g., class1-s1)
                 
                 # Create student VM by cloning template config + overlay disk
+                # CRITICAL: Use class-base VM's disk as backing file (NOT base_qcow2_path)
                 success, error, student_mac = create_overlay_vm(
                     ssh_executor=ssh_executor,
                     vmid=vmid,
                     name=student_name,
-                    base_qcow2_path=base_qcow2_path,
+                    base_qcow2_path=class_base_disk_path,  # Use class-base VM disk, not original base
                     node=template_node,
                     template_vmid=template_vmid,  # NEW: Clone config from template
                 )
@@ -761,7 +768,9 @@ def create_class_vms(
         # Step 1: Handle template vs no-template workflow
         if template_vmid:
             # WITH TEMPLATE: Export template to class base QCOW2
-            base_qcow2_path = f"{DEFAULT_TEMPLATE_STORAGE_PATH}/{class_prefix}-base.qcow2"
+            # CRITICAL: Include template VMID in filename to prevent reusing wrong template's base
+            # Different templates with same class name would otherwise share the same base file
+            base_qcow2_path = f"{DEFAULT_TEMPLATE_STORAGE_PATH}/{class_prefix}-t{template_vmid}-base.qcow2"
             
             # Check if base QCOW2 already exists (when adding VMs to existing class)
             check_cmd = f"test -f {base_qcow2_path} && echo 'exists' || echo 'not_found'"
@@ -769,7 +778,7 @@ def create_class_vms(
             base_exists = stdout.strip() == 'exists'
             
             if base_exists:
-                logger.info(f"Base QCOW2 already exists for class {class_id}: {base_qcow2_path}")
+                logger.info(f"Base QCOW2 already exists for class {class_id} (template {template_vmid}): {base_qcow2_path}")
                 logger.info("Skipping template export - using existing base for new VMs")
                 result.details.append(f"Using existing class base: {base_qcow2_path}")
                 

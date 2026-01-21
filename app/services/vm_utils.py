@@ -63,14 +63,14 @@ def get_optimal_node(ssh_executor, proxmox=None, vm_memory_mb=2048, simulated_vm
                 try:
                     mem_total = float(node.get('maxmem', 1))
                     mem_used = float(node.get('mem', 0))
-                except (ValueError, TypeError):
-                    logger.debug(f"Node {node_name}: Invalid memory values, skipping")
+                    
+                    # Add simulated memory usage from VMs being created
+                    simulated_count = simulated_vms_per_node.get(node_name, 0)
+                    simulated_mem = simulated_count * vm_memory_mb * 1024 * 1024  # Convert MB to bytes
+                    mem_used += simulated_mem
+                except (ValueError, TypeError) as e:
+                    logger.debug(f"Node {node_name}: Invalid memory values ({e}), skipping")
                     continue
-                
-                # Add simulated memory usage from VMs being created
-                simulated_count = simulated_vms_per_node.get(node_name, 0)
-                simulated_mem = simulated_count * vm_memory_mb * 1024 * 1024  # Convert MB to bytes
-                mem_used += simulated_mem
                 
                 mem_free_pct = (mem_total - mem_used) / mem_total if mem_total > 0 else 0
                 
