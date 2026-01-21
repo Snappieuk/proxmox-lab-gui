@@ -40,33 +40,46 @@ VM_STOP_TIMEOUT = int(os.getenv("VM_STOP_TIMEOUT", "60"))
 VM_STOP_POLL_INTERVAL = int(os.getenv("VM_STOP_POLL_INTERVAL", "3"))
 
 
-def get_vm_node(ssh_executor: SSHExecutor, vmid: int) -> Optional[str]:
+def get_vm_node(ssh_executor: SSHExecutor, vmid: int, proxmox=None) -> Optional[str]:
     """Find which node a VM is currently on.
     
-    Uses pvesh to query cluster-wide VM status.
+    Uses Proxmox API first, falls back to SSH commands if needed.
     
     Args:
         ssh_executor: SSH executor (can be connected to any cluster node)
         vmid: VM ID to locate
+        proxmox: Proxmox API connection (optional, will fetch if not provided)
         
     Returns:
         Node name where VM is located, or None if not found
     """
     try:
-        # Use pvesh to query cluster resources (works from any node)
-        cmd = f"pvesh get /cluster/resources --type vm --output-format json | grep -A5 '\"vmid\":{vmid}' | grep '\"node\":' | cut -d'\"' -f4"
-        exit_code, stdout, stderr = ssh_executor.execute(cmd, timeout=10, check=False)
+        # Try Proxmox API first (most reliable)
+        if proxmox is None:
+            try:
+                from app.services.proxmox_service import get_proxmox_admin
+                proxmox = get_proxmox_admin()
+            except:
+                pass
         
-        if exit_code == 0 and stdout.strip():
-            node = stdout.strip()
-            logger.debug(f"VM {vmid} is on node: {node}")
-            return node
+        if proxmox:
+            try:
+                resources = proxmox.cluster.resources.get(type='vm')
+                for resource in resources:
+                    if resource.get('vmid') == vmid:
+                        node = resource.get('node')
+                        logger.debug(f"VM {vmid} is on node: {node} (via API)")
+                        return node
+            except Exception as e:
+                logger.debug(f"Could not use API to locate VM: {e}")
         
-        # Fallback: try qm status (only works if VM is on current node)
-        cmd = f"qm status {vmid} 2>/dev/null | grep -q 'status:' && hostname"
+        # Fallback: try qm status on current node
+        cmd = f"qm status {vmid} 2>/dev/null && hostname"
         exit_code, stdout, stderr = ssh_executor.execute(cmd, timeout=5, check=False)
         if exit_code == 0 and stdout.strip():
-            node = stdout.strip()
+            # Extract hostname from output (last line)
+            lines = [l.strip() for l in stdout.strip().split('\n') if l.strip()]
+            node = lines[-1]
             logger.debug(f"VM {vmid} found on current node: {node}")
             return node
             
@@ -129,6 +142,16 @@ def create_vm_shell(
     safe_name = sanitize_vm_name(name)
     other_settings = other_settings or {}
     
+    # Extract boot_order from other_settings if not provided as parameter
+    if boot_order is None and 'boot' in other_settings:
+        boot_order = other_settings.pop('boot')
+        logger.debug(f"Extracted boot order from other_settings: {boot_order}")
+    
+    # Remove settings that will be applied explicitly to avoid duplicates
+    # These are already handled as function parameters
+    for key in ['agent', 'bios', 'cores', 'cpu', 'machine', 'memory', 'ostype', 'scsihw']:
+        other_settings.pop(key, None)
+    
     # Base command
     cmd = (
         f"qm create {vmid} --name {safe_name} "
@@ -166,7 +189,7 @@ def create_vm_shell(
             proxmox = None
         
         # Verify which node the VM is on (may have auto-migrated)
-        vm_node = get_vm_node(ssh_executor, vmid)
+        vm_node = get_vm_node(ssh_executor, vmid, proxmox)
         if not vm_node:
             logger.warning(f"Could not determine node for VM {vmid}, assuming current node")
             # Try to get current node from SSH
@@ -192,20 +215,26 @@ def create_vm_shell(
                     logger.error(f"Failed to add EFI disk via SSH: {stderr}")
         
         # Enable QEMU guest agent by default
+        agent_enabled = False
         if proxmox:
             try:
-                proxmox.nodes(vm_node).qemu(vmid).config.set(agent='enabled=1,fstrim_cloned_disks=1')
+                # Note: agent parameter must be passed as plain value, not key=value format
+                proxmox.nodes(vm_node).qemu(vmid).config.set(agent='1')
                 logger.info(f"Enabled QEMU guest agent for VM {vmid} via API")
+                agent_enabled = True
             except Exception as e:
-                logger.error(f"Failed to enable guest agent via API: {e}")
-        else:
+                logger.warning(f"Failed to enable guest agent via API: {e}, trying SSH fallback")
+        
+        if not agent_enabled:
+            # Fallback to SSH qm command
             agent_cmd = f"qm set {vmid} --agent enabled=1,fstrim_cloned_disks=1"
             exit_code, stdout, stderr = ssh_executor.execute(agent_cmd, timeout=30, check=False)
-        if exit_code == 0:
-            logger.info(f"Enabled QEMU guest agent for VM {vmid}")
-        else:
-            logger.error(f"Failed to enable QEMU guest agent for VM {vmid}: {stderr}")
-            # Don't fail the VM creation, but log prominently
+            if exit_code == 0:
+                logger.info(f"Enabled QEMU guest agent for VM {vmid} via SSH")
+                agent_enabled = True
+            else:
+                logger.error(f"Failed to enable QEMU guest agent for VM {vmid}: {stderr}")
+                # Don't fail the VM creation, but log prominently
         
         # Verify guest agent was actually enabled by reading config
         verify_cmd = f"qm config {vmid} | grep agent"
@@ -253,24 +282,6 @@ def create_vm_shell(
             else:
                 # Fallback to SSH qm commands
                 skip_keys = ['name', 'vmid', 'digest', 'meta', 'template']
-                # Skip hardware settings that were already set explicitly in qm create command
-                # But only skip if we actually SET them (not None)
-                if bios and 'bios' not in skip_keys:
-                    skip_keys.append('bios')
-                if boot_order and 'boot' not in skip_keys:
-                    skip_keys.append('boot')
-                if cores and 'cores' not in skip_keys:
-                    skip_keys.append('cores')
-                if cpu and 'cpu' not in skip_keys:
-                    skip_keys.append('cpu')
-                if machine and 'machine' not in skip_keys:
-                    skip_keys.append('machine')
-                if memory and 'memory' not in skip_keys:
-                    skip_keys.append('memory')
-                if ostype and 'ostype' not in skip_keys:
-                    skip_keys.append('ostype')
-                if scsihw and 'scsihw' not in skip_keys:
-                    skip_keys.append('scsihw')
                 
                 for key, value in other_settings.items():
                     if key in skip_keys or value is None:
