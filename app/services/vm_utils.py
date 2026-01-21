@@ -455,14 +455,14 @@ def parse_disk_config(disk_line: str) -> dict:
     """Parse a Proxmox disk configuration line.
     
     Handles formats like:
-    - "TRUENAS-NFS:100/vm-100-disk-0.qcow2,size=32G"
-    - "local-lvm:vm-100-disk-0,size=32G"
+    - "TRUENAS-NFS:100/vm-100-disk-0.qcow2,size=32G,cache=writeback,discard=on"
+    - "local-lvm:vm-100-disk-0,size=32G,iothread=1,ssd=1"
     
     Args:
         disk_line: Disk configuration string
         
     Returns:
-        Dict with keys: storage, volume, size_str, size_gb (may be None)
+        Dict with keys: storage, volume, size_str, size_gb, format, and ALL other options
     """
     result = {
         'storage': None,
@@ -470,6 +470,7 @@ def parse_disk_config(disk_line: str) -> dict:
         'size_str': None,
         'size_gb': None,
         'format': None,
+        'options': {},  # Store all extra options
     }
     
     if not disk_line:
@@ -496,22 +497,29 @@ def parse_disk_config(disk_line: str) -> dict:
         elif '.vmdk' in result['volume']:
             result['format'] = 'vmdk'
     
-    # Parse size from options
+    # Parse ALL options from remaining parts
     for part in parts[1:]:
         part = part.strip()
-        if part.startswith('size='):
-            result['size_str'] = part.split('=')[1].upper()
-            # Convert to GB
-            size_str = result['size_str']
-            try:
-                if 'G' in size_str:
-                    result['size_gb'] = float(size_str.replace('G', ''))
-                elif 'M' in size_str:
-                    result['size_gb'] = float(size_str.replace('M', '')) / 1024
-                elif 'T' in size_str:
-                    result['size_gb'] = float(size_str.replace('T', '')) * 1024
-            except ValueError:
-                pass
+        if '=' in part:
+            key, value = part.split('=', 1)
+            key = key.strip()
+            value = value.strip()
+            
+            if key == 'size':
+                result['size_str'] = value.upper()
+                # Convert to GB
+                try:
+                    if 'G' in value.upper():
+                        result['size_gb'] = float(value.upper().replace('G', ''))
+                    elif 'M' in value.upper():
+                        result['size_gb'] = float(value.upper().replace('M', '')) / 1024
+                    elif 'T' in value.upper():
+                        result['size_gb'] = float(value.upper().replace('T', '')) * 1024
+                except ValueError:
+                    pass
+            else:
+                # Store ALL other options (cache, discard, iothread, ssd, backup, etc.)
+                result['options'][key] = value
     
     return result
 

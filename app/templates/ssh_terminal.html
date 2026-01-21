@@ -330,17 +330,28 @@
             };
             
             ws.onerror = (error) => {
-                status.textContent = 'Connection error - WebSocket proxy configuration needed';
+                status.textContent = 'Connection error - Check WebSocket availability';
                 status.className = 'error';
                 console.error('WebSocket error:', error);
+                console.error('Connection details:', {
+                    url: wsUrl,
+                    host: window.location.host,
+                    protocol: window.location.protocol,
+                    port: window.location.port
+                });
                 
                 // Show helpful error message for proxy issues
                 term.write('\r\n\x1b[1;31m╔══════════════════════════════════════════════════════════╗\x1b[0m\r\n');
                 term.write('\x1b[1;31m║  WebSocket Connection Failed                            ║\x1b[0m\r\n');
                 term.write('\x1b[1;31m╠══════════════════════════════════════════════════════════╣\x1b[0m\r\n');
-                term.write('\x1b[1;33m║  This usually happens when running behind a proxy.      ║\x1b[0m\r\n');
+                term.write(`\x1b[1;33m║  URL: ${wsUrl.padEnd(52)}║\x1b[0m\r\n`);
                 term.write('\x1b[1;33m║                                                          ║\x1b[0m\r\n');
-                term.write('\x1b[1;33m║  If using nginx, add to your config:                    ║\x1b[0m\r\n');
+                term.write('\x1b[1;33m║  Possible causes:                                        ║\x1b[0m\r\n');
+                term.write('\x1b[0m║  1. flask-sock package not installed on server          ║\x1b[0m\r\n');
+                term.write('\x1b[0m║  2. Firewall blocking WebSocket connections             ║\x1b[0m\r\n');
+                term.write('\x1b[0m║  3. Proxy not configured for WebSocket upgrade          ║\x1b[0m\r\n');
+                term.write('\x1b[0m║                                                          ║\x1b[0m\r\n');
+                term.write('\x1b[0m║  If using nginx reverse proxy, add this config:         ║\x1b[0m\r\n');
                 term.write('\x1b[0m║                                                          ║\x1b[0m\r\n');
                 term.write('\x1b[0m║    location /ws/ {                                       ║\x1b[0m\r\n');
                 term.write('\x1b[0m║      proxy_pass http://localhost:8080;                  ║\x1b[0m\r\n');

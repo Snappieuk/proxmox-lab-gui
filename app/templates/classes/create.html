@@ -32,9 +32,14 @@
         
         <div class="form-group">
             <label for="template-select">Template</label>
-            <select id="template-select" name="template_id">
-                <option value="">Select cluster first...</option>
-            </select>
+            <div style="display: flex; gap: 0.5rem; align-items: start;">
+                <select id="template-select" name="template_id" style="flex: 1;">
+                    <option value="">Select cluster first...</option>
+                </select>
+                <button type="button" id="refresh-templates-btn" class="btn-secondary" style="padding: 0.5rem 1rem; white-space: nowrap;" title="Refresh template cache from Proxmox">
+                    <i class="ti ti-refresh"></i> Refresh
+                </button>
+            </div>
             <small class="form-help">Select a template or choose "None" to create VMs without a template</small>
         </div>
         
@@ -182,6 +187,11 @@
 .btn-secondary:hover {
     background: #e1dfdd;
 }
+
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
 </style>
 
 <script>
@@ -209,6 +219,65 @@ document.addEventListener('DOMContentLoaded', async function() {
 
     document.getElementById('alter-specs-checkbox').addEventListener('change', function() {
         updateSpecsVisibility();
+    });
+    
+    // Handle refresh templates button
+    document.getElementById('refresh-templates-btn').addEventListener('click', async function() {
+        const btn = this;
+        const originalHTML = btn.innerHTML;
+        
+        // Check if user is admin
+        const isAdmin = {{ 'true' if is_admin else 'false' }};
+        if (!isAdmin) {
+            alert('Only administrators can refresh the template cache.');
+            return;
+        }
+        
+        // Disable button and show loading state
+        btn.disabled = true;
+        btn.innerHTML = '<i class="ti ti-loader-2" style="animation: spin 1s linear infinite;"></i> Refreshing...';
+        
+        try {
+            const resp = await fetch('/api/sync/templates/trigger', {
+                method: 'POST'
+            });
+            const data = await resp.json();
+            
+            if (data.ok) {
+                // Show success message
+                btn.innerHTML = '<i class="ti ti-check"></i> Refreshed!';
+                setTimeout(() => {
+                    btn.innerHTML = originalHTML;
+                    btn.disabled = false;
+                }, 2000);
+                
+                // Reload templates for current cluster
+                const clusterId = document.getElementById('deployment-cluster').value;
+                if (clusterId) {
+                    await loadTemplatesForCluster(clusterId);
+                }
+                
+                // Show stats message if available
+                if (data.message) {
+                    console.log('Template refresh:', data.message);
+                }
+            } else {
+                btn.innerHTML = '<i class="ti ti-alert-triangle"></i> Failed';
+                alert('Failed to refresh templates: ' + (data.error || 'Unknown error'));
+                setTimeout(() => {
+                    btn.innerHTML = originalHTML;
+                    btn.disabled = false;
+                }, 2000);
+            }
+        } catch (e) {
+            console.error('Error refreshing templates:', e);
+            btn.innerHTML = '<i class="ti ti-alert-triangle"></i> Error';
+            alert('Error refreshing templates: ' + e.message);
+            setTimeout(() => {
+                btn.innerHTML = originalHTML;
+                btn.disabled = false;
+            }, 2000);
+        }
     });
     
     // Update templates and nodes when cluster changes

@@ -1956,6 +1956,15 @@ def get_vms_for_user(user: str, search: Optional[str] = None, skip_ips: bool = F
                     accessible_vmids.update(class_vmids)
                     logger.debug("get_vms_for_user: user=%s has %d VMs from direct assignments", user, len(class_vmids))
                     
+                    # VMs from classes they own (where they are the main teacher)
+                    owned_classes = Class.query.filter_by(teacher_id=local_user.id).all()
+                    for cls in owned_classes:
+                        class_vm_assignments = VMAssignment.query.filter_by(class_id=cls.id).all()
+                        owned_vmids = {a.proxmox_vmid for a in class_vm_assignments}
+                        accessible_vmids.update(owned_vmids)
+                        logger.debug("get_vms_for_user: user=%s has %d VMs from owned class '%s'", 
+                                   user, len(owned_vmids), cls.name)
+                    
                     # VMs from classes they co-own (teacher VMs + all student VMs in those classes)
                     co_owned_classes = local_user.co_owned_classes
                     for cls in co_owned_classes:

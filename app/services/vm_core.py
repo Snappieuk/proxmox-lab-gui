@@ -57,6 +57,9 @@ def create_vm_shell(
     cpu: str = None,
     scsihw: str = None,
     storage: str = "local-zfs",
+    net_model: str = "virtio",
+    net_options: str = '',
+    other_settings: dict = None,
 ) -> Tuple[bool, str]:
     """
     Create an empty VM shell (no disk attached).
@@ -78,17 +81,21 @@ def create_vm_shell(
         cpu: CPU type (e.g., 'host', 'kvm64') - default: auto-detect from ostype
         scsihw: SCSI hardware controller (e.g., 'virtio-scsi-pci', 'lsi') - default: auto-detect
         storage: Storage pool for EFI disk (default: local-zfs)
+        net_model: Network interface model (virtio, e1000, rtl8139, etc.) - default: virtio
+        net_options: Additional network options string (firewall=1,rate=100, etc.)
+        other_settings: Dict of additional VM settings to apply (agent, onboot, protection, etc.)
         
     Returns:
         Tuple of (success, error_message)
     """
     safe_name = sanitize_vm_name(name)
+    other_settings = other_settings or {}
     
     # Base command
     cmd = (
         f"qm create {vmid} --name {safe_name} "
         f"--memory {memory} --cores {cores} "
-        f"--net0 virtio,bridge={network_bridge} "
+        f"--net0 {net_model},bridge={network_bridge}{net_options} "
         f"--ostype {ostype}"
     )
     
@@ -139,6 +146,35 @@ def create_vm_shell(
             logger.info(f"Verified QEMU guest agent is enabled for VM {vmid}")
         else:
             logger.warning(f"Could not verify guest agent for VM {vmid}, output: {stdout}")
+        
+        # Apply all other settings from template (if provided)
+        if other_settings:
+            logger.info(f"Applying {len(other_settings)} additional settings to VM {vmid}")
+            settings_applied = 0
+            settings_failed = 0
+            
+            for key, value in other_settings.items():
+                # Skip settings that are already set or shouldn't be copied
+                skip_keys = ['name', 'vmid', 'digest', 'meta', 'template', 'bios', 'boot', 
+                            'cores', 'cpu', 'machine', 'memory', 'ostype', 'scsihw', 'sockets']
+                if key in skip_keys or value is None:
+                    continue
+                
+                # Apply setting
+                try:
+                    set_cmd = f"qm set {vmid} --{key} {value}"
+                    exit_code, stdout, stderr = ssh_executor.execute(set_cmd, timeout=30, check=False)
+                    if exit_code == 0:
+                        settings_applied += 1
+                        logger.debug(f"Applied setting {key}={value} to VM {vmid}")
+                    else:
+                        settings_failed += 1
+                        logger.warning(f"Failed to apply setting {key}={value} to VM {vmid}: {stderr}")
+                except Exception as e:
+                    settings_failed += 1
+                    logger.warning(f"Error applying setting {key} to VM {vmid}: {e}")
+            
+            logger.info(f"Applied {settings_applied} settings to VM {vmid}, {settings_failed} failed")
         
         return True, ""
         
@@ -422,6 +458,7 @@ def attach_disk_to_vm(
     disk_slot: str = "scsi0",
     storage: str = None,
     set_boot: bool = True,
+    disk_options: str = '',
 ) -> Tuple[bool, str]:
     """
     Attach a disk to a VM.
@@ -435,6 +472,7 @@ def attach_disk_to_vm(
         disk_slot: Disk slot (default: scsi0)
         storage: Storage name (default: PROXMOX_STORAGE_NAME)
         set_boot: If True, set this disk as boot disk (default: True)
+        disk_options: Additional disk options string (cache=writeback,discard=on, etc.)
         
     Returns:
         Tuple of (success, error_message)
@@ -449,6 +487,9 @@ def attach_disk_to_vm(
     else:
         # Relative path - use storage:path format
         disk_spec = f"{storage}:{disk_path}"
+        # Add disk options if provided
+        if disk_options:
+            disk_spec += f",{disk_options}"
     
     boot_opts = ""
     if set_boot:

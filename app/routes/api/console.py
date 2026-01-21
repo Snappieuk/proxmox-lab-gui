@@ -45,16 +45,56 @@ def api_get_vnc_info(vmid: int):
     try:
         user = require_user()
         
-        # Check if user is teacher or admin
+        # Check if user has access to this VM (admin, or VM assigned to user, or teacher/co-owner of class)
         is_admin = is_admin_user(user)
-        username = user.split('@')[0] if '@' in user else user
-        local_user = get_user_by_username(username)
         
-        if not is_admin and (not local_user or local_user.role not in ['teacher', 'adminer']):
-            return jsonify({
-                "ok": False,
-                "error": "Access denied. Only teachers and administrators can access VM console."
-            }), 403
+        if not is_admin:
+            # Check if user has permission to access this VM
+            from app.models import VMAssignment, User
+            username = user.split('@')[0] if '@' in user else user
+            
+            # Build username variants
+            variants = {username, user}
+            if '@' in username:
+                base = username.split('@', 1)[0]
+                variants.add(base)
+            variants.update({v + '@pve' for v in list(variants)})
+            variants.update({v + '@pam' for v in list(variants)})
+            
+            user_row = User.query.filter(User.username.in_(variants)).first()
+            
+            if not user_row:
+                return jsonify({
+                    "ok": False,
+                    "error": "User not found"
+                }), 403
+            
+            # Check if user has access to this VM
+            has_access = False
+            
+            # Check direct VM assignment
+            assignment = VMAssignment.query.filter_by(
+                proxmox_vmid=vmid,
+                assigned_user_id=user_row.id
+            ).first()
+            
+            if assignment:
+                has_access = True
+            else:
+                # Check if user is teacher/co-owner of class that owns this VM
+                from app.models import Class
+                vm_assignment = VMAssignment.query.filter_by(proxmox_vmid=vmid).first()
+                
+                if vm_assignment and vm_assignment.class_id:
+                    class_ = Class.query.get(vm_assignment.class_id)
+                    if class_ and class_.is_owner(user_row):
+                        has_access = True
+            
+            if not has_access:
+                return jsonify({
+                    "ok": False,
+                    "error": "Access denied. You do not have permission to access this VM console."
+                }), 403
         
         cluster_id = request.args.get('cluster_id') or session.get('cluster_id')
         if not cluster_id:
@@ -216,6 +256,50 @@ def view_console(vmid: int):
     try:
         user = require_user()
         
+        # Check if user has access to this VM (admin, or VM assigned to user, or teacher/co-owner of class)
+        is_admin = is_admin_user(user)
+        
+        if not is_admin:
+            # Check if user has permission to access this VM
+            from app.models import VMAssignment, User, Class
+            username = user.split('@')[0] if '@' in user else user
+            
+            # Build username variants
+            variants = {username, user}
+            if '@' in username:
+                base = username.split('@', 1)[0]
+                variants.add(base)
+            variants.update({v + '@pve' for v in list(variants)})
+            variants.update({v + '@pam' for v in list(variants)})
+            
+            user_row = User.query.filter(User.username.in_(variants)).first()
+            
+            if not user_row:
+                return "Access denied: User not found", 403
+            
+            # Check if user has access to this VM
+            has_access = False
+            
+            # Check direct VM assignment
+            assignment = VMAssignment.query.filter_by(
+                proxmox_vmid=vmid,
+                assigned_user_id=user_row.id
+            ).first()
+            
+            if assignment:
+                has_access = True
+            else:
+                # Check if user is teacher/co-owner of class that owns this VM
+                vm_assignment = VMAssignment.query.filter_by(proxmox_vmid=vmid).first()
+                
+                if vm_assignment and vm_assignment.class_id:
+                    class_ = Class.query.get(vm_assignment.class_id)
+                    if class_ and class_.is_owner(user_row):
+                        has_access = True
+            
+            if not has_access:
+                return "Access denied: You do not have permission to access this VM console", 403
+        
         # Get cluster info
         cluster_id = request.args.get('cluster_id') or session.get('cluster_id')
         clusters = get_clusters_from_db()
@@ -357,15 +441,96 @@ def init_websocket_proxy(app, sock_instance):
         forward_thread = None
         
         try:
-            # Get connection info from server-side cache
+            # Try to get connection info from server-side cache first
             conn_data = _vnc_connection_cache.get(vmid)
+            
+            # If not in cache, look up VM info fresh (for cross-PC access)
             if not conn_data:
-                logger.error(f"No connection data found in cache for VM {vmid}")
+                logger.warning(f"No cached connection data for VM {vmid}, looking up fresh...")
+                
+                # Get cluster from session or use default
+                cluster_id = session.get('cluster_id')
+                if not cluster_id:
+                    clusters = get_clusters_from_db()
+                    cluster_id = clusters[0]['id'] if clusters else None
+                
+                if not cluster_id:
+                    logger.error(f"No cluster available for VM {vmid}")
+                    try:
+                        ws.close()
+                    except Exception:
+                        pass
+                    return
+                
+                # Get cluster config
+                clusters = get_clusters_from_db()
+                cluster_config = None
+                for cluster in clusters:
+                    if cluster['id'] == cluster_id:
+                        cluster_config = cluster
+                        break
+                
+                if not cluster_config:
+                    logger.error(f"Cluster {cluster_id} not found")
+                    try:
+                        ws.close()
+                    except Exception:
+                        pass
+                    return
+                
+                # Find VM on nodes
+                proxmox = get_proxmox_admin_for_cluster(cluster_id)
+                vm_node = None
+                vm_type = None
+                
                 try:
-                    ws.close()
-                except Exception:
-                    pass
-                return
+                    nodes = proxmox.nodes.get()
+                    for node_info in nodes:
+                        node = node_info['node']
+                        
+                        # Check QEMU VMs
+                        try:
+                            vms = proxmox.nodes(node).qemu.get()
+                            for vm in vms:
+                                if vm['vmid'] == vmid:
+                                    vm_node = node
+                                    vm_type = 'qemu'
+                                    break
+                        except Exception:
+                            pass
+                        
+                        if vm_node:
+                            break
+                except Exception as e:
+                    logger.error(f"Failed to find VM {vmid}: {e}")
+                    try:
+                        ws.close()
+                    except Exception:
+                        pass
+                    return
+                
+                if not vm_node:
+                    logger.error(f"VM {vmid} not found on any node")
+                    try:
+                        ws.close()
+                    except Exception:
+                        pass
+                    return
+                
+                # Build connection data
+                conn_data = {
+                    'cluster_id': cluster_id,
+                    'node': vm_node,
+                    'vm_type': vm_type,
+                    'host': cluster_config['host'],
+                    'proxmox_port': cluster_config.get('port', 8006),
+                    'username': cluster_config['user'],
+                    'password': cluster_config['password']
+                }
+                
+                # Cache it for future use
+                _vnc_connection_cache[vmid] = conn_data
+                logger.info(f"Cached fresh connection data for VM {vmid}")
             
             cluster_id = conn_data['cluster_id']
             node = conn_data['node']

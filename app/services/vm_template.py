@@ -125,6 +125,12 @@ def export_template_to_qcow2(
         
         logger.info(f"Found disk on {disk_slot}, storage {storage}, volume {volume}")
         
+        # Extract ALL disk options (cache, discard, iothread, ssd, backup, etc.)
+        disk_options_str = ''
+        if disk_info.get('options'):
+            disk_options_str = ','.join([f"{k}={v}" for k, v in disk_info['options'].items()])
+            logger.info(f"Template disk options: {disk_options_str}")
+        
         # Extract disk controller type from slot name (scsi0 -> scsi, virtio0 -> virtio, etc.)
         disk_controller_type = 'scsi'  # Default
         if disk_slot:
@@ -143,6 +149,27 @@ def export_template_to_qcow2(
         cpu = config.get('cpu')  # CPU type (e.g., host, kvm64)
         scsihw = config.get('scsihw')  # SCSI hardware controller (e.g., virtio-scsi-pci, lsi)
         
+        # Extract network interface model and ALL options from net0
+        net_config = config.get('net0', '')
+        net_model = 'virtio'  # Default
+        net_options_str = ''  # Store complete options (firewall, rate, etc.)
+        if net_config:
+            # Parse format: 'virtio=XX:XX:XX:XX:XX:XX,bridge=vmbr0,firewall=1,rate=100'
+            parts = net_config.split(',')
+            # First part is model=MAC
+            if parts and '=' in parts[0]:
+                net_model = parts[0].split('=')[0]  # Extract model (virtio, e1000, rtl8139, etc.)
+            # Remaining parts are options (skip bridge and MAC)
+            net_opts = []
+            for part in parts[1:]:
+                part = part.strip()
+                # Preserve all options except MAC address
+                if '=' in part and not part.startswith(net_model):
+                    net_opts.append(part)
+            if net_opts:
+                net_options_str = ',' + ','.join(net_opts)
+        logger.info(f"Template network: model={net_model}, options={net_options_str}")
+        
         # Get resource specs from template
         memory = config.get('memory', 2048)  # Memory in MB
         cores = config.get('cores', 2)  # CPU cores
@@ -151,6 +178,80 @@ def export_template_to_qcow2(
         # Store EFI and TPM config to pass to cloned VMs
         efi_disk = efi_config  # Will be used to create EFI disk on clones
         tpm_state = tpm_config  # Will be used to create TPM on clones
+        
+        # CRITICAL: Get boot order configuration (fixes Windows boot issues)
+        boot_order = config.get('boot')  # Boot order (e.g., 'order=scsi0;ide2;net0')
+        if not boot_order and disk_slot:
+            # Default boot order if not specified: boot from main disk only
+            boot_order = f'order={disk_slot}'
+        logger.info(f"Template boot order: {boot_order}")
+        
+        # Extract ALL other VM settings that should be preserved
+        # These settings affect VM behavior and should match the template exactly
+        other_settings = {
+            'agent': config.get('agent'),  # QEMU guest agent config
+            'args': config.get('args'),  # Custom QEMU arguments
+            'audio0': config.get('audio0'),  # Audio device
+            'balloon': config.get('balloon'),  # Balloon device (memory)
+            'bios': bios,  # Already extracted but include in dict
+            'boot': boot_order,  # Already extracted but include in dict
+            'cdrom': config.get('cdrom'),  # CD-ROM image
+            'cicustom': config.get('cicustom'),  # Cloud-init custom files
+            'cipassword': config.get('cipassword'),  # Cloud-init password
+            'citype': config.get('citype'),  # Cloud-init type
+            'ciuser': config.get('ciuser'),  # Cloud-init user
+            'cores': cores,  # Already extracted
+            'cpu': cpu,  # Already extracted
+            'cpulimit': config.get('cpulimit'),  # CPU limit
+            'cpuunits': config.get('cpuunits'),  # CPU weight
+            'description': config.get('description'),  # VM description
+            'hotplug': config.get('hotplug'),  # Hotplug features
+            'hugepages': config.get('hugepages'),  # Hugepages
+            'ide2': config.get('ide2'),  # IDE2 (often cloud-init drive)
+            'ipconfig0': config.get('ipconfig0'),  # Cloud-init IP config
+            'keyboard': config.get('keyboard'),  # Keyboard layout
+            'kvm': config.get('kvm'),  # KVM virtualization
+            'localtime': config.get('localtime'),  # Use local time
+            'lock': config.get('lock'),  # Lock status
+            'machine': machine,  # Already extracted
+            'memory': memory,  # Already extracted
+            'migrate_downtime': config.get('migrate_downtime'),  # Migration downtime
+            'migrate_speed': config.get('migrate_speed'),  # Migration speed
+            'nameserver': config.get('nameserver'),  # DNS nameserver
+            'numa': config.get('numa'),  # NUMA enabled
+            'onboot': config.get('onboot'),  # Start at boot
+            'ostype': ostype,  # Already extracted
+            'protection': config.get('protection'),  # Deletion protection
+            'reboot': config.get('reboot'),  # Reboot on shutdown
+            'rng0': config.get('rng0'),  # Random number generator
+            'scsihw': scsihw,  # Already extracted
+            'searchdomain': config.get('searchdomain'),  # DNS search domain
+            'serial0': config.get('serial0'),  # Serial port 0
+            'serial1': config.get('serial1'),  # Serial port 1
+            'serial2': config.get('serial2'),  # Serial port 2
+            'serial3': config.get('serial3'),  # Serial port 3
+            'shares': config.get('shares'),  # CPU shares
+            'smbios1': config.get('smbios1'),  # SMBIOS type 1 values
+            'sockets': sockets,  # Already extracted
+            'sshkeys': config.get('sshkeys'),  # SSH public keys (cloud-init)
+            'startup': config.get('startup'),  # Startup/shutdown order
+            'tablet': config.get('tablet'),  # Tablet pointer device
+            'tags': config.get('tags'),  # VM tags
+            'usb0': config.get('usb0'),  # USB device 0
+            'usb1': config.get('usb1'),  # USB device 1
+            'usb2': config.get('usb2'),  # USB device 2
+            'usb3': config.get('usb3'),  # USB device 3
+            'vcpus': config.get('vcpus'),  # vCPU count
+            'vga': config.get('vga'),  # VGA adapter
+            'vmgenid': config.get('vmgenid'),  # VM generation ID
+            'watchdog': config.get('watchdog'),  # Watchdog device
+        }
+        
+        # Remove None values to avoid cluttering logs
+        other_settings = {k: v for k, v in other_settings.items() if v is not None}
+        
+        logger.info(f"Template additional settings extracted: {len(other_settings)} options")
+        logger.debug(f"Additional settings: {other_settings}")
         
         logger.info(f"Template hardware config extracted:")
         logger.info(f"  ostype: {ostype}, bios: {bios}, machine: {machine}")
@@ -180,14 +281,14 @@ def export_template_to_qcow2(
         )
         
         if success:
-            logger.info(f"Successfully exported template to {output_path} (controller: {disk_controller_type}, ostype: {ostype}, bios: {bios}, scsihw: {scsihw}, memory: {memory}MB, cores: {cores}, EFI: {bool(efi_disk)}, TPM: {bool(tpm_state)})")
-            return True, "", disk_controller_type, ostype, bios, machine, cpu, scsihw, memory, cores, sockets, efi_disk, tpm_state
+            logger.info(f"Successfully exported template to {output_path} (controller: {disk_controller_type}, ostype: {ostype}, bios: {bios}, scsihw: {scsihw}, net: {net_model}, memory: {memory}MB, cores: {cores}, EFI: {bool(efi_disk)}, TPM: {bool(tpm_state)}, boot: {boot_order}, +{len(other_settings)} settings)")
+            return True, "", disk_controller_type, ostype, bios, machine, cpu, scsihw, memory, cores, sockets, efi_disk, tpm_state, boot_order, net_model, disk_options_str, net_options_str, other_settings
         else:
-            return False, error, None, None, None, None, None, None, None, None, None, None, None
+            return False, error, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None
         
     except Exception as e:
         logger.exception(f"Error exporting template: {e}")
-        return False, str(e), None, None, None, None, None, None, None, None, None, None, None, None, None
+        return False, str(e), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None
 
 
 # ---------------------------------------------------------------------------
@@ -211,6 +312,11 @@ def create_overlay_vm(
     scsihw: str = None,
     efi_disk: str = None,
     tpm_state: str = None,
+    boot_order: str = None,
+    net_model: str = 'virtio',
+    disk_options: str = '',
+    net_options: str = '',
+    other_settings: dict = None,
 ) -> Tuple[bool, str, Optional[str]]:
     """
     Create a VM using a QCOW2 overlay (copy-on-write).
@@ -235,12 +341,18 @@ def create_overlay_vm(
         scsihw: SCSI hardware controller - copied from template
         efi_disk: EFI disk config from template (for UEFI Windows VMs)
         tpm_state: TPM state config from template (for Windows 11)
+        boot_order: Boot order configuration from template (e.g., 'order=scsi0;ide2;net0')
+        net_model: Network interface model (virtio, e1000, rtl8139, etc.) - default: virtio
+        disk_options: Disk options string (cache, discard, iothread, ssd, backup, etc.)
+        net_options: Network options string (firewall, rate, etc.)
+        other_settings: Dict of all other VM settings to apply
         
     Returns:
         Tuple of (success, error_message, mac_address)
     """
     storage = storage or PROXMOX_STORAGE_NAME
     images_path = DEFAULT_VM_IMAGES_PATH
+    other_settings = other_settings or {}
     
     try:
         # Step 1: Create VM shell with same hardware config as template
@@ -256,6 +368,9 @@ def create_overlay_vm(
             cpu=cpu,
             scsihw=scsihw,
             storage=storage,
+            net_model=net_model,
+            net_options=net_options,
+            other_settings=other_settings,
         )
         
         if not success:
@@ -301,21 +416,40 @@ def create_overlay_vm(
             destroy_vm(ssh_executor, vmid, purge=True)
             return False, f"Failed to create overlay disk: {error}", None
         
-        # Step 3: Attach disk to VM using correct controller type
+        # Step 3: Attach disk to VM using correct controller type with all options
         disk_spec = f"{vmid}/vm-{vmid}-disk-0.qcow2"
         success, error = attach_disk_to_vm(
             ssh_executor=ssh_executor,
             vmid=vmid,
             disk_path=disk_spec,
             storage=storage,
-            set_boot=True,
+            set_boot=False,  # Don't set basic boot here, we'll set proper boot order below
             disk_slot=f"{disk_controller_type}0",  # Use detected controller type
+            disk_options=disk_options,  # Apply all disk options from template
         )
         
         if not success:
             # Cleanup on failure
             destroy_vm(ssh_executor, vmid, purge=True)
             return False, f"Failed to attach disk: {error}", None
+        
+        # Step 3.5: Set proper boot order (CRITICAL for Windows VMs)
+        if boot_order:
+            logger.info(f"Applying boot order to VM {vmid}: {boot_order}")
+            # Replace disk slot reference in boot order with our new disk
+            # e.g., 'order=scsi0;ide2;net0' stays the same since we use scsi0
+            boot_cmd = f"qm set {vmid} --boot {boot_order}"
+            exit_code, stdout, stderr = ssh_executor.execute(boot_cmd, timeout=30, check=False)
+            if exit_code != 0:
+                logger.error(f"Failed to set boot order on VM {vmid}: {stderr}")
+                destroy_vm(ssh_executor, vmid, purge=True)
+                return False, f"Failed to set boot order: {stderr}", None
+            logger.info(f"Boot order applied to VM {vmid}: {boot_order}")
+        else:
+            # Fallback to simple boot configuration
+            logger.info(f"No boot order from template, using simple boot for VM {vmid}")
+            boot_cmd = f"qm set {vmid} --boot order={disk_controller_type}0"
+            ssh_executor.execute(boot_cmd, timeout=30, check=False)
         
         # Get MAC address
         mac = get_vm_mac_address_ssh(ssh_executor, vmid)

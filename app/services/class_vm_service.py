@@ -467,7 +467,7 @@ def recreate_student_vms_from_template(
         base_qcow2_path = f"{DEFAULT_TEMPLATE_STORAGE_PATH}/{class_prefix}-base.qcow2"
         
         logger.info(f"Exporting template {template_vmid} to {base_qcow2_path}")
-        success, error, disk_controller_type, ostype, bios, machine, cpu, scsihw, memory, cores, sockets, efi_disk, tpm_state = export_template_to_qcow2(
+        success, error, disk_controller_type, ostype, bios, machine, cpu, scsihw, memory, cores, sockets, efi_disk, tpm_state, boot_order, net_model, disk_options_str, net_options_str, other_settings = export_template_to_qcow2(
             ssh_executor=ssh_executor,
             template_vmid=template_vmid,
             node=template_node,
@@ -477,9 +477,10 @@ def recreate_student_vms_from_template(
         if not success:
             return False, f"Failed to export template: {error}", []
         
-        logger.info(f"Template hardware: controller={disk_controller_type}, ostype={ostype}, bios={bios}, machine={machine}, cpu={cpu}, scsihw={scsihw}")
+        logger.info(f"Template hardware: controller={disk_controller_type}, ostype={ostype}, bios={bios}, machine={machine}, cpu={cpu}, scsihw={scsihw}, net={net_model}")
+        logger.info(f"Template disk opts: {disk_options_str}, net opts: {net_options_str}, +{len(other_settings)} settings")
         logger.info(f"Template resources: memory={memory}MB, cores={cores}, sockets={sockets}")
-        logger.info(f"Template boot: EFI={bool(efi_disk)}, TPM={bool(tpm_state)}")
+        logger.info(f"Template boot: EFI={bool(efi_disk)}, TPM={bool(tpm_state)}, boot_order={boot_order}")
         
         # Create student VMs as overlays using prefix-based VMID allocation
         for i in range(count):
@@ -548,8 +549,8 @@ def recreate_student_vms_from_template(
                     mac_address=student_mac,
                     node=template_node,
                     assigned_user_id=None,
-                    target_hostname=hostname,  # Store intended hostname for auto-rename
-                    hostname_configured=False,  # Mark as not yet renamed
+                    target_hostname=None,  # Hostname auto-rename DISABLED (requires guest agent)
+                    hostname_configured=True,  # Skip auto-rename (prevents boot interference)
                     status='available',
                     is_template_vm=False,
                     is_teacher_vm=False,
@@ -734,6 +735,11 @@ def create_class_vms(
                 sockets = 1
                 efi_disk = None
                 tpm_state = None
+                boot_order = None  # No boot order for existing base
+                net_model = 'virtio'  # Default network model
+                disk_options_str = ''  # No disk options
+                net_options_str = ''  # No network options
+                other_settings = {}  # No other settings
                 
                 # Try to get metadata from teacher VM if it exists
                 teacher_vmid = get_vmid_for_class_vm(class_id, 0)
@@ -769,7 +775,7 @@ def create_class_vms(
                         progress_percent=5
                     )
                 
-                success, error, disk_controller_type, ostype, bios, machine, cpu, scsihw, memory, cores, sockets, efi_disk, tpm_state = export_template_to_qcow2(
+                success, error, disk_controller_type, ostype, bios, machine, cpu, scsihw, memory, cores, sockets, efi_disk, tpm_state, boot_order, net_model, disk_options_str, net_options_str, other_settings = export_template_to_qcow2(
                     ssh_executor=ssh_executor,
                     template_vmid=template_vmid,
                     node=template_node,
@@ -782,8 +788,8 @@ def create_class_vms(
                     logger.error(error_msg)
                     return result
                 
-                logger.info(f"Template export completed successfully: {base_qcow2_path} (controller: {disk_controller_type}, ostype: {ostype}, bios: {bios}, scsihw: {scsihw}, memory: {memory}MB, cores: {cores}, EFI: {bool(efi_disk)}, TPM: {bool(tpm_state)})")
-                result.details.append(f"Class base created: {base_qcow2_path} ({disk_controller_type} disk, {bios} firmware, {scsihw} controller, {memory}MB RAM, {cores} cores, {'UEFI' if efi_disk else 'BIOS'})")
+                logger.info(f"Template export completed successfully: {base_qcow2_path} (controller: {disk_controller_type}, ostype: {ostype}, bios: {bios}, scsihw: {scsihw}, net: {net_model}, disk_opts: {disk_options_str}, net_opts: {net_options_str}, +{len(other_settings)} settings, memory: {memory}MB, cores: {cores}, EFI: {bool(efi_disk)}, TPM: {bool(tpm_state)}, boot_order: {boot_order})")
+                result.details.append(f"Class base created: {base_qcow2_path} ({disk_controller_type} disk, {bios} firmware, {scsihw} controller, {net_model} network, {memory}MB RAM, {cores} cores, {'UEFI' if efi_disk else 'BIOS'}, boot: {boot_order})")
             
             # Update progress: template export complete (or skipped)
             if class_.clone_task_id:
@@ -862,6 +868,11 @@ def create_class_vms(
                     scsihw=scsihw,  # Preserve template's SCSI controller
                     efi_disk=efi_disk,  # Preserve template's EFI disk (critical for Windows UEFI boot)
                     tpm_state=tpm_state,  # Preserve template's TPM (required for Windows 11)
+                    boot_order=boot_order,  # Preserve template's boot order (CRITICAL for Windows boot)
+                    net_model=net_model,  # Preserve template's network interface model
+                    disk_options=disk_options_str,  # Preserve ALL disk options
+                    net_options=net_options_str,  # Preserve ALL network options
+                    other_settings=other_settings,  # Preserve ALL other VM settings
                 )
                 
                 if not success:
@@ -918,6 +929,11 @@ def create_class_vms(
                     scsihw=scsihw,
                     efi_disk=efi_disk,
                     tpm_state=tpm_state,
+                    boot_order=boot_order,  # Preserve template's boot order
+                    net_model=net_model,  # Preserve template's network interface model
+                    disk_options=disk_options_str,  # Preserve ALL disk options
+                    net_options=net_options_str,  # Preserve ALL network options
+                    other_settings=other_settings,  # Preserve ALL other VM settings
                 )
                 
                 if not success:
@@ -1748,6 +1764,8 @@ def recreate_teacher_vm_from_base(class_id: int, class_name: str) -> tuple[bool,
             scsihw=scsihw,
             efi_disk=efi_disk,
             tpm_state=tpm_state,
+            boot_order=None,  # No boot order available in this context
+            net_model='virtio',  # Default network model
         )
         
         if not success:

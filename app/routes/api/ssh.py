@@ -29,6 +29,24 @@ api_ssh_bp = Blueprint('api_ssh', __name__)
 _sock = None
 
 
+@api_ssh_bp.route("/ssh/test")
+def ssh_test():
+    """Test endpoint to check if WebSocket support is available."""
+    from flask import jsonify
+    return jsonify({
+        "websocket_available": WEBSOCKET_AVAILABLE,
+        "sock_initialized": _sock is not None,
+        "message": "WebSocket SSH terminal is " + ("ENABLED" if WEBSOCKET_AVAILABLE and _sock else "DISABLED")
+    })
+
+
+@api_ssh_bp.route("/ssh/diagnostics")
+@login_required
+def ssh_diagnostics():
+    """Serve SSH diagnostics page to help troubleshoot connection issues."""
+    return render_template("ssh_diagnostic.html")
+
+
 def init_websocket(app, sock):
     """Initialize WebSocket routes. Called from app factory."""
     global _sock

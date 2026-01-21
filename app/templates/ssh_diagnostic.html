@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SSH Terminal Diagnostics</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 20px;
+            max-width: 1000px;
+            margin: 0 auto;
+        }
+        h1 { color: #4ec9b0; }
+        h2 { color: #569cd6; margin-top: 30px; }
+        .test-section {
+            background: #252526;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 4px;
+            border-left: 4px solid #569cd6;
+        }
+        .test-result {
+            margin: 10px 0;
+            padding: 10px;
+            border-radius: 4px;
+        }
+        .success {
+            background: #1a7f37;
+            color: white;
+        }
+        .error {
+            background: #a1260d;
+            color: white;
+        }
+        .warning {
+            background: #8a6d3b;
+            color: white;
+        }
+        .info {
+            background: #2d3748;
+            color: #d4d4d4;
+        }
+        button {
+            background: #0e639c;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background: #1177bb;
+        }
+        pre {
+            background: #1e1e1e;
+            padding: 10px;
+            border-radius: 4px;
+            overflow-x: auto;
+        }
+        code {
+            font-family: 'Consolas', 'Courier New', monospace;
+        }
+    </style>
+</head>
+<body>
+    <h1>🔧 SSH Terminal Diagnostics</h1>
+    <p>This page helps diagnose connection issues with the SSH terminal.</p>
+
+    <div class="test-section">
+        <h2>1. Connection Information</h2>
+        <div id="connection-info" class="test-result info">
+            <strong>Current URL:</strong> <span id="current-url"></span><br>
+            <strong>Protocol:</strong> <span id="protocol"></span><br>
+            <strong>Host:</strong> <span id="host"></span><br>
+            <strong>Port:</strong> <span id="port"></span><br>
+            <strong>WebSocket URL would be:</strong> <span id="ws-url"></span>
+        </div>
+    </div>
+
+    <div class="test-section">
+        <h2>2. Server WebSocket Support</h2>
+        <button onclick="testWebSocketSupport()">Test WebSocket Support</button>
+        <div id="ws-support-result"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>3. WebSocket Connection Test</h2>
+        <p>This will attempt to create a WebSocket connection (will fail without VM credentials, but tests connectivity).</p>
+        <label>Test VMID: <input type="number" id="test-vmid" value="100" style="background: #3c3c3c; color: #d4d4d4; border: 1px solid #555; padding: 5px;"></label>
+        <button onclick="testWebSocketConnection()">Test WebSocket Connection</button>
+        <div id="ws-connection-result"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>4. Network Connectivity</h2>
+        <button onclick="testNetworkConnectivity()">Test Network Paths</button>
+        <div id="network-result"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>5. Browser Compatibility</h2>
+        <div id="browser-info" class="test-result info"></div>
+    </div>
+
+    <script>
+        // Display connection info
+        document.getElementById('current-url').textContent = window.location.href;
+        document.getElementById('protocol').textContent = window.location.protocol;
+        document.getElementById('host').textContent = window.location.host;
+        document.getElementById('port').textContent = window.location.port || (window.location.protocol === 'https:' ? '443' : '80');
+        
+        const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${wsProtocol}//${window.location.host}/ws/ssh/100?ip=127.0.0.1`;
+        document.getElementById('ws-url').textContent = wsUrl;
+
+        // Test WebSocket support on server
+        async function testWebSocketSupport() {
+            const resultDiv = document.getElementById('ws-support-result');
+            resultDiv.innerHTML = '<div class="test-result info">Testing...</div>';
+            
+            try {
+                const response = await fetch('/ssh/test');
+                const data = await response.json();
+                
+                let html = `<div class="test-result ${data.websocket_available && data.sock_initialized ? 'success' : 'error'}">`;
+                html += `<strong>Result:</strong> ${data.message}<br>`;
+                html += `<strong>WebSocket Available:</strong> ${data.websocket_available}<br>`;
+                html += `<strong>Sock Initialized:</strong> ${data.sock_initialized}<br>`;
+                
+                if (!data.websocket_available) {
+                    html += `<br><strong>Solution:</strong> Install flask-sock on the server:<br>`;
+                    html += `<code>pip install flask-sock websocket-client</code><br>`;
+                    html += `Then restart the Flask application.`;
+                }
+                html += '</div>';
+                
+                resultDiv.innerHTML = html;
+            } catch (e) {
+                resultDiv.innerHTML = `<div class="test-result error">
+                    <strong>Error:</strong> ${e.message}<br>
+                    Test endpoint may not exist (older version) or server is unreachable.
+                </div>`;
+            }
+        }
+
+        // Test WebSocket connection
+        async function testWebSocketConnection() {
+            const resultDiv = document.getElementById('ws-connection-result');
+            const vmid = document.getElementById('test-vmid').value;
+            const wsUrl = `${wsProtocol}//${window.location.host}/ws/ssh/${vmid}?ip=127.0.0.1`;
+            
+            resultDiv.innerHTML = '<div class="test-result info">Attempting WebSocket connection...</div>';
+            
+            try {
+                const ws = new WebSocket(wsUrl);
+                
+                const timeout = setTimeout(() => {
+                    if (ws.readyState !== WebSocket.OPEN) {
+                        ws.close();
+                        resultDiv.innerHTML = `<div class="test-result error">
+                            <strong>Connection Timeout</strong><br>
+                            WebSocket did not open within 5 seconds.<br>
+                            This suggests:<br>
+                            • Firewall blocking WebSocket connections<br>
+                            • Reverse proxy not configured for WebSocket upgrade<br>
+                            • Server not responding on WebSocket endpoint
+                        </div>`;
+                    }
+                }, 5000);
+                
+                ws.onopen = () => {
+                    clearTimeout(timeout);
+                    ws.close();
+                    resultDiv.innerHTML = `<div class="test-result success">
+                        <strong>✓ WebSocket Connection Successful!</strong><br>
+                        Connection opened successfully. SSH terminal should work.
+                    </div>`;
+                };
+                
+                ws.onerror = (error) => {
+                    clearTimeout(timeout);
+                    console.error('WebSocket error:', error);
+                    resultDiv.innerHTML = `<div class="test-result error">
+                        <strong>✗ WebSocket Connection Failed</strong><br>
+                        <strong>Attempted URL:</strong> ${wsUrl}<br><br>
+                        <strong>Possible causes:</strong><br>
+                        1. flask-sock not installed (run: pip install flask-sock websocket-client)<br>
+                        2. Firewall blocking WebSocket (port ${window.location.port || '80/443'})<br>
+                        3. Reverse proxy needs WebSocket upgrade headers<br>
+                        4. CORS or network routing issue
+                    </div>`;
+                };
+                
+                ws.onclose = (event) => {
+                    clearTimeout(timeout);
+                    if (event.code !== 1000 && resultDiv.innerHTML.includes('info')) {
+                        resultDiv.innerHTML = `<div class="test-result warning">
+                            <strong>Connection Closed</strong><br>
+                            Code: ${event.code}<br>
+                            Reason: ${event.reason || 'None provided'}<br>
+                            Clean: ${event.wasClean}<br><br>
+                            This might be expected (no credentials provided), but confirms WebSocket connectivity.
+                        </div>`;
+                    }
+                };
+            } catch (e) {
+                resultDiv.innerHTML = `<div class="test-result error">
+                    <strong>Exception:</strong> ${e.message}<br>
+                    Failed to create WebSocket object.
+                </div>`;
+            }
+        }
+
+        // Test network connectivity
+        async function testNetworkConnectivity() {
+            const resultDiv = document.getElementById('network-result');
+            resultDiv.innerHTML = '<div class="test-result info">Testing network paths...</div>';
+            
+            const tests = [
+                { name: 'Root Path', url: '/' },
+                { name: 'API Health', url: '/health' },
+                { name: 'SSH Test Endpoint', url: '/ssh/test' },
+            ];
+            
+            let html = '';
+            for (const test of tests) {
+                try {
+                    const start = Date.now();
+                    const response = await fetch(test.url);
+                    const duration = Date.now() - start;
+                    const status = response.ok ? 'success' : 'warning';
+                    html += `<div class="test-result ${status}">
+                        <strong>${test.name}:</strong> ${response.status} ${response.statusText} (${duration}ms)
+                    </div>`;
+                } catch (e) {
+                    html += `<div class="test-result error">
+                        <strong>${test.name}:</strong> Failed - ${e.message}
+                    </div>`;
+                }
+            }
+            
+            resultDiv.innerHTML = html;
+        }
+
+        // Display browser info
+        const browserInfo = document.getElementById('browser-info');
+        browserInfo.innerHTML = `
+            <strong>Browser:</strong> ${navigator.userAgent}<br>
+            <strong>WebSocket Support:</strong> ${typeof WebSocket !== 'undefined' ? '✓ Yes' : '✗ No'}<br>
+            <strong>Online:</strong> ${navigator.onLine ? '✓ Yes' : '✗ No'}
+        `;
+
+        // Auto-run basic tests
+        window.addEventListener('load', () => {
+            testWebSocketSupport();
+            testNetworkConnectivity();
+        });
+    </script>
+</body>
+</html>
