@@ -7,11 +7,19 @@ This approach is simpler and more reliable than parsing/applying 65+ settings in
 
 import logging
 import re
+import random
 from typing import Tuple, Optional
 from app.services.ssh_executor import SSHExecutor
-from app.services.vm_utils import generate_mac_address
 
 logger = logging.getLogger(__name__)
+
+
+def generate_mac_address() -> str:
+    """Generate a random MAC address in Proxmox format."""
+    # Proxmox uses locally administered MAC addresses (02:xx:xx:xx:xx:xx)
+    mac = [0x02, random.randint(0x00, 0xff), random.randint(0x00, 0xff),
+           random.randint(0x00, 0xff), random.randint(0x00, 0xff), random.randint(0x00, 0xff)]
+    return ':'.join([f'{b:02X}' for b in mac])
 
 
 def clone_vm_config(
@@ -149,11 +157,10 @@ def clone_vm_config(
         # Step 3: Write new config
         new_config = '\n'.join(new_lines)
         
-        # Escape special characters for shell
-        # Use heredoc to avoid quoting issues
-        write_cmd = f"""cat > {dest_conf} << 'EOFCONFIG'
-{new_config}
-EOFCONFIG"""
+        # Write config using Python string escaping for SSH
+        # Escape single quotes and backslashes for shell
+        escaped_config = new_config.replace('\\', '\\\\').replace("'", "'\\''")
+        write_cmd = f"echo '{escaped_config}' > {dest_conf}"
         
         exit_code, stdout, stderr = ssh_executor.execute(
             write_cmd,
@@ -165,9 +172,21 @@ EOFCONFIG"""
             return False, f"Failed to write new config: {stderr}", None
         
         logger.info(f"Created VM config: {dest_conf}")
+        
+        # Verify config was written
+        exit_code, verify_content, stderr = ssh_executor.execute(
+            f"cat {dest_conf}",
+            timeout=10,
+            check=False
+        )
+        
+        if exit_code != 0:
+            return False, f"Config file was not created: {stderr}", None
+        
+        logger.info(f"Verified VM config exists: {dest_conf} ({len(verify_content)} bytes)")
         logger.info(f"VM {dest_vmid} created with all settings from {source_vmid}")
         
-        # Step 4: Tell Proxmox to reload the config
+        # Step 4: Tell Proxmox to reload configs (force cluster sync)
         # This forces Proxmox to recognize the new VM
         exit_code, stdout, stderr = ssh_executor.execute(
             f"qm showcmd {dest_vmid}",
