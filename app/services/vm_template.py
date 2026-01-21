@@ -144,6 +144,7 @@ def export_template_to_qcow2(
         
         # Get hardware specs from template config (important for Windows VMs)
         ostype = config.get('ostype', 'l26')  # Default to Linux 2.6+ if not specified
+        logger.info(f"Template ostype: {ostype} (from config: {config.get('ostype', 'NOT SET')})")
         bios = config.get('bios', 'seabios')  # BIOS type (seabios or ovmf/UEFI)
         machine = config.get('machine')  # Machine type (e.g., pc-q35-8.1)
         cpu = config.get('cpu')  # CPU type (e.g., host, kvm64)

@@ -366,6 +366,17 @@ def deploy_class_vms(
         if not template_node:
             return False, "No Proxmox nodes available", {}
         
+        # For template-based classes: use template's memory/cores (preserve hardware specs)
+        # For template-less classes: use class-level settings
+        if template_vmid:
+            # Template exists - will use template's hardware specs (extracted in create_class_vms)
+            memory_to_use = None  # Signal to use template values
+            cores_to_use = None   # Signal to use template values
+        else:
+            # No template - use class-level settings
+            memory_to_use = class_obj.memory_mb or 2048
+            cores_to_use = class_obj.cpu_cores or 2
+        
         # Call create_class_vms with proper parameters
         result = create_class_vms(
             class_id=class_id,
@@ -374,8 +385,8 @@ def deploy_class_vms(
             pool_size=num_students,
             class_name=class_obj.name,
             teacher_id=class_obj.teacher_id,
-            memory=class_obj.memory_mb or 2048,
-            cores=class_obj.cpu_cores or 2,
+            memory=memory_to_use,
+            cores=cores_to_use,
             disk_size_gb=class_obj.disk_size_gb or 32,
             auto_start=False,
         )
@@ -653,6 +664,12 @@ def create_class_vms(
     logger.info(f"Creating VMs for class {class_id} ({class_name})")
     logger.info(f"Template VMID: {template_vmid}, Pool size: {pool_size}")
     
+    # If memory/cores are None (template-based class), they will be extracted from template later
+    if memory is not None and cores is not None:
+        logger.info(f"Using class-specified hardware: {memory}MB RAM, {cores} cores")
+    else:
+        logger.info(f"Will use template hardware specs (to be extracted)")
+    
     ssh_executor = None
     optimal_node = None
     proxmox = None
@@ -775,7 +792,7 @@ def create_class_vms(
                         progress_percent=5
                     )
                 
-                success, error, disk_controller_type, ostype, bios, machine, cpu, scsihw, memory, cores, sockets, efi_disk, tpm_state, boot_order, net_model, disk_options_str, net_options_str, other_settings = export_template_to_qcow2(
+                success, error, disk_controller_type, ostype, bios, machine, cpu, scsihw, template_memory, template_cores, sockets, efi_disk, tpm_state, boot_order, net_model, disk_options_str, net_options_str, other_settings = export_template_to_qcow2(
                     ssh_executor=ssh_executor,
                     template_vmid=template_vmid,
                     node=template_node,
@@ -787,6 +804,20 @@ def create_class_vms(
                     result.error = error_msg
                     logger.error(error_msg)
                     return result
+                
+                # If memory/cores were not specified (None), use template values
+                # Otherwise use the values passed to this function (class override)
+                if memory is None:
+                    memory = template_memory
+                    logger.info(f"Using template memory: {memory}MB")
+                else:
+                    logger.info(f"Overriding template memory ({template_memory}MB) with class setting: {memory}MB")
+                    
+                if cores is None:
+                    cores = template_cores
+                    logger.info(f"Using template cores: {cores}")
+                else:
+                    logger.info(f"Overriding template cores ({template_cores}) with class setting: {cores}")
                 
                 logger.info(f"Template export completed successfully: {base_qcow2_path} (controller: {disk_controller_type}, ostype: {ostype}, bios: {bios}, scsihw: {scsihw}, net: {net_model}, disk_opts: {disk_options_str}, net_opts: {net_options_str}, +{len(other_settings)} settings, memory: {memory}MB, cores: {cores}, EFI: {bool(efi_disk)}, TPM: {bool(tpm_state)}, boot_order: {boot_order})")
                 result.details.append(f"Class base created: {base_qcow2_path} ({disk_controller_type} disk, {bios} firmware, {scsihw} controller, {net_model} network, {memory}MB RAM, {cores} cores, {'UEFI' if efi_disk else 'BIOS'}, boot: {boot_order})")

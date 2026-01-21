@@ -40,6 +40,42 @@ VM_STOP_TIMEOUT = int(os.getenv("VM_STOP_TIMEOUT", "60"))
 VM_STOP_POLL_INTERVAL = int(os.getenv("VM_STOP_POLL_INTERVAL", "3"))
 
 
+def get_vm_node(ssh_executor: SSHExecutor, vmid: int) -> Optional[str]:
+    """Find which node a VM is currently on.
+    
+    Uses pvesh to query cluster-wide VM status.
+    
+    Args:
+        ssh_executor: SSH executor (can be connected to any cluster node)
+        vmid: VM ID to locate
+        
+    Returns:
+        Node name where VM is located, or None if not found
+    """
+    try:
+        # Use pvesh to query cluster resources (works from any node)
+        cmd = f"pvesh get /cluster/resources --type vm --output-format json | grep -A5 '\"vmid\":{vmid}' | grep '\"node\":' | cut -d'\"' -f4"
+        exit_code, stdout, stderr = ssh_executor.execute(cmd, timeout=10, check=False)
+        
+        if exit_code == 0 and stdout.strip():
+            node = stdout.strip()
+            logger.debug(f"VM {vmid} is on node: {node}")
+            return node
+        
+        # Fallback: try qm status (only works if VM is on current node)
+        cmd = f"qm status {vmid} 2>/dev/null | grep -q 'status:' && hostname"
+        exit_code, stdout, stderr = ssh_executor.execute(cmd, timeout=5, check=False)
+        if exit_code == 0 and stdout.strip():
+            node = stdout.strip()
+            logger.debug(f"VM {vmid} found on current node: {node}")
+            return node
+            
+    except Exception as e:
+        logger.warning(f"Failed to locate VM {vmid}: {e}")
+    
+    return None
+
+
 # ---------------------------------------------------------------------------
 # VM Shell Creation (empty VM without disk)
 # ---------------------------------------------------------------------------
@@ -121,10 +157,19 @@ def create_vm_shell(
         
         logger.info(f"Created VM shell: {vmid} ({safe_name})")
         
+        # Verify VM was created and get its node (VMs may auto-migrate after creation)
+        vm_node = get_vm_node(ssh_executor, vmid)
+        if not vm_node:
+            logger.warning(f"Could not verify node for VM {vmid}, will try commands anyway")
+            vm_node = "localhost"  # Fallback
+        else:
+            logger.info(f"VM {vmid} is on node: {vm_node}")
+        
         # For UEFI VMs (ovmf), add EFI disk automatically
+        # Use pvesh instead of qm (works cluster-wide, handles auto-migration)
         if bios and bios.lower() == 'ovmf':
-            logger.info(f"UEFI VM detected, adding EFI disk to VM {vmid}")
-            efi_cmd = f"qm set {vmid} --efidisk0 {storage}:1,efitype=4m,pre-enrolled-keys=1"
+            logger.info(f"UEFI VM detected, adding EFI disk to VM {vmid} on node {vm_node}")
+            efi_cmd = f"pvesh set /nodes/{vm_node}/qemu/{vmid}/config --efidisk0 {storage}:1,efitype=4m,pre-enrolled-keys=1"
             exit_code, stdout, stderr = ssh_executor.execute(efi_cmd, timeout=30, check=False)
             if exit_code != 0:
                 logger.error(f"Failed to add EFI disk to VM {vmid}: {stderr}")
@@ -132,8 +177,8 @@ def create_vm_shell(
             else:
                 logger.info(f"Added EFI disk to VM {vmid}")
         
-        # Enable QEMU guest agent by default (even if guest doesn't have it installed yet)
-        agent_cmd = f"qm set {vmid} --agent enabled=1,fstrim_cloned_disks=1"
+        # Enable QEMU guest agent by default (use pvesh for cluster-wide compatibility)
+        agent_cmd = f"pvesh set /nodes/{vm_node}/qemu/{vmid}/config --agent enabled=1,fstrim_cloned_disks=1"
         exit_code, stdout, stderr = ssh_executor.execute(agent_cmd, timeout=30, check=False)
         if exit_code == 0:
             logger.info(f"Enabled QEMU guest agent for VM {vmid}")
@@ -150,9 +195,11 @@ def create_vm_shell(
             logger.warning(f"Could not verify guest agent for VM {vmid}, output: {stdout}")
         
         # Apply boot order if provided (CRITICAL for Windows boot - must come before other settings)
+        # Use pvesh (works after VM migration)
         if boot_order:
-            logger.info(f"Applying boot order to VM {vmid}: {boot_order}")
-            boot_cmd = f"qm set {vmid} --{boot_order}"
+            logger.info(f"Applying boot order to VM {vmid} on node {vm_node}: {boot_order}")
+            # boot_order comes as 'order=scsi0;ide2;net0' from template
+            boot_cmd = f"pvesh set /nodes/{vm_node}/qemu/{vmid}/config --boot {boot_order}"
             exit_code, stdout, stderr = ssh_executor.execute(boot_cmd, timeout=30, check=False)
             if exit_code == 0:
                 logger.info(f"✓ Boot order applied to VM {vmid}: {boot_order}")
@@ -169,15 +216,34 @@ def create_vm_shell(
             settings_failed = 0
             
             for key, value in other_settings.items():
-                # Skip settings that are already set or shouldn't be copied
-                skip_keys = ['name', 'vmid', 'digest', 'meta', 'template', 'bios', 'boot', 
-                            'cores', 'cpu', 'machine', 'memory', 'ostype', 'scsihw', 'sockets']
+                # Skip internal/metadata fields and null values
+                skip_keys = ['name', 'vmid', 'digest', 'meta', 'template']
+                # Skip hardware settings that were already set explicitly in qm create command
+                # But only skip if we actually SET them (not None)
+                if bios and key == 'bios':
+                    skip_keys.append('bios')
+                if boot_order and key == 'boot':
+                    skip_keys.append('boot')
+                if cores and key == 'cores':
+                    skip_keys.append('cores')
+                if cpu and key == 'cpu':
+                    skip_keys.append('cpu')
+                if machine and key == 'machine':
+                    skip_keys.append('machine')
+                if memory and key == 'memory':
+                    skip_keys.append('memory')
+                if ostype and key == 'ostype':
+                    skip_keys.append('ostype')
+                if scsihw and key == 'scsihw':
+                    skip_keys.append('scsihw')
+                    
                 if key in skip_keys or value is None:
                     continue
+                    continue
                 
-                # Apply setting
+                # Apply setting (use pvesh for cluster-wide compatibility)
                 try:
-                    set_cmd = f"qm set {vmid} --{key} {value}"
+                    set_cmd = f"pvesh set /nodes/{vm_node}/qemu/{vmid}/config --{key} {value}"
                     exit_code, stdout, stderr = ssh_executor.execute(set_cmd, timeout=30, check=False)
                     if exit_code == 0:
                         settings_applied += 1
