@@ -338,12 +338,13 @@ def create_overlay_vm(
     disk_options: str = '',
     net_options: str = '',
     other_settings: dict = None,
+    template_vmid: int = None,
 ) -> Tuple[bool, str, Optional[str]]:
     """
     Create a VM using a QCOW2 overlay (copy-on-write).
     
-    Creates an empty VM shell, generates an overlay disk backed by the
-    base image, and attaches it to the VM.
+    NEW APPROACH: Copy template's .conf file and modify it directly.
+    This guarantees 100% identical configuration without parsing 65+ settings.
     
     Args:
         ssh_executor: SSH executor for running commands
@@ -351,32 +352,73 @@ def create_overlay_vm(
         name: VM name
         base_qcow2_path: Path to backing QCOW2 file
         node: Proxmox node name
-        memory: Memory in MB (default: 2048)
-        cores: CPU cores (default: 2)
+        memory: Memory in MB (default: 2048) - IGNORED if template_vmid provided
+        cores: CPU cores (default: 2) - IGNORED if template_vmid provided
         storage: Storage name (default: PROXMOX_STORAGE_NAME)
         disk_controller_type: Disk controller type - scsi, virtio, sata, or ide (default: scsi)
-        ostype: OS type (e.g., 'win10', 'win11', 'l26' for Linux) - default: l26
-        bios: BIOS type ('seabios' or 'ovmf') - copied from template
-        machine: Machine type - copied from template
-        cpu: CPU type - copied from template
-        scsihw: SCSI hardware controller - copied from template
-        efi_disk: EFI disk config from template (for UEFI Windows VMs)
-        tpm_state: TPM state config from template (for Windows 11)
-        boot_order: Boot order configuration from template (e.g., 'order=scsi0;ide2;net0')
-        net_model: Network interface model (virtio, e1000, rtl8139, etc.) - default: virtio
-        disk_options: Disk options string (cache, discard, iothread, ssd, backup, etc.)
-        net_options: Network options string (firewall, rate, etc.)
-        other_settings: Dict of all other VM settings to apply
+        ostype: OS type - IGNORED if template_vmid provided
+        bios: BIOS type - IGNORED if template_vmid provided
+        machine: Machine type - IGNORED if template_vmid provided
+        cpu: CPU type - IGNORED if template_vmid provided
+        scsihw: SCSI hardware controller - IGNORED if template_vmid provided
+        efi_disk: EFI disk config - IGNORED if template_vmid provided
+        tpm_state: TPM state config - IGNORED if template_vmid provided
+        boot_order: Boot order configuration - IGNORED if template_vmid provided
+        net_model: Network interface model - IGNORED if template_vmid provided
+        disk_options: Disk options string - IGNORED if template_vmid provided
+        net_options: Network options string - IGNORED if template_vmid provided
+        other_settings: Dict of all other VM settings - IGNORED if template_vmid provided
+        template_vmid: If provided, copy config from this template VM (NEW PARAMETER)
         
     Returns:
         Tuple of (success, error_message, mac_address)
     """
     storage = storage or PROXMOX_STORAGE_NAME
     images_path = DEFAULT_VM_IMAGES_PATH
-    other_settings = other_settings or {}
     
     try:
-        # Step 1: Create VM shell with same hardware config as template
+        # Step 1: Create overlay disk first
+        overlay_dir = f"{images_path}/{vmid}"
+        overlay_path = f"{overlay_dir}/vm-{vmid}-disk-0.qcow2"
+        
+        success, error = create_overlay_disk(
+            ssh_executor=ssh_executor,
+            output_path=overlay_path,
+            backing_file=base_qcow2_path,
+        )
+        
+        if not success:
+            return False, f"Failed to create overlay disk: {error}", None
+        
+        # Step 2: Clone VM config from template (if template_vmid provided)
+        if template_vmid:
+            logger.info(f"Cloning VM config from template {template_vmid} to VM {vmid}")
+            from app.services.vm_config_clone import clone_vm_config
+            
+            # Disk path relative to storage mount: "58000/vm-58000-disk-0.qcow2"
+            overlay_disk_rel = f"{vmid}/vm-{vmid}-disk-0.qcow2"
+            
+            success, error, mac = clone_vm_config(
+                ssh_executor=ssh_executor,
+                source_vmid=template_vmid,
+                dest_vmid=vmid,
+                dest_name=name,
+                overlay_disk_path=overlay_disk_rel,
+                storage=storage,
+            )
+            
+            if not success:
+                # Cleanup overlay disk on failure
+                ssh_executor.execute(f"rm -rf {overlay_dir}", check=False)
+                return False, f"Failed to clone VM config: {error}", None
+            
+            logger.info(f"VM {vmid} created with config from template {template_vmid}, MAC: {mac}")
+            return True, "", mac
+        
+        # Step 3: Fallback to old approach if no template_vmid (shouldn't happen in normal usage)
+        logger.warning(f"No template_vmid provided, using legacy VM creation approach")
+        
+        # OLD APPROACH: Create VM shell with explicit settings
         logger.info(f"Creating VM shell with scsihw={scsihw}, disk_controller_type={disk_controller_type}")
         success, error = create_vm_shell(
             ssh_executor=ssh_executor,

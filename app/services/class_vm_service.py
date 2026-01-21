@@ -494,6 +494,8 @@ def recreate_student_vms_from_template(
         logger.info(f"Template boot: EFI={bool(efi_disk)}, TPM={bool(tpm_state)}, boot_order={boot_order}")
         
         # Create student VMs as overlays using prefix-based VMID allocation
+        from app.services.vm_template import create_overlay_vm
+        
         for i in range(count):
             try:
                 # Student VMs use indices 1-99 (index 0 is teacher VM)
@@ -501,56 +503,21 @@ def recreate_student_vms_from_template(
                 student_name = f"{class_prefix}-student-{i+1}"
                 hostname = f"{class_prefix}-s{i+1}"  # Short hostname (e.g., class1-s1)
                 
-                # Create VM shell with proper specs from class configuration
-                exit_code, stdout, stderr = ssh_executor.execute(
-                    f"qm create {vmid} --name {student_name} --memory {memory} --cores {cores} "
-                    f"--net0 virtio,bridge=vmbr0",
-                    timeout=60
+                # Create student VM by cloning template config + overlay disk
+                success, error, student_mac = create_overlay_vm(
+                    ssh_executor=ssh_executor,
+                    vmid=vmid,
+                    name=student_name,
+                    base_qcow2_path=base_qcow2_path,
+                    node=template_node,
+                    template_vmid=template_vmid,  # NEW: Clone config from template
                 )
                 
-                if exit_code != 0:
-                    logger.error(f"Failed to create VM shell {vmid}: {stderr}")
+                if not success:
+                    logger.error(f"Failed to create student VM {vmid}: {error}")
                     continue
                 
-                # DISABLED: Cloud-init and hostname auto-config can cause boot issues
-                # Only enable this if your templates have cloud-init installed
-                # ssh_executor.execute(
-                #     f"qm set {vmid} --ciuser root --cipassword proxmox --ipconfig0 ip=dhcp --nameserver 8.8.8.8",
-                #     check=False  # Don't fail if cloud-init not supported
-                # )
-                
-                # Create overlay disk
-                overlay_path = f"{DEFAULT_VM_IMAGES_PATH}/{vmid}/vm-{vmid}-disk-0.qcow2"
-                ssh_executor.execute(f"mkdir -p {DEFAULT_VM_IMAGES_PATH}/{vmid}", check=False)
-                
-                exit_code, stdout, stderr = ssh_executor.execute(
-                    f"qemu-img create -f qcow2 -F qcow2 -b {base_qcow2_path} {overlay_path}",
-                    timeout=120
-                )
-                
-                if exit_code != 0:
-                    logger.error(f"Failed to create overlay for {vmid}: {stderr}")
-                    ssh_executor.execute(f"qm destroy {vmid}", check=False)
-                    continue
-                
-                # Set permissions
-                ssh_executor.execute(f"chmod 600 {overlay_path}", check=False)
-                ssh_executor.execute(f"chown root:root {overlay_path}", check=False)
-                
-                # Attach disk
-                exit_code, stdout, stderr = ssh_executor.execute(
-                    f"qm set {vmid} --scsi0 {PROXMOX_STORAGE_NAME}:{vmid}/vm-{vmid}-disk-0.qcow2 --boot c --bootdisk scsi0",
-                    timeout=60
-                )
-                
-                if exit_code != 0:
-                    logger.error(f"Failed to attach disk to {vmid}: {stderr}")
-                    ssh_executor.execute(f"qm destroy {vmid}", check=False)
-                    continue
-                
-                # Get MAC address
-                student_mac = get_vm_mac_address(ssh_executor, vmid)
-                logger.info(f"Retrieved MAC address for VM {vmid}: {student_mac}")
+                logger.info(f"Created student VM {vmid} ({student_name}) with MAC {student_mac}")
                 
                 # Create VMAssignment
                 assignment = VMAssignment(
@@ -889,21 +856,7 @@ def create_class_vms(
                     name=teacher_name,
                     base_qcow2_path=base_qcow2_path,
                     node=template_node,
-                    memory=memory,  # Use template's memory spec
-                    cores=cores,  # Use template's CPU cores
-                    disk_controller_type=disk_controller_type,  # Use template's disk controller type
-                    ostype=ostype,  # Use template's OS type (important for Windows VMs)
-                    bios=bios,  # Preserve template's BIOS (UEFI vs BIOS)
-                    machine=machine,  # Preserve template's machine type
-                    cpu=cpu,  # Preserve template's CPU type
-                    scsihw=scsihw,  # Preserve template's SCSI controller
-                    efi_disk=efi_disk,  # Preserve template's EFI disk (critical for Windows UEFI boot)
-                    tpm_state=tpm_state,  # Preserve template's TPM (required for Windows 11)
-                    boot_order=boot_order,  # Preserve template's boot order (CRITICAL for Windows boot)
-                    net_model=net_model,  # Preserve template's network interface model
-                    disk_options=disk_options_str,  # Preserve ALL disk options
-                    net_options=net_options_str,  # Preserve ALL network options
-                    other_settings=other_settings,  # Preserve ALL other VM settings
+                    template_vmid=template_vmid,  # NEW: Pass template VMID for config cloning
                 )
                 
                 if not success:
@@ -950,21 +903,7 @@ def create_class_vms(
                     name=class_base_name,
                     base_qcow2_path=base_qcow2_path,
                     node=template_node,
-                    memory=memory,
-                    cores=cores,
-                    disk_controller_type=disk_controller_type,
-                    ostype=ostype,
-                    bios=bios,
-                    machine=machine,
-                    cpu=cpu,
-                    scsihw=scsihw,
-                    efi_disk=efi_disk,
-                    tpm_state=tpm_state,
-                    boot_order=boot_order,  # Preserve template's boot order
-                    net_model=net_model,  # Preserve template's network interface model
-                    disk_options=disk_options_str,  # Preserve ALL disk options
-                    net_options=net_options_str,  # Preserve ALL network options
-                    other_settings=other_settings,  # Preserve ALL other VM settings
+                    template_vmid=template_vmid,  # NEW: Pass template VMID for config cloning
                 )
                 
                 if not success:
