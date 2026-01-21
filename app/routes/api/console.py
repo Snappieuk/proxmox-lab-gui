@@ -413,12 +413,19 @@ def view_console(vmid: int):
         
         # Render console page - will connect to /ws/vnc/<vmid> WebSocket proxy
         # Pass vmid so frontend can retrieve ticket from session via API if needed
-        return render_template(
-            'console.html',
-            vmid=vmid,
-            vm_name=vm_name,
-            websocket_available=WEBSOCKET_AVAILABLE
-        )
+        try:
+            logger.info(f"[VNC VIEW2] Rendering console.html template for VM {vmid}")
+            rendered = render_template(
+                'console.html',
+                vmid=vmid,
+                vm_name=vm_name,
+                websocket_available=WEBSOCKET_AVAILABLE
+            )
+            logger.info(f"[VNC VIEW2] Template rendered successfully (length={len(rendered)})")
+            return rendered
+        except Exception as render_error:
+            logger.error(f"[VNC VIEW2] Template rendering failed: {render_error}", exc_info=True)
+            return f"Template error: {str(render_error)}", 500
         
     except Exception as e:
         logger.error(f"Failed to serve console for VM {vmid}: {e}", exc_info=True)
