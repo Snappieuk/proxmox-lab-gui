@@ -84,6 +84,11 @@ def export_template_to_qcow2(
         logger.info(f"Retrieved config for template {template_vmid}: {len(config)} keys")
         logger.debug(f"Config keys: {list(config.keys())}")
         
+        # Log the full config to debug boot order extraction
+        logger.info(f"Full template config:")
+        for key, value in config.items():
+            logger.info(f"  {key}: {value}")
+        
         # Auto-detect which disk slot has the actual disk
         # Check common disk slots in order of preference
         disk_config = None
@@ -181,11 +186,26 @@ def export_template_to_qcow2(
         tpm_state = tpm_config  # Will be used to create TPM on clones
         
         # CRITICAL: Get boot order configuration (fixes Windows boot issues)
-        boot_order = config.get('boot')  # Boot order (e.g., 'order=scsi0;ide2;net0')
-        if not boot_order and disk_slot:
+        boot_order_raw = config.get('boot')  # Boot order from template (e.g., 'scsi0, net0' or 'order=scsi0;net0')
+        
+        # Normalize boot order format for Proxmox API
+        if boot_order_raw:
+            # Check if it already has 'order=' prefix
+            if boot_order_raw.startswith('order='):
+                boot_order = boot_order_raw
+            else:
+                # Format: "scsi0, net0" -> "order=scsi0;net0"
+                # Remove spaces and replace commas with semicolons
+                devices = [d.strip() for d in boot_order_raw.replace(',', ';').split(';') if d.strip()]
+                boot_order = f"order={';'.join(devices)}"
+            logger.info(f"Template boot order (raw): {boot_order_raw} -> (normalized): {boot_order}")
+        elif disk_slot:
             # Default boot order if not specified: boot from main disk only
             boot_order = f'order={disk_slot}'
-        logger.info(f"Template boot order: {boot_order}")
+            logger.info(f"No boot order in template, using default: {boot_order}")
+        else:
+            boot_order = None
+            logger.warning("No boot order found in template and no disk slot detected")
         
         # Extract ALL other VM settings that should be preserved
         # These settings affect VM behavior and should match the template exactly
@@ -357,6 +377,7 @@ def create_overlay_vm(
     
     try:
         # Step 1: Create VM shell with same hardware config as template
+        logger.info(f"Creating VM shell with scsihw={scsihw}, disk_controller_type={disk_controller_type}")
         success, error = create_vm_shell(
             ssh_executor=ssh_executor,
             vmid=vmid,

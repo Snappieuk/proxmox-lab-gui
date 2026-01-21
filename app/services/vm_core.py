@@ -147,10 +147,29 @@ def create_vm_shell(
         boot_order = other_settings.pop('boot')
         logger.debug(f"Extracted boot order from other_settings: {boot_order}")
     
-    # Remove settings that will be applied explicitly to avoid duplicates
-    # These are already handled as function parameters
-    for key in ['agent', 'bios', 'cores', 'cpu', 'machine', 'memory', 'ostype', 'scsihw']:
-        other_settings.pop(key, None)
+    # Remove settings that are already handled as explicit parameters
+    # BUT ONLY if they were actually provided as parameters (not None)
+    # This prevents duplicates while preserving template values
+    if bios is not None:
+        other_settings.pop('bios', None)
+    if cores is not None:
+        other_settings.pop('cores', None)
+    if cpu is not None:
+        other_settings.pop('cpu', None)
+    if machine is not None:
+        other_settings.pop('machine', None)
+    if memory is not None:
+        other_settings.pop('memory', None)
+    if ostype is not None:
+        other_settings.pop('ostype', None)
+    if scsihw is not None:
+        other_settings.pop('scsihw', None)
+    
+    # Agent is always removed since we apply it separately later
+    other_settings.pop('agent', None)
+    
+    logger.info(f"Creating VM {vmid} with: ostype={ostype}, scsihw={scsihw}, bios={bios}, cpu={cpu}, machine={machine}, memory={memory}, cores={cores}")
+    logger.info(f"Remaining other_settings to apply: {len(other_settings)} items")
     
     # Base command
     cmd = (
@@ -169,6 +188,7 @@ def create_vm_shell(
         cmd += f" --bios {bios}"
     if scsihw:
         cmd += f" --scsihw {scsihw}"
+        logger.info(f"Setting SCSI controller for VM {vmid}: {scsihw}")
     
     try:
         exit_code, stdout, stderr = ssh_executor.execute(cmd, timeout=60, check=False)
