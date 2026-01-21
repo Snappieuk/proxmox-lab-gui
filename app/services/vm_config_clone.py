@@ -48,10 +48,48 @@ def clone_vm_config(
         Tuple of (success, error_message, mac_address)
     """
     try:
-        # Step 1: Read source VM config
+        # Step 0: Verify source template exists and check cluster
         source_conf = f"/etc/pve/qemu-server/{source_vmid}.conf"
         dest_conf = f"/etc/pve/qemu-server/{dest_vmid}.conf"
         
+        # Check which node we're connected to
+        exit_code, hostname_output, _ = ssh_executor.execute("hostname", timeout=5, check=False)
+        current_node = hostname_output.strip() if exit_code == 0 else "unknown"
+        logger.info(f"SSH connected to node: {current_node}")
+        
+        # Check cluster status
+        exit_code, cluster_info, _ = ssh_executor.execute("pvecm status", timeout=5, check=False)
+        if exit_code == 0:
+            logger.info(f"Cluster status: {cluster_info[:200]}")  # First 200 chars
+        
+        logger.info(f"Verifying template {source_vmid} exists...")
+        exit_code, ls_output, stderr = ssh_executor.execute(
+            f"ls -la {source_conf}",
+            timeout=10,
+            check=False
+        )
+        
+        if exit_code != 0:
+            error_msg = f"Template {source_vmid} config not found at {source_conf} on node {current_node}."
+            logger.error(error_msg)
+            logger.error(f"ls stderr: {stderr}")
+            
+            # Try to list all VMs to help debug
+            exit_code2, vm_list, _ = ssh_executor.execute(
+                "ls -1 /etc/pve/qemu-server/*.conf 2>/dev/null | head -20",
+                timeout=10,
+                check=False
+            )
+            if exit_code2 == 0 and vm_list:
+                logger.info(f"Available VM configs on this node: {vm_list}")
+            else:
+                logger.error(f"Could not list VM configs: {vm_list}")
+            
+            return False, error_msg, None
+        
+        logger.info(f"Template config found: {ls_output.strip()}")
+        
+        # Step 1: Read source VM config
         logger.info(f"Cloning VM config: {source_conf} -> {dest_conf}")
         
         # Read source config

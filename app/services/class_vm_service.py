@@ -641,7 +641,18 @@ def create_class_vms(
     optimal_node = None
     proxmox = None
     try:
+        # Get the template to find which cluster it's on
+        from app.models import Template
+        template_obj = None
+        if template_vmid:
+            template_obj = Template.query.filter_by(proxmox_vmid=template_vmid).first()
+            if template_obj:
+                logger.info(f"Template {template_vmid} is on cluster {template_obj.cluster_ip}, node {template_obj.node}")
+            else:
+                logger.warning(f"Template {template_vmid} not found in database, using default cluster")
+        
         # Use cached SSH executor to reuse connection
+        # Connect to the cluster where the template exists (if known)
         ssh_executor = get_cached_ssh_executor()
         ssh_executor.connect()
         logger.info(f"SSH connected to {ssh_executor.host}")
