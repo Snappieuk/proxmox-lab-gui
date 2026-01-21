@@ -658,30 +658,53 @@ def create_class_vms(
                 result.error = f"Template {template_vmid} not found in database. Please register the template first."
                 return result
         
-        # Create SSH executor connecting to the SPECIFIC NODE where template exists
-        if template_cluster_ip and template_node_name:
+        # Create SSH executor connecting to the correct cluster
+        # /etc/pve/ is cluster-wide, so any node in the cluster can access all VM configs
+        if template_cluster_ip:
             # Find cluster config from database by host IP
             cluster = Cluster.query.filter_by(host=template_cluster_ip).first()
             
             if not cluster:
-                logger.error(f"No cluster config found for IP {template_cluster_ip}")
+                logger.error(f"No cluster config found for IP {template_cluster_ip} in database")
+                # List available clusters for debugging
+                all_clusters = Cluster.query.all()
+                logger.error(f"Available clusters in DB: {[(c.name, c.host) for c in all_clusters]}")
                 result.error = f"Cluster {template_cluster_ip} not configured in database"
                 return result
             
-            # Connect to the SPECIFIC NODE where the template is located
-            # Use node name as hostname (assumes node names are resolvable hostnames)
+            logger.info(f"Found cluster in DB: {cluster.name} ({cluster.host})")
+            
+            # Connect to cluster - this should give us access to /etc/pve/ for all nodes
             ssh_executor = SSHExecutor(
-                host=template_node_name,  # Connect to specific node, not cluster IP
-                username='root',  # Standard Proxmox SSH user
-                password=cluster.password,  # Use cluster password for SSH
+                host=cluster.host,
+                username='root',
+                password=cluster.password,
             )
-            logger.info(f"Creating SSH connection to template's node: {template_node_name} (cluster {template_cluster_ip})")
+            logger.info(f"Attempting SSH connection to cluster {cluster.name} at {cluster.host}...")
         else:
             # No template - use cached executor (default cluster)
             ssh_executor = get_cached_ssh_executor()
         
         ssh_executor.connect()
-        logger.info(f"✓ SSH connected to {ssh_executor.host}")
+        
+        # Check which node we actually connected to
+        exit_code, hostname_out, _ = ssh_executor.execute("hostname", timeout=5, check=False)
+        actual_node = hostname_out.strip() if exit_code == 0 else "unknown"
+        logger.info(f"✓ SSH connected to {ssh_executor.host}, actual node: {actual_node}")
+        
+        # Verify we can access the template's config via cluster-wide /etc/pve/
+        if template_vmid:
+            logger.info(f"Verifying template {template_vmid} config accessibility...")
+            verify_cmd = f"ls -la /etc/pve/qemu-server/{template_vmid}.conf"
+            exit_code, verify_out, verify_err = ssh_executor.execute(verify_cmd, timeout=5, check=False)
+            if exit_code == 0:
+                logger.info(f"✓ Template {template_vmid} config accessible: {verify_out.strip()}")
+            else:
+                logger.error(f"✗ Cannot access template {template_vmid} config: {verify_err}")
+                logger.error(f"Template is supposed to be on node: {template_node_name}")
+                logger.error(f"We are connected to node: {actual_node}")
+                result.error = f"Template {template_vmid} not accessible from node {actual_node}"
+                return result
         
         # Get Proxmox API connection for resource queries
         try:
