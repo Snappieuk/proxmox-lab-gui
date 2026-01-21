@@ -395,6 +395,11 @@ def create_overlay_vm(
             logger.info(f"Cloning VM config from template {template_vmid} to VM {vmid}")
             from app.services.vm_config_clone import clone_vm_config
             
+            # Get template node from database
+            from app.models import Template
+            template_obj = Template.query.filter_by(proxmox_vmid=template_vmid).first()
+            template_node = template_obj.node if template_obj else None
+            
             # Disk path relative to storage mount: "58000/vm-58000-disk-0.qcow2"
             overlay_disk_rel = f"{vmid}/vm-{vmid}-disk-0.qcow2"
             
@@ -405,6 +410,7 @@ def create_overlay_vm(
                 dest_name=name,
                 overlay_disk_path=overlay_disk_rel,
                 storage=storage,
+                source_node=template_node,  # Pass node for SSH hop
             )
             
             if not success:

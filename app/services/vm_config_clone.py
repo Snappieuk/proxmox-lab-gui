@@ -29,6 +29,7 @@ def clone_vm_config(
     dest_name: str,
     overlay_disk_path: str,
     storage: str = "TRUENAS-NFS",
+    source_node: str = None,
 ) -> Tuple[bool, str, Optional[str]]:
     """
     Clone a VM by copying its config file and modifying necessary fields.
@@ -43,6 +44,7 @@ def clone_vm_config(
         dest_name: New VM name
         overlay_disk_path: Path to overlay disk (e.g., "58000/vm-58000-disk-0.qcow2")
         storage: Storage name (default: TRUENAS-NFS)
+        source_node: Node where source VM is located (for SSH hop if needed)
         
     Returns:
         Tuple of (success, error_message, mac_address)
@@ -57,50 +59,27 @@ def clone_vm_config(
         current_node = hostname_output.strip() if exit_code == 0 else "unknown"
         logger.info(f"SSH connected to node: {current_node}")
         
-        # Check cluster status
-        exit_code, cluster_info, _ = ssh_executor.execute("pvecm status", timeout=5, check=False)
-        if exit_code == 0:
-            logger.info(f"Cluster status: {cluster_info[:200]}")  # First 200 chars
+        # If template is on a different node, use SSH hop
+        if source_node and source_node != current_node:
+            logger.info(f"Template is on {source_node}, we're on {current_node} - using SSH hop")
+            cat_cmd = f"ssh {source_node} 'cat {source_conf}'"
+        else:
+            cat_cmd = f"cat {source_conf}"
         
-        logger.info(f"Verifying template {source_vmid} exists...")
-        exit_code, ls_output, stderr = ssh_executor.execute(
-            f"ls -la {source_conf}",
-            timeout=10,
-            check=False
-        )
+        logger.info(f"Reading template config: {source_conf}")
         
-        if exit_code != 0:
-            error_msg = f"Template {source_vmid} config not found at {source_conf} on node {current_node}."
-            logger.error(error_msg)
-            logger.error(f"ls stderr: {stderr}")
-            
-            # Try to list all VMs to help debug
-            exit_code2, vm_list, _ = ssh_executor.execute(
-                "ls -1 /etc/pve/qemu-server/*.conf 2>/dev/null | head -20",
-                timeout=10,
-                check=False
-            )
-            if exit_code2 == 0 and vm_list:
-                logger.info(f"Available VM configs on this node: {vm_list}")
-            else:
-                logger.error(f"Could not list VM configs: {vm_list}")
-            
-            return False, error_msg, None
-        
-        logger.info(f"Template config found: {ls_output.strip()}")
-        
-        # Step 1: Read source VM config
-        logger.info(f"Cloning VM config: {source_conf} -> {dest_conf}")
-        
-        # Read source config
+        # Read source config (with SSH hop if needed)
         exit_code, config_content, stderr = ssh_executor.execute(
-            f"cat {source_conf}",
+            cat_cmd,
             timeout=10,
             check=False
         )
         
         if exit_code != 0:
-            return False, f"Failed to read source config: {stderr}", None
+            error_msg = f"Template {source_vmid} config not found at {source_conf} on node {source_node or current_node}."
+            logger.error(error_msg)
+            logger.error(f"cat stderr: {stderr}")
+            return False, error_msg, None
         
         # Step 2: Modify config line by line
         new_lines = []
