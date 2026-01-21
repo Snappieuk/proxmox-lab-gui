@@ -116,13 +116,24 @@ def get_proxmox_admin_for_cluster(cluster_id: str) -> ProxmoxAPI:
     with _proxmox_lock:
         # Double-check inside lock to handle race conditions
         if cluster_id not in _proxmox_connections:
+            # Create session with larger connection pool to support parallel operations
+            import requests
+            from requests.adapters import HTTPAdapter
+            
+            session = requests.Session()
+            # Increase pool size from default 10 to 50 for parallel IP lookups
+            adapter = HTTPAdapter(pool_connections=50, pool_maxsize=50)
+            session.mount('http://', adapter)
+            session.mount('https://', adapter)
+            
             _proxmox_connections[cluster_id] = ProxmoxAPI(
                 cluster["host"],
                 user=cluster["user"],
                 password=cluster["password"],
                 verify_ssl=cluster.get("verify_ssl", False),
+                session=session,
             )
-            logger.info("Connected to Proxmox cluster '%s' at %s", cluster["name"], cluster["host"])
+            logger.info("Connected to Proxmox cluster '%s' at %s (pool_size=50)", cluster["name"], cluster["host"])
 
     return _proxmox_connections[cluster_id]
 
@@ -145,13 +156,24 @@ def get_proxmox_admin() -> ProxmoxAPI:
     with _proxmox_lock:
         # Double-check inside lock to handle race conditions
         if cluster_id not in _proxmox_connections:
+            # Create session with larger connection pool to support parallel operations
+            import requests
+            from requests.adapters import HTTPAdapter
+            
+            session = requests.Session()
+            # Increase pool size from default 10 to 50 for parallel IP lookups
+            adapter = HTTPAdapter(pool_connections=50, pool_maxsize=50)
+            session.mount('http://', adapter)
+            session.mount('https://', adapter)
+            
             _proxmox_connections[cluster_id] = ProxmoxAPI(
                 cluster["host"],
                 user=cluster["user"],
                 password=cluster["password"],
                 verify_ssl=cluster.get("verify_ssl", False),
+                session=session,
             )
-            logger.info("Connected to Proxmox cluster '%s' at %s", cluster["name"], cluster["host"])
+            logger.info("Connected to Proxmox cluster '%s' at %s (pool_size=50)", cluster["name"], cluster["host"])
     
     return _proxmox_connections[cluster_id]
 
@@ -183,11 +205,22 @@ def create_proxmox_client() -> ProxmoxAPI:
     across threads, since ProxmoxAPI may not be fully thread-safe.
     """
     cluster = get_current_cluster()
+    
+    # Create session with larger connection pool for parallel operations
+    import requests
+    from requests.adapters import HTTPAdapter
+    
+    session = requests.Session()
+    adapter = HTTPAdapter(pool_connections=50, pool_maxsize=50)
+    session.mount('http://', adapter)
+    session.mount('https://', adapter)
+    
     return ProxmoxAPI(
         cluster["host"],
         user=cluster["user"],
         password=cluster["password"],
         verify_ssl=cluster.get("verify_ssl", False),
+        session=session,
     )
 
 
