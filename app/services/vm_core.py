@@ -157,29 +157,50 @@ def create_vm_shell(
         
         logger.info(f"Created VM shell: {vmid} ({safe_name})")
         
-        # Verify VM was created and get its node (VMs may auto-migrate after creation)
+        # Get Proxmox API connection for post-creation config (API auto-routes to correct node)
+        try:
+            from app.services.proxmox_service import get_proxmox_admin
+            proxmox = get_proxmox_admin()
+        except Exception as e:
+            logger.warning(f"Could not get Proxmox API, falling back to SSH commands: {e}")
+            proxmox = None
+        
+        # Verify which node the VM is on (may have auto-migrated)
         vm_node = get_vm_node(ssh_executor, vmid)
         if not vm_node:
-            logger.warning(f"Could not verify node for VM {vmid}, will try commands anyway")
-            vm_node = "localhost"  # Fallback
-        else:
-            logger.info(f"VM {vmid} is on node: {vm_node}")
+            logger.warning(f"Could not determine node for VM {vmid}, assuming current node")
+            # Try to get current node from SSH
+            exit_code, stdout, _ = ssh_executor.execute("hostname", timeout=5, check=False)
+            vm_node = stdout.strip() if exit_code == 0 else "localhost"
+        
+        logger.info(f"VM {vmid} is on node: {vm_node}")
         
         # For UEFI VMs (ovmf), add EFI disk automatically
-        # Use pvesh instead of qm (works cluster-wide, handles auto-migration)
         if bios and bios.lower() == 'ovmf':
-            logger.info(f"UEFI VM detected, adding EFI disk to VM {vmid} on node {vm_node}")
-            efi_cmd = f"pvesh set /nodes/{vm_node}/qemu/{vmid}/config --efidisk0 {storage}:1,efitype=4m,pre-enrolled-keys=1"
-            exit_code, stdout, stderr = ssh_executor.execute(efi_cmd, timeout=30, check=False)
-            if exit_code != 0:
-                logger.error(f"Failed to add EFI disk to VM {vmid}: {stderr}")
-                # Don't fail the whole operation - EFI disk might already exist or be added later
+            logger.info(f"UEFI VM detected, adding EFI disk to VM {vmid}")
+            if proxmox:
+                try:
+                    proxmox.nodes(vm_node).qemu(vmid).config.set(efidisk0=f"{storage}:1,efitype=4m,pre-enrolled-keys=1")
+                    logger.info(f"Added EFI disk to VM {vmid} via API")
+                except Exception as e:
+                    logger.error(f"Failed to add EFI disk via API: {e}")
             else:
-                logger.info(f"Added EFI disk to VM {vmid}")
+                # Fallback to SSH qm command
+                efi_cmd = f"qm set {vmid} --efidisk0 {storage}:1,efitype=4m,pre-enrolled-keys=1"
+                exit_code, stdout, stderr = ssh_executor.execute(efi_cmd, timeout=30, check=False)
+                if exit_code != 0:
+                    logger.error(f"Failed to add EFI disk via SSH: {stderr}")
         
-        # Enable QEMU guest agent by default (use pvesh for cluster-wide compatibility)
-        agent_cmd = f"pvesh set /nodes/{vm_node}/qemu/{vmid}/config --agent enabled=1,fstrim_cloned_disks=1"
-        exit_code, stdout, stderr = ssh_executor.execute(agent_cmd, timeout=30, check=False)
+        # Enable QEMU guest agent by default
+        if proxmox:
+            try:
+                proxmox.nodes(vm_node).qemu(vmid).config.set(agent='enabled=1,fstrim_cloned_disks=1')
+                logger.info(f"Enabled QEMU guest agent for VM {vmid} via API")
+            except Exception as e:
+                logger.error(f"Failed to enable guest agent via API: {e}")
+        else:
+            agent_cmd = f"qm set {vmid} --agent enabled=1,fstrim_cloned_disks=1"
+            exit_code, stdout, stderr = ssh_executor.execute(agent_cmd, timeout=30, check=False)
         if exit_code == 0:
             logger.info(f"Enabled QEMU guest agent for VM {vmid}")
         else:
@@ -199,7 +220,7 @@ def create_vm_shell(
         if boot_order:
             logger.info(f"Applying boot order to VM {vmid} on node {vm_node}: {boot_order}")
             # boot_order comes as 'order=scsi0;ide2;net0' from template
-            boot_cmd = f"pvesh set /nodes/{vm_node}/qemu/{vmid}/config --boot {boot_order}"
+            boot_cmd = f"pvesh set /nodes/{vm_node}/qemu/{vmid}/config -boot {boot_order}"
             exit_code, stdout, stderr = ssh_executor.execute(boot_cmd, timeout=30, check=False)
             if exit_code == 0:
                 logger.info(f"✓ Boot order applied to VM {vmid}: {boot_order}")
@@ -243,7 +264,7 @@ def create_vm_shell(
                 
                 # Apply setting (use pvesh for cluster-wide compatibility)
                 try:
-                    set_cmd = f"pvesh set /nodes/{vm_node}/qemu/{vmid}/config --{key} {value}"
+                    set_cmd = f"pvesh set /nodes/{vm_node}/qemu/{vmid}/config -{key} {value}"
                     exit_code, stdout, stderr = ssh_executor.execute(set_cmd, timeout=30, check=False)
                     if exit_code == 0:
                         settings_applied += 1
