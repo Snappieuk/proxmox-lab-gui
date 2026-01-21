@@ -1933,10 +1933,14 @@ def delete_vm(vmid: int, node: str, cluster_ip: str = None) -> Tuple[bool, str]:
                 # Other error
                 logger.error(f"Failed to delete VM {vmid} via API: {delete_error}")
                 return False, f"Proxmox API delete failed: {error_str}"
-                
+        
         except Exception as e:
-            logger.exception(f"Failed to delete VM {vmid}: {e}")
-            return False, f"Delete failed: {str(e)}"
+            logger.exception(f"Failed during VM deletion via API: {e}")
+            return False, f"API deletion failed: {str(e)}"
+    
+    except Exception as e:
+        logger.exception(f"Failed to delete VM {vmid}: {e}")
+        return False, f"Delete failed: {str(e)}"
 
 
 def convert_vm_to_template(vmid: int, node: str, cluster_ip: str = None) -> Tuple[bool, str]:
