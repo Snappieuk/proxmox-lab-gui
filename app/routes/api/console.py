@@ -381,6 +381,7 @@ def view_console(vmid: int):
         # This ticket will be regenerated in the WebSocket handler (which is fine - both are valid)
         # Store connection details in server-side cache instead of session
         # This avoids session cookie overflow when opening multiple consoles
+        # CRITICAL: Store authorized user for WebSocket validation
         _vnc_connection_cache[vmid] = {
             'cluster_id': cluster_id,
             'node': vm_node,
@@ -388,7 +389,8 @@ def view_console(vmid: int):
             'host': proxmox_host,
             'proxmox_port': proxmox_port,
             'username': username,
-            'password': password
+            'password': password,
+            'authorized_user': user,  # Store who accessed /view2 for WebSocket validation
         }
         
         # Only store a small reference in session
@@ -436,102 +438,31 @@ def init_websocket_proxy(app, sock_instance):
         WebSocket proxy: Browser ← Flask ← Proxmox
         This handles all Proxmox authentication so the browser doesn't need to.
         Generates VNC ticket just-in-time to avoid timeout issues.
+        
+        Permission is checked by requiring user to visit /view2 first, which populates
+        the cache with authorized_user. WebSocket cannot access session after upgrade.
         """
         proxmox_ws = None
         forward_thread = None
         
         try:
-            # Try to get connection info from server-side cache first
+            # CRITICAL: Get connection info from cache (populated by /view2 route after permission check)
             conn_data = _vnc_connection_cache.get(vmid)
             
-            # If not in cache, look up VM info fresh (for cross-PC access)
             if not conn_data:
-                logger.warning(f"No cached connection data for VM {vmid}, looking up fresh...")
-                
-                # Get cluster from session or use default
-                cluster_id = session.get('cluster_id')
-                if not cluster_id:
-                    clusters = get_clusters_from_db()
-                    cluster_id = clusters[0]['id'] if clusters else None
-                
-                if not cluster_id:
-                    logger.error(f"No cluster available for VM {vmid}")
-                    try:
-                        ws.close()
-                    except Exception:
-                        pass
-                    return
-                
-                # Get cluster config
-                clusters = get_clusters_from_db()
-                cluster_config = None
-                for cluster in clusters:
-                    if cluster['id'] == cluster_id:
-                        cluster_config = cluster
-                        break
-                
-                if not cluster_config:
-                    logger.error(f"Cluster {cluster_id} not found")
-                    try:
-                        ws.close()
-                    except Exception:
-                        pass
-                    return
-                
-                # Find VM on nodes
-                proxmox = get_proxmox_admin_for_cluster(cluster_id)
-                vm_node = None
-                vm_type = None
-                
+                logger.error(f"No connection data for VM {vmid} - user must visit /console/{vmid}/view2 first")
                 try:
-                    nodes = proxmox.nodes.get()
-                    for node_info in nodes:
-                        node = node_info['node']
-                        
-                        # Check QEMU VMs
-                        try:
-                            vms = proxmox.nodes(node).qemu.get()
-                            for vm in vms:
-                                if vm['vmid'] == vmid:
-                                    vm_node = node
-                                    vm_type = 'qemu'
-                                    break
-                        except Exception:
-                            pass
-                        
-                        if vm_node:
-                            break
-                except Exception as e:
-                    logger.error(f"Failed to find VM {vmid}: {e}")
-                    try:
-                        ws.close()
-                    except Exception:
-                        pass
-                    return
-                
-                if not vm_node:
-                    logger.error(f"VM {vmid} not found on any node")
-                    try:
-                        ws.close()
-                    except Exception:
-                        pass
-                    return
-                
-                # Build connection data
-                conn_data = {
-                    'cluster_id': cluster_id,
-                    'node': vm_node,
-                    'vm_type': vm_type,
-                    'host': cluster_config['host'],
-                    'proxmox_port': cluster_config.get('port', 8006),
-                    'username': cluster_config['user'],
-                    'password': cluster_config['password']
-                }
-                
-                # Cache it for future use
-                _vnc_connection_cache[vmid] = conn_data
-                logger.info(f"Cached fresh connection data for VM {vmid}")
+                    ws.close()
+                except Exception:
+                    pass
+                return
             
+            # Log authorized access (authorized_user was set in /view2 after permission check)
+            authorized_user = conn_data.get('authorized_user', 'unknown')
+            logger.info(f"WebSocket opened for VM {vmid} console by {authorized_user}")
+            
+            # Extract connection parameters from cache
+            # Extract connection parameters from cache
             cluster_id = conn_data['cluster_id']
             node = conn_data['node']
             vm_type = conn_data['vm_type']
