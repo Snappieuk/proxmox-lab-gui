@@ -596,21 +596,28 @@ def init_websocket_proxy(app, sock_instance):
             def forward_to_browser():
                 """Forward Proxmox → Browser with minimal overhead"""
                 try:
+                    logger.info(f"[{vmid}] Forward thread started (Proxmox → Browser)")
+                    bytes_forwarded = 0
                     while not stop_forwarding.is_set():
                         try:
                             # Use recv() instead of recv_data() for better performance
                             data = proxmox_ws.recv()
                             if not data:
+                                logger.info(f"[{vmid}] Proxmox sent empty data, closing")
                                 break
+                            bytes_forwarded += len(data)
                             # Send immediately without buffering
                             ws.send(data)
+                            if bytes_forwarded < 200:  # Log first few messages
+                                logger.debug(f"[{vmid}] Forwarded {len(data)} bytes to browser (total: {bytes_forwarded})")
                         except Exception as e:
                             if not stop_forwarding.is_set():
-                                logger.debug(f"Forward to browser stopped: {e}")
+                                logger.info(f"[{vmid}] Forward to browser stopped: {e}")
                             break
                 except Exception as e:
-                    logger.error(f"Forward thread error: {e}")
+                    logger.error(f"[{vmid}] Forward thread error: {e}")
                 finally:
+                    logger.info(f"[{vmid}] Forward thread ending (total bytes: {bytes_forwarded})")
                     stop_forwarding.set()
             
             # Start forwarding thread with higher priority
@@ -618,12 +625,18 @@ def init_websocket_proxy(app, sock_instance):
             forward_thread.start()
             
             # Forward browser → Proxmox (main loop) with minimal buffering
+            logger.info(f"[{vmid}] Main loop started (Browser → Proxmox)")
+            bytes_received = 0
             try:
                 while not stop_forwarding.is_set():
                     try:
                         data = ws.receive()
                         if data is None:
+                            logger.info(f"[{vmid}] Browser closed connection")
                             break
+                        bytes_received += len(data)
+                        if bytes_received < 200:  # Log first few messages
+                            logger.debug(f"[{vmid}] Received {len(data)} bytes from browser (total: {bytes_received})")
                         # Send immediately with binary opcode for VNC
                         proxmox_ws.send(data, opcode=websocket.ABNF.OPCODE_BINARY)
                     except Exception as e:
