@@ -454,19 +454,23 @@ def init_websocket_proxy(app, sock_instance):
         proxmox_ws = None
         forward_thread = None
         
-        logger.info(f"[VNC WS] Connection attempt for VM {vmid}")
+        logger.info(f"[VNC WS] ========== WebSocket connection attempt for VM {vmid} ==========")
+        logger.info(f"[VNC WS] Client connected from: {ws.environ.get('REMOTE_ADDR', 'unknown')}")
+        logger.info(f"[VNC WS] WebSocket protocol: {ws.environ.get('HTTP_SEC_WEBSOCKET_PROTOCOL', 'none')}")
         
         try:
             # CRITICAL: Get connection info from cache (populated by /view2 route after permission check)
+            logger.info(f"[VNC WS] Looking up connection data for VM {vmid}...")
             conn_data = _vnc_connection_cache.get(vmid)
             
             if not conn_data:
-                logger.error(f"[VNC WS] No connection data for VM {vmid} - user must visit /console/{vmid}/view2 first")
+                logger.error(f"[VNC WS] ❌ No connection data for VM {vmid} - user must visit /console/{vmid}/view2 first")
                 logger.error(f"[VNC WS] Current cache keys: {list(_vnc_connection_cache.keys())}")
                 try:
-                    ws.close()
-                except Exception:
-                    pass
+                    ws.send('ERROR: No connection data - visit console page first')
+                    ws.close(1008, 'No connection data')
+                except Exception as e:
+                    logger.error(f"[VNC WS] Error sending close message: {e}")
                 return
             
             # Log authorized access (authorized_user was set in /view2 after permission check)
@@ -561,7 +565,8 @@ def init_websocket_proxy(app, sock_instance):
                     suppress_origin=True,
                     timeout=30
                 )
-                logger.info(f"[{vmid}] Step 7: ✓ Connected to Proxmox VNC successfully")
+                logger.info(f"[{vmid}] Step 7: ✓✓✓ Connected to Proxmox VNC successfully ✓✓✓")
+                logger.info(f"[{vmid}] Proxmox WebSocket state: connected={proxmox_ws.connected}")
                 logger.info(f"[{vmid}] Step 8: ✓ VNC stream ready - starting bidirectional forwarding")
                 
             except websocket.WebSocketTimeoutException as timeout_error:
@@ -641,17 +646,24 @@ def init_websocket_proxy(app, sock_instance):
                         proxmox_ws.send(data, opcode=websocket.ABNF.OPCODE_BINARY)
                     except Exception as e:
                         if not stop_forwarding.is_set():
-                            logger.debug(f"Forward to Proxmox stopped: {e}")
+                            logger.info(f"[{vmid}] Forward to Proxmox stopped: {e}")
                         break
+            except Exception as main_error:
+                logger.error(f"[{vmid}] Main loop error: {main_error}", exc_info=True)
             finally:
                 stop_forwarding.set()
+                logger.info(f"[{vmid}] Main loop ended (total bytes received: {bytes_received})")
             
-            logger.info(f"VNC proxy closed for VM {vmid}")
+            logger.info(f"[{vmid}] ========== VNC proxy closed for VM {vmid} ==========")
             
         except Exception as e:
-            logger.error(f"VNC WebSocket proxy error for VM {vmid}: {e}", exc_info=True)
+            logger.error(f"[{vmid}] VNC WebSocket proxy error: {e}", exc_info=True)
         finally:
             # Cleanup
+            logger.info(f"[{vmid}] Cleaning up WebSocket resources...")
+            if forward_thread and forward_thread.is_alive():
+                logger.info(f"[{vmid}] Waiting for forward thread...")
+                forward_thread.join(timeout=2)
             if proxmox_ws:
                 try:
                     proxmox_ws.close()

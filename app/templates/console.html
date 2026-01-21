@@ -142,12 +142,13 @@
         
         // Connect through Flask backend WebSocket proxy instead of directly to Proxmox
         // Flask backend handles all Proxmox authentication using session data
-        // Use ws:// for direct Flask access (no HTTPS reverse proxy)
-        const protocol = 'ws:';
+        // Auto-detect protocol: http→ws, https→wss (browser enforces this for security)
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const wsUrl = `${protocol}//${window.location.host}/ws/vnc/${vmid}`;
         
         console.log('=== noVNC Console Debug Info ===');
         console.log('WebSocket URL:', wsUrl);
+        console.log('Page protocol:', window.location.protocol, '→ WS protocol:', protocol);
         console.log('VMID:', vmid);
         console.log('Connecting through Flask WebSocket proxy:', wsUrl);
         console.log('Backend will authenticate to Proxmox with stored session data');
@@ -283,7 +284,8 @@
         }
         
         function connectedToServer(e) {
-            console.log('✅ Connected to VM console successfully!');
+            console.log('✅ ========== Connected to VM console successfully! ==========');
+            console.log('Connection event details:', e);
             lastConnectTime = Date.now(); // Track connection time
             updateStatus('', 'Connected');
             document.getElementById('loading').style.display = 'none';
@@ -293,14 +295,20 @@
         }
         
         function disconnectedFromServer(e) {
-            console.log('❌ Disconnected from server:', e.detail);
+            console.log('❌ ========== Disconnected from server ==========');
+            console.log('Disconnect event:', e);
+            console.log('Event detail:', e.detail);
+            console.log('Clean disconnect:', e.detail.clean);
+            console.log('Disconnect code:', e.detail.code);
+            console.log('Disconnect reason:', e.detail.reason);
+            console.log('Time since connect:', Date.now() - lastConnectTime, 'ms');
             
             // Cancel any scheduled refresh since we're disconnected
             cancelScheduledRefresh();
             
             const reason = e.detail.reason || '';
             const code = e.detail.code || 0;
-            console.log('📊 Disconnect details - clean:', e.detail.clean, 'code:', code, 'reason:', reason);
+            console.log('📊 Disconnect summary - clean:', e.detail.clean, 'code:', code, 'reason:', reason);
             
             // AUTO-RECONNECT IMMEDIATELY for clean disconnects or ticket expiration
             // Clean disconnect = normal VNC session end (ticket expired)
