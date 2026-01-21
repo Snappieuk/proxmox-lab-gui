@@ -642,7 +642,7 @@ def create_class_vms(
     proxmox = None
     try:
         # Get the template to find which node it's on
-        from app.models import Template
+        from app.models import Template, Cluster
         template_obj = None
         template_cluster_ip = None
         template_node_name = None
@@ -660,25 +660,20 @@ def create_class_vms(
         
         # Create SSH executor connecting to the SPECIFIC NODE where template exists
         if template_cluster_ip and template_node_name:
-            # Find cluster config by IP
-            from app.config import CLUSTERS
-            cluster_config = None
-            for cluster in CLUSTERS:
-                if cluster.get('host') == template_cluster_ip:
-                    cluster_config = cluster
-                    break
+            # Find cluster config from database by host IP
+            cluster = Cluster.query.filter_by(host=template_cluster_ip).first()
             
-            if not cluster_config:
+            if not cluster:
                 logger.error(f"No cluster config found for IP {template_cluster_ip}")
-                result.error = f"Cluster {template_cluster_ip} not configured"
+                result.error = f"Cluster {template_cluster_ip} not configured in database"
                 return result
             
             # Connect to the SPECIFIC NODE where the template is located
             # Use node name as hostname (assumes node names are resolvable hostnames)
             ssh_executor = SSHExecutor(
                 host=template_node_name,  # Connect to specific node, not cluster IP
-                username=cluster_config.get('ssh_user', 'root'),
-                password=cluster_config.get('ssh_password', cluster_config.get('password')),
+                username='root',  # Standard Proxmox SSH user
+                password=cluster.password,  # Use cluster password for SSH
             )
             logger.info(f"Creating SSH connection to template's node: {template_node_name} (cluster {template_cluster_ip})")
         else:
