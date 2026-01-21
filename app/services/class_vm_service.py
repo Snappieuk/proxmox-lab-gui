@@ -695,7 +695,14 @@ def create_class_vms(
         # Verify we can access the template's config via cluster-wide /etc/pve/
         if template_vmid:
             logger.info(f"Verifying template {template_vmid} config accessibility...")
-            verify_cmd = f"ls -la /etc/pve/qemu-server/{template_vmid}.conf"
+            
+            # If template is on a different node than where we landed, use SSH hop
+            if template_node_name and template_node_name != actual_node:
+                logger.info(f"Template on {template_node_name}, we're on {actual_node} - using SSH hop")
+                verify_cmd = f"ssh {template_node_name} 'ls -la /etc/pve/qemu-server/{template_vmid}.conf'"
+            else:
+                verify_cmd = f"ls -la /etc/pve/qemu-server/{template_vmid}.conf"
+            
             exit_code, verify_out, verify_err = ssh_executor.execute(verify_cmd, timeout=5, check=False)
             if exit_code == 0:
                 logger.info(f"✓ Template {template_vmid} config accessible: {verify_out.strip()}")
