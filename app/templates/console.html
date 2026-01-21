@@ -142,11 +142,12 @@
         
         // Connect through Flask backend WebSocket proxy instead of directly to Proxmox
         // Flask backend handles all Proxmox authentication using session data
-        // ALWAYS use ws:// (not wss://) because Flask runs on HTTP without SSL
+        // Use ws:// for direct Flask access (no HTTPS reverse proxy)
         const protocol = 'ws:';
         const wsUrl = `${protocol}//${window.location.host}/ws/vnc/${vmid}`;
         
         console.log('=== noVNC Console Debug Info ===');
+        console.log('WebSocket URL:', wsUrl);
         console.log('VMID:', vmid);
         console.log('Connecting through Flask WebSocket proxy:', wsUrl);
         console.log('Backend will authenticate to Proxmox with stored session data');
