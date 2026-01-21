@@ -163,8 +163,8 @@ def export_template_to_qcow2(
             net_opts = []
             for part in parts[1:]:
                 part = part.strip()
-                # Preserve all options except MAC address
-                if '=' in part and not part.startswith(net_model):
+                # Preserve all options except MAC address and bridge (bridge is added separately in vm_core)
+                if '=' in part and not part.startswith(net_model) and not part.startswith('bridge='):
                     net_opts.append(part)
             if net_opts:
                 net_options_str = ',' + ','.join(net_opts)
