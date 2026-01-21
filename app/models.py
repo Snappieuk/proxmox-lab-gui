@@ -714,6 +714,8 @@ def init_db(app):
             },
             'pool_pre_ping': True,  # Verify connections are alive
             'pool_recycle': 3600,  # Recycle connections after 1 hour
+            'pool_size': 20,  # Increase from default 5 to handle background threads
+            'max_overflow': 30,  # Increase from default 10 to handle bursts
         }
     
     # Disable modification tracking (not needed and impacts performance)

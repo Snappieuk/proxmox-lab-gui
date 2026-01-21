@@ -59,6 +59,7 @@ def create_vm_shell(
     storage: str = "local-zfs",
     net_model: str = "virtio",
     net_options: str = '',
+    boot_order: str = None,
     other_settings: dict = None,
 ) -> Tuple[bool, str]:
     """
@@ -83,6 +84,7 @@ def create_vm_shell(
         storage: Storage pool for EFI disk (default: local-zfs)
         net_model: Network interface model (virtio, e1000, rtl8139, etc.) - default: virtio
         net_options: Additional network options string (firewall=1,rate=100, etc.)
+        boot_order: Boot order (e.g., 'order=scsi0;ide2;net0') - CRITICAL for Windows boot
         other_settings: Dict of additional VM settings to apply (agent, onboot, protection, etc.)
         
     Returns:
@@ -146,6 +148,19 @@ def create_vm_shell(
             logger.info(f"Verified QEMU guest agent is enabled for VM {vmid}")
         else:
             logger.warning(f"Could not verify guest agent for VM {vmid}, output: {stdout}")
+        
+        # Apply boot order if provided (CRITICAL for Windows boot - must come before other settings)
+        if boot_order:
+            logger.info(f"Applying boot order to VM {vmid}: {boot_order}")
+            boot_cmd = f"qm set {vmid} --{boot_order}"
+            exit_code, stdout, stderr = ssh_executor.execute(boot_cmd, timeout=30, check=False)
+            if exit_code == 0:
+                logger.info(f"✓ Boot order applied to VM {vmid}: {boot_order}")
+            else:
+                logger.error(f"✗ Failed to apply boot order to VM {vmid}: {stderr}")
+                # Don't fail VM creation, but log prominently
+        else:
+            logger.debug(f"No boot order specified for VM {vmid}, using Proxmox default")
         
         # Apply all other settings from template (if provided)
         if other_settings:
