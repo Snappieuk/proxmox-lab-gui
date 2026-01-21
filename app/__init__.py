@@ -47,7 +47,7 @@ def create_app(config=None):
     app.config['SECRET_KEY'] = SECRET_KEY
     app.config['SESSION_COOKIE_SECURE'] = False  # Allow HTTP for dev
     app.config['SESSION_COOKIE_HTTPONLY'] = True
-    app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+    app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'  # Default (works for same-origin)
     logger.info(f"SECRET_KEY configured (length: {len(SECRET_KEY)})")
     
     # Configure file upload limits (10GB max for ISOs)

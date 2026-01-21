@@ -255,9 +255,11 @@ def view_console(vmid: int):
     """Serve the noVNC console page. Ticket generation happens in WebSocket handler."""
     try:
         user = require_user()
+        logger.info(f"[VNC VIEW2] User '{user}' accessing console for VM {vmid}")
         
         # Check if user has access to this VM (admin, or VM assigned to user, or teacher/co-owner of class)
         is_admin = is_admin_user(user)
+        logger.info(f"[VNC VIEW2] User '{user}' is_admin={is_admin}")
         
         if not is_admin:
             # Check if user has permission to access this VM
@@ -445,12 +447,15 @@ def init_websocket_proxy(app, sock_instance):
         proxmox_ws = None
         forward_thread = None
         
+        logger.info(f"[VNC WS] Connection attempt for VM {vmid}")
+        
         try:
             # CRITICAL: Get connection info from cache (populated by /view2 route after permission check)
             conn_data = _vnc_connection_cache.get(vmid)
             
             if not conn_data:
-                logger.error(f"No connection data for VM {vmid} - user must visit /console/{vmid}/view2 first")
+                logger.error(f"[VNC WS] No connection data for VM {vmid} - user must visit /console/{vmid}/view2 first")
+                logger.error(f"[VNC WS] Current cache keys: {list(_vnc_connection_cache.keys())}")
                 try:
                     ws.close()
                 except Exception:
@@ -458,6 +463,7 @@ def init_websocket_proxy(app, sock_instance):
                 return
             
             # Log authorized access (authorized_user was set in /view2 after permission check)
+            logger.info(f"[VNC WS] Found cache data for VM {vmid}, authorized_user: {conn_data.get('authorized_user', 'N/A')}")
             authorized_user = conn_data.get('authorized_user', 'unknown')
             logger.info(f"WebSocket opened for VM {vmid} console by {authorized_user}")
             
@@ -541,24 +547,37 @@ def init_websocket_proxy(app, sock_instance):
             proxmox_ws = websocket.WebSocket(sslopt={"cert_reqs": ssl.CERT_NONE})
             
             try:
-                logger.debug(f"[{vmid}] Step 7: Initiating connection (timeout=10s)...")
+                logger.debug(f"[{vmid}] Step 7: Initiating connection (timeout=30s)...")
                 proxmox_ws.connect(
                     proxmox_ws_url,
                     cookie=f"PVEAuthCookie={pve_auth_cookie}",
                     suppress_origin=True,
-                    timeout=10
+                    timeout=30
                 )
                 logger.info(f"[{vmid}] Step 7: ✓ Connected to Proxmox VNC successfully")
                 logger.info(f"[{vmid}] Step 8: ✓ VNC stream ready - starting bidirectional forwarding")
                 
+            except websocket.WebSocketTimeoutException as timeout_error:
+                logger.error(f"❌ Connection timeout to Proxmox VNC server (30 seconds)")
+                logger.error(f"   This usually means: 1) Proxmox server is slow/overloaded, 2) Firewall blocking WebSocket, 3) VM not responding")
+                logger.error(f"   Connection: wss://{host}:{proxmox_port} → node {node} → VM {vmid}")
+                logger.error(f"   VNC port: {vnc_port}")
+                try:
+                    ws.send('Connection timeout - Proxmox server did not respond within 30 seconds')
+                    ws.close()
+                except Exception:
+                    pass
+                return
             except Exception as conn_error:
                 logger.error(f"❌ Failed to connect to Proxmox WebSocket: {conn_error}")
+                logger.error(f"   Error type: {type(conn_error).__name__}")
                 logger.error(f"   Connection details: host={host}, port={proxmox_port}, vmid={vmid}")
                 logger.error(f"   VNC port: {vnc_port}")
                 logger.error(f"   Ticket (first 50 chars): {ticket[:50] if len(ticket) > 50 else ticket}")
                 import traceback
                 logger.error(f"   Full traceback: {traceback.format_exc()}")
                 try:
+                    ws.send(f'Connection error: {str(conn_error)}')
                     ws.close()
                 except Exception:
                     pass
