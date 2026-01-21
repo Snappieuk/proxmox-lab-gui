@@ -216,17 +216,22 @@ def create_vm_shell(
             logger.warning(f"Could not verify guest agent for VM {vmid}, output: {stdout}")
         
         # Apply boot order if provided (CRITICAL for Windows boot - must come before other settings)
-        # Use pvesh (works after VM migration)
         if boot_order:
-            logger.info(f"Applying boot order to VM {vmid} on node {vm_node}: {boot_order}")
-            # boot_order comes as 'order=scsi0;ide2;net0' from template
-            boot_cmd = f"pvesh set /nodes/{vm_node}/qemu/{vmid}/config -boot {boot_order}"
-            exit_code, stdout, stderr = ssh_executor.execute(boot_cmd, timeout=30, check=False)
-            if exit_code == 0:
-                logger.info(f"✓ Boot order applied to VM {vmid}: {boot_order}")
+            logger.info(f"Applying boot order to VM {vmid}: {boot_order}")
+            if proxmox:
+                try:
+                    # boot_order comes as 'order=scsi0;ide2;net0' from template
+                    proxmox.nodes(vm_node).qemu(vmid).config.set(boot=boot_order)
+                    logger.info(f"✓ Boot order applied to VM {vmid} via API: {boot_order}")
+                except Exception as e:
+                    logger.error(f"✗ Failed to apply boot order via API: {e}")
             else:
-                logger.error(f"✗ Failed to apply boot order to VM {vmid}: {stderr}")
-                # Don't fail VM creation, but log prominently
+                boot_cmd = f"qm set {vmid} --boot {boot_order}"
+                exit_code, stdout, stderr = ssh_executor.execute(boot_cmd, timeout=30, check=False)
+                if exit_code == 0:
+                    logger.info(f"✓ Boot order applied to VM {vmid}: {boot_order}")
+                else:
+                    logger.error(f"✗ Failed to apply boot order to VM {vmid}: {stderr}")
         else:
             logger.debug(f"No boot order specified for VM {vmid}, using Proxmox default")
         
@@ -236,44 +241,53 @@ def create_vm_shell(
             settings_applied = 0
             settings_failed = 0
             
-            for key, value in other_settings.items():
-                # Skip internal/metadata fields and null values
+            # Apply all settings at once via API (more efficient and reliable)
+            if proxmox:
+                try:
+                    proxmox.nodes(vm_node).qemu(vmid).config.set(**other_settings)
+                    settings_applied = len(other_settings)
+                    logger.info(f"✓ Applied {settings_applied} settings to VM {vmid} via API")
+                except Exception as e:
+                    logger.error(f"Failed to apply settings via API: {e}")
+                    settings_failed = len(other_settings)
+            else:
+                # Fallback to SSH qm commands
                 skip_keys = ['name', 'vmid', 'digest', 'meta', 'template']
                 # Skip hardware settings that were already set explicitly in qm create command
                 # But only skip if we actually SET them (not None)
-                if bios and key == 'bios':
+                if bios and 'bios' not in skip_keys:
                     skip_keys.append('bios')
-                if boot_order and key == 'boot':
+                if boot_order and 'boot' not in skip_keys:
                     skip_keys.append('boot')
-                if cores and key == 'cores':
+                if cores and 'cores' not in skip_keys:
                     skip_keys.append('cores')
-                if cpu and key == 'cpu':
+                if cpu and 'cpu' not in skip_keys:
                     skip_keys.append('cpu')
-                if machine and key == 'machine':
+                if machine and 'machine' not in skip_keys:
                     skip_keys.append('machine')
-                if memory and key == 'memory':
+                if memory and 'memory' not in skip_keys:
                     skip_keys.append('memory')
-                if ostype and key == 'ostype':
+                if ostype and 'ostype' not in skip_keys:
                     skip_keys.append('ostype')
-                if scsihw and key == 'scsihw':
+                if scsihw and 'scsihw' not in skip_keys:
                     skip_keys.append('scsihw')
-                    
-                if key in skip_keys or value is None:
-                    continue
-                    continue
                 
-                # Apply setting (use pvesh for cluster-wide compatibility)
-                try:
-                    set_cmd = f"pvesh set /nodes/{vm_node}/qemu/{vmid}/config -{key} {value}"
-                    exit_code, stdout, stderr = ssh_executor.execute(set_cmd, timeout=30, check=False)
-                    if exit_code == 0:
-                        settings_applied += 1
-                        logger.debug(f"Applied setting {key}={value} to VM {vmid}")
-                    else:
+                for key, value in other_settings.items():
+                    if key in skip_keys or value is None:
+                        continue
+                    
+                    # Apply setting via qm command
+                    try:
+                        set_cmd = f"qm set {vmid} --{key} {value}"
+                        exit_code, stdout, stderr = ssh_executor.execute(set_cmd, timeout=30, check=False)
+                        if exit_code == 0:
+                            settings_applied += 1
+                            logger.debug(f"Applied setting {key}={value} to VM {vmid}")
+                        else:
+                            settings_failed += 1
+                            logger.warning(f"Failed to apply setting {key}={value} to VM {vmid}: {stderr}")
+                    except Exception as e:
                         settings_failed += 1
-                        logger.warning(f"Failed to apply setting {key}={value} to VM {vmid}: {stderr}")
-                except Exception as e:
-                    settings_failed += 1
                     logger.warning(f"Error applying setting {key} to VM {vmid}: {e}")
             
             logger.info(f"Applied {settings_applied} settings to VM {vmid}, {settings_failed} failed")
