@@ -1,7 +1,7 @@
 flask
 flask-sock
 flask-sqlalchemy
-proxmoxer
+proxmoxer>=2.0.0
 requests
 requests-toolbelt
 python-dotenv
