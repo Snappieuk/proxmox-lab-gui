@@ -6,13 +6,13 @@ After=network.target
 Type=exec
 User=root
 Group=root
-WorkingDirectory=/root/rdp-gen
-Environment="PATH=/root/rdp-gen/venv/bin:/usr/local/bin:/usr/bin:/bin"
+WorkingDirectory=/root
+Environment="PATH=/root/venv/bin:/usr/local/bin:/usr/bin:/bin"
 Environment="PVE_VERIFY=False"
 Environment="PYTHONUNBUFFERED=1"
-EnvironmentFile=-/root/rdp-gen/.env
+EnvironmentFile=-/root/.env
 # Run Flask using the new modular entry point (run.py is in /root/)
-ExecStart=/root/rdp-gen/venv/bin/python3 /root/run.py
+ExecStart=/root/venv/bin/python3 /root/run.py
 ExecReload=/bin/kill -s HUP $MAINPID
 Restart=always
 RestartSec=3
