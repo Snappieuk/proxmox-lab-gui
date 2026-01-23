@@ -17,6 +17,18 @@ from proxmoxer import ProxmoxAPI
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+# Configure urllib3 connection pooling globally for large class deployments
+# Increase from default 10 to 100 to handle 20+ VMs concurrently
+from urllib3.util import Retry
+from requests.adapters import HTTPAdapter
+
+# Global HTTP adapter with increased pool size
+_http_adapter = HTTPAdapter(
+    pool_connections=100,
+    pool_maxsize=100,
+    max_retries=Retry(total=3, backoff_factor=0.3)
+)
+
 # Create unverified SSL context for self-signed certificates
 ssl._create_default_https_context = ssl._create_unverified_context
 
@@ -156,13 +168,35 @@ def get_proxmox_admin() -> ProxmoxAPI:
     with _proxmox_lock:
         # Double-check inside lock to handle race conditions
         if cluster_id not in _proxmox_connections:
-            _proxmox_connections[cluster_id] = ProxmoxAPI(
-                cluster["host"],
-                user=cluster["user"],
-                password=cluster["password"],
-                verify_ssl=cluster.get("verify_ssl", False),
-            )
-            logger.info("Connected to Proxmox cluster '%s' at %s", cluster["name"], cluster["host"])
+            # Create requests session with connection pooling for large deployments
+            import requests
+            session = requests.Session()
+            session.mount('http://', _http_adapter)
+            session.mount('https://', _http_adapter)
+            
+            try:
+                _proxmox_connections[cluster_id] = ProxmoxAPI(
+                    cluster["host"],
+                    user=cluster["user"],
+                    password=cluster["password"],
+                    verify_ssl=cluster.get("verify_ssl", False),
+                    service='requests',  # Explicitly use requests backend
+                )
+                # Monkey-patch the session after creation
+                if hasattr(_proxmox_connections[cluster_id], '_backend') and hasattr(_proxmox_connections[cluster_id]._backend, 'session'):
+                    _proxmox_connections[cluster_id]._backend.session.mount('http://', _http_adapter)
+                    _proxmox_connections[cluster_id]._backend.session.mount('https://', _http_adapter)
+            except Exception as e:
+                logger.error(f"Failed to create Proxmox connection with pooling: {e}")
+                # Fallback without session parameter
+                _proxmox_connections[cluster_id] = ProxmoxAPI(
+                    cluster["host"],
+                    user=cluster["user"],
+                    password=cluster["password"],
+                    verify_ssl=cluster.get("verify_ssl", False),
+                )
+            
+            logger.info("Connected to Proxmox cluster '%s' at %s (pool_size=100)", cluster["name"], cluster["host"])
     
     return _proxmox_connections[cluster_id]
 
@@ -195,12 +229,33 @@ def create_proxmox_client() -> ProxmoxAPI:
     """
     cluster = get_current_cluster()
     
-    return ProxmoxAPI(
-        cluster["host"],
-        user=cluster["user"],
-        password=cluster["password"],
-        verify_ssl=cluster.get("verify_ssl", False),
-    )
+    # Create with connection pooling
+    import requests
+    session = requests.Session()
+    session.mount('http://', _http_adapter)
+    session.mount('https://', _http_adapter)
+    
+    try:
+        client = ProxmoxAPI(
+            cluster["host"],
+            user=cluster["user"],
+            password=cluster["password"],
+            verify_ssl=cluster.get("verify_ssl", False),
+            service='requests',
+        )
+        # Monkey-patch session after creation
+        if hasattr(client, '_backend') and hasattr(client._backend, 'session'):
+            client._backend.session.mount('http://', _http_adapter)
+            client._backend.session.mount('https://', _http_adapter)
+        return client
+    except Exception:
+        # Fallback without pooling
+        return ProxmoxAPI(
+            cluster["host"],
+            user=cluster["user"],
+            password=cluster["password"],
+            verify_ssl=cluster.get("verify_ssl", False),
+        )
 
 
 def probe_proxmox() -> Dict[str, Any]:
