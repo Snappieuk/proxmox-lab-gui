@@ -138,13 +138,27 @@ def get_proxmox_admin_for_cluster(cluster_id: str) -> ProxmoxAPI:
             session.mount('http://', adapter)
             session.mount('https://', adapter)
             
-            _proxmox_connections[cluster_id] = ProxmoxAPI(
-                cluster["host"],
-                user=cluster["user"],
-                password=cluster["password"],
-                verify_ssl=cluster.get("verify_ssl", False),
-                session=session,
-            )
+            try:
+                _proxmox_connections[cluster_id] = ProxmoxAPI(
+                    cluster["host"],
+                    user=cluster["user"],
+                    password=cluster["password"],
+                    verify_ssl=cluster.get("verify_ssl", False),
+                    service='requests',  # Explicitly use requests backend
+                )
+                # Monkey-patch the session after creation
+                if hasattr(_proxmox_connections[cluster_id], '_backend') and hasattr(_proxmox_connections[cluster_id]._backend, 'session'):
+                    _proxmox_connections[cluster_id]._backend.session.mount('http://', adapter)
+                    _proxmox_connections[cluster_id]._backend.session.mount('https://', adapter)
+            except Exception as e:
+                logger.error(f"Failed to create Proxmox connection with pooling: {e}")
+                # Fallback without advanced session configuration
+                _proxmox_connections[cluster_id] = ProxmoxAPI(
+                    cluster["host"],
+                    user=cluster["user"],
+                    password=cluster["password"],
+                    verify_ssl=cluster.get("verify_ssl", False),
+                )
             logger.info("Connected to Proxmox cluster '%s' at %s (pool_size=50)", cluster["name"], cluster["host"])
 
     return _proxmox_connections[cluster_id]
