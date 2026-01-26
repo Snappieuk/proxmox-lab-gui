@@ -1743,10 +1743,21 @@ def load_balance_class_vms(class_id: int):
             if stats['score'] >= avg_score:
                 continue  # Node is above average, skip
             
-            # Find STOPPED VMs on this node that can be migrated
-            # Only migrate stopped VMs to avoid disrupting students
-            node_vms = [vm for vm in vm_details.values() 
-                       if vm['node'] == node_name and vm['status'] == 'stopped']
+            # Find VMs on this node that can be migrated
+            # Prefer stopped VMs first (no disruption), but allow running VMs if node is severely overloaded
+            node_vms = [vm for vm in vm_details.values() if vm['node'] == node_name]
+            
+            # Separate stopped vs running VMs
+            stopped_vms = [vm for vm in node_vms if vm['status'] == 'stopped']
+            running_vms = [vm for vm in node_vms if vm['status'] == 'running']
+            
+            # If node is severely overloaded (< 5% RAM free), include running VMs
+            # Otherwise, only migrate stopped VMs to avoid student disruption
+            if stats['mem_free_pct'] < 0.05:  # Less than 5% RAM free = critical
+                node_vms = stopped_vms + running_vms  # Migrate both
+                logger.warning(f"Node {node_name} critically overloaded ({stats['mem_free_pct']*100:.1f}% RAM free), will migrate running VMs")
+            else:
+                node_vms = stopped_vms  # Only migrate stopped VMs
             
             # Sort VMs by resource usage (larger VMs first for better balance impact)
             node_vms.sort(key=lambda x: x['maxmem'], reverse=True)
@@ -1840,34 +1851,110 @@ def load_balance_class_vms(class_id: int):
         
         successful_migrations = []
         failed_migrations = []
+        vms_to_restart = []  # Track running VMs that were stopped for migration
         
         # Track assignments to update (batch update at end)
         assignments_to_update = []
         
         for migration in migrations:
+            vmid = migration['vmid']
+            from_node = migration['from_node']
+            to_node = migration['to_node']
+            vm_status = migration['status']
+            was_running = vm_status == 'running'
+            
             try:
-                logger.info(f"Migrating stopped VM {migration['vmid']} from {migration['from_node']} to {migration['to_node']}")
+                # Step 1: Stop VM if it's running (required for offline migration)
+                if was_running:
+                    logger.info(f"Stopping running VM {vmid} on {from_node} for migration")
+                    try:
+                        proxmox.nodes(from_node).qemu(vmid).status.stop.post()
+                        
+                        # Wait for VM to stop (with timeout)
+                        import time
+                        max_wait = 60  # 60 seconds
+                        waited = 0
+                        while waited < max_wait:
+                            status = proxmox.nodes(from_node).qemu(vmid).status.current.get()
+                            if status.get('status') == 'stopped':
+                                logger.info(f"VM {vmid} stopped successfully after {waited}s")
+                                break
+                            time.sleep(2)
+                            waited += 2
+                        else:
+                            raise Exception(f"VM {vmid} did not stop within {max_wait}s")
+                            
+                    except Exception as stop_error:
+                        logger.error(f"Failed to stop VM {vmid} for migration: {stop_error}")
+                        migration['error'] = f"Failed to stop VM: {str(stop_error)}"
+                        failed_migrations.append(migration)
+                        continue
                 
-                # Offline migration for stopped VMs (faster, no downtime concern)
-                # Note: We only migrate stopped VMs to avoid disrupting students
-                proxmox.nodes(migration['from_node']).qemu(migration['vmid']).migrate.post(
-                    target=migration['to_node'],
-                    online=0  # Offline migration
+                # Step 2: Migrate VM (now stopped)
+                logger.info(f"Migrating VM {vmid} from {from_node} to {to_node}")
+                proxmox.nodes(from_node).qemu(vmid).migrate.post(
+                    target=to_node,
+                    online=0  # Offline migration (VM must be stopped)
                 )
                 
+                # Wait for migration to complete
+                import time
+                max_wait = 300  # 5 minutes for migration
+                waited = 0
+                migration_complete = False
+                
+                while waited < max_wait:
+                    try:
+                        # Check if VM exists on target node
+                        status = proxmox.nodes(to_node).qemu(vmid).status.current.get()
+                        if status:
+                            logger.info(f"VM {vmid} migration completed after {waited}s")
+                            migration_complete = True
+                            break
+                    except:
+                        pass  # VM not on target yet
+                    
+                    time.sleep(5)
+                    waited += 5
+                
+                if not migration_complete:
+                    raise Exception(f"Migration did not complete within {max_wait}s")
+                
+                # Step 3: Track for restart if it was originally running
+                if was_running:
+                    vms_to_restart.append({'vmid': vmid, 'node': to_node})
+                
                 successful_migrations.append(migration)
-                logger.info(f"Successfully migrated VM {migration['vmid']}")
+                logger.info(f"Successfully migrated VM {vmid}")
                 
                 # Track assignment for batch update
-                assignment = class_vms.get(migration['vmid'])
+                assignment = class_vms.get(vmid)
                 if assignment:
-                    assignment.node = migration['to_node']
+                    assignment.node = to_node
                     assignments_to_update.append(assignment)
                 
             except Exception as e:
-                logger.exception(f"Failed to migrate VM {migration['vmid']}: {e}")
+                logger.exception(f"Failed to migrate VM {vmid}: {e}")
                 migration['error'] = str(e)
                 failed_migrations.append(migration)
+                
+                # If we stopped a running VM but migration failed, try to restart it on original node
+                if was_running:
+                    try:
+                        logger.info(f"Migration failed, restarting VM {vmid} on original node {from_node}")
+                        proxmox.nodes(from_node).qemu(vmid).status.start.post()
+                    except Exception as restart_error:
+                        logger.error(f"Failed to restart VM {vmid} after migration failure: {restart_error}")
+        
+        # Step 4: Restart VMs that were running before migration
+        restarted_count = 0
+        for vm_info in vms_to_restart:
+            try:
+                logger.info(f"Restarting VM {vm_info['vmid']} on {vm_info['node']} (was running before migration)")
+                proxmox.nodes(vm_info['node']).qemu(vm_info['vmid']).status.start.post()
+                restarted_count += 1
+            except Exception as restart_error:
+                logger.error(f"Failed to restart VM {vm_info['vmid']} after migration: {restart_error}")
         
         # Batch commit all database updates at once
         if assignments_to_update:
@@ -1878,9 +1965,13 @@ def load_balance_class_vms(class_id: int):
                 logger.exception(f"Failed to update VM assignments: {db_error}")
                 db.session.rollback()
         
+        message = f"Load balance complete: {len(successful_migrations)} successful, {len(failed_migrations)} failed"
+        if restarted_count > 0:
+            message += f", {restarted_count} VMs restarted"
+        
         return jsonify({
             "ok": True,
-            "message": f"Load balance complete: {len(successful_migrations)} successful, {len(failed_migrations)} failed",
+            "message": message,
             "node_stats": node_stats,
             "avg_score": avg_score,
             "score_variance": score_variance,

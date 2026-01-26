@@ -2485,31 +2485,50 @@ async function bulkStartVMs() {
     const checkboxes = document.querySelectorAll('.vm-checkbox:checked');
     if (checkboxes.length === 0) return;
     
-    if (!confirm(`Start ${checkboxes.length} VM(s)?`)) return;
-    
+    // Filter to only stopped VMs
+    const stoppedVMs = [];
     const vmids = [];
     const vmNames = [];
     
     for (const cb of checkboxes) {
         const vmid = parseInt(cb.value);
-        vmids.push(vmid);
+        const statusBadge = document.getElementById(`status-${vmid}`);
+        const status = statusBadge ? statusBadge.textContent.trim().toLowerCase() : '';
         
-        // Get VM name from the table
-        const nameEl = document.getElementById(`name-${vmid}`);
-        if (nameEl) {
-            vmNames.push(nameEl.textContent);
+        // Only include stopped VMs
+        if (status === 'stopped') {
+            const nameEl = document.getElementById(`name-${vmid}`);
+            stoppedVMs.push({ vmid, name: nameEl ? nameEl.textContent : `VM ${vmid}` });
+            vmids.push(vmid);
+            if (nameEl) {
+                vmNames.push(nameEl.textContent);
+            }
         }
-        
+    }
+    
+    if (stoppedVMs.length === 0) {
+        showAlert('No stopped VMs selected', 'warning');
+        return;
+    }
+    
+    const skipped = checkboxes.length - stoppedVMs.length;
+    const confirmMsg = skipped > 0 
+        ? `Start ${stoppedVMs.length} VM(s)? (${skipped} already running will be skipped)`
+        : `Start ${stoppedVMs.length} VM(s)?`;
+    
+    if (!confirm(confirmMsg)) return;
+    
+    for (const vm of stoppedVMs) {
         try {
-            await fetch(`/api/vm/${vmid}/start`, { method: 'POST' });
+            await fetch(`/api/vm/${vm.vmid}/start`, { method: 'POST' });
         } catch (e) {
-            console.error(`Failed to start VM ${vmid}:`, e);
+            console.error(`Failed to start VM ${vm.vmid}:`, e);
         }
     }
     
     // Show single alert with list of VMs
     const vmList = vmNames.join(', ');
-    showAlert(`Starting ${checkboxes.length} VM(s): ${vmList}`, 'success');
+    showAlert(`Starting ${stoppedVMs.length} VM(s): ${vmList}`, 'success');
     
     // Uncheck all
     document.getElementById('select-all-vms').checked = false;
@@ -2527,29 +2546,48 @@ async function bulkStopVMs() {
     const checkboxes = document.querySelectorAll('.vm-checkbox:checked');
     if (checkboxes.length === 0) return;
     
-    if (!confirm(`Stop ${checkboxes.length} VM(s)?`)) return;
-    
+    // Filter to only running VMs
+    const runningVMs = [];
     const vmNames = [];
     
     for (const cb of checkboxes) {
         const vmid = parseInt(cb.value);
+        const statusBadge = document.getElementById(`status-${vmid}`);
+        const status = statusBadge ? statusBadge.textContent.trim().toLowerCase() : '';
         
-        // Get VM name from the table
-        const nameEl = document.getElementById(`name-${vmid}`);
-        if (nameEl) {
-            vmNames.push(nameEl.textContent);
+        // Only include running VMs
+        if (status === 'running') {
+            const nameEl = document.getElementById(`name-${vmid}`);
+            runningVMs.push({ vmid, name: nameEl ? nameEl.textContent : `VM ${vmid}` });
+            if (nameEl) {
+                vmNames.push(nameEl.textContent);
+            }
         }
-        
+    }
+    
+    if (runningVMs.length === 0) {
+        showAlert('No running VMs selected', 'warning');
+        return;
+    }
+    
+    const skipped = checkboxes.length - runningVMs.length;
+    const confirmMsg = skipped > 0 
+        ? `Stop ${runningVMs.length} VM(s)? (${skipped} already stopped will be skipped)`
+        : `Stop ${runningVMs.length} VM(s)?`;
+    
+    if (!confirm(confirmMsg)) return;
+    
+    for (const vm of runningVMs) {
         try {
-            await fetch(`/api/vm/${vmid}/stop`, { method: 'POST' });
+            await fetch(`/api/vm/${vm.vmid}/stop`, { method: 'POST' });
         } catch (e) {
-            console.error(`Failed to stop VM ${vmid}:`, e);
+            console.error(`Failed to stop VM ${vm.vmid}:`, e);
         }
     }
     
     // Show single alert with list of VMs
     const vmList = vmNames.join(', ');
-    showAlert(`Stopping ${checkboxes.length} VM(s): ${vmList}`, 'success');
+    showAlert(`Stopping ${runningVMs.length} VM(s): ${vmList}`, 'success');
     
     // Uncheck all
     document.getElementById('select-all-vms').checked = false;

@@ -41,6 +41,9 @@ def sync_isos_from_proxmox(full_sync=True):
         'errors': []
     }
     
+    # Disable autoflush to avoid mid-operation locks
+    db.session.autoflush = False
+    
     # Track all ISOs found in Proxmox (volid set)
     found_volids = set()
     
@@ -151,14 +154,32 @@ def sync_isos_from_proxmox(full_sync=True):
             db.session.delete(iso)
             stats['isos_removed'] += 1
     
-    # Commit all changes
-    try:
-        db.session.commit()
-        logger.info(f"ISO sync complete: {stats}")
-    except Exception as e:
-        db.session.rollback()
-        logger.error(f"Failed to commit ISO sync changes: {e}")
-        stats['errors'].append(f"Database commit failed: {str(e)}")
+    # Commit all changes with retry logic for database locks
+    max_retries = 5
+    retry_count = 0
+    while retry_count < max_retries:
+        try:
+            db.session.commit()
+            db.session.close()  # Release lock immediately
+            logger.info(f"ISO sync complete: {stats}")
+            break
+        except Exception as e:
+            retry_count += 1
+            db.session.rollback()
+            db.session.close()  # Release lock even on error
+            
+            if "database is locked" in str(e).lower() and retry_count < max_retries:
+                import time
+                wait_time = retry_count * 1.0  # Progressive backoff: 1s, 2s, 3s, 4s, 5s
+                logger.warning(f"Database locked, retrying in {wait_time}s (attempt {retry_count}/{max_retries})")
+                time.sleep(wait_time)
+            else:
+                logger.error(f"Failed to commit ISO sync changes: {e}")
+                stats['errors'].append(f"Database commit failed: {str(e)}")
+                break
+    
+    # Re-enable autoflush
+    db.session.autoflush = True
     
     return stats
 

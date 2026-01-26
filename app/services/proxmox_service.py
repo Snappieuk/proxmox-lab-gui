@@ -43,13 +43,15 @@ _proxmox_connections: Dict[str, Any] = {}
 def get_clusters_from_db():
     """Load active clusters from database (database-first architecture)."""
     try:
-        from app.models import Cluster
+        from app.models import Cluster, db
         from flask import has_app_context
         
         if has_app_context():
-            clusters = Cluster.query.filter_by(is_active=True).order_by(Cluster.priority.desc(), Cluster.name).all()
-            if clusters:
-                return [c.to_dict() for c in clusters]
+            # Use no_autoflush to prevent session issues when called from background threads
+            with db.session.no_autoflush:
+                clusters = Cluster.query.filter_by(is_active=True).order_by(Cluster.priority.desc(), Cluster.name).all()
+                if clusters:
+                    return [c.to_dict() for c in clusters]
         else:
             logger.warning("get_clusters_from_db called outside app context")
     except Exception as e:
