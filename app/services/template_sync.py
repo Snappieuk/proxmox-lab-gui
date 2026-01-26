@@ -7,7 +7,7 @@ Similar to background_sync.py for VMs, but for templates.
 
 import logging
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 from threading import Thread
 
 from app.services.proxmox_service import get_clusters_from_db

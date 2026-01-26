@@ -14,13 +14,10 @@ from typing import Any, Dict
 # Suppress SSL warnings for self-signed certificates
 import urllib3
 from proxmoxer import ProxmoxAPI
-
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
-# Configure urllib3 connection pooling globally for large class deployments
-# Increase from default 10 to 100 to handle 20+ VMs concurrently
 from urllib3.util import Retry
 from requests.adapters import HTTPAdapter
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Global HTTP adapter with increased pool size
 _http_adapter = HTTPAdapter(

@@ -43,7 +43,6 @@ from app.services.proxmox_operations import (
     CLASS_CLUSTER_IP,
     delete_vm,
     get_vm_status_from_inventory,
-    list_proxmox_templates,
     revert_vm_to_snapshot,
     start_class_vm,
     stop_class_vm,
@@ -203,7 +202,7 @@ def create_new_class():
             app_ctx = app.app_context()
             app_ctx.push()
             
-            from app.models import Class, db
+            from app.models import Class
             from app.services.class_vm_service import deploy_class_vms
 
             # Re-fetch class within the app context to get fresh database session
@@ -1911,7 +1910,7 @@ def load_balance_class_vms(class_id: int):
                             logger.info(f"VM {vmid} migration completed after {waited}s")
                             migration_complete = True
                             break
-                    except:
+                    except Exception:
                         pass  # VM not on target yet
                     
                     time.sleep(5)
