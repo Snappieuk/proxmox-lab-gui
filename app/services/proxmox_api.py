@@ -19,7 +19,7 @@ def get_vnc_ticket(node: str, vmid: int, vm_type: str = 'kvm', cluster_id: Optio
     Generate a VNC ticket and port for accessing a VM console via noVNC.
     
     This ticket is required for authenticating WebSocket connections to Proxmox's
-    VNC proxy. The ticket is short-lived (~2 minutes) for security.
+    VNC proxy. With generate-password=1, the ticket is valid for 2 hours.
     
     Args:
         node: Proxmox node name where the VM is located (e.g., 'pve1', 'pve2')
@@ -44,7 +44,7 @@ def get_vnc_ticket(node: str, vmid: int, vm_type: str = 'kvm', cluster_id: Optio
         >>> print(f"Use ticket: {vnc_info['ticket'][:20]}...")
         
     Notes:
-        - Ticket expires in ~2 minutes - generate just before connecting
+        - Ticket expires in 2 hours (7200s) with generate-password=1
         - For WebSocket URL format: wss://<host>:8006/api2/json/nodes/<node>/<vm_type>/<vmid>/vncwebsocket?port=<port>&vncticket=<ticket>
         - Must also send PVEAuthCookie in WebSocket request headers
     """
@@ -66,10 +66,11 @@ def get_vnc_ticket(node: str, vmid: int, vm_type: str = 'kvm', cluster_id: Optio
         # Call Proxmox API to generate VNC ticket
         # Parameters:
         #   - websocket=1: Enable WebSocket mode (required for noVNC)
+        #   - generate-password=1: Extend ticket lifetime from 60s to 7200s (2 hours)
         if vm_type == 'kvm':
-            ticket_data = proxmox.nodes(node).qemu(vmid).vncproxy.post(websocket=1)
+            ticket_data = proxmox.nodes(node).qemu(vmid).vncproxy.post(websocket=1, **{'generate-password': 1})
         else:  # lxc
-            ticket_data = proxmox.nodes(node).lxc(vmid).vncproxy.post(websocket=1)
+            ticket_data = proxmox.nodes(node).lxc(vmid).vncproxy.post(websocket=1, **{'generate-password': 1})
         
         # Extract ticket information
         ticket = ticket_data.get('ticket')

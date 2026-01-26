@@ -124,40 +124,46 @@ def get_proxmox_admin_for_cluster(cluster_id: str) -> ProxmoxAPI:
                 raise ValueError(f"Unknown cluster_id or cluster_ip: {cluster_id}")
             cluster_id = cluster["id"]
 
+    # Check if connection exists (fast path without lock)
+    if cluster_id in _proxmox_connections:
+        return _proxmox_connections[cluster_id]
+    
+    # Create connection OUTSIDE lock (slow network operation)
+    import requests
+    from requests.adapters import HTTPAdapter
+    
+    session = requests.Session()
+    adapter = HTTPAdapter(pool_connections=50, pool_maxsize=50)
+    session.mount('http://', adapter)
+    session.mount('https://', adapter)
+    
+    try:
+        new_connection = ProxmoxAPI(
+            cluster["host"],
+            user=cluster["user"],
+            password=cluster["password"],
+            verify_ssl=cluster.get("verify_ssl", False),
+            service='requests',
+        )
+        # Monkey-patch the session after creation
+        if hasattr(new_connection, '_backend') and hasattr(new_connection._backend, 'session'):
+            new_connection._backend.session.mount('http://', adapter)
+            new_connection._backend.session.mount('https://', adapter)
+    except Exception as e:
+        logger.error(f"Failed to create Proxmox connection with pooling: {e}")
+        # Fallback without advanced session configuration
+        new_connection = ProxmoxAPI(
+            cluster["host"],
+            user=cluster["user"],
+            password=cluster["password"],
+            verify_ssl=cluster.get("verify_ssl", False),
+        )
+    
+    # Now acquire lock ONLY for dictionary write (fast)
     with _proxmox_lock:
-        # Double-check inside lock to handle race conditions
+        # Double-check - another thread may have created it while we were connecting
         if cluster_id not in _proxmox_connections:
-            # Create session with larger connection pool to support parallel operations
-            import requests
-            from requests.adapters import HTTPAdapter
-            
-            session = requests.Session()
-            # Increase pool size from default 10 to 50 for parallel IP lookups
-            adapter = HTTPAdapter(pool_connections=50, pool_maxsize=50)
-            session.mount('http://', adapter)
-            session.mount('https://', adapter)
-            
-            try:
-                _proxmox_connections[cluster_id] = ProxmoxAPI(
-                    cluster["host"],
-                    user=cluster["user"],
-                    password=cluster["password"],
-                    verify_ssl=cluster.get("verify_ssl", False),
-                    service='requests',  # Explicitly use requests backend
-                )
-                # Monkey-patch the session after creation
-                if hasattr(_proxmox_connections[cluster_id], '_backend') and hasattr(_proxmox_connections[cluster_id]._backend, 'session'):
-                    _proxmox_connections[cluster_id]._backend.session.mount('http://', adapter)
-                    _proxmox_connections[cluster_id]._backend.session.mount('https://', adapter)
-            except Exception as e:
-                logger.error(f"Failed to create Proxmox connection with pooling: {e}")
-                # Fallback without advanced session configuration
-                _proxmox_connections[cluster_id] = ProxmoxAPI(
-                    cluster["host"],
-                    user=cluster["user"],
-                    password=cluster["password"],
-                    verify_ssl=cluster.get("verify_ssl", False),
-                )
+            _proxmox_connections[cluster_id] = new_connection
             logger.info("Connected to Proxmox cluster '%s' at %s (pool_size=50)", cluster["name"], cluster["host"])
 
     return _proxmox_connections[cluster_id]

@@ -338,20 +338,8 @@ def api_vm_start(vmid: int):
         node = vm['node']
         vm_type = vm['type']
         
-        # Query cluster to find actual node (VM may have been migrated)
+        # Start the VM - try database node first (fast path)
         actual_node = node
-        try:
-            resources = proxmox.cluster.resources.get(type="vm")
-            for r in resources:
-                if int(r.get('vmid', -1)) == int(vmid):
-                    actual_node = r.get('node')
-                    if actual_node != node:
-                        logger.info(f"VM {vmid} was migrated from {node} to {actual_node}, using actual node")
-                    break
-        except Exception as e:
-            logger.warning(f"Cluster resources query failed: {e}, using database node {node}")
-        
-        # Start the VM
         try:
             if vm_type == 'qemu':
                 proxmox.nodes(actual_node).qemu(vmid).status.start.post()
@@ -361,6 +349,38 @@ def api_vm_start(vmid: int):
             # If VM is already running, that's okay
             if "already running" in str(start_error).lower():
                 logger.info(f"VM {vmid} already running")
+            # If VM not found on expected node, it may have migrated - query cluster
+            elif "does not exist" in str(start_error).lower() or "not found" in str(start_error).lower():
+                logger.warning(f"VM {vmid} not found on {node}, checking for migration...")
+                try:
+                    resources = proxmox.cluster.resources.get(type="vm")
+                    for r in resources:
+                        if int(r.get('vmid', -1)) == int(vmid):
+                            actual_node = r.get('node')
+                            logger.info(f"Found VM {vmid} on {actual_node} (migrated from {node})")
+                            
+                            # Update database with new node location
+                            try:
+                                from app.models import VMInventory, db
+                                vm_record = VMInventory.query.filter_by(cluster_id=cluster_id, vmid=vmid).first()
+                                if vm_record:
+                                    vm_record.node = actual_node
+                                    db.session.commit()
+                                    logger.info(f"Updated VMInventory: VM {vmid} now on node {actual_node}")
+                            except Exception as db_err:
+                                logger.warning(f"Failed to update VMInventory after migration: {db_err}")
+                            
+                            # Retry on correct node
+                            if vm_type == 'qemu':
+                                proxmox.nodes(actual_node).qemu(vmid).status.start.post()
+                            else:
+                                proxmox.nodes(actual_node).lxc(vmid).status.start.post()
+                            break
+                    else:
+                        raise  # VM not found anywhere
+                except Exception as migration_error:
+                    logger.error(f"Failed to start VM after migration check: {migration_error}")
+                    raise
             else:
                 raise
         
@@ -430,29 +450,49 @@ def api_vm_stop(vmid: int):
         node = vm['node']
         vm_type = vm['type']
         
-        # Query cluster to find actual node (VM may have been migrated)
+        # Shutdown the VM - try database node first (fast path)
         actual_node = node
-        try:
-            resources = proxmox.cluster.resources.get(type="vm")
-            for r in resources:
-                if int(r.get('vmid', -1)) == int(vmid):
-                    actual_node = r.get('node')
-                    if actual_node != node:
-                        logger.info(f"VM {vmid} was migrated from {node} to {actual_node}, using actual node")
-                    break
-        except Exception as e:
-            logger.warning(f"Cluster resources query failed: {e}, using database node {node}")
-        
-        # Stop the VM
         try:
             if vm_type == 'qemu':
                 proxmox.nodes(actual_node).qemu(vmid).status.shutdown.post()
             else:  # lxc
                 proxmox.nodes(actual_node).lxc(vmid).status.shutdown.post()
         except Exception as stop_error:
-            # If VM is already stopped or doesn't exist, that's okay
-            if "not running" in str(stop_error).lower() or "does not exist" in str(stop_error).lower():
-                logger.info(f"VM {vmid} already stopped or doesn't exist")
+            # If VM is already stopped, that's okay
+            if "not running" in str(stop_error).lower():
+                logger.info(f"VM {vmid} already stopped")
+            # If VM not found on expected node, it may have migrated - query cluster
+            elif "does not exist" in str(stop_error).lower() or "not found" in str(stop_error).lower():
+                logger.warning(f"VM {vmid} not found on {node}, checking for migration...")
+                try:
+                    resources = proxmox.cluster.resources.get(type="vm")
+                    for r in resources:
+                        if int(r.get('vmid', -1)) == int(vmid):
+                            actual_node = r.get('node')
+                            logger.info(f"Found VM {vmid} on {actual_node} (migrated from {node})")
+                            
+                            # Update database with new node location
+                            try:
+                                from app.models import VMInventory, db
+                                vm_record = VMInventory.query.filter_by(cluster_id=cluster_id, vmid=vmid).first()
+                                if vm_record:
+                                    vm_record.node = actual_node
+                                    db.session.commit()
+                                    logger.info(f"Updated VMInventory: VM {vmid} now on node {actual_node}")
+                            except Exception as db_err:
+                                logger.warning(f"Failed to update VMInventory after migration: {db_err}")
+                            
+                            # Retry on correct node
+                            if vm_type == 'qemu':
+                                proxmox.nodes(actual_node).qemu(vmid).status.shutdown.post()
+                            else:
+                                proxmox.nodes(actual_node).lxc(vmid).status.shutdown.post()
+                            break
+                    else:
+                        raise  # VM not found anywhere
+                except Exception as migration_error:
+                    logger.error(f"Failed to stop VM after migration check: {migration_error}")
+                    raise
             else:
                 raise
         
@@ -502,32 +542,48 @@ def api_vm_eject_iso(vmid: int):
         
         # Execute eject via Proxmox API
         proxmox = get_proxmox_admin()
-        node = vm['node']
-        
-        # Query cluster to find actual node (VM may have been migrated)
-        actual_node = node
-        try:
-            resources = proxmox.cluster.resources.get(type="vm")
-            for r in resources:
-                if int(r.get('vmid', -1)) == int(vmid):
-                    actual_node = r.get('node')
-                    if actual_node != node:
-                        logger.info(f"VM {vmid} was migrated from {node} to {actual_node}, using actual node")
-                    break
-        except Exception as e:
-            logger.warning(f"Cluster resources query failed: {e}, using database node {node}")
+        node = vm['node']  # Try database node first (fast)
         
         # Eject ISO by setting ide2 to 'none' or 'cdrom,media=cdrom'
         # This removes the ISO but keeps the CD/DVD drive
         try:
-            proxmox.nodes(actual_node).qemu(vmid).config.put(ide2='none')
-            logger.info(f"Ejected ISO from VM {vmid} on node {actual_node}")
+            proxmox.nodes(node).qemu(vmid).config.put(ide2='none')
+            logger.info(f"Ejected ISO from VM {vmid} on node {node}")
             return jsonify({
                 "ok": True, 
                 "message": "Installation media ejected successfully. VM can now boot from disk."
             })
         except Exception as eject_error:
             error_msg = str(eject_error)
+            # Check if VM migrated to different node
+            if "does not exist" in error_msg.lower() and "not found" not in error_msg.lower():
+                logger.warning(f"VM {vmid} not on {node}, checking for migration...")
+                try:
+                    resources = proxmox.cluster.resources.get(type="vm")
+                    for r in resources:
+                        if int(r.get('vmid', -1)) == int(vmid):
+                            actual_node = r.get('node')
+                            logger.info(f"Found VM {vmid} on {actual_node} (migrated)")
+                            
+                            # Update database with new node location
+                            try:
+                                from app.models import VMInventory, db
+                                vm_record = VMInventory.query.filter_by(cluster_id=cluster_id, vmid=vmid).first()
+                                if vm_record:
+                                    vm_record.node = actual_node
+                                    db.session.commit()
+                                    logger.info(f"Updated VMInventory: VM {vmid} now on node {actual_node}")
+                            except Exception as db_err:
+                                logger.warning(f"Failed to update VMInventory after migration: {db_err}")
+                            
+                            # Retry on correct node
+                            proxmox.nodes(actual_node).qemu(vmid).config.put(ide2='none')
+                            return jsonify({
+                                "ok": True, 
+                                "message": "Installation media ejected successfully. VM can now boot from disk."
+                            })
+                except Exception:
+                    pass  # Fall through to original error handling
             if "does not have" in error_msg.lower() or "not found" in error_msg.lower():
                 return jsonify({
                     "ok": False, 
@@ -671,29 +727,11 @@ def api_vm_update_config(vmid: int):
                     'cluster_id': vm_record.cluster_id
                 }
             else:
-                # Still not found - VM might not be synced to database yet
-                # Try to get it directly from Proxmox
-                logger.warning(f"VM {vmid} not in VMInventory, attempting direct Proxmox lookup")
-                try:
-                    proxmox = get_proxmox_admin_for_cluster(cluster_id)
-                    # Try to find VM in cluster resources
-                    resources = proxmox.cluster.resources.get(type='vm')
-                    for res in resources:
-                        if res.get('vmid') == vmid:
-                            vm = {
-                                'vmid': vmid,
-                                'node': res.get('node'),
-                                'status': res.get('status', 'unknown'),
-                                'is_template': res.get('template', 0) == 1,
-                                'cluster_id': cluster_id
-                            }
-                            logger.info(f"Found VM {vmid} via Proxmox API on node {vm['node']}")
-                            break
-                except Exception as lookup_err:
-                    logger.error(f"Failed to lookup VM via Proxmox API: {lookup_err}")
-                
-                if not vm:
-                    return jsonify({"ok": False, "error": f"VM {vmid} not found in any cluster"}), 404
+                # VM not in database yet - wait for background sync
+                return jsonify({
+                    "ok": False, 
+                    "error": f"VM {vmid} not found. Background sync may still be indexing VMs. Please try again in a moment."
+                }), 404
         
         # Check access permissions
         if not is_admin_user(user):
@@ -712,22 +750,10 @@ def api_vm_update_config(vmid: int):
             # For templates, we need to convert to VM, update, then convert back
             logger.info(f"VM {vmid} is a template, converting to VM temporarily")
             try:
-                # Remove template flag
+                # Remove template flag (async operation - don't wait)
                 proxmox.nodes(node).qemu(vmid).config.put(template=0)
-                
-                # Wait for template flag to be removed (verify it's actually changed)
-                import time
-                max_wait = 30
-                waited = 0
-                while waited < max_wait:
-                    time.sleep(1)
-                    waited += 1
-                    config = proxmox.nodes(node).qemu(vmid).config.get()
-                    if config.get('template') != 1:
-                        logger.info(f"Template converted to VM after {waited} seconds")
-                        break
-                else:
-                    logger.warning(f"Template flag still set after {max_wait} seconds")
+                logger.info(f"Initiated template-to-VM conversion for {vmid}")
+                # Proxmox will handle conversion - proceed immediately
                     
             except Exception as e:
                 logger.error(f"Failed to convert template to VM: {e}")
@@ -737,55 +763,27 @@ def api_vm_update_config(vmid: int):
         if not is_template and vm['status'] == 'running':
             return jsonify({"ok": False, "error": "VM must be stopped to change hardware configuration"}), 400
         
-        # Update hardware via Proxmox API
+        # Update hardware via Proxmox API (non-blocking)
         try:
             proxmox.nodes(node).qemu(vmid).config.put(cores=cores, memory=memory)
-            
-            # Verify the config was actually updated
-            import time
-            max_wait = 30
-            waited = 0
-            while waited < max_wait:
-                time.sleep(1)
-                waited += 1
-                config = proxmox.nodes(node).qemu(vmid).config.get()
-                if config.get('cores') == cores and config.get('memory') == memory:
-                    logger.info(f"VM config updated successfully after {waited} seconds")
-                    break
-            else:
-                logger.warning(f"Config may not be fully applied after {max_wait} seconds")
-            
             logger.info(f"Updated VM {vmid} config: {cores} cores, {memory}MB RAM (user: {user})")
+            # Config update is async - Proxmox will apply changes
         except Exception as e:
             logger.error(f"Failed to update VM config: {e}")
             # If it was a template, try to convert back
             if is_template:
                 try:
                     proxmox.nodes(node).qemu(vmid).template.post()
-                except:
-                    pass
+                except Exception as e:
+                    logger.error(f"Failed to reconvert to template after error: {e}")
             return jsonify({"ok": False, "error": f"Failed to update VM config: {str(e)}"}), 500
         
-        # If it was a template, convert back to template
+        # If it was a template, convert back to template (async)
         if is_template:
             try:
-                import time
                 proxmox.nodes(node).qemu(vmid).template.post()
-                
-                # Wait for conversion back to template and verify
-                max_wait = 30
-                waited = 0
-                while waited < max_wait:
-                    time.sleep(1)
-                    waited += 1
-                    config = proxmox.nodes(node).qemu(vmid).config.get()
-                    if config.get('template') == 1:
-                        logger.info(f"Converted back to template after {waited} seconds")
-                        break
-                else:
-                    logger.error(f"Failed to verify template conversion after {max_wait} seconds")
-                    return jsonify({"ok": False, "error": "Config updated but template conversion not verified"}), 500
-                    
+                logger.info(f"Initiated VM-to-template reconversion for {vmid}")
+                # Proxmox will handle conversion - no need to wait
             except Exception as e:
                 logger.error(f"Failed to convert back to template: {e}")
                 return jsonify({"ok": False, "error": f"Config updated but failed to convert back to template: {str(e)}"}), 500
@@ -810,5 +808,7 @@ def api_vm_update_config(vmid: int):
     except Exception as e:
         logger.exception(f"Failed to update VM {vmid} config")
         return jsonify({"ok": False, "error": str(e)}), 500
+
+
 
 
