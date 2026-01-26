@@ -903,36 +903,8 @@ def clone_progress_route(task_id: str):
     progress = get_clone_progress(task_id)
     return jsonify(progress)
 
-@api_classes_bp.route("/<int:class_id>/promote-editable", methods=["POST"])
-@login_required
-def promote_editable_to_base_template(class_id: int):
-    """DEPRECATED: This endpoint uses qm clone which locks templates and is no longer supported.
-    
-    Use the new disk-export workflow instead:
-    - /api/classes/<id>/publish-template - Push teacher VM changes to all students
-    """
-    return jsonify({
-        "ok": False,
-        "error": f"This endpoint is deprecated and uses qm clone (template locking). Use /api/classes/{class_id}/publish-template instead.",
-        "deprecated": True,
-        "replacement_endpoint": f"/api/classes/{class_id}/publish-template"
-    }), 410
-
-
-@api_classes_bp.route("/<int:class_id>/redeploy-student-vms", methods=["POST"])
-@login_required
-def redeploy_student_vms(class_id: int):
-    """DEPRECATED: This endpoint uses qm clone which locks templates and is no longer supported.
-    
-    Use the new disk-export workflow instead:
-    - /api/classes/<id>/publish-template - Recreates all student VMs from teacher VM
-    """
-    return jsonify({
-        "ok": False,
-        "error": f"This endpoint is deprecated and uses qm clone (template locking). Use /api/classes/{class_id}/publish-template instead.",
-        "deprecated": True,
-        "replacement_endpoint": f"/api/classes/{class_id}/publish-template"
-    }), 410
+# DELETED: 3 deprecated endpoints (promote_editable_to_base_template, redeploy_student_vms, push_updates)
+# These used qm clone which locks templates. Use /api/classes/<id>/publish-template instead.
 
 
 @api_classes_bp.route("/<int:class_id>/vms/<int:assignment_id>/assign", methods=["POST"])
@@ -1175,22 +1147,6 @@ def revert_my_vm(class_id: int):
 # ---------------------------------------------------------------------------
 # Teacher Operations
 # ---------------------------------------------------------------------------
-
-@api_classes_bp.route("/<int:class_id>/push-updates", methods=["POST"])
-@login_required
-def push_updates(class_id: int):
-    """DEPRECATED: This endpoint uses qm clone which locks templates and is no longer supported.
-    
-    Use the new disk-export workflow instead:
-    - /api/classes/<id>/publish-template - Push teacher VM changes using disk copy
-    """
-    return jsonify({
-        "ok": False,
-        "error": f"This endpoint is deprecated and uses qm clone (template locking). Use /api/classes/{class_id}/publish-template instead.",
-        "deprecated": True,
-        "replacement_endpoint": f"/api/classes/{class_id}/publish-template"
-    }), 410
-
 
 # ---------------------------------------------------------------------------
 # User Management (Adminer only)

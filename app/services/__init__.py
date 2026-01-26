@@ -1,10 +1,6 @@
 # Services package - re-exports for convenient imports
 # noqa: F401 comments indicate these are intentional re-exports
-from app.services.cluster_manager import (
-    get_cluster_config as get_cluster_config,  # noqa: F401
-    invalidate_cluster_cache as invalidate_cluster_cache,  # noqa: F401
-    save_cluster_config as save_cluster_config,  # noqa: F401
-)
+# DELETED: cluster_manager imports (duplicate of proxmox_service)
 from app.services.proxmox_service import (
     get_current_cluster as get_current_cluster,  # noqa: F401
     get_current_cluster_id as get_current_cluster_id,  # noqa: F401

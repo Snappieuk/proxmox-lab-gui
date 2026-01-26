@@ -13,7 +13,6 @@ All tables use SQLite via SQLAlchemy.
 """
 
 import os
-import secrets
 from datetime import datetime, timedelta
 
 from flask_sqlalchemy import SQLAlchemy
@@ -48,7 +47,7 @@ class Cluster(db.Model):
     host = db.Column(db.String(255), nullable=False)  # IP address or hostname
     port = db.Column(db.Integer, default=8006)  # Proxmox API port
     user = db.Column(db.String(80), nullable=False)  # Proxmox user (e.g., root@pam)
-    password = db.Column(db.String(256), nullable=False)  # Proxmox password (encrypted in production)
+    password = db.Column(db.String(256), nullable=False)  # Proxmox password
     verify_ssl = db.Column(db.Boolean, default=False)  # SSL certificate verification
     is_default = db.Column(db.Boolean, default=False)  # Default cluster for new users
     is_active = db.Column(db.Boolean, default=True)  # Enable/disable cluster

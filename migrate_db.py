@@ -67,6 +67,8 @@ CRITICAL_MIGRATIONS = [
     ('clusters', 'enable_ip_lookup', 'BOOLEAN', '1'),
     ('clusters', 'enable_ip_persistence', 'BOOLEAN', '0'),
     ('clusters', 'description', 'TEXT', 'NULL'),
+    # Encryption support - increase password column size for encrypted data
+    ('clusters', 'password_expanded', 'VARCHAR(512)', 'NULL'),  # Placeholder for password size migration
 ]
 
 # System settings table schema

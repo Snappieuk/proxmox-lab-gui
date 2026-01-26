@@ -1,4 +1,3 @@
-import json
 import logging
 import os
 import re
@@ -20,6 +19,14 @@ logger = logging.getLogger(__name__)
 from app.config import (  # noqa: E402 - import after SSL config
     DB_IP_CACHE_TTL,
     PROXMOX_CACHE_TTL,
+)
+
+# Import proxmox_service functions (after config)
+from app.services.proxmox_service import (  # noqa: E402
+    get_current_cluster_id,
+    get_current_cluster,
+    get_proxmox_admin_for_cluster,
+    get_proxmox_admin
 )
 
 # All other settings now come from database via settings_service
@@ -57,171 +64,19 @@ _proxmox_lock = threading.Lock()
 # Proxmox connection per cluster - dict mapping cluster_id to ProxmoxAPI instance
 _proxmox_connections: Dict[str, Any] = {}
 
-def get_current_cluster_id():
-    """Get current cluster ID from Flask session or default to first cluster."""
-    try:
-        from flask import session
-        from app.services.proxmox_service import get_clusters_from_db
-        clusters = get_clusters_from_db()
-        if not clusters:
-            return None
-        return session.get("cluster_id", clusters[0]["id"])
-    except (RuntimeError, ImportError):
-        # No Flask context (e.g., background thread or CLI) - use default
-        from app.services.proxmox_service import get_clusters_from_db
-        clusters = get_clusters_from_db()
-        return clusters[0]["id"] if clusters else None
+# DELETED: Duplicate cluster functions - use versions from app/services/proxmox_service.py instead:
+# - get_current_cluster_id() -> proxmox_service.get_current_cluster_id()
+# - get_current_cluster() -> proxmox_service.get_current_cluster()
+# - switch_cluster() -> proxmox_service.switch_cluster()
+# - get_proxmox_admin_for_cluster() -> proxmox_service.get_proxmox_admin_for_cluster()
+# - get_proxmox_admin() -> proxmox_service.get_proxmox_admin()
+# Import from proxmox_service when needed (see imports at top of file)
+
+# DELETED: get_cluster_config() - deprecated function replaced by database-first cluster management
+# Use Cluster.query.all() to get cluster configs from database instead
 
 
-def get_current_cluster():
-    """Get current cluster configuration based on session."""
-    from app.services.proxmox_service import get_clusters_from_db
-    cluster_id = get_current_cluster_id()
-    clusters = get_clusters_from_db()
-    
-    for cluster in clusters:
-        if cluster["id"] == cluster_id:
-            return cluster
-    
-    # Fallback to first cluster if invalid ID somehow
-    return clusters[0] if clusters else None
-
-
-def switch_cluster(cluster_id: str):
-    """Switch to a different Proxmox cluster.
-    
-    Args:
-        cluster_id: ID of the cluster to switch to
-    
-    Invalidates all cached connections and forces reconnection on next use.
-    """
-    global _proxmox_connections
-    
-    # Validate cluster ID
-    from app.services.proxmox_service import get_clusters_from_db
-    clusters = get_clusters_from_db()
-    valid = any(c["id"] == cluster_id for c in clusters)
-    if not valid:
-        raise ValueError(f"Invalid cluster ID: {cluster_id}")
-    
-    with _proxmox_lock:
-        # Clear all connections to force fresh connections
-        _proxmox_connections = {}
-        logger.info("Cleared all cluster connections for switch to: %s", cluster_id)
-
-
-def get_proxmox_admin_for_cluster(cluster_id: str):
-    """Get or create Proxmox connection for a specific cluster.
-    
-    Unlike get_proxmox_admin(), this doesn't rely on Flask session context.
-    Used when fetching VMs from multiple clusters simultaneously.
-    """
-    global _proxmox_connections
-    
-    # Fast path: return existing connection if available
-    if cluster_id in _proxmox_connections:
-        return _proxmox_connections[cluster_id]
-    
-    # Find the cluster config
-    from app.services.proxmox_service import get_clusters_from_db
-    clusters = get_clusters_from_db()
-    cluster = next((c for c in clusters if c["id"] == cluster_id), None)
-    if not cluster:
-        raise ValueError(f"Unknown cluster_id: {cluster_id}")
-    
-    with _proxmox_lock:
-        # Double-check inside lock to handle race conditions
-        if cluster_id not in _proxmox_connections:
-            _proxmox_connections[cluster_id] = ProxmoxAPI(
-                cluster["host"],
-                user=cluster["user"],
-                password=cluster["password"],
-                verify_ssl=cluster.get("verify_ssl", False),
-            )
-            logger.info("Connected to Proxmox cluster '%s' at %s", cluster["name"], cluster["host"])
-    
-    return _proxmox_connections[cluster_id]
-
-
-def get_proxmox_admin():
-    """Get or create Proxmox connection for current cluster (lazy initialization).
-    
-    Thread-safe singleton pattern per cluster: uses double-checked locking to ensure
-    only one Proxmox connection per cluster is created even in multi-threaded scenarios.
-    Each cluster's ProxmoxAPI client is reused for all subsequent calls to that cluster.
-    
-    Supports multi-cluster: uses current cluster from Flask session.
-    """
-    global _proxmox_connections
-    
-    cluster = get_current_cluster()
-    cluster_id = cluster["id"]
-    
-    # Fast path: return existing connection if available
-    if cluster_id in _proxmox_connections:
-        return _proxmox_connections[cluster_id]
-    
-    with _proxmox_lock:
-        # Double-check inside lock to handle race conditions
-        if cluster_id not in _proxmox_connections:
-            _proxmox_connections[cluster_id] = ProxmoxAPI(
-                cluster["host"],
-                user=cluster["user"],
-                password=cluster["password"],
-                verify_ssl=cluster.get("verify_ssl", False),
-            )
-            logger.info("Connected to Proxmox cluster '%s' at %s", cluster["name"], cluster["host"])
-    
-    return _proxmox_connections[cluster_id]
-
-
-def get_cluster_config() -> List[Dict[str, Any]]:
-    """Get current cluster configuration."""
-    return CLUSTERS
-
-
-def save_cluster_config(clusters: List[Dict[str, Any]]) -> None:
-    """Save cluster configuration to database.
-    
-    DEPRECATED: This function is for backward compatibility only.
-    Use Cluster model directly for database-first architecture.
-    """
-    logger.warning("save_cluster_config() is deprecated - use Cluster model directly")
-    
-    try:
-        from app.models import Cluster, db
-        
-        # Update existing clusters or create new ones
-        for cluster_data in clusters:
-            cluster_id = cluster_data.get("id")
-            if cluster_id:
-                cluster = Cluster.query.get(cluster_id)
-                if cluster:
-                    # Update existing
-                    for key, value in cluster_data.items():
-                        if hasattr(cluster, key) and key != 'id':
-                            setattr(cluster, key, value)
-                else:
-                    # Create new with specified ID
-                    cluster = Cluster(**cluster_data)
-                    db.session.add(cluster)
-            else:
-                # Create new (auto-generate ID)
-                cluster = Cluster(**{k: v for k, v in cluster_data.items() if k != 'id'})
-                db.session.add(cluster)
-        
-        db.session.commit()
-        logger.info(f"Saved {len(clusters)} clusters to database")
-    except Exception as e:
-        logger.error(f"Failed to save cluster config: {e}", exc_info=True)
-        raise
-    
-    # Clear all existing connections to force reconnection with new config
-    global _proxmox_connections
-    with _proxmox_lock:
-        _proxmox_connections.clear()
-    
-    logger.info(f"Updated cluster configuration with {len(clusters)} cluster(s)")
+# DELETED: save_cluster_config() - deprecated, use Cluster model directly
 
 
 def _create_proxmox_client():
@@ -297,30 +152,8 @@ def _load_vm_cache() -> None:
     _vm_cache_ts[cache_key] = 0.0
     _vm_cache_loaded[cache_key] = True
     logger.info("VM cache loading from JSON disabled - using database (VMInventory) instead")
-    return
-    
-    # OLD CODE (disabled):
-    # if not os.path.exists(VM_CACHE_FILE):
-    #     _vm_cache_data[cache_key] = None
-    #     _vm_cache_ts[cache_key] = 0.0
-    #     _vm_cache_loaded[cache_key] = True
-    #     return
-    # 
-    # try:
-    #     with open(VM_CACHE_FILE, "r", encoding="utf-8") as f:
-    #         all_data = json.load(f)
-    #         cluster_data = all_data.get(cache_key, {})
-    #         _vm_cache_data[cache_key] = cluster_data.get("vms", [])
-    #         _vm_cache_ts[cache_key] = cluster_data.get("timestamp", 0.0)
-    #     cache_count = len(_vm_cache_data.get(cache_key) or [])
-    #     logger.info("Loaded VM cache for all clusters with %d VMs from %s", 
-    #                cache_count, VM_CACHE_FILE)
-    # except Exception as e:
-    #     logger.warning("Failed to load VM cache: %s", e)
-    #     _vm_cache_data[cache_key] = None
-    #     _vm_cache_ts[cache_key] = 0.0
-    
     _vm_cache_loaded[cache_key] = True
+    return
 
 def _save_vm_cache() -> None:
     """Save VM cache to JSON file for all clusters.
@@ -453,17 +286,7 @@ def _get_cluster_resources_cached() -> List[Dict[str, Any]]:
         return []
 
 
-def invalidate_cluster_cache() -> None:
-    """Invalidate the short-lived cluster resources cache for current cluster.
-    
-    Called after VM start/stop operations to ensure fresh data is fetched.
-    """
-    global _cluster_cache_data, _cluster_cache_ts
-    cluster_id = get_current_cluster_id()
-    with _cluster_cache_lock:
-        _cluster_cache_data[cluster_id] = None
-        _cluster_cache_ts[cluster_id] = 0.0
-    logger.debug("Invalidated cluster cache for %s", cluster_id)
+# DELETED: invalidate_cluster_cache() duplicate - use version from proxmox_service.py
 
 
 def _get_cached_ip_from_db(cluster_id: str, vmid: int) -> Optional[str]:

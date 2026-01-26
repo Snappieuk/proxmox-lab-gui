@@ -185,7 +185,6 @@ def test_proxmox_operations_functions_exist():
     from app.services.proxmox_operations import (
         CLASS_CLUSTER_IP,
         clone_vm_from_template,
-        clone_vms_for_class,
         convert_vm_to_template,
         create_vm_snapshot,
         delete_vm,
@@ -196,6 +195,9 @@ def test_proxmox_operations_functions_exist():
         stop_class_vm,
     )
     
+    # DELETED: clone_vms_for_class() was removed - replaced by class_vm_service.create_class_vms()
+    # which uses disk export + overlay approach instead of slow qm clone
+    
     assert callable(list_proxmox_templates)
     assert callable(clone_vm_from_template)
     assert callable(convert_vm_to_template)
@@ -205,7 +207,6 @@ def test_proxmox_operations_functions_exist():
     assert callable(start_class_vm)
     assert callable(stop_class_vm)
     assert callable(get_vm_status)
-    assert callable(clone_vms_for_class)
     assert CLASS_CLUSTER_IP == '10.220.15.249'
     
     print("✓ Proxmox operations functions exist")
