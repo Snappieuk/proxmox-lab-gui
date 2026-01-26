@@ -10,14 +10,8 @@ from datetime import datetime
 
 from flask import Blueprint, jsonify, request, session
 
-from app.services.proxmox_service import get_clusters_from_db
-from app.services.proxmox_client import (
-    _invalidate_vm_cache,
-    get_cluster_config,
-    invalidate_cluster_cache,
-    save_cluster_config,
-    switch_cluster,
-)
+from app.services.proxmox_service import get_clusters_from_db, switch_cluster
+from app.services.proxmox_client import _invalidate_vm_cache
 from app.utils.decorators import admin_required, login_required
 
 logger = logging.getLogger(__name__)
@@ -95,7 +89,6 @@ def api_switch_cluster():
     
     # Invalidate all caches to force refresh from new cluster
     switch_cluster(cluster_id)
-    invalidate_cluster_cache()
     _invalidate_vm_cache()
     
     logger.info("Cache invalidated, returning success for cluster %s", cluster_id)
@@ -174,8 +167,7 @@ def api_create_cluster():
         db.session.add(cluster)
         db.session.commit()
         
-        # Invalidate caches
-        invalidate_cluster_cache()
+        # Invalidate VM cache to refresh cluster list
         _invalidate_vm_cache()
         
         return jsonify({
@@ -261,8 +253,7 @@ def api_update_cluster(cluster_db_id: int):
         cluster.updated_at = datetime.utcnow()
         db.session.commit()
         
-        # Invalidate caches
-        invalidate_cluster_cache()
+        # Invalidate VM cache to refresh cluster list
         _invalidate_vm_cache()
         
         return jsonify({
@@ -341,8 +332,7 @@ def api_delete_cluster(cluster_db_id: int):
         db.session.delete(cluster)
         db.session.commit()
         
-        # Invalidate caches
-        invalidate_cluster_cache()
+        # Invalidate VM cache to refresh cluster list
         _invalidate_vm_cache()
         
         return jsonify({
