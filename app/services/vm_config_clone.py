@@ -14,6 +14,53 @@ from app.services.ssh_executor import SSHExecutor
 logger = logging.getLogger(__name__)
 
 
+def check_template_has_efi_tpm(
+    ssh_executor: SSHExecutor,
+    template_vmid: int,
+    template_node: str = None,
+) -> Tuple[bool, bool]:
+    """
+    Check if a template has EFI and/or TPM configured.
+    
+    Args:
+        ssh_executor: SSH executor
+        template_vmid: Template VM ID
+        template_node: Node where template is located (for SSH hop)
+        
+    Returns:
+        Tuple of (has_efi, has_tpm)
+    """
+    try:
+        source_conf = f"/etc/pve/qemu-server/{template_vmid}.conf"
+        
+        # Check which node we're connected to
+        exit_code, hostname_output, _ = ssh_executor.execute("hostname", timeout=5, check=False)
+        current_node = hostname_output.strip() if exit_code == 0 else "unknown"
+        
+        # Use SSH hop if needed
+        if template_node and template_node != current_node:
+            cat_cmd = f"ssh {template_node} 'cat {source_conf}'"
+        else:
+            cat_cmd = f"cat {source_conf}"
+        
+        # Read template config
+        exit_code, config_content, _ = ssh_executor.execute(cat_cmd, timeout=10, check=False)
+        
+        if exit_code != 0:
+            logger.warning(f"Could not read template {template_vmid} config")
+            return False, False
+        
+        # Check for EFI and TPM in config
+        has_efi = 'efidisk0:' in config_content
+        has_tpm = 'tpmstate0:' in config_content
+        
+        return has_efi, has_tpm
+        
+    except Exception as e:
+        logger.error(f"Error checking template EFI/TPM: {e}")
+        return False, False
+
+
 def generate_mac_address() -> str:
     """Generate a random MAC address in Proxmox format."""
     # Proxmox uses locally administered MAC addresses (02:xx:xx:xx:xx:xx)
@@ -113,45 +160,50 @@ def clone_vm_config(
                 disk_config = disk_match.group(3)
                 disk_slot = f"{controller}{slot_num}"
                 
-                # Replace disk path, keep all options
-                # Format: "STORAGE:vm-OLDID-disk-0,cache=writeback,discard=on,..."
-                # Replace with: "STORAGE:NEWID/vm-NEWID-disk-0.qcow2,cache=writeback,discard=on,..."
-                new_disk = re.sub(
-                    r'[^:,]+:([^,]+)',
-                    f'{storage}:{overlay_disk_path}',
-                    disk_config,
-                    count=1
-                )
-                new_lines.append(f"{disk_slot}: {new_disk}")
-                logger.info(f"Updated disk {disk_slot}: {storage}:{overlay_disk_path}")
+                # Replace disk path, keep ALL options after first comma
+                # Input format: "STORAGE:OLD_PATH,option1=val1,option2=val2,..."
+                # Output format: "STORAGE:NEW_PATH,option1=val1,option2=val2,..."
+                
+                # Split on comma to separate path from options
+                parts = disk_config.split(',', 1)  # Split only on FIRST comma
+                options_part = ',' + parts[1] if len(parts) > 1 else ''  # ",option1=val1,..."
+                
+                # Replace just the storage:path part
+                new_disk_path = f"{storage}:{overlay_disk_path}"
+                new_disk_full = new_disk_path + options_part
+                
+                new_lines.append(f"{disk_slot}: {new_disk_full}")
+                logger.info(f"Updated disk {disk_slot}: {new_disk_path} (preserved {len(options_part)} chars of options)")
                 continue
             
-            # Update EFI disk path
+            # Update EFI disk path - use relative path like main disk
             if line.startswith('efidisk0:'):
-                # Format: "STORAGE:vm-OLDID-disk-1,..."
-                # Replace with: "STORAGE:1,..." (let Proxmox create new EFI disk)
+                # Format: "STORAGE:vm-OLDID-disk-1,efitype=4m,..."
+                # Replace with: "STORAGE:NEWID/vm-NEWID-disk-1.raw,efitype=4m,..."
+                # Keep all options (efitype, pre-enrolled-keys, etc.)
                 new_efi = re.sub(
                     r'([^:,]+):([^,]+)',
-                    f'{storage}:1',
+                    f'{storage}:{dest_vmid}/vm-{dest_vmid}-disk-1.raw',
                     line,
                     count=1
                 )
                 new_lines.append(new_efi)
-                logger.info(f"Updated EFI disk path")
+                logger.info(f"Updated EFI disk path to {dest_vmid}/vm-{dest_vmid}-disk-1.raw")
                 continue
             
-            # Update TPM state path
+            # Update TPM state path - use relative path like main disk
             if line.startswith('tpmstate0:'):
-                # Format: "STORAGE:vm-OLDID-disk-2,..."
-                # Replace with: "STORAGE:1,..." (let Proxmox create new TPM)
+                # Format: "STORAGE:vm-OLDID-disk-2,version=v2.0,..."
+                # Replace with: "STORAGE:NEWID/vm-NEWID-disk-2.raw,version=v2.0,..."
+                # Keep all options (version, etc.)
                 new_tpm = re.sub(
                     r'([^:,]+):([^,]+)',
-                    f'{storage}:1',
+                    f'{storage}:{dest_vmid}/vm-{dest_vmid}-disk-2.raw',
                     line,
                     count=1
                 )
                 new_lines.append(new_tpm)
-                logger.info(f"Updated TPM state path")
+                logger.info(f"Updated TPM state path to {dest_vmid}/vm-{dest_vmid}-disk-2.raw")
                 continue
             
             # Update network MAC address
@@ -166,6 +218,12 @@ def clone_vm_config(
                 )
                 new_lines.append(new_net)
                 logger.info(f"Updated MAC address to: {new_mac}")
+                continue
+            
+            # Explicitly preserve VGA/display settings (critical for VirtIO-GPU, etc.)
+            if line.startswith('vga:'):
+                new_lines.append(line)
+                logger.info(f"Preserved VGA setting: {line}")
                 continue
             
             # Keep all other lines unchanged
@@ -200,7 +258,20 @@ def clone_vm_config(
         if exit_code != 0:
             return False, f"Config file was not created: {stderr}", None
         
+        # Validate config has required fields
+        if 'name:' not in verify_content:
+            return False, "Config file missing name field", None
+        if disk_slot and f'{disk_slot}:' not in verify_content:
+            return False, f"Config file missing disk {disk_slot}", None
+        if 'net0:' not in verify_content:
+            return False, "Config file missing network config", None
+        
+        # Log preserved settings for debugging
+        vga_preserved = 'vga:' in verify_content
+        disk_options = verify_content.count('cache=') + verify_content.count('backup=') + verify_content.count('discard=')
+        
         logger.info(f"Verified VM config exists: {dest_conf} ({len(verify_content)} bytes)")
+        logger.info(f"Config validation: VGA={vga_preserved}, disk_options={disk_options} preserved")
         logger.info(f"VM {dest_vmid} created with all settings from {source_vmid}")
         
         # Step 4: Tell Proxmox to reload configs (force cluster sync)

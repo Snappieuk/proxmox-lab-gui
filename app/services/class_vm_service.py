@@ -33,7 +33,6 @@ from typing import Any, Dict, List, Optional, Tuple
 from app.models import Class, VMAssignment, db
 from app.services.ssh_executor import (
     SSHExecutor,
-    get_ssh_executor_from_config,
     get_pooled_ssh_executor_from_config,
 )
 from app.services.vm_core import wait_for_vm_stopped
@@ -452,11 +451,14 @@ def recreate_student_vms_from_template(
     logger.info(f"Recreating {count} student VMs for class {class_id} from template {template_vmid}")
     
     # Fetch class specs if not provided
+    class_ = Class.query.get(class_id)
+    if not class_:
+        return False, f"Class {class_id} not found", []
+    
     if memory is None or cores is None:
-        class_obj = Class.query.get(class_id)
-        if class_obj:
-            memory = class_obj.memory_mb or 4096
-            cores = class_obj.cpu_cores or 2
+        if class_:
+            memory = class_.memory_mb or 4096
+            cores = class_.cpu_cores or 2
         else:
             memory = 4096
             cores = 2
@@ -498,6 +500,7 @@ def recreate_student_vms_from_template(
         
         # Student VMs should use class-base VM's disk as backing file, NOT the original base QCOW2
         # This creates proper 3-tier hierarchy: template → class-base → student VMs
+        qcow2_storage = PROXMOX_STORAGE_NAME  # Storage name for QCOW2 images
         class_base_vmid = class_.vmid_prefix * 100 + 99  # e.g., 732 * 100 + 99 = 73299
         class_base_disk_path = f"/mnt/pve/{qcow2_storage}/images/{class_base_vmid}/vm-{class_base_vmid}-disk-0.qcow2"
         logger.info(f"Student VMs will use class-base backing file: {class_base_disk_path}")
@@ -1186,7 +1189,7 @@ def create_class_vms(
         # Update VMInventory immediately for teacher VM (makes it visible in UI right away)
         try:
             from app.services.proxmox_service import get_clusters_from_db
-            from app.services.inventory_service import persist_vm_inventory, update_vm_status
+            from app.services.inventory_service import persist_vm_inventory
 
             # Get cluster_ip from class template, or fallback to default
             cluster_ip = None
@@ -1753,7 +1756,8 @@ def recreate_teacher_vm_from_base(class_id: int, class_name: str) -> tuple[bool,
             from app.services.vm_utils import get_optimal_node
             node = get_optimal_node(ssh_executor, proxmox, vm_memory_mb=memory)
         
-        # Get template specs from class-base VM if available
+        # Get template specs from class (includes template_vmid for config cloning)
+        template_vmid = class_.template.proxmox_vmid if class_.template else None
         disk_controller_type = "scsi"
         ostype = "l26"
         bios = "seabios"
@@ -1762,6 +1766,8 @@ def recreate_teacher_vm_from_base(class_id: int, class_name: str) -> tuple[bool,
         scsihw = "virtio-scsi-single"
         efi_disk = None
         tpm_state = None
+        
+        logger.info(f"Will clone config from template {template_vmid}" if template_vmid else "No template available, using legacy creation")
         
         try:
             config = proxmox.nodes(node).qemu(class_base_vmid).config.get()
@@ -1812,6 +1818,7 @@ def recreate_teacher_vm_from_base(class_id: int, class_name: str) -> tuple[bool,
             tpm_state=tpm_state,
             boot_order=None,  # No boot order available in this context
             net_model='virtio',  # Default network model
+            template_vmid=template_vmid,  # CRITICAL: Pass template VMID for config cloning
         )
         
         if not success:

@@ -393,12 +393,41 @@ def create_overlay_vm(
         # Step 2: Clone VM config from template (if template_vmid provided)
         if template_vmid:
             logger.info(f"Cloning VM config from template {template_vmid} to VM {vmid}")
-            from app.services.vm_config_clone import clone_vm_config
+            from app.services.vm_config_clone import clone_vm_config, check_template_has_efi_tpm
             
             # Get template node from database
             from app.models import Template
             template_obj = Template.query.filter_by(proxmox_vmid=template_vmid).first()
             template_node = template_obj.node if template_obj else None
+            
+            # Check if template has EFI/TPM disks that need to be created
+            has_efi, has_tpm = check_template_has_efi_tpm(ssh_executor, template_vmid, template_node)
+            
+            # Create EFI disk if template has one (required for UEFI boot)
+            if has_efi:
+                logger.info(f"Template has EFI disk, creating for VM {vmid}")
+                efi_path = f"{overlay_dir}/vm-{vmid}-disk-1.raw"
+                # Create 528K EFI disk (standard size)
+                efi_cmd = f"qemu-img create -f raw {efi_path} 528K"
+                exit_code, stdout, stderr = ssh_executor.execute(efi_cmd, timeout=30, check=False)
+                if exit_code != 0:
+                    logger.error(f"Failed to create EFI disk: {stderr}")
+                    ssh_executor.execute(f"rm -rf {overlay_dir}", check=False)
+                    return False, f"Failed to create EFI disk: {stderr}", None
+                logger.info(f"Created EFI disk at {efi_path}")
+            
+            # Create TPM state disk if template has one (required for Windows 11)
+            if has_tpm:
+                logger.info(f"Template has TPM, creating for VM {vmid}")
+                tpm_path = f"{overlay_dir}/vm-{vmid}-disk-2.raw"
+                # Create 4M TPM state disk (standard size)
+                tpm_cmd = f"qemu-img create -f raw {tpm_path} 4M"
+                exit_code, stdout, stderr = ssh_executor.execute(tpm_cmd, timeout=30, check=False)
+                if exit_code != 0:
+                    logger.warning(f"Failed to create TPM disk: {stderr}")
+                    # Don't fail the whole operation for TPM
+                else:
+                    logger.info(f"Created TPM disk at {tpm_path}")
             
             # Disk path relative to storage mount: "58000/vm-58000-disk-0.qcow2"
             overlay_disk_rel = f"{vmid}/vm-{vmid}-disk-0.qcow2"
