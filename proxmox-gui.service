@@ -10,6 +10,7 @@ WorkingDirectory=/root
 Environment="PATH=/root/venv/bin:/usr/local/bin:/usr/bin:/bin"
 Environment="PVE_VERIFY=False"
 Environment="PYTHONUNBUFFERED=1"
+Environment="PYTHONPATH=/root"
 EnvironmentFile=-/root/.env
 # Run Flask using the new modular entry point (run.py is in /root/)
 ExecStart=/root/venv/bin/python3 /root/run.py
