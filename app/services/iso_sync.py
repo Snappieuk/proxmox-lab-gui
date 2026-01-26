@@ -133,8 +133,12 @@ def sync_isos_from_proxmox(full_sync=True):
                             stats['errors'].append(f"Storage scan failed: {node_name}/{storage_name} - {str(e)}")
                 
                 except Exception as e:
-                    logger.warning(f"Failed to scan node {node_name}: {e}")
-                    stats['errors'].append(f"Node scan failed: {node_name} - {str(e)}")
+                    # Use debug level for expected connection issues (DNS failures, offline nodes)
+                    if 'hostname lookup' in str(e) or 'No route to host' in str(e):
+                        logger.debug(f"Node {node_name} unreachable (expected if node is offline): {e}")
+                    else:
+                        logger.warning(f"Failed to scan node {node_name}: {e}")
+                        stats['errors'].append(f"Node scan failed: {node_name} - {str(e)}")
         
         except Exception as e:
             logger.error(f"Failed to sync cluster {cluster_id}: {e}")

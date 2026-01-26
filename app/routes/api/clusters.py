@@ -454,7 +454,7 @@ def get_cluster_resources(cluster_id: str):
                 
                 # Check if we got valid data
                 if max_cpu_cores == 0:
-                    logger.warning(f"Node {node_name} returned maxcpu=0, trying alternative API...")
+                    logger.warning(f"Node {node_name} returned maxcpu={max_cpu_cores}, trying alternative API...")
                     # Try using the node list data instead (it has cpuinfo)
                     max_cpu_cores = float(node_data.get('maxcpu', 0))
                     cpu_usage = float(node_data.get('cpu', 0))
