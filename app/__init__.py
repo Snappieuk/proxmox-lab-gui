@@ -170,37 +170,21 @@ def create_app(config=None):
     except Exception as e:
         logger.error(f"Failed to start background IP scanner: {e}", exc_info=True)
     
-    # Start background VM inventory sync
+    # Start unified background sync daemon (VM inventory + templates + ISOs)
     try:
         from app.services.background_sync import start_background_sync
         start_background_sync(app)
-        logger.info("Background VM inventory sync started")
+        logger.info("Unified background sync started (VM inventory + templates + ISOs)")
     except Exception as e:
-        logger.error(f"Failed to start background VM inventory sync: {e}", exc_info=True)
+        logger.error(f"Failed to start background sync: {e}", exc_info=True)
     
-    # Start auto-shutdown daemon
+    # Start auto-shutdown daemon for restricted classes
     try:
         from app.services.auto_shutdown_service import start_auto_shutdown_daemon
         start_auto_shutdown_daemon(app)
         logger.info("Auto-shutdown daemon started")
     except Exception as e:
         logger.error(f"Failed to start auto-shutdown daemon: {e}", exc_info=True)
-    
-    # Start background template sync daemon (database-first architecture)
-    try:
-        from app.services.template_sync import start_template_sync_daemon
-        start_template_sync_daemon(app)
-        logger.info("Background template sync daemon started")
-    except Exception as e:
-        logger.error(f"Failed to start template sync daemon: {e}", exc_info=True)
-    
-    # Start background ISO sync daemon (database-first architecture)
-    try:
-        from app.services.iso_sync import start_iso_sync_daemon
-        start_iso_sync_daemon(app)
-        logger.info("Background ISO sync daemon started")
-    except Exception as e:
-        logger.error(f"Failed to start ISO sync daemon: {e}", exc_info=True)
     
     # Ensure templates are replicated across all nodes at startup (disabled by default)
     # Check SystemSettings for enable_template_replication (database-first)

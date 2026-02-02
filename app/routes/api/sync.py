@@ -122,7 +122,7 @@ def trigger_template_sync():
     Returns:
         JSON with sync results
     """
-    from app.services.template_sync import sync_templates_from_proxmox
+    from app.services.background_sync import sync_templates_from_proxmox
     
     try:
         stats = sync_templates_from_proxmox(full_sync=True)
@@ -210,20 +210,26 @@ def trigger_iso_sync():
     Returns:
         JSON with sync results
     """
-    from app.services.iso_sync import trigger_immediate_iso_sync
+    from app.services.background_sync import sync_isos_from_proxmox
     
     try:
-        success = trigger_immediate_iso_sync()
-        if success:
+        # Run immediate sync (not in background like the old version)
+        stats = sync_isos_from_proxmox(full_sync=True)
+        
+        if stats.get('errors'):
+            logger.warning(f"ISO sync completed with errors: {stats['errors']}")
             return jsonify({
                 'ok': True,
-                'message': 'ISO sync triggered in background - check logs for progress'
+                'stats': stats,
+                'message': f"ISO sync complete with {len(stats['errors'])} error(s): {stats['isos_found']} found, {stats['isos_added']} added, {stats['isos_updated']} updated",
+                'warnings': stats['errors']
             })
         else:
             return jsonify({
-                'ok': False,
-                'error': 'Failed to trigger ISO sync'
-            }), 500
+                'ok': True,
+                'stats': stats,
+                'message': f"ISO sync complete: {stats['isos_found']} found, {stats['isos_added']} added, {stats['isos_updated']} updated"
+            })
     except Exception as e:
         logger.exception("Failed to trigger ISO sync")
         return jsonify({
