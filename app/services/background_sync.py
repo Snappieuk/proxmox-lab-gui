@@ -83,40 +83,40 @@ def start_background_sync(app):
                     
                     # VM Inventory: Full sync every 10 minutes (600 seconds)
                     if (_sync_stats['last_full_sync'] is None or 
-                        (now - _sync_stats['last_full_sync']).seconds >= 600):
+                        (now - _sync_stats['last_full_sync']).total_seconds() >= 600):
                         logger.info("Starting full VM inventory sync...")
                         _perform_full_sync()
                         error_count = 0
                     
                     # VM Inventory: Quick sync every 2 minutes (120 seconds)
                     elif (_sync_stats['last_quick_sync'] is None or
-                          (now - _sync_stats['last_quick_sync']).seconds >= 120):
+                          (now - _sync_stats['last_quick_sync']).total_seconds() >= 120):
                         _perform_quick_sync()
                         error_count = 0
                     
                     # Templates: Full sync every 30 minutes (1800 seconds)
                     if (_sync_stats['last_template_full_sync'] is None or
-                        (now - _sync_stats['last_template_full_sync']).seconds >= 1800):
+                        (now - _sync_stats['last_template_full_sync']).total_seconds() >= 1800):
                         logger.info("Starting full template sync...")
                         _perform_template_full_sync()
                         error_count = 0
                     
                     # Templates: Quick verification every 5 minutes (300 seconds)
                     elif (_sync_stats['last_template_quick_sync'] is None or
-                          (now - _sync_stats['last_template_quick_sync']).seconds >= 300):
+                          (now - _sync_stats['last_template_quick_sync']).total_seconds() >= 300):
                         _perform_template_quick_sync()
                         error_count = 0
                     
                     # ISOs: Full sync every 30 minutes (1800 seconds)
                     if (_sync_stats['last_iso_full_sync'] is None or
-                        (now - _sync_stats['last_iso_full_sync']).seconds >= 1800):
+                        (now - _sync_stats['last_iso_full_sync']).total_seconds() >= 1800):
                         logger.info("Starting full ISO sync...")
                         _perform_iso_full_sync()
                         error_count = 0
                     
                     # ISOs: Quick verification every 5 minutes (300 seconds)
                     elif (_sync_stats['last_iso_quick_sync'] is None or
-                          (now - _sync_stats['last_iso_quick_sync']).seconds >= 300):
+                          (now - _sync_stats['last_iso_quick_sync']).total_seconds() >= 300):
                         _perform_iso_quick_sync()
                         error_count = 0
                 
