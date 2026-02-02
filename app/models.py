@@ -453,8 +453,6 @@ class Template(db.Model):
     cluster_ip = db.Column(db.String(45), default='10.220.15.249', index=True)  # Proxmox cluster IP
     node = db.Column(db.String(80), nullable=True, index=True)  # Proxmox node name
     is_replica = db.Column(db.Boolean, default=False, index=True)  # True if replicated from another node
-    source_vmid = db.Column(db.Integer, nullable=True)  # Original template VMID if this is a replica
-    source_node = db.Column(db.String(80), nullable=True)  # Original template node if this is a replica
     created_by_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
     is_class_template = db.Column(db.Boolean, default=False)  # True if created for a specific class
     class_id = db.Column(db.Integer, db.ForeignKey('classes.id'), nullable=True)  # Scoped to class if set
@@ -492,8 +490,6 @@ class Template(db.Model):
             'cluster_ip': self.cluster_ip,
             'node': self.node,
             'is_replica': self.is_replica,
-            'source_vmid': self.source_vmid,
-            'source_node': self.source_node,
             'created_by_id': self.created_by_id,
             'created_by_name': self.created_by.username if self.created_by else None,
             'is_class_template': self.is_class_template,
