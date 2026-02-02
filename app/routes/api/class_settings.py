@@ -12,7 +12,7 @@ bp = Blueprint('class_settings', __name__)
 
 def require_teacher_or_admin(class_: Class, user_id: str) -> bool:
     """Check if user is teacher/admin for this class."""
-    from app.services.proxmox_client import is_admin_user
+    from app.services.proxmox_service import is_admin_user
     
     # Check if admin
     if is_admin_user(user_id):

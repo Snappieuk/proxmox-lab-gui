@@ -182,13 +182,13 @@ def test_exports_match_requirements():
     print("✓ All required functions are exported")
 
 
-def test_proxmox_client_can_import():
-    """Test that proxmox_client can import arp_scanner functions."""
-    from app.services import proxmox_client
+def test_proxmox_service_can_import():
+    """Test that proxmox_service can import arp_scanner functions."""
+    from app.services import proxmox_service
     
     assert proxmox_client.ARP_SCANNER_AVAILABLE is True
     
-    print("✓ proxmox_client successfully imports arp_scanner")
+    print("✓ proxmox_service successfully imports arp_scanner")
 
 
 def run_all_tests():

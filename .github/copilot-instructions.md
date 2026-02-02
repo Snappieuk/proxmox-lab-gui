@@ -49,7 +49,7 @@ A Flask webapp providing a lab VM portal similar to Azure Labs for self-service 
 - **Admin bypass**: Admins see all VMs (permission check skipped).
 - Both class-based assignments and direct assignments use same VMAssignment table, differentiated by `class_id` field.
 - Function `_resolve_user_owned_vmids()` in `app/routes/api/vms.py` handles all permission logic.
-- All systems query Proxmox clusters via `app/services/proxmox_client.py` and render same templates.
+- All systems query Proxmox clusters via `app/services/proxmox_service.py` and render same templates.
 
 **Database-first cluster management** (`app/models.py` Cluster model + `app/config.py`):
 - **Cluster table**: Stores all Proxmox cluster connection configurations (host, port, user, password, verify_ssl, is_active, is_default)
@@ -73,8 +73,8 @@ A Flask webapp providing a lab VM portal similar to Azure Labs for self-service 
 2. **Background sync daemon** (`app/services/background_sync.py`): Auto-starts on app init, keeps VMInventory synchronized with Proxmox. Full sync every 5min, quick sync every 30sec for running VMs.
 3. **Inventory service** (`app/services/inventory_service.py`): Database operations layer - `persist_vm_inventory()`, `fetch_vm_inventory()`, `update_vm_status()`.
 4. **Performance benefit**: Database queries <100ms vs Proxmox API 5-30 seconds = **100x faster page loads**. GUI never blocked by slow Proxmox API.
-5. **VM list cache** (legacy fallback in `app/services/proxmox_client.py`): Module-level `_vm_cache_data` dict with 5min TTL. Used only when VMInventory unavailable.
-6. **IP lookup cache** (`_ip_cache` in `app/services/proxmox_client.py`): Separate 5min TTL for guest agent IP queries – **critical** to avoid timeout storms (guest agent calls are SLOW).
+5. **VM list cache** (legacy fallback in `app/services/proxmox_service.py`): Module-level `_vm_cache_data` dict with 5min TTL. Used only when VMInventory unavailable.
+6. **IP lookup cache** (`_ip_cache` in `app/services/proxmox_service.py`): Separate 5min TTL for guest agent IP queries – **critical** to avoid timeout storms (guest agent calls are SLOW).
 
 **IP discovery hierarchy** (most complex subsystem):
 1. **VMInventory database cache**: Check database first (updated by background sync every 30s for running VMs)
@@ -209,7 +209,7 @@ api/
 - **Template conversion**: Can convert created VMs to templates
 - **Hardware options**: CPU, memory, disk, network, BIOS, boot order, SCSI controller, etc.
 
-**`app/services/proxmox_client.py`** (Proxmox integration, ~1800 lines):
+**`app/services/proxmox_service.py`** (Proxmox integration, ~1800 lines):
 - **Singletons**: `proxmox_admin` (legacy single cluster), `proxmox_admin_wrapper` (cache adapter)
 - **Core VM functions**: `get_all_vms()` (fetch all VMs from database), `get_vms_for_user()` (user-specific view), `find_vm_for_user()` (permission check)
 - **VM operations**: `start_vm(vm)`, `shutdown_vm(vm)` – handle both QEMU and LXC, invalidate cache after operation
@@ -413,7 +413,7 @@ git add . && git commit -m "Changes" && git push
 
 **Testing without Proxmox** (no test suite exists):
 - Create mock `ProxmoxAPI` class with methods: `version.get()`, `nodes().qemu().status.current.get()`, etc.
-- Swap `proxmox_admin` in `app/services/proxmox_client.py` or inject mock into `app/services/proxmox_service.py`
+- Swap `proxmox_admin` in `app/services/proxmox_service.py` or inject mock into `app/services/proxmox_service.py`
 - Return fixture VM dicts: `{"vmid": 100, "name": "test-vm", "status": "running", "node": "mock1", "type": "qemu"}`
 
 **Environment config priority**:
@@ -440,7 +440,7 @@ git add . && git commit -m "Changes" && git push
 
 **Dual caching layers** (easy to confuse):
 - `ProxmoxCache` class in `cache.py` – used minimally, mostly for app startup warmup
-- Module-level `_vm_cache_data` dict in `app/services/proxmox_client.py` – **primary cache** for all `/api/vms` calls
+- Module-level `_vm_cache_data` dict in `app/services/proxmox_service.py` – **primary cache** for all `/api/vms` calls
 - IP lookups have separate `_ip_cache` (5min TTL) to avoid guest agent timeout storms
 - Cache invalidation: `start_vm()` and `shutdown_vm()` call `_invalidate_vm_cache()` to clear module-level cache
 
@@ -452,7 +452,7 @@ git add . && git commit -m "Changes" && git push
 **LXC vs QEMU differences** (both exposed as "VMs"):
 - LXC: `nodes(node).lxc(vmid)`, IP via `.interfaces.get()` (fast, works when stopped)
 - QEMU: `nodes(node).qemu(vmid)`, IP via `.agent.get()` (slow, requires running VM + guest agent installed)
-- Unified in code via `type` field: "lxc" or "qemu" (see `_build_vm_dict()` in `app/services/proxmox_client.py`)
+- Unified in code via `type` field: "lxc" or "qemu" (see `_build_vm_dict()` in `app/services/proxmox_service.py`)
 
 **RDP file generation failures**:
 - `build_rdp(vm)` raises `ValueError` if VM has no IP address (stopped VMs, missing guest agent)
@@ -489,7 +489,7 @@ def api_vm_reboot(vmid: int):
 ```
 
 **Add VM metadata field**:
-1. In `app/services/proxmox_client.py` `_build_vm_dict()`, extract from `raw` dict: `cores = raw.get("maxcpu")`
+1. In `app/services/proxmox_service.py` `_build_vm_dict()`, extract from `raw` dict: `cores = raw.get("maxcpu")`
 2. Add to return dict: `"cores": cores`
 3. In `index.html`, add display: `<div>Cores: {{ vm.cores }}</div>`
 

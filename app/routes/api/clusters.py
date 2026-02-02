@@ -11,7 +11,7 @@ from datetime import datetime
 from flask import Blueprint, jsonify, request, session
 
 from app.services.proxmox_service import get_clusters_from_db, switch_cluster
-from app.services.proxmox_client import _invalidate_vm_cache
+from app.services.proxmox_service import _invalidate_vm_cache
 from app.utils.decorators import admin_required, login_required
 
 logger = logging.getLogger(__name__)

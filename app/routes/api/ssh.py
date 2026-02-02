@@ -10,7 +10,7 @@ import logging
 
 from flask import Blueprint, abort, render_template, request, url_for
 
-from app.services.proxmox_client import find_vm_for_user, verify_vm_ip
+from app.services.proxmox_service import find_vm_for_user, verify_vm_ip
 from app.utils.decorators import login_required
 
 logger = logging.getLogger(__name__)

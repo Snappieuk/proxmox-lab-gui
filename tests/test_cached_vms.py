@@ -26,7 +26,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 def test_cluster_cache_thread_safety():
     """Test that cluster cache functions are thread-safe."""
-    from app.services.proxmox_client import (
+    from app.services.proxmox_service import (
         invalidate_cluster_cache,
     )
 
@@ -57,7 +57,7 @@ def test_cluster_cache_thread_safety():
 @pytest.mark.skip(reason="MAPPINGS_FILE no longer exists in proxmox_client - refactored to database")
 def test_mappings_cache_thread_safety():
     """Test that mappings cache is thread-safe for concurrent access."""
-    from app.services.proxmox_client import (
+    from app.services.proxmox_service import (
         get_user_vm_map,
         invalidate_mappings_cache,
         set_user_vm_mapping,
@@ -125,7 +125,7 @@ def test_mappings_cache_thread_safety():
 @pytest.mark.skip(reason="_cache_ip and _get_cached_ip no longer exist - refactored")
 def test_ip_cache_thread_safety():
     """Test that IP cache is thread-safe."""
-    from app.services.proxmox_client import (
+    from app.services.proxmox_service import (
         _cache_ip,
         _get_cached_ip,
     )
@@ -165,7 +165,7 @@ def test_proxmox_cache_ttl_config():
 
 def test_cluster_query_functions_exist():
     """Test that new cluster-wide query functions exist."""
-    from app.services.proxmox_client import (
+    from app.services.proxmox_service import (
         _get_cached_ips_batch,
         get_all_lxc_containers,
         get_all_qemu_vms,
@@ -187,7 +187,7 @@ def test_cluster_query_functions_exist():
 @pytest.mark.skip(reason="_cache_ip no longer exists - refactored")
 def test_batch_ip_cache():
     """Test batch IP cache retrieval function."""
-    from app.services.proxmox_client import (
+    from app.services.proxmox_service import (
         _cache_ip,
         _get_cached_ips_batch,
     )
@@ -217,7 +217,7 @@ def test_thread_pool_executor_exists():
     """Test that ThreadPoolExecutor for parallel IP lookups exists."""
     from concurrent.futures import ThreadPoolExecutor
 
-    from app.services.proxmox_client import _ip_lookup_executor
+    from app.services.proxmox_service import _ip_lookup_executor
     
     assert isinstance(_ip_lookup_executor, ThreadPoolExecutor)
     print("✓ ThreadPoolExecutor for IP lookups exists")
@@ -226,7 +226,7 @@ def test_thread_pool_executor_exists():
 @pytest.mark.skip(reason="set_user_vm_mapping and MAPPINGS_FILE no longer exist - refactored to database")
 def test_mappings_write_through_cache():
     """Test that mappings use write-through caching."""
-    from app.services.proxmox_client import (
+    from app.services.proxmox_service import (
         get_user_vm_map,
         invalidate_mappings_cache,
         set_user_vm_mapping,
@@ -276,7 +276,7 @@ def test_mappings_write_through_cache():
 @pytest.mark.skip(reason="build_rdp moved to rdp_service module")
 def test_rdp_content_in_memory():
     """Test that RDP content is built in-memory without temp files."""
-    from app.services.proxmox_client import build_rdp
+    from app.services.proxmox_service import build_rdp
 
     # Create a mock VM dict
     mock_vm = {
@@ -302,7 +302,7 @@ def test_rdp_content_in_memory():
 @pytest.mark.skip(reason="IP_CACHE_TTL renamed or removed")
 def test_ip_cache_ttl():
     """Test that IP_CACHE_TTL is set to 3600 (1 hour)."""
-    from app.services.proxmox_client import IP_CACHE_TTL
+    from app.services.proxmox_service import IP_CACHE_TTL
     
     assert IP_CACHE_TTL == 3600, f"IP_CACHE_TTL should be 3600, got {IP_CACHE_TTL}"
     print(f"✓ IP_CACHE_TTL = {IP_CACHE_TTL} seconds (1 hour)")
@@ -312,7 +312,7 @@ def test_ip_lookup_workers_auto_tuned():
     """Test that IP lookup workers are auto-tuned based on CPU count."""
     import os
 
-    from app.services.proxmox_client import DEFAULT_IP_LOOKUP_WORKERS
+    from app.services.proxmox_service import DEFAULT_IP_LOOKUP_WORKERS
     
     expected = max(2, min(8, (os.cpu_count() or 4) - 1))
     assert DEFAULT_IP_LOOKUP_WORKERS == expected, \
@@ -323,7 +323,7 @@ def test_ip_lookup_workers_auto_tuned():
 
 def test_admin_group_cache_exists():
     """Test that admin group cache variables and functions exist."""
-    from app.services.proxmox_client import (
+    from app.services.proxmox_service import (
         ADMIN_GROUP_CACHE_TTL,
         _get_admin_group_members_cached,
         _invalidate_admin_group_cache,
@@ -338,7 +338,7 @@ def test_admin_group_cache_exists():
 def test_admin_group_cache_invalidation():
     """Test that admin group cache can be invalidated."""
     from app.services import proxmox_client
-    from app.services.proxmox_client import (
+    from app.services.proxmox_service import (
         _invalidate_admin_group_cache,
     )
 
@@ -362,7 +362,7 @@ def test_lookup_vm_ip_delegates_to_thread_safe():
     """Test that _lookup_vm_ip delegates to _lookup_vm_ip_thread_safe."""
     import inspect
 
-    from app.services.proxmox_client import _lookup_vm_ip
+    from app.services.proxmox_service import _lookup_vm_ip
     
     source = inspect.getsource(_lookup_vm_ip)
     assert "_lookup_vm_ip_thread_safe" in source, \

@@ -290,7 +290,7 @@ def get_ssh_executor_from_config() -> SSHExecutor:
     Returns:
         SSHExecutor configured with current cluster credentials (NOT connected)
     """
-    from app.services.proxmox_client import get_current_cluster
+    from app.services.proxmox_service import get_current_cluster
     
     cluster = get_current_cluster()
     

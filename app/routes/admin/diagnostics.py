@@ -10,7 +10,7 @@ import logging
 from flask import Blueprint, jsonify, render_template
 
 from app.services.arp_scanner import get_arp_table
-from app.services.proxmox_client import (
+from app.services.proxmox_service import (
     _get_vm_mac,
     get_all_vms,
 )

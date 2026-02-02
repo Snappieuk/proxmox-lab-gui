@@ -104,7 +104,7 @@ def _perform_full_sync():
     
     try:
         from app.services.inventory_service import persist_vm_inventory
-        from app.services.proxmox_client import get_all_vms
+        from app.services.proxmox_service import get_all_vms
         from app.models import VMAssignment, db
         
         vms = get_all_vms(skip_ips=False, force_refresh=True)
