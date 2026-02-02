@@ -57,7 +57,7 @@ def test_cluster_cache_thread_safety():
 @pytest.mark.skip(reason="MAPPINGS_FILE no longer exists in proxmox_client - refactored to database")
 def test_mappings_cache_thread_safety():
     """Test that mappings cache is thread-safe for concurrent access."""
-    from app.services.mappings_service import (
+    from app.services.proxmox_client import (
         get_user_vm_map,
         invalidate_mappings_cache,
         set_user_vm_mapping,

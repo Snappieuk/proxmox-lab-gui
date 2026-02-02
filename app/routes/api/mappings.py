@@ -12,7 +12,7 @@ from typing import Any, Dict, List
 
 from flask import Blueprint, jsonify, request
 
-from app.services.mappings_service import (
+from app.services.proxmox_client import (
     get_all_vm_ids_and_names,
     get_user_vm_map,
     save_user_vm_map,
