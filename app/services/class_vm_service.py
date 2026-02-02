@@ -841,7 +841,7 @@ def create_class_vms(
                 success, error, disk_controller_type, ostype, bios, machine, cpu, scsihw, template_memory, template_cores, sockets, efi_disk, tpm_state, boot_order, net_model, disk_options_str, net_options_str, other_settings = export_template_to_qcow2(
                     ssh_executor=ssh_executor,
                     template_vmid=template_vmid,
-                    node=template_node,
+                    node=template_node_name,
                     output_path=base_qcow2_path,
                 )
                 
@@ -934,7 +934,7 @@ def create_class_vms(
                     vmid=teacher_vmid,
                     name=teacher_name,
                     base_qcow2_path=base_qcow2_path,
-                    node=template_node,
+                    node=template_node_name,
                     template_vmid=template_vmid,  # NEW: Pass template VMID for config cloning
                 )
                 
@@ -981,7 +981,7 @@ def create_class_vms(
                     vmid=class_base_vmid,
                     name=class_base_name,
                     base_qcow2_path=base_qcow2_path,
-                    node=template_node,
+                    node=template_node_name,
                     template_vmid=template_vmid,  # NEW: Pass template VMID for config cloning
                 )
                 
@@ -1050,18 +1050,27 @@ def create_class_vms(
                 teacher_vmid = get_vmid_for_class_vm(class_id, 0)
                 teacher_name = f"{class_prefix}-teacher"
                 
-                # Create empty VM shell without storage (will attach after migration)
-                exit_code, stdout, stderr = ssh_executor.execute(
-                    f"qm create {teacher_vmid} --name {teacher_name} "
-                    f"--memory {memory} --cores {cores} "
-                    f"--net0 virtio,bridge=vmbr0",
-                    timeout=120,
-                    check=False
+                # Create empty VM shell with proper hardware settings
+                from app.services.vm_core import create_vm_shell
+                
+                success, error = create_vm_shell(
+                    ssh_executor=ssh_executor,
+                    vmid=teacher_vmid,
+                    name=teacher_name,
+                    memory=memory,
+                    cores=cores,
+                    ostype=ostype,
+                    storage=PROXMOX_STORAGE_NAME,
+                    net_model='virtio',
                 )
                 
-                if exit_code != 0:
-                    result.error = f"Failed to create teacher VM shell: {stderr}"
+                if not success:
+                    result.error = f"Failed to create teacher VM shell: {error}"
                     return result
+                
+                # Enable guest agent
+                agent_cmd = f"qm set {teacher_vmid} --agent enabled=1,fstrim_cloned_disks=1"
+                ssh_executor.execute(agent_cmd, timeout=30, check=False)
                 
                 break
             
@@ -1119,15 +1128,42 @@ def create_class_vms(
             class_base_name = f"{class_prefix}-base"
             
             result.details.append("Creating class-base VM shell (no template)...")
+            from app.services.vm_core import create_vm_shell
+            
+            success, error = create_vm_shell(
+                ssh_executor=ssh_executor,
+                vmid=class_base_vmid,
+                name=class_base_name,
+                memory=memory,
+                cores=cores,
+                ostype=ostype,
+                storage=PROXMOX_STORAGE_NAME,
+                net_model='virtio',
+            )
+            
+            if not success:
+                result.error = f"Failed to create class-base VM shell: {error}"
+                return result
+            
+            # Enable guest agent
+            agent_cmd = f"qm set {class_base_vmid} --agent enabled=1,fstrim_cloned_disks=1"
+            ssh_executor.execute(agent_cmd, timeout=30, check=False)
+            
+            # Attach storage to class-base VM
+            current_node = get_vm_current_node(ssh_executor, class_base_vmid)
+            if not current_node:
+                current_node = template_node  # Fallback
+            
             exit_code, stdout, stderr = ssh_executor.execute(
-                f"qm create {class_base_vmid} --name {class_base_name} --memory {memory} --cores {cores} "
-                f"--net0 virtio,bridge=vmbr0 "
-                f"--scsi0 {PROXMOX_STORAGE_NAME}:{disk_size_gb} --boot order=scsi0",
-                timeout=120
+                f"pvesh set /nodes/{current_node}/qemu/{class_base_vmid}/config -scsi0 {PROXMOX_STORAGE_NAME}:{disk_size_gb} -boot order=scsi0",
+                timeout=120,
+                check=False
             )
             
             if exit_code != 0:
-                result.error = f"Failed to create class-base VM shell: {stderr}"
+                result.error = f"Failed to attach storage to class-base VM: {stderr}"
+                # Clean up the VM
+                ssh_executor.execute(f"qm destroy {class_base_vmid}", check=False)
                 return result
             
             result.class_base_vmid = class_base_vmid
@@ -1290,10 +1326,34 @@ def create_class_vms(
                 disk_slot = f"{disk_controller_type if base_qcow2_path else 'scsi'}0"
                 
                 try:
-                    # Create VM shell with complete hardware config from template
+                    # Create VM with template config cloning (WITH TEMPLATE workflow)
                     if base_qcow2_path:
-                        # Use create_vm_shell to get proper hardware config
+                        # Use create_overlay_vm with template_vmid to clone ALL config
+                        # This is the same approach used for teacher VM - guarantees identical config
+                        from app.services.vm_template import create_overlay_vm
+                        
+                        # Student VMs use class-base VM disk as backing file (3-tier hierarchy)
+                        class_base_disk_path = f"/mnt/pve/{PROXMOX_STORAGE_NAME}/images/{class_base_vmid}/vm-{class_base_vmid}-disk-0.qcow2"
+                        
+                        success, error, student_mac = create_overlay_vm(
+                            ssh_executor=ssh_executor,
+                            vmid=vmid,
+                            name=student_name,
+                            base_qcow2_path=class_base_disk_path,
+                            node=template_node_name,
+                            template_vmid=template_vmid,  # Clone ALL config from template (not just hardware)
+                        )
+                        
+                        if not success:
+                            logger.error(f"Failed to create student VM {vmid}: {error}")
+                            result.failed += 1
+                            continue
+                        
+                        logger.info(f"Created student VM {vmid} with config cloned from template {template_vmid}")
+                    else:
+                        # Template-less: create VM shell with proper hardware settings
                         from app.services.vm_core import create_vm_shell
+                        
                         success, error = create_vm_shell(
                             ssh_executor=ssh_executor,
                             vmid=vmid,
@@ -1301,11 +1361,8 @@ def create_class_vms(
                             memory=memory,
                             cores=cores,
                             ostype=ostype,
-                            bios=bios,
-                            machine=machine,
-                            cpu=cpu,
-                            scsihw=scsihw,
                             storage=PROXMOX_STORAGE_NAME,
+                            net_model='virtio',
                         )
                         
                         if not success:
@@ -1313,107 +1370,44 @@ def create_class_vms(
                             result.failed += 1
                             continue
                         
-                        # Add EFI disk if template had one
-                        if efi_disk:
-                            logger.info(f"Adding EFI disk to student VM {vmid}")
-                            efi_cmd = f"qm set {vmid} --efidisk0 {PROXMOX_STORAGE_NAME}:1,efitype=4m,pre-enrolled-keys=1"
-                            exit_code, stdout, stderr = ssh_executor.execute(efi_cmd, timeout=30, check=False)
-                            if exit_code != 0:
-                                logger.warning(f"Failed to add EFI disk to VM {vmid}: {stderr}")
-                        
-                        # Add TPM if template had one
-                        if tpm_state:
-                            logger.info(f"Adding TPM to student VM {vmid}")
-                            tpm_cmd = f"qm set {vmid} --tpmstate0 {PROXMOX_STORAGE_NAME}:1,version=v2.0"
-                            exit_code, stdout, stderr = ssh_executor.execute(tpm_cmd, timeout=30, check=False)
-                            if exit_code != 0:
-                                logger.warning(f"Failed to add TPM to VM {vmid}: {stderr}")
-                    else:
-                        # Template-less: create basic VM shell
-                        exit_code, stdout, stderr = ssh_executor.execute(
-                            f"qm create {vmid} --name {student_name} "
-                            f"--memory {memory} --cores {cores} "
-                            f"--net0 virtio,bridge=vmbr0 "
-                            f"--ostype l26",
-                            timeout=60
-                        )
-                        
-                        if exit_code != 0:
-                            logger.error(f"Failed to create VM shell {vmid}: {stderr}")
-                            result.failed += 1
-                            continue
-                        
-                        # Enable guest agent for template-less VMs too
+                        # Enable guest agent
                         agent_cmd = f"qm set {vmid} --agent enabled=1,fstrim_cloned_disks=1"
                         ssh_executor.execute(agent_cmd, timeout=30, check=False)
-                    
-                    # Migrate to optimal node BEFORE attaching storage
-                    logger.info(f"Migrating student VM {vmid} to {student_optimal_node}...")
-                    migration_success, error_msg = migrate_vm_to_node(ssh_executor, vmid, student_optimal_node, timeout=120)
-                    if not migration_success:
-                        logger.warning(f"Failed to migrate VM {vmid} to {student_optimal_node}: {error_msg}. Continuing on current node.")
-                    else:
-                        logger.info(f"VM {vmid} migrated to {student_optimal_node}")
-                        # Wait briefly for migration to complete
-                        import time
-                        time.sleep(2)
-                    
-                    # Create disk - overlay if template exists, empty disk if not
-                    if base_qcow2_path:
-                        # Create overlay disk pointing to base
-                        overlay_dir = f"{DEFAULT_VM_IMAGES_PATH}/{vmid}"
-                        overlay_path = f"{overlay_dir}/vm-{vmid}-disk-0.qcow2"
                         
-                        ssh_executor.execute(f"mkdir -p {overlay_dir}", check=False)
+                        # Migrate to optimal node BEFORE attaching storage (template-less only)
+                        logger.info(f"Migrating student VM {vmid} to {student_optimal_node}...")
+                        migration_success, error_msg = migrate_vm_to_node(ssh_executor, vmid, student_optimal_node, timeout=120)
+                        if not migration_success:
+                            logger.warning(f"Failed to migrate VM {vmid} to {student_optimal_node}: {error_msg}. Continuing on current node.")
+                        else:
+                            logger.info(f"VM {vmid} migrated to {student_optimal_node}")
+                            # Wait briefly for migration to complete
+                            import time
+                            time.sleep(2)
                         
-                        exit_code, stdout, stderr = ssh_executor.execute(
-                            f"qemu-img create -f qcow2 -F qcow2 -b {base_qcow2_path} {overlay_path}",
-                            timeout=60
-                        )
-                        
-                        if exit_code != 0:
-                            logger.error(f"Failed to create overlay for {vmid}: {stderr}")
-                            ssh_executor.execute(f"qm destroy {vmid}", check=False)
-                            result.failed += 1
-                            continue
-                        
-                        # Set permissions
-                        ssh_executor.execute(f"chmod 600 {overlay_path}", check=False)
-                        ssh_executor.execute(f"chown root:root {overlay_path}", check=False)
-                        
-                        # Attach disk to VM (get current node after migration)
+                        # Attach empty disk (template-less workflow only)
                         current_node = get_vm_current_node(ssh_executor, vmid)
                         if not current_node:
                             current_node = student_optimal_node  # Fallback
                         
                         exit_code, stdout, stderr = ssh_executor.execute(
-                            f"pvesh set /nodes/{current_node}/qemu/{vmid}/config -{disk_slot} {PROXMOX_STORAGE_NAME}:{vmid}/vm-{vmid}-disk-0.qcow2 -boot c -bootdisk {disk_slot}",
-                            timeout=60
-                        )
-                    else:
-                        # No template - create VM with empty disk
-                        # Get VM's current node after migration
-                        current_node = get_vm_current_node(ssh_executor, vmid)
-                        if not current_node:
-                            current_node = optimal_node  # Fallback
-                        
-                        # Use scsi0 for template-less VMs (default)
-                        exit_code, stdout, stderr = ssh_executor.execute(
                             f"pvesh set /nodes/{current_node}/qemu/{vmid}/config -scsi0 {PROXMOX_STORAGE_NAME}:{disk_size_gb} -boot order=scsi0",
-                            timeout=60
+                            timeout=60,
+                            check=False
                         )
-                    
-                    if exit_code != 0:
-                        logger.error(f"Failed to attach disk to {vmid}: {stderr}")
-                        ssh_executor.execute(f"qm destroy {vmid}", check=False)
-                        result.failed += 1
-                        continue
+                        
+                        if exit_code != 0:
+                            logger.error(f"Failed to attach disk to {vmid}: {stderr}")
+                            ssh_executor.execute(f"qm destroy {vmid}", check=False)
+                            result.failed += 1
+                            continue
                     
                     result.student_vmids.append(vmid)
                     result.successful += 1
                     
-                    # Get MAC address for student VM
-                    student_mac = get_vm_mac_address(ssh_executor, vmid)
+                    # Get MAC address for student VM (already retrieved by create_overlay_vm for template-based)
+                    if not base_qcow2_path:
+                        student_mac = get_vm_mac_address(ssh_executor, vmid)
                     
                     # Get actual current node for assignment
                     actual_node = get_vm_current_node(ssh_executor, vmid)

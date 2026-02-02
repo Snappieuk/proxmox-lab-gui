@@ -85,7 +85,7 @@ def export_template_to_qcow2(
         logger.debug(f"Config keys: {list(config.keys())}")
         
         # Log the full config to debug boot order extraction
-        logger.info(f"Full template config:")
+        logger.info("Full template config:")
         for key, value in config.items():
             logger.info(f"  {key}: {value}")
         
@@ -274,7 +274,7 @@ def export_template_to_qcow2(
         logger.info(f"Template additional settings extracted: {len(other_settings)} options")
         logger.debug(f"Additional settings: {other_settings}")
         
-        logger.info(f"Template hardware config extracted:")
+        logger.info("Template hardware config extracted:")
         logger.info(f"  ostype: {ostype}, bios: {bios}, machine: {machine}")
         logger.info(f"  cpu: {cpu}, scsihw: {scsihw}")
         logger.info(f"  memory: {memory}MB, cores: {cores}, sockets: {sockets}")
@@ -395,39 +395,70 @@ def create_overlay_vm(
             logger.info(f"Cloning VM config from template {template_vmid} to VM {vmid}")
             from app.services.vm_config_clone import clone_vm_config, check_template_has_efi_tpm
             
-            # Get template node from database
-            from app.models import Template
-            template_obj = Template.query.filter_by(proxmox_vmid=template_vmid).first()
-            template_node = template_obj.node if template_obj else None
+            # Get template node - prefer passed 'node' parameter, fallback to database lookup
+            template_node = node  # Use the node parameter passed to this function
+            if not template_node:
+                # Fallback: try to get from database
+                from app.models import Template
+                template_obj = Template.query.filter_by(proxmox_vmid=template_vmid).first()
+                template_node = template_obj.node if template_obj else None
+            
+            logger.info(f"Template {template_vmid} is on node: {template_node}")
             
             # Check if template has EFI/TPM disks that need to be created
             has_efi, has_tpm = check_template_has_efi_tpm(ssh_executor, template_vmid, template_node)
+            
+            logger.info(f"Template {template_vmid} EFI/TPM check: has_efi={has_efi}, has_tpm={has_tpm}")
+            
+            # Ensure overlay directory exists (should already exist from overlay disk creation)
+            ssh_executor.execute(f"mkdir -p {overlay_dir}", check=False)
             
             # Create EFI disk if template has one (required for UEFI boot)
             if has_efi:
                 logger.info(f"Template has EFI disk, creating for VM {vmid}")
                 efi_path = f"{overlay_dir}/vm-{vmid}-disk-1.raw"
-                # Create 528K EFI disk (standard size)
+                # Create 528K EFI disk (standard size) - use qemu-img for proper format
                 efi_cmd = f"qemu-img create -f raw {efi_path} 528K"
                 exit_code, stdout, stderr = ssh_executor.execute(efi_cmd, timeout=30, check=False)
                 if exit_code != 0:
                     logger.error(f"Failed to create EFI disk: {stderr}")
                     ssh_executor.execute(f"rm -rf {overlay_dir}", check=False)
                     return False, f"Failed to create EFI disk: {stderr}", None
-                logger.info(f"Created EFI disk at {efi_path}")
+                
+                # Set proper permissions on EFI disk
+                ssh_executor.execute(f"chmod 600 {efi_path}", timeout=10, check=False)
+                ssh_executor.execute(f"chown root:root {efi_path}", timeout=10, check=False)
+                
+                # Verify EFI disk was created
+                verify_cmd = f"ls -lh {efi_path}"
+                exit_code, ls_output, _ = ssh_executor.execute(verify_cmd, timeout=10, check=False)
+                if exit_code == 0:
+                    logger.info(f"Created EFI disk at {efi_path}: {ls_output.strip()}")
+                else:
+                    logger.error(f"EFI disk verification failed - file not found: {efi_path}")
             
             # Create TPM state disk if template has one (required for Windows 11)
             if has_tpm:
                 logger.info(f"Template has TPM, creating for VM {vmid}")
                 tpm_path = f"{overlay_dir}/vm-{vmid}-disk-2.raw"
-                # Create 4M TPM state disk (standard size)
+                # Create 4M TPM state disk (standard size) - use qemu-img for proper format
                 tpm_cmd = f"qemu-img create -f raw {tpm_path} 4M"
                 exit_code, stdout, stderr = ssh_executor.execute(tpm_cmd, timeout=30, check=False)
                 if exit_code != 0:
                     logger.warning(f"Failed to create TPM disk: {stderr}")
                     # Don't fail the whole operation for TPM
                 else:
-                    logger.info(f"Created TPM disk at {tpm_path}")
+                    # Set proper permissions on TPM disk
+                    ssh_executor.execute(f"chmod 600 {tpm_path}", timeout=10, check=False)
+                    ssh_executor.execute(f"chown root:root {tpm_path}", timeout=10, check=False)
+                    
+                    # Verify TPM disk was created
+                    verify_cmd = f"ls -lh {tpm_path}"
+                    exit_code, ls_output, _ = ssh_executor.execute(verify_cmd, timeout=10, check=False)
+                    if exit_code == 0:
+                        logger.info(f"Created TPM disk at {tpm_path}: {ls_output.strip()}")
+                    else:
+                        logger.warning(f"TPM disk verification failed - file not found: {tpm_path}")
             
             # Disk path relative to storage mount: "58000/vm-58000-disk-0.qcow2"
             overlay_disk_rel = f"{vmid}/vm-{vmid}-disk-0.qcow2"
@@ -448,10 +479,30 @@ def create_overlay_vm(
                 return False, f"Failed to clone VM config: {error}", None
             
             logger.info(f"VM {vmid} created with config from template {template_vmid}, MAC: {mac}")
+            
+            # Verify the config was written correctly (especially EFI/TPM paths)
+            verify_config_cmd = f"cat /etc/pve/qemu-server/{vmid}.conf"
+            exit_code, config_content, _ = ssh_executor.execute(verify_config_cmd, timeout=10, check=False)
+            if exit_code == 0:
+                if has_efi and 'efidisk0:' in config_content:
+                    for line in config_content.split('\n'):
+                        if line.startswith('efidisk0:'):
+                            logger.info(f"VM {vmid} EFI config: {line}")
+                elif has_efi:
+                    logger.error(f"VM {vmid} config missing efidisk0 line!")
+                    
+                if has_tpm and 'tpmstate0:' in config_content:
+                    for line in config_content.split('\n'):
+                        if line.startswith('tpmstate0:'):
+                            logger.info(f"VM {vmid} TPM config: {line}")
+                elif has_tpm:
+                    logger.warning(f"VM {vmid} config missing tpmstate0 line!")
+            else:
+                logger.warning(f"Could not verify VM {vmid} config")
             return True, "", mac
         
         # Step 3: Fallback to old approach if no template_vmid (shouldn't happen in normal usage)
-        logger.warning(f"No template_vmid provided, using legacy VM creation approach")
+        logger.warning("No template_vmid provided, using legacy VM creation approach")
         
         # OLD APPROACH: Create VM shell with explicit settings
         logger.info(f"Creating VM shell with scsihw={scsihw}, disk_controller_type={disk_controller_type}")

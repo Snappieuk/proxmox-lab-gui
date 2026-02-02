@@ -59,7 +59,7 @@ def get_vm_node(ssh_executor: SSHExecutor, vmid: int, proxmox=None) -> Optional[
             try:
                 from app.services.proxmox_service import get_proxmox_admin
                 proxmox = get_proxmox_admin()
-            except:
+            except Exception:
                 pass
         
         if proxmox:
@@ -78,7 +78,7 @@ def get_vm_node(ssh_executor: SSHExecutor, vmid: int, proxmox=None) -> Optional[
         exit_code, stdout, stderr = ssh_executor.execute(cmd, timeout=5, check=False)
         if exit_code == 0 and stdout.strip():
             # Extract hostname from output (last line)
-            lines = [l.strip() for l in stdout.strip().split('\n') if l.strip()]
+            lines = [line.strip() for line in stdout.strip().split('\n') if line.strip()]
             node = lines[-1]
             logger.debug(f"VM {vmid} found on current node: {node}")
             return node
@@ -317,9 +317,9 @@ def create_vm_shell(
                         else:
                             settings_failed += 1
                             logger.warning(f"Failed to apply setting {key}={value} to VM {vmid}: {stderr}")
-                    except Exception as e:
+                    except Exception as ex:
                         settings_failed += 1
-                    logger.warning(f"Error applying setting {key} to VM {vmid}: {e}")
+                        logger.warning(f"Error applying setting {key} to VM {vmid}: {ex}")
             
             logger.info(f"Applied {settings_applied} settings to VM {vmid}, {settings_failed} failed")
         

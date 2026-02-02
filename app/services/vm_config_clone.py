@@ -44,15 +44,27 @@ def check_template_has_efi_tpm(
             cat_cmd = f"cat {source_conf}"
         
         # Read template config
-        exit_code, config_content, _ = ssh_executor.execute(cat_cmd, timeout=10, check=False)
+        exit_code, config_content, stderr = ssh_executor.execute(cat_cmd, timeout=10, check=False)
         
         if exit_code != 0:
-            logger.warning(f"Could not read template {template_vmid} config")
+            logger.warning(f"Could not read template {template_vmid} config: {stderr}")
             return False, False
         
         # Check for EFI and TPM in config
         has_efi = 'efidisk0:' in config_content
         has_tpm = 'tpmstate0:' in config_content
+        
+        logger.info(f"Template {template_vmid} config check: has_efi={has_efi}, has_tpm={has_tpm}")
+        if has_efi:
+            # Log the EFI line for debugging
+            for line in config_content.split('\n'):
+                if line.startswith('efidisk0:'):
+                    logger.info(f"Template EFI config: {line}")
+        if has_tpm:
+            # Log the TPM line for debugging
+            for line in config_content.split('\n'):
+                if line.startswith('tpmstate0:'):
+                    logger.info(f"Template TPM config: {line}")
         
         return has_efi, has_tpm
         
@@ -143,7 +155,7 @@ def clone_vm_config(
             
             # Remove template flag
             if line.startswith('template:'):
-                logger.info(f"Removing template flag")
+                logger.info("Removing template flag")
                 continue
             
             # Update name
