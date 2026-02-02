@@ -314,15 +314,21 @@ def get_pooled_ssh_executor_from_config() -> SSHExecutor:
     Returns:
         SSHExecutor from pool (already connected and ready to use)
     """
-    from app.services.proxmox_client import get_current_cluster
-    
-    cluster = get_current_cluster()
-    
-    # Extract username without realm (root@pam -> root)
-    username = cluster["user"].split("@")[0] if "@" in cluster["user"] else cluster["user"]
-    
-    return get_pooled_ssh_executor(
-        host=cluster["host"],
-        username=username,
-        password=cluster["password"],
-    )
+    try:
+        from app.services.proxmox_service import get_current_cluster
+        
+        cluster = get_current_cluster()
+        
+        # Extract username without realm (root@pam -> root)
+        username = cluster["user"].split("@")[0] if "@" in cluster["user"] else cluster["user"]
+        
+        logger.info(f"Getting pooled SSH executor for {username}@{cluster['host']}")
+        
+        return get_pooled_ssh_executor(
+            host=cluster["host"],
+            username=username,
+            password=cluster["password"],
+        )
+    except Exception as e:
+        logger.error(f"Failed to create Proxmox connection with pooling: {e}")
+        raise

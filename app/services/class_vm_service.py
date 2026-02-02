@@ -510,7 +510,6 @@ def recreate_student_vms_from_template(
                 # Student VMs use indices 1-99 (index 0 is teacher VM)
                 vmid = get_vmid_for_class_vm(class_id, i + 1)
                 student_name = f"{class_prefix}-student-{i+1}"
-                hostname = f"{class_prefix}-s{i+1}"  # Short hostname (e.g., class1-s1)
                 
                 # Create student VM by cloning template config + overlay disk
                 # CRITICAL: Use class-base VM's disk as backing file (NOT base_qcow2_path)
@@ -645,10 +644,9 @@ def create_class_vms(
     if memory is not None and cores is not None:
         logger.info(f"Using class-specified hardware: {memory}MB RAM, {cores} cores")
     else:
-        logger.info(f"Will use template hardware specs (to be extracted)")
+        logger.info("Will use template hardware specs (to be extracted)")
     
     ssh_executor = None
-    optimal_node = None
     proxmox = None
     try:
         # Get the template to find which node it's on
@@ -826,15 +824,15 @@ def create_class_vms(
                 # Base doesn't exist - export template (first time creating VMs for this class)
                 result.details.append(f"Exporting template {template_vmid} to class base (this may take several minutes for large disks)...")
                 logger.info(f"Starting template export: VMID {template_vmid}, node {template_node}, output {base_qcow2_path}")
-                logger.info(f"NOTE: Disk export is a blocking operation - no VMs can be created until export completes")
+                logger.info("NOTE: Disk export is a blocking operation - no VMs can be created until export completes")
                 logger.info(f"Starting template export: VMID {template_vmid}, node {template_node}, output {base_qcow2_path}")
-                logger.info(f"NOTE: Disk export is a blocking operation - no VMs can be created until export completes")
+                logger.info("NOTE: Disk export is a blocking operation - no VMs can be created until export completes")
             
                 # Update progress: exporting template
                 if class_.clone_task_id:
                     update_clone_progress(
                         class_.clone_task_id,
-                        message=f"Exporting template disk (this may take several minutes)...",
+                        message="Exporting template disk (this may take several minutes)...",
                         progress_percent=5
                     )
                 
@@ -1043,7 +1041,6 @@ def create_class_vms(
             max_retries = 30
             teacher_vmid = None
             teacher_mac = None
-            start_vmid = 100  # Track starting point for VMID search
             
             for retry in range(max_retries):
                 # Use prefix-based VMID allocation (teacher VM is index 0)
@@ -1261,9 +1258,6 @@ def create_class_vms(
         except Exception as e:
             logger.warning(f"Failed to add teacher VM to VMInventory: {e}")
         
-        # Track used VMIDs in memory to avoid collisions during creation
-        used_vmids_in_this_session = {teacher_vmid}
-        
         # Step 3: Create student VMs as QCOW2 overlays
         if pool_size > 0:
             result.details.append(f"Creating {pool_size} student VMs...")
@@ -1271,7 +1265,7 @@ def create_class_vms(
             # Find next available student index by querying existing VMAssignments
             existing_student_vmids = VMAssignment.query.filter(
                 VMAssignment.class_id == class_id,
-                VMAssignment.is_teacher_vm == False
+                VMAssignment.is_teacher_vm.is_(False)
             ).with_entities(VMAssignment.proxmox_vmid).all()
             
             # Extract indices from VMIDs (e.g., 23405 -> index 5)
@@ -1321,9 +1315,6 @@ def create_class_vms(
                 else:
                     student_optimal_node = get_optimal_node(ssh_executor, proxmox, vm_memory_mb=memory, simulated_vms_per_node=simulated_vms_per_node)
                     logger.info(f"Selected optimal node for {student_name}: {student_optimal_node} (current allocation: {simulated_vms_per_node})")
-                
-                # Determine disk slot based on controller type
-                disk_slot = f"{disk_controller_type if base_qcow2_path else 'scsi'}0"
                 
                 try:
                     # Create VM with template config cloning (WITH TEMPLATE workflow)
@@ -1922,7 +1913,7 @@ def save_teacher_vm_to_base(class_id: int, teacher_vmid: int, teacher_node: str,
         ssh_executor.execute(f"rm -f {staging_qcow2_path}", check=False)
         
         # Step 3: Export teacher VM disk to staging (collapse any layers to flat image)
-        logger.info(f"Exporting teacher VM disk to staging (this may take a few minutes)")
+        logger.info("Exporting teacher VM disk to staging (this may take a few minutes)")
         export_cmd = f"qemu-img convert -f qcow2 -O qcow2 {teacher_disk_path} {staging_qcow2_path}"
         exit_code, stdout, stderr = ssh_executor.execute(export_cmd, check=False, timeout=600)
         
