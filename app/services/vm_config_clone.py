@@ -190,32 +190,28 @@ def clone_vm_config(
             
             # Update EFI disk path - use relative path like main disk
             if line.startswith('efidisk0:'):
-                # Format: "STORAGE:vm-OLDID-disk-1,efitype=4m,..."
+                # Format: "STORAGE:OLDPATH,efitype=4m,..."
                 # Replace with: "STORAGE:NEWID/vm-NEWID-disk-1.raw,efitype=4m,..."
                 # Keep all options (efitype, pre-enrolled-keys, etc.)
-                new_efi = re.sub(
-                    r'([^:,]+):([^,]+)',
-                    f'{storage}:{dest_vmid}/vm-{dest_vmid}-disk-1.raw',
-                    line,
-                    count=1
-                )
+                # Extract everything after first comma (the options)
+                parts = line.split(':', 1)[1].split(',', 1)  # Get everything after 'efidisk0:'
+                options_part = ',' + parts[1] if len(parts) > 1 else ''
+                new_efi = f"efidisk0: {storage}:{dest_vmid}/vm-{dest_vmid}-disk-1.raw{options_part}"
                 new_lines.append(new_efi)
-                logger.info(f"Updated EFI disk path to {dest_vmid}/vm-{dest_vmid}-disk-1.raw")
+                logger.info(f"Updated EFI disk path to {dest_vmid}/vm-{dest_vmid}-disk-1.raw (preserved {len(options_part)} chars of options)")
                 continue
             
             # Update TPM state path - use relative path like main disk
             if line.startswith('tpmstate0:'):
-                # Format: "STORAGE:vm-OLDID-disk-2,version=v2.0,..."
+                # Format: "STORAGE:OLDPATH,version=v2.0,..."
                 # Replace with: "STORAGE:NEWID/vm-NEWID-disk-2.raw,version=v2.0,..."
                 # Keep all options (version, etc.)
-                new_tpm = re.sub(
-                    r'([^:,]+):([^,]+)',
-                    f'{storage}:{dest_vmid}/vm-{dest_vmid}-disk-2.raw',
-                    line,
-                    count=1
-                )
+                # Extract everything after first comma (the options)
+                parts = line.split(':', 1)[1].split(',', 1)  # Get everything after 'tpmstate0:'
+                options_part = ',' + parts[1] if len(parts) > 1 else ''
+                new_tpm = f"tpmstate0: {storage}:{dest_vmid}/vm-{dest_vmid}-disk-2.raw{options_part}"
                 new_lines.append(new_tpm)
-                logger.info(f"Updated TPM state path to {dest_vmid}/vm-{dest_vmid}-disk-2.raw")
+                logger.info(f"Updated TPM state path to {dest_vmid}/vm-{dest_vmid}-disk-2.raw (preserved {len(options_part)} chars of options)")
                 continue
             
             # Update network MAC address
