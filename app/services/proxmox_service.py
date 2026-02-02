@@ -533,7 +533,7 @@ def _get_cached_ip_from_db(cluster_id: str, vmid: int) -> Optional[str]:
 
     from flask import has_app_context
 
-    from app.models import VMAssignment, VMIPCache
+    from app.models import VMAssignment, VMInventory
     
     if not has_app_context():
         logger.debug("_get_cached_ip_from_db: skipping (no app context)")
@@ -547,23 +547,13 @@ def _get_cached_ip_from_db(cluster_id: str, vmid: int) -> Optional[str]:
             if age.total_seconds() < DB_IP_CACHE_TTL:
                 return assignment.cached_ip
         
-        # Check VMIPCache (legacy VMs)
-        cache_entry = VMIPCache.query.filter_by(vmid=vmid, cluster_id=cluster_id).first()
-        if cache_entry and cache_entry.cached_ip and cache_entry.ip_updated_at:
-            age = datetime.utcnow() - cache_entry.ip_updated_at
-            if age.total_seconds() < DB_IP_CACHE_TTL:
-                return cache_entry.cached_ip
-    except Exception as e:
-        logger.debug(f"Failed to get cached IP from DB for VM {vmid}: {e}")
-    
-    # Final fallback: check VMInventory table for persisted IP
-    try:
-        from app.models import VMInventory
+        # Check VMInventory for all VMs (primary source of truth)
         inventory = VMInventory.query.filter_by(cluster_id=cluster_id, vmid=vmid).first()
         if inventory and inventory.ip and inventory.ip not in ('N/A', 'Fetching...', ''):
             return inventory.ip
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"Failed to get cached IP from DB for VM {vmid}: {e}")
+    
     return None
 
 
@@ -577,7 +567,7 @@ def _get_cached_ips_batch(cluster_id: str, vmids: List[int]) -> Dict[int, str]:
 
     from flask import has_app_context
 
-    from app.models import VMAssignment, VMIPCache
+    from app.models import VMAssignment, VMInventory
     
     if not has_app_context():
         logger.debug("_get_cached_ips_batch: skipping (no app context)")
@@ -598,25 +588,14 @@ def _get_cached_ips_batch(cluster_id: str, vmids: List[int]) -> Dict[int, str]:
         for assignment in assignments:
             results[assignment.vmid] = assignment.cached_ip
         
-        # Get remaining VMs from VMIPCache
+        # Get remaining VMs from VMInventory (primary source of truth)
         remaining_vmids = [v for v in vmids if v not in results]
-        if remaining_vmids:
-            cache_entries = VMIPCache.query.filter(
-                VMIPCache.vmid.in_(remaining_vmids),
-                VMIPCache.cluster_id == cluster_id,
-                VMIPCache.cached_ip.isnot(None),
-                VMIPCache.ip_updated_at >= cutoff
-            ).all()
-            
-            for entry in cache_entries:
-                results[entry.vmid] = entry.cached_ip
     
     except Exception as e:
         logger.debug(f"Failed to batch fetch cached IPs from DB: {e}")
     
-    # Final fallback: check VMInventory table for remaining VMs
+    # Check VMInventory table for remaining VMs
     try:
-        from app.models import VMInventory
         remaining_vmids = [v for v in vmids if v not in results]
         if remaining_vmids:
             inventory_entries = VMInventory.query.filter(
@@ -639,7 +618,7 @@ def _cache_ip_to_db(cluster_id: str, vmid: int, ip: Optional[str], mac: Optional
 
     from flask import has_app_context
 
-    from app.models import VMAssignment, VMIPCache, db
+    from app.models import VMAssignment, VMInventory, db
     
     if not has_app_context():
         logger.debug("_cache_ip_to_db: skipping (no app context)")
@@ -661,22 +640,23 @@ def _cache_ip_to_db(cluster_id: str, vmid: int, ip: Optional[str], mac: Optional
             db.session.commit()
             return
         
-        # Otherwise update/create VMIPCache
-        cache_entry = VMIPCache.query.filter_by(vmid=vmid, cluster_id=cluster_id).first()
-        if cache_entry:
-            cache_entry.cached_ip = ip
-            cache_entry.ip_updated_at = now
+        # Otherwise update VMInventory (primary source of truth)
+        inventory = VMInventory.query.filter_by(cluster_id=cluster_id, vmid=vmid).first()
+        if inventory:
+            inventory.ip = ip
+            inventory.last_updated = now
             if mac:
-                cache_entry.mac_address = mac
+                inventory.mac_address = mac
         else:
-            cache_entry = VMIPCache(
+            # Create new VMInventory entry
+            inventory = VMInventory(
                 vmid=vmid,
                 cluster_id=cluster_id,
-                cached_ip=ip,
+                ip=ip,
                 mac_address=mac,
-                ip_updated_at=now
+                last_updated=now
             )
-            db.session.add(cache_entry)
+            db.session.add(inventory)
         
         db.session.commit()
     except Exception as e:
@@ -688,7 +668,7 @@ def _clear_vm_ip_cache(cluster_id: str, vmid: int) -> None:
     """Clear IP cache for specific VM in database."""
     from flask import has_app_context
 
-    from app.models import VMAssignment, VMIPCache, db
+    from app.models import VMAssignment, VMInventory, db
     
     if not has_app_context():
         logger.debug("_clear_vm_ip_cache: skipping (no app context)")
@@ -702,11 +682,11 @@ def _clear_vm_ip_cache(cluster_id: str, vmid: int) -> None:
             assignment.ip_updated_at = None
             logger.debug("Cleared VMAssignment IP cache for VM %d", vmid)
         
-        # Clear VMIPCache
-        cache_entry = VMIPCache.query.filter_by(vmid=vmid).first()
-        if cache_entry:
-            db.session.delete(cache_entry)
-            logger.debug("Deleted VMIPCache entry for VM %d", vmid)
+        # Clear VMInventory IP
+        inventory = VMInventory.query.filter_by(cluster_id=cluster_id, vmid=vmid).first()
+        if inventory:
+            inventory.ip = None
+            logger.debug("Cleared VMInventory IP for VM %d", vmid)
         
         db.session.commit()
     except Exception as e:
@@ -1320,7 +1300,7 @@ def _enrich_from_db_cache(vms: List[Dict[str, Any]]) -> None:
     """
     Enrich VMs with cached IP addresses from database (in-place).
     
-    Checks VMAssignment.cached_ip for class VMs and VMIPCache for legacy VMs.
+    Checks VMAssignment.cached_ip for class VMs and VMInventory for all VMs.
     Only uses cached IPs if they're less than 1 hour old.
     
     Args:
@@ -1330,7 +1310,7 @@ def _enrich_from_db_cache(vms: List[Dict[str, Any]]) -> None:
 
     from flask import has_app_context
 
-    from app.models import VMAssignment, VMIPCache
+    from app.models import VMAssignment, VMInventory
     
     if not has_app_context():
         logger.debug("_enrich_from_db_cache: skipping (no app context)")
@@ -1364,26 +1344,22 @@ def _enrich_from_db_cache(vms: List[Dict[str, Any]]) -> None:
     except Exception as e:
         logger.error("Failed to load VMAssignment cache: %s", e)
     
-    # Check VMIPCache for legacy/non-class VMs
-    legacy_vm_cache = {}
+    # Check VMInventory for all VMs (primary source of truth)
+    vm_cache = {}
     try:
-        cache_entries = VMIPCache.query.filter(
-            VMIPCache.cached_ip.isnot(None),
-            VMIPCache.ip_updated_at.isnot(None)
+        inventory_entries = VMInventory.query.filter(
+            VMInventory.ip.isnot(None)
         ).all()
         
-        for entry in cache_entries:
-            age = now - entry.ip_updated_at
-            if age < cache_ttl:
-                legacy_vm_cache[entry.vmid] = entry.cached_ip
-            else:
-                logger.debug("VM %d: legacy cached IP expired (age=%s)", entry.vmid, age)
-                expired += 1
+        for entry in inventory_entries:
+            # VMInventory doesn't have separate IP update timestamp, so we use last_updated
+            # Note: This is updated on any VM sync, not just IP changes
+            if entry.ip and entry.ip not in ('N/A', 'Fetching...', ''):
+                vm_cache[entry.vmid] = entry.ip
         
-        logger.debug("Loaded %d cached IPs from VMIPCache (expired=%d)", 
-                    len(legacy_vm_cache), expired)
+        logger.debug("Loaded %d IPs from VMInventory", len(vm_cache))
     except Exception as e:
-        logger.error("Failed to load VMIPCache: %s", e)
+        logger.error("Failed to load VMInventory: %s", e)
     
     # Apply cached IPs to VMs
     for vm in vms:
@@ -1394,8 +1370,8 @@ def _enrich_from_db_cache(vms: List[Dict[str, Any]]) -> None:
         if current_ip and current_ip not in ("N/A", "Fetching...", ""):
             continue
         
-        # Check class VM cache first, then legacy cache
-        cached_ip = class_vm_cache.get(vmid) or legacy_vm_cache.get(vmid)
+        # Check class VM cache first, then VMInventory
+        cached_ip = class_vm_cache.get(vmid) or vm_cache.get(vmid)
         
         if cached_ip:
             vm["ip"] = cached_ip
@@ -1412,7 +1388,7 @@ def _enrich_vms_with_arp_ips(vms: List[Dict[str, Any]], force_sync: bool = False
     """
     Enrich VM list with IPs discovered via ARP scanning (fast, in-place).
     
-    First checks database cache (VMAssignment.cached_ip and VMIPCache).
+    First checks database cache (VMAssignment.cached_ip and VMInventory).
     Only runs ARP scan for VMs missing IPs or with expired cache (1hr TTL).
     
     Scans ALL running QEMU VMs and LXC containers without IPs.
@@ -1564,7 +1540,7 @@ def _save_ips_to_db(vms: List[Dict[str, Any]], vm_mac_map: Dict[int, str]) -> No
     """
     Save discovered IPs to database for persistence across restarts.
     
-    Updates VMAssignment.cached_ip for class VMs and VMIPCache for legacy VMs.
+    Updates VMAssignment.cached_ip for class VMs and VMInventory for all VMs.
     Only saves IPs that are valid (not N/A, Fetching..., or empty).
     
     Args:
@@ -1575,7 +1551,7 @@ def _save_ips_to_db(vms: List[Dict[str, Any]], vm_mac_map: Dict[int, str]) -> No
 
     from flask import has_app_context
 
-    from app.models import VMAssignment, VMIPCache, db
+    from app.models import VMAssignment, VMInventory, db
     
     if not has_app_context():
         logger.warning("_save_ips_to_db: skipping (no app context)")
@@ -1583,7 +1559,7 @@ def _save_ips_to_db(vms: List[Dict[str, Any]], vm_mac_map: Dict[int, str]) -> No
     
     now = datetime.utcnow()
     class_updates = 0
-    legacy_updates = 0
+    inventory_updates = 0
     
     try:
         # Get all class VMs in one query (use correct column proxmox_vmid)
@@ -1611,41 +1587,41 @@ def _save_ips_to_db(vms: List[Dict[str, Any]], vm_mac_map: Dict[int, str]) -> No
                     assignment.ip_updated_at = now
                     class_updates += 1
                     logger.debug("Updated VMAssignment %d: cached_ip=%s", vmid, ip)
+            
+            # Update VMInventory for all VMs (primary source of truth)
+            cluster_id = vm.get("cluster_id", "default")
+            mac = vm_mac_map.get(vmid)
+            if not mac:
+                # Try to get MAC from VM config
+                mac = _get_vm_mac(vm["node"], vmid, vm["type"], cluster_id=cluster_id)
+            
+            # Find or create VMInventory entry
+            inventory = VMInventory.query.filter_by(cluster_id=cluster_id, vmid=vmid).first()
+            if inventory:
+                # Update existing
+                if inventory.ip != ip:
+                    inventory.ip = ip
+                    inventory.last_updated = now
+                    if mac:
+                        inventory.mac_address = mac
+                    inventory_updates += 1
+                    logger.debug("Updated VMInventory %d: ip=%s", vmid, ip)
             else:
-                # Legacy VM - use VMIPCache
-                mac = vm_mac_map.get(vmid)
-                if not mac:
-                    # Try to get MAC from VM config
-                    cluster_id = vm.get("cluster_id")
-                    mac = _get_vm_mac(vm["node"], vmid, vm["type"], cluster_id=cluster_id)
-                
-                if mac:
-                    # Check if entry exists
-                    cache_entry = VMIPCache.query.filter_by(vmid=vmid).first()
-                    if cache_entry:
-                        # Update existing
-                        if cache_entry.cached_ip != ip:
-                            cache_entry.cached_ip = ip
-                            cache_entry.ip_updated_at = now
-                            cache_entry.mac_address = mac  # Update MAC if changed
-                            legacy_updates += 1
-                            logger.debug("Updated VMIPCache %d: cached_ip=%s", vmid, ip)
-                    else:
-                        # Create new entry
-                        cache_entry = VMIPCache(
-                            vmid=vmid,
-                            mac_address=mac,
-                            cached_ip=ip,
-                            ip_updated_at=now,
-                            cluster_id=vm.get("cluster_id", "default")
-                        )
-                        db.session.add(cache_entry)
-                        legacy_updates += 1
-                        logger.debug("Created VMIPCache %d: cached_ip=%s", vmid, ip)
+                # Create new entry
+                inventory = VMInventory(
+                    vmid=vmid,
+                    cluster_id=cluster_id,
+                    ip=ip,
+                    mac_address=mac,
+                    last_updated=now
+                )
+                db.session.add(inventory)
+                inventory_updates += 1
+                logger.debug("Created VMInventory %d: ip=%s", vmid, ip)
         
         # Commit all updates in one transaction
         db.session.commit()
-        logger.info("Saved IPs to database: %d class VMs, %d legacy VMs", class_updates, legacy_updates)
+        logger.info("Saved IPs to database: %d class VMs, %d VMInventory updates", class_updates, inventory_updates)
         
     except Exception as e:
         logger.error("Failed to save IPs to database: %s", e)

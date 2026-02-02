@@ -586,18 +586,7 @@ class VMAssignment(db.Model):
         return f'<VMAssignment {self.proxmox_vmid} -> {self.assigned_user.username if self.assigned_user else "unassigned"}>'
 
 
-class VMIPCache(db.Model):
-    """IP address cache for VMs (legacy mappings.json VMs)."""
-    __tablename__ = 'vm_ip_cache'
-    
-    vmid = db.Column(db.Integer, primary_key=True, index=True)
-    mac_address = db.Column(db.String(17), nullable=True, index=True)
-    cached_ip = db.Column(db.String(45), nullable=True)
-    ip_updated_at = db.Column(db.DateTime, nullable=True)
-    cluster_id = db.Column(db.String(50), nullable=True)
-    
-    def __repr__(self):
-        return f'<VMIPCache vmid={self.vmid} ip={self.cached_ip}>'
+
 
 
 class VMInventory(db.Model):
