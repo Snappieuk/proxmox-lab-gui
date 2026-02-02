@@ -2,7 +2,7 @@
 Console API endpoints - noVNC console access for VMs
 
 This module provides VNC console access through a WebSocket proxy architecture.
-For a cleaner API abstraction, see app.services.proxmox_api module which provides
+For a cleaner API abstraction, see app.services.proxmox_service module which provides
 get_vnc_ticket(), get_auth_ticket(), and find_vm_location() helper functions.
 """
 

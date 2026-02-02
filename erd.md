@@ -154,15 +154,7 @@ erDiagram
         datetime last_status_check
         text sync_error
     }
-    
-    VMIPCache {
-        int vmid PK
-        string mac_address
-        string cached_ip
-        datetime ip_updated_at
-        string cluster_id
-    }
-    
+        
     ISOImage {
         int id PK
         string volid UK
@@ -205,7 +197,6 @@ erDiagram
     Template }o--o| LabClass : "class_specific"
     
     Cluster ||--o{ VMInventory : "stores_inventory"
-    Cluster ||--o{ VMIPCache : "caches_ips"
     Cluster ||--o{ ISOImage : "stores_isos"
     
     ClassEnrollment }o--|| User : "student"

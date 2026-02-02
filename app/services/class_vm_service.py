@@ -333,7 +333,7 @@ def deploy_class_vms(
         (success, message, vm_info_dict)
     """
     from app.services.inventory_service import persist_vm_inventory
-    from app.services.proxmox_client import get_all_vms
+    from app.services.proxmox_service import get_all_vms
     
     try:
         # Load class from database

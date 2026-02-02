@@ -570,7 +570,7 @@ python3
 
 **Code organization**:
 - Database operations → `app/services/inventory_service.py`
-- Proxmox API calls → `app/services/proxmox_client.py`
+- Proxmox API calls → `app/services/proxmox_service.py`
 - VM deployment → `app/services/class_vm_service.py` (uses SSH executor)
 - Template sync → `app/services/template_sync.py`
 - Background tasks → `app/services/background_sync.py`, `app/services/template_sync.py`
