@@ -1,11 +1,7 @@
 # Routes package - contains Flask blueprints
 
 # Import blueprints for easy access
-from app.routes.admin.clusters import admin_clusters_bp
-from app.routes.admin.diagnostics import admin_diagnostics_bp
-from app.routes.admin.mappings import admin_mappings_bp
-from app.routes.admin.users import admin_users_bp
-from app.routes.admin.vm_class_mappings import admin_vm_mappings_bp
+from app.routes.admin import admin_bp
 from app.routes.api.class_api import api_classes_bp
 from app.routes.api.class_owners import api_class_owners_bp
 from app.routes.api.class_import import class_import_bp
@@ -41,11 +37,7 @@ def register_blueprints(app):
     app.register_blueprint(portal_bp)
     app.register_blueprint(classes_bp)
     app.register_blueprint(template_builder_bp)
-    app.register_blueprint(admin_mappings_bp)
-    app.register_blueprint(admin_clusters_bp)
-    app.register_blueprint(admin_diagnostics_bp)
-    app.register_blueprint(admin_users_bp)
-    app.register_blueprint(admin_vm_mappings_bp)
+    app.register_blueprint(admin_bp)
     app.register_blueprint(api_vms_bp)
     app.register_blueprint(api_mappings_bp)
     app.register_blueprint(api_clusters_bp)
