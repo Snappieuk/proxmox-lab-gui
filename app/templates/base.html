@@ -69,16 +69,16 @@
                    href="{{ url_for('admin.admin_view') }}">
                     <i class="ti ti-eye"></i> Admin view
                 </a>
-                <a class="sidebar-link {% if request.endpoint == 'admin_users.users_management' %}sidebar-link-active{% endif %}"
-                   href="{{ url_for('admin_users.users_management') }}">
+                <a class="sidebar-link {% if request.endpoint == 'admin.users_management' %}sidebar-link-active{% endif %}"
+                   href="{{ url_for('admin.users_management') }}">
                     <i class="ti ti-users"></i> User management
                 </a>
-                <a class="sidebar-link {% if request.endpoint == 'admin_mappings.admin_mappings' %}sidebar-link-active{% endif %}"
-                   href="{{ url_for('admin_mappings.admin_mappings') }}">
+                <a class="sidebar-link {% if request.endpoint == 'admin.admin_mappings' %}sidebar-link-active{% endif %}"
+                   href="{{ url_for('admin.admin_mappings') }}">
                     <i class="ti ti-arrows-left-right"></i> Mappings
                 </a>
-                <a class="sidebar-link {% if request.endpoint == 'admin_vm_mappings.vm_class_mappings' %}sidebar-link-active{% endif %}"
-                   href="{{ url_for('admin_vm_mappings.vm_class_mappings') }}">
+                <a class="sidebar-link {% if request.endpoint == 'admin.vm_class_mappings' %}sidebar-link-active{% endif %}"
+                   href="{{ url_for('admin.vm_class_mappings') }}">
                     <i class="ti ti-topology-star-3"></i> VM:Class Mappings
                 </a>
                 
@@ -87,8 +87,8 @@
     
     {% if session.get("user") and is_admin %}
     <div class="sidebar-settings">
-        <a class="sidebar-link sidebar-link-settings {% if request.endpoint == 'admin_clusters.admin_settings' %}sidebar-link-active{% endif %}"
-           href="{{ url_for('admin_clusters.admin_settings') }}">
+        <a class="sidebar-link sidebar-link-settings {% if request.endpoint == 'admin.admin_settings' %}sidebar-link-active{% endif %}"
+           href="{{ url_for('admin.admin_settings') }}">
             <i class="ti ti-settings-filled"></i> Settings
         </a>
     </div>
