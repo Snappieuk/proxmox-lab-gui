@@ -20,20 +20,28 @@ A Flask webapp providing a lab VM portal similar to Azure Labs for self-service 
 - **VM specs management**: Teachers can modify VM hardware specs (CPU cores and RAM) via class settings. Changes trigger automatic recreation of all student VMs with new specs. Function `recreate_student_vms_with_new_specs()` in `class_vm_service.py` deletes old student VMs and creates new ones with updated hardware while preserving overlay structure. API endpoint: `/api/classes/<id>/settings` (POST with `cpu_cores` and `memory_mb` fields).
 - **Progressive UI loading**: Frontend shows "Starting..." badge for VMs that are running but have no IP yet. Only transitions to "Running" after IP is discovered. Polls at 2s and 10s intervals after VM start, background sync triggers IP discovery 15s after start operation.
 - **IP discovery workflow**: Multi-tier hierarchy - VMInventory DB cache → Proxmox guest agent `network-get-interfaces` API → LXC `.interfaces.get()` → ARP scanner with nmap → RDP port 3389 validation. Background thread triggers immediate IP sync 15 seconds after VM start (allows boot time before network check).
-- **VM Deployment strategy** (VM shell + disk export/overlay - NEVER use qm clone):
+- **VM Deployment strategy** (Config cloning + disk overlays - NEVER use qm clone):
   - **Location**: All disk operations in `app/services/class_vm_service.py` using direct SSH `qm` and `qemu-img` commands
-  - **Critical rule**: NEVER use `qm clone` for any VM creation - always use disk export + overlay approach
+  - **Critical rule**: NEVER use `qm clone` for any VM creation - always use config cloning + disk overlay approach
+  - **Config cloning** (`app/services/vm_config_clone.py`): **NEW PRIMARY METHOD**
+    - Copies entire VM config file from template to student VM (65+ settings guaranteed identical)
+    - Modifies VM-specific fields only: disk paths, EFI/TPM paths, MAC address, VM name
+    - Function: `clone_vm_config()` - reads `/etc/pve/qemu-server/{template}.conf`, modifies, writes new config
+    - Helper: `check_template_has_efi_tpm()` - detects if template uses EFI/TPM for UEFI boot (Windows 11 requirement)
+    - EFI/TPM disk creation: If template has EFI/TPM, creates raw disk files (528K for EFI, 4M for TPM) with proper permissions
+    - Path rewriting: Updates all disk paths (main disk, EFI disk, TPM state) to point to new VM's directories
+    - Preserves all options: efitype, pre-enrolled-keys, version, disk options, network options - everything from template
   - **Workflow with template**:
     1. Export template disk: `qemu-img convert -O qcow2` creates base QCOW2 file from template
-    2. Teacher VM: Empty shell (`qm create`) + copy-on-write overlay pointing to base QCOW2
-    3. Class-base VM: Reference QCOW2 file used as backing file for student overlays
-    4. Student VMs: `qemu-img create -f qcow2 -F qcow2 -b <base>` creates copy-on-write overlays
+    2. Teacher VM: Overlay disk created first, then `clone_vm_config()` copies entire config from template with disk path updates
+    3. Student VMs: `qemu-img create -f qcow2 -F qcow2 -b <base>` creates overlay, then `clone_vm_config()` copies config
+    4. EFI/TPM handling: If template has EFI/TPM, creates raw disk files and updates paths in config file
   - **Workflow without template**:
-    1. Teacher/class-base/student VMs: `qm create --scsi0 STORAGE:SIZE` creates empty shells with disks
-  - **Why no cloning**: `qm clone` is slow, doesn't support overlays, and creates full disk copies. Disk export + overlays are 10x faster and space-efficient.
-  - **Template push**: Export updated template disk to new class-base QCOW2, recreate student overlays
-  - **Key functions**: `create_class_vms()`, `export_template_to_qcow2()`, `save_and_deploy_class_vms()`, `get_vm_mac_address()`
-  - **SSH helper**: `SSHExecutor` from `ssh_executor.py` provides SSH connection wrapper
+    1. Teacher/class-base/student VMs: `create_vm_shell()` from `vm_core.py` creates empty VMs with hardware specs
+  - **Why config cloning**: Guarantees 100% identical configuration (CPU, memory, BIOS, UEFI, TPM, boot order, VGA, all 65+ settings). Faster and more reliable than individual setting application. Critical for Windows 11 VMs with UEFI+TPM requirements.
+  - **Template push**: Export updated template disk to new class-base QCOW2, recreate student overlays with `clone_vm_config()`
+  - **Key modules**: `vm_config_clone.py` (config copying), `vm_template.py` (overlay creation), `vm_core.py` (shell creation), `class_vm_service.py` (orchestration)
+  - **SSH helper**: `SSHExecutor` from `ssh_executor.py` provides SSH connection wrapper and connection pooling
 - **Class co-owners feature**: Teachers can grant other teachers/admins full class management permissions. Uses many-to-many relationship via `class_co_owners` association table. Check permissions with `Class.is_owner(user)` method.
 - **Template publishing workflow**: Teachers can publish VM changes to class template, then propagate to all student VMs. Located at `app/routes/api/publish_template.py` and `app/routes/api/class_template.py`. Deletes old student VMs and recreates fresh ones from updated template using disk copy approach (same as initial class creation).
 - **User VM assignments**: All VM→user mappings stored in database via VMAssignment table. Direct assignments (no class) use `class_id=NULL`. Located at `app/routes/api/user_vm_assignments.py`. NO JSON files used.
@@ -163,30 +171,98 @@ api/
 - Template conversion: `convert_vm_to_template()` (converts VM → template)
 - Multi-cluster aware: Takes `cluster_ip` param, looks up cluster by IP in `CLUSTERS` config
 
-**`app/services/ssh_executor.py`** (SSH helper, ~170 lines):
-- **SSH operations**: `SSHExecutor` class for executing commands on Proxmox nodes via paramiko
-- **Helper function**: `get_ssh_executor_from_config()` creates configured SSH executor from current cluster config
-- **Purpose**: Provides low-level SSH command execution for VM operations
-- **Used by**: `class_vm_service.py` for all `qm` and `qemu-img` commands
+**`app/services/vm_config_clone.py`** (VM config cloning, ~325 lines):
+- **Purpose**: Copy Proxmox VM config files directly for 100% identical VMs
+- **Core architecture**: Reads `/etc/pve/qemu-server/{source}.conf`, modifies VM-specific fields, writes to new config file
+- **Key functions**:
+  - `check_template_has_efi_tpm()`: Detects if template has EFI/TPM disks configured (lines 17-70)
+  - `clone_vm_config()`: Main function - copies entire config file with path/MAC modifications (lines 82-305)
+  - `generate_mac_address()`: Creates random MAC address in Proxmox format (02:xx:xx:xx:xx:xx)
+- **Fields modified during cloning**:
+  1. VM name - updates to destination VM name
+  2. Template flag - removed (line starts with `template:`)
+  3. Main disk path - updates to point to overlay disk (scsi0/virtio0/sata0/ide0)
+  4. EFI disk path - rewrites to `{storage}:{vmid}/vm-{vmid}-disk-1.raw` with all options preserved
+  5. TPM state path - rewrites to `{storage}:{vmid}/vm-{vmid}-disk-2.raw` with all options preserved
+  6. MAC address - generates new unique address for net0
+  7. VGA settings - explicitly preserved for VirtIO-GPU support
+- **Path rewriting logic** (lines 193-221):
+  - Splits disk lines on first comma to separate path from options
+  - Preserves ALL options after comma (disk-cache, IO thread, efitype, pre-enrolled-keys, version, etc.)
+  - Uses string manipulation instead of regex for precise option preservation
+  - Example: `efidisk0: STORAGE:126/base-126-disk-0.qcow2,efitype=4m,pre-enrolled-keys=1` → `efidisk0: STORAGE:42809/vm-42809-disk-1.raw,efitype=4m,pre-enrolled-keys=1`
+- **SSH hop support**: Can read template config from different node via SSH tunnel (lines 127-135)
+- **Used by**: `vm_template.create_overlay_vm()` when `template_vmid` parameter provided
 
-**`app/services/class_vm_service.py`** (Class VM service workflows, ~843 lines):
-- **Primary VM creation service**: Orchestrates class VM deployment workflows using canonical implementations from vm_utils, vm_core, and vm_template modules
+**`app/services/vm_template.py`** (Template export and overlay creation, ~1037 lines):
+- **Purpose**: Template disk export and overlay VM creation with full config cloning
+- **Key functions**:
+  - `export_template_to_qcow2()`: Exports template disk to QCOW2 base file (lines 87-230)
+  - `create_overlay_vm()`: Creates VM with overlay disk + cloned config (lines 328-520) - **PRIMARY VM CREATION METHOD**
+  - `create_overlay_disk()`: Creates QCOW2 overlay with backing file (lines 664-710)
+- **Config cloning integration** (lines 393-490):
+  - When `template_vmid` provided, calls `clone_vm_config()` instead of manual setting application
+  - Detects EFI/TPM requirements via `check_template_has_efi_tpm()`
+  - Creates EFI disk (528K raw) and TPM disk (4M raw) if template has them
+  - Sets proper permissions (chmod 600, chown root:root) on all disk files
+  - Verifies disk creation via `ls -lh` and config file inspection
+- **EFI/TPM disk creation** (lines 418-460):
+  - EFI: `qemu-img create -f raw {path} 528K` - required for UEFI boot
+  - TPM: `qemu-img create -f raw {path} 4M` - required for Windows 11 TPM 2.0
+  - Both disks created in VM directory: `{storage_path}/{vmid}/vm-{vmid}-disk-N.raw`
+  - Path format in config: `efidisk0: STORAGE:VMID/vm-VMID-disk-1.raw,efitype=4m,pre-enrolled-keys=1`
+- **Verification logging** (lines 468-490):
+  - Reads created config file to verify EFI/TPM lines present
+  - Logs errors if expected disks missing from config
+  - Critical for debugging UEFI boot issues in Windows VMs
+
+**`app/services/ssh_executor.py`** (SSH connection pooling, ~329 lines):
+- **Purpose**: Thread-safe SSH connection pooling for Proxmox node operations
+- **Core classes**:
+  - `SSHConnectionPool`: Manages reusable paramiko SSH connections (lines 23-118)
+  - `SSHExecutor`: Wraps connection for command execution (lines 120-280)
+- **Connection pooling** (lines 23-118):
+  - Thread-safe connection reuse to avoid SSH handshake overhead
+  - Automatic reconnection on connection failure
+  - Connection validation before reuse
+  - Module-level `_connection_pool` for global access
+- **Key functions**:
+  - `get_pooled_ssh_executor()`: Returns executor from connection pool (lines 169-199)
+  - `get_pooled_ssh_executor_from_config()`: Creates executor from cluster config with error handling (lines 301-329)
+  - `get_ssh_executor_from_config()`: Legacy non-pooled executor creation (lines 283-299)
+  - `cleanup_connection_pool()`: Closes all pooled connections (lines 201-213)
+- **Cleanup integration**: `atexit.register()` in `app/__init__.py` ensures connections closed on shutdown
+- **Error handling** (lines 315-329): Catches import errors and connection failures, logs detailed error messages
+- **Used by**: All VM operations in `class_vm_service.py`, `vm_template.py`, `vm_core.py` for `qm` and `qemu-img` commands
+
+**`app/services/class_vm_service.py`** (Class VM service workflows, ~2225 lines):
+- **Primary VM creation service**: Orchestrates class VM deployment workflows using config cloning + disk overlays
   - **Modular design** (imports from canonical modules):
     - `export_template_to_qcow2`: Imported from `vm_template` - exports template disk using `qemu-img convert`
+    - `create_overlay_vm`: Imported from `vm_template` - creates VM with overlay disk and cloned config
     - `wait_for_vm_stopped`: Imported from `vm_core` - polls VM status until stopped
+    - `create_vm_shell`: Imported from `vm_core` - creates empty VM shell for template-less workflows
     - Wrapper functions: `get_next_available_vmid()`, `get_vm_mac_address()`, `sanitize_vm_name()` delegate to canonical `vm_utils` implementations
-  - **Disk operations** (NO CLONING - always use disk export + overlays):
-    - Teacher VM: Empty shell (`qm create`) + overlay disk pointing to exported base QCOW2 (uses `vm_template.create_overlay_vm()`)
-    - Student overlays: `qemu-img create -f qcow2 -F qcow2 -b <base>` creates copy-on-write overlay disks
-    - Empty shells: `qm create --scsi0 STORAGE:SIZE` for template-less classes (no template to export)
+  - **Template-based workflow** (uses config cloning):
+    1. Export template disk to base QCOW2: `export_template_to_qcow2()`
+    2. Create teacher VM: `create_overlay_vm(template_vmid=X)` - clones full config + creates overlay disk + EFI/TPM disks
+    3. Create student VMs: `create_overlay_vm(template_vmid=X)` for each student - identical config to template
+  - **Template-less workflow** (manual shell creation):
+    1. Create empty VM shells with hardware specs: `create_vm_shell()` from `vm_core.py`
+    2. No config cloning, manually specify CPU/RAM/disk parameters
   - **Key functions**: 
-    - `deploy_class_vms()`: Entry point - orchestrates VM creation and VMInventory update
-    - `create_class_vms()`: Core logic - handles template/no-template workflows, creates all VMs
-    - `recreate_student_vms_from_template()`: Recreate student VMs from template (used in template push)
+    - `deploy_class_vms()`: Entry point - orchestrates VM creation and VMInventory update (lines 800-900)
+    - `create_class_vms()`: Core logic - handles template/no-template workflows, creates all VMs (lines 920-1400)
+    - `recreate_student_vms_from_template()`: Recreate student VMs from template (used in template push) (lines 1600-1800)
     - `get_vm_mac_address()`: Parses `qm config` output to extract MAC from net0 line
     - `save_and_deploy_class_vms()`: Updates student VMs by rebasing overlays on new base
+  - **EFI/TPM support**: Automatically detects and creates EFI/TPM disks when template has them (Windows 11 UEFI boot)
+  - **SSH execution**: Uses `get_pooled_ssh_executor_from_config()` for connection-pooled command execution
 - **VMAssignment management**: Creates database records for all VMs with vm_name and mac_address
-- **SSH execution**: Uses `SSHExecutor` from `ssh_executor.py` for remote command execution
+- **Critical fixes (Feb 2026)**:
+  - Fixed undefined variable `template_node` → `template_node_name` (4 occurrences)
+  - Student VMs now use `create_overlay_vm(template_vmid=X)` instead of manual shell creation
+  - Template-less VMs use `create_vm_shell()` instead of raw `qm create` commands
 
 **`app/services/class_service.py`** (Class management logic, ~560 lines):
 - User CRUD: `create_local_user()`, `authenticate_local_user()`, `update_user_role()`

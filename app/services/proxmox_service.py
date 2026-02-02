@@ -40,6 +40,9 @@ ssl._create_default_https_context = ssl._create_unverified_context
 
 logger = logging.getLogger(__name__)
 
+# ARP scanner availability flag
+ARP_SCANNER_AVAILABLE = True  # Module exists and can be imported
+
 # =============================================================================
 # CLUSTER MANAGEMENT & CONNECTION POOLING
 # =============================================================================

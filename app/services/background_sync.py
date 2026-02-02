@@ -26,6 +26,9 @@ from typing import Any, Dict
 
 logger = logging.getLogger(__name__)
 
+# ARP scanner availability flag
+ARP_SCANNER_AVAILABLE = True  # Module exists and can be imported
+
 # Global sync state
 _sync_thread = None
 _sync_running = False
