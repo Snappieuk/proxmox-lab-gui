@@ -348,9 +348,13 @@ def sync_templates_from_proxmox(full_sync=True):
     # Track all templates found in Proxmox (cluster_ip, node, vmid tuples)
     found_templates = set()
 
+    next_id = (db.session.query(func.max(Template.id)).scalar() or 0) + 1
+
     def _next_template_id() -> int:
-        max_id = db.session.query(func.max(Template.id)).scalar()
-        return (max_id or 0) + 1
+        nonlocal next_id
+        value = next_id
+        next_id += 1
+        return value
     
     # Sync each cluster
     for cluster in get_clusters_from_db():
