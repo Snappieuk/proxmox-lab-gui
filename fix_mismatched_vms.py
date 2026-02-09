@@ -28,6 +28,7 @@ Examples:
 
 import sys
 import os
+import json
 import logging
 import argparse
 from typing import Dict, List, Tuple
@@ -68,18 +69,15 @@ def check_vm_config(ssh_executor, vmid: int, reference_vmid: int) -> Dict:
         'disk_format': 'unknown'
     }
     
-    # Get both VM configs
-    vm_config_cmd = f"qm config {vmid}"
-    ref_config_cmd = f"qm config {reference_vmid}"
-    
-    exit_code, vm_config_out, _ = ssh_executor.execute(vm_config_cmd, check=False)
-    if exit_code != 0:
+    # Get both VM configs (cluster-aware)
+    vm_config_out = _get_vm_config(ssh_executor, vmid)
+    if not vm_config_out:
         result['matched'] = False
         result['missing_features'].append('VM_NOT_FOUND')
         return result
     
-    exit_code, ref_config_out, _ = ssh_executor.execute(ref_config_cmd, check=False)
-    if exit_code != 0:
+    ref_config_out = _get_vm_config(ssh_executor, reference_vmid)
+    if not ref_config_out:
         result['matched'] = False
         result['missing_features'].append('REFERENCE_VM_NOT_FOUND')
         return result
@@ -286,10 +284,9 @@ def scan_class(ssh_executor, class_obj: Class) -> Tuple[List[Tuple[int, VMAssign
     # Get class-base VMID
     class_base_vmid = class_obj.vmid_prefix * 100 + 99
     
-    # Verify class-base VM exists
-    check_cmd = f"qm config {class_base_vmid} 2>/dev/null"
-    exit_code, _, _ = ssh_executor.execute(check_cmd, check=False)
-    if exit_code != 0:
+    # Verify class-base VM exists (cluster-aware)
+    class_base_node = _find_vm_node(ssh_executor, class_base_vmid)
+    if not class_base_node:
         logger.warning(f"Class-base VM {class_base_vmid} not found for class '{class_obj.name}'! Skipping.")
         return [], 0
     
@@ -355,6 +352,55 @@ def _get_ssh_executor_for_cluster(cluster: Dict):
         # Cluster port is the Proxmox API port (default 8006). SSH is always 22.
         port=22,
     )
+
+
+def _find_vm_node(ssh_executor, vmid: int) -> str:
+    """Find the node hosting a VM via cluster resources (cluster-wide)."""
+    cmd = "pvesh get /cluster/resources --type vm --output-format json"
+    exit_code, stdout, _ = ssh_executor.execute(cmd, check=False, timeout=30)
+    if exit_code != 0 or not stdout.strip():
+        return ""
+
+    try:
+        resources = json.loads(stdout)
+    except json.JSONDecodeError:
+        return ""
+
+    for item in resources:
+        if str(item.get("vmid")) == str(vmid):
+            return item.get("node", "")
+
+    return ""
+
+
+def _get_vm_config(ssh_executor, vmid: int) -> str:
+    """Get VM config using cluster-aware lookup with pvesh fallback."""
+    cmd = f"qm config {vmid}"
+    exit_code, stdout, _ = ssh_executor.execute(cmd, check=False)
+    if exit_code == 0 and stdout.strip():
+        return stdout
+
+    node = _find_vm_node(ssh_executor, vmid)
+    if not node:
+        return ""
+
+    cmd = f"pvesh get /nodes/{node}/qemu/{vmid}/config --output-format json"
+    exit_code, stdout, _ = ssh_executor.execute(cmd, check=False, timeout=30)
+    if exit_code != 0 or not stdout.strip():
+        return ""
+
+    try:
+        config = json.loads(stdout)
+    except json.JSONDecodeError:
+        return ""
+
+    # Convert config dict back into "key: value" lines
+    lines = []
+    for key, value in config.items():
+        if value is None:
+            continue
+        lines.append(f"{key}: {value}")
+    return "\n".join(lines)
 
 
 def main():
