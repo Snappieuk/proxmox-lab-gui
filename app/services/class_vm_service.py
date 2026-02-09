@@ -796,9 +796,9 @@ def create_class_vms(
             # Check if base QCOW2 already exists (when adding VMs to existing class)
             check_cmd = f"test -f {base_qcow2_path} && echo 'exists' || echo 'not_found'"
             exit_code, stdout, stderr = ssh_executor.execute(check_cmd, check=False)
-            base_exists = stdout.strip() == 'exists'
+            base_qcow2_exists = stdout.strip() == 'exists'
             
-            if base_exists:
+            if base_qcow2_exists:
                 logger.info(f"Base QCOW2 already exists for class {class_id} (template {template_vmid}): {base_qcow2_path}")
                 logger.info("Skipping template export - using existing base for new VMs")
                 result.details.append(f"Using existing class base: {base_qcow2_path}")
@@ -1005,9 +1005,9 @@ def create_class_vms(
             # qm status can fail for stopped/suspended VMs, but config file is definitive
             check_base_cmd = f"test -f /etc/pve/qemu-server/{class_base_vmid}.conf"
             exit_code, _, _ = ssh_executor.execute(check_base_cmd, check=False)
-            base_exists = (exit_code == 0)
+            class_base_vm_exists = (exit_code == 0)
             
-            if base_exists:
+            if class_base_vm_exists:
                 logger.info(f"Class-base VM {class_base_vmid} already exists - skipping creation")
                 result.details.append(f"Class-base VM already exists (VMID: {class_base_vmid})")
                 result.class_base_vmid = class_base_vmid
