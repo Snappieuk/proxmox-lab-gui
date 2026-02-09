@@ -274,21 +274,28 @@ def fix_vm(ssh_executor, class_obj: Class, vmid: int, class_base_vmid: int,
     return True
 
 
-def scan_class(ssh_executor, class_obj: Class) -> Tuple[List[Tuple[int, VMAssignment]], int]:
+def scan_class(ssh_executor, class_obj: Class) -> Tuple[List[Tuple[int, VMAssignment, List[str]]], int, int]:
     """
     Scan all student VMs in a class and identify mismatched ones.
     
     Returns:
         Tuple of (list of mismatched (vmid, assignment) tuples, total student count)
     """
-    # Get class-base VMID
-    class_base_vmid = class_obj.vmid_prefix * 100 + 99
+    # Get class-base VMID (prefer DB assignment; fallback to prefix*100+99)
+    class_base_assignment = VMAssignment.query.filter_by(
+        class_id=class_obj.id,
+        is_template_vm=True,
+    ).first()
+    if class_base_assignment:
+        class_base_vmid = class_base_assignment.proxmox_vmid
+    else:
+        class_base_vmid = class_obj.vmid_prefix * 100 + 99
     
     # Verify class-base VM exists (cluster-aware)
     class_base_node = _find_vm_node(ssh_executor, class_base_vmid)
     if not class_base_node:
         logger.warning(f"Class-base VM {class_base_vmid} not found for class '{class_obj.name}'! Skipping.")
-        return [], 0
+        return [], 0, class_base_vmid
     
     # Check all student VMs in class
     assignments = VMAssignment.query.filter_by(
@@ -299,7 +306,7 @@ def scan_class(ssh_executor, class_obj: Class) -> Tuple[List[Tuple[int, VMAssign
     
     if not assignments:
         logger.info(f"  No student VMs found in class '{class_obj.name}'")
-        return [], 0
+        return [], 0, class_base_vmid
     
     mismatched_vms = []
     
@@ -311,7 +318,7 @@ def scan_class(ssh_executor, class_obj: Class) -> Tuple[List[Tuple[int, VMAssign
         if not result['matched']:
             mismatched_vms.append((vmid, assignment, result['missing_features']))
     
-    return mismatched_vms, len(assignments)
+    return mismatched_vms, len(assignments), class_base_vmid
 
 
 def _resolve_cluster_for_class(class_obj: Class) -> Dict:
@@ -468,10 +475,10 @@ def main():
                 ssh_executor.connect()
                 
                 # Scan this class
-                mismatched_vms, total_students = scan_class(ssh_executor, class_obj)
+                mismatched_vms, total_students, class_base_vmid = scan_class(ssh_executor, class_obj)
                 
                 if mismatched_vms:
-                    all_mismatched[class_obj.id] = (class_obj, mismatched_vms)
+                    all_mismatched[class_obj.id] = (class_obj, mismatched_vms, class_base_vmid)
                     logger.warning(f"  ✗ Found {len(mismatched_vms)} mismatched VMs out of {total_students} total:")
                     for vmid, assignment, features in mismatched_vms:
                         logger.warning(f"    - VM {vmid} ({assignment.vm_name}): {', '.join(features)}")
@@ -493,10 +500,10 @@ def main():
             logger.info("✓ No mismatched VMs found across all classes!")
             return 0
         
-        total_mismatched = sum(len(vms) for _, vms in all_mismatched.values())
+        total_mismatched = sum(len(vms) for _, vms, _ in all_mismatched.values())
         logger.warning(f"Found {total_mismatched} mismatched VMs across {len(all_mismatched)} classes:\n")
         
-        for class_id, (class_obj, mismatched_vms) in all_mismatched.items():
+        for class_id, (class_obj, mismatched_vms, _) in all_mismatched.items():
             logger.warning(f"Class '{class_obj.name}' (ID: {class_id}):")
             logger.warning(f"  {len(mismatched_vms)} VMs need fixing:")
             for vmid, assignment, features in mismatched_vms:
@@ -511,7 +518,7 @@ def main():
             total_success = 0
             total_failed = 0
             
-            for class_id, (class_obj, mismatched_vms) in all_mismatched.items():
+            for class_id, (class_obj, mismatched_vms, class_base_vmid) in all_mismatched.items():
                 logger.info(f"\nFixing class '{class_obj.name}'...")
                 
                 # Resolve cluster for this class
@@ -531,8 +538,6 @@ def main():
                 
                 try:
                     ssh_executor.connect()
-                    class_base_vmid = class_obj.vmid_prefix * 100 + 99
-                    
                     for vmid, assignment, features in mismatched_vms:
                         if fix_vm(ssh_executor, class_obj, vmid, class_base_vmid,
                                  assignment.node, dry_run=args.dry_run):
