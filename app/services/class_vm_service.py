@@ -905,13 +905,14 @@ def create_class_vms(
             teacher_mac = None
             teacher_actual_node = None
             
-            # Check if teacher VM exists in Proxmox (not just database)
-            check_vm_cmd = f"qm status {teacher_vmid} 2>/dev/null"
-            exit_code, status_out, _ = ssh_executor.execute(check_vm_cmd, check=False)
+            # Check if teacher VM exists in Proxmox (check config file, not status)
+            # qm status can fail for stopped VMs, but config file is definitive
+            check_vm_cmd = f"test -f /etc/pve/qemu-server/{teacher_vmid}.conf"
+            exit_code, _, _ = ssh_executor.execute(check_vm_cmd, check=False)
             teacher_exists_in_proxmox = (exit_code == 0)
             
             if teacher_exists_in_proxmox:
-                logger.info(f"Teacher VM {teacher_vmid} already exists in Proxmox (status: {status_out.strip()}) - skipping creation")
+                logger.info(f"Teacher VM {teacher_vmid} already exists in Proxmox - skipping creation")
                 result.details.append(f"Teacher VM already exists (VMID: {teacher_vmid})")
                 result.teacher_vmid = teacher_vmid  # Set result even when skipping
                 
@@ -1000,13 +1001,14 @@ def create_class_vms(
             class_base_vmid = class_.vmid_prefix * 100 + 99  # e.g., 234 * 100 + 99 = 23499
             class_base_name = f"{class_prefix}-base"
             
-            # Check if class-base VM already exists
-            check_base_cmd = f"qm status {class_base_vmid} 2>/dev/null"
-            exit_code, base_status_out, _ = ssh_executor.execute(check_base_cmd, check=False)
+            # Check if class-base VM already exists (check config file, not status)
+            # qm status can fail for stopped/suspended VMs, but config file is definitive
+            check_base_cmd = f"test -f /etc/pve/qemu-server/{class_base_vmid}.conf"
+            exit_code, _, _ = ssh_executor.execute(check_base_cmd, check=False)
             base_exists = (exit_code == 0)
             
             if base_exists:
-                logger.info(f"Class-base VM {class_base_vmid} already exists (status: {base_status_out.strip()}) - skipping creation")
+                logger.info(f"Class-base VM {class_base_vmid} already exists - skipping creation")
                 result.details.append(f"Class-base VM already exists (VMID: {class_base_vmid})")
                 result.class_base_vmid = class_base_vmid
                 
@@ -1098,13 +1100,14 @@ def create_class_vms(
             teacher_vmid = get_vmid_for_class_vm(class_id, 0)
             teacher_name = f"{class_prefix}-teacher"
             
-            # Check if teacher VM already exists
-            check_vm_cmd = f"qm status {teacher_vmid} 2>/dev/null"
-            exit_code, status_out, _ = ssh_executor.execute(check_vm_cmd, check=False)
+            # Check if teacher VM already exists (check config file, not status)
+            # qm status can return non-zero for stopped VMs, but config file is definitive
+            check_vm_cmd = f"test -f /etc/pve/qemu-server/{teacher_vmid}.conf"
+            exit_code, _, _ = ssh_executor.execute(check_vm_cmd, check=False)
             teacher_exists = (exit_code == 0)
             
             if teacher_exists:
-                logger.info(f"Teacher VM {teacher_vmid} already exists (status: {status_out.strip()}) - skipping creation")
+                logger.info(f"Teacher VM {teacher_vmid} already exists - skipping creation")
                 result.details.append(f"Teacher VM already exists (VMID: {teacher_vmid})")
                 result.teacher_vmid = teacher_vmid
                 
@@ -1220,13 +1223,14 @@ def create_class_vms(
             class_base_vmid = class_.vmid_prefix * 100 + 99  # e.g., 234 * 100 + 99 = 23499
             class_base_name = f"{class_prefix}-base"
             
-            # Check if class-base VM already exists
-            check_base_cmd = f"qm status {class_base_vmid} 2>/dev/null"
-            exit_code, base_status_out, _ = ssh_executor.execute(check_base_cmd, check=False)
+            # Check if class-base VM already exists (check config file, not status)
+            # qm status can fail for stopped/suspended VMs, but config file is definitive
+            check_base_cmd = f"test -f /etc/pve/qemu-server/{class_base_vmid}.conf"
+            exit_code, _, _ = ssh_executor.execute(check_base_cmd, check=False)
             base_exists = (exit_code == 0)
             
             if base_exists:
-                logger.info(f"Class-base VM {class_base_vmid} already exists (status: {base_status_out.strip()}) - skipping creation")
+                logger.info(f"Class-base VM {class_base_vmid} already exists - skipping creation")
                 result.details.append(f"Class-base VM already exists (VMID: {class_base_vmid})")
                 result.class_base_vmid = class_base_vmid
                 
