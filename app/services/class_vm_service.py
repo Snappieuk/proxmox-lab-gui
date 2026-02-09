@@ -1423,6 +1423,8 @@ def create_class_vms(
             students_created = 0
             current_index = next_student_index
             vms_in_current_batch = 0
+            iterations_without_progress = 0  # Safety counter to prevent infinite loops
+            MAX_ITERATIONS_WITHOUT_PROGRESS = 20  # If we've tried 20 indices without creating a VM, bail out
             
             while students_created < pool_size:
                 # OPTIMIZATION: Batch delay to prevent server overload
@@ -1467,8 +1469,8 @@ def create_class_vms(
                 check_student_cmd = f"qm status {vmid} 2>/dev/null"
                 exit_code, _, _ = ssh_executor.execute(check_student_cmd, check=False)
                 if exit_code == 0:
-                    logger.warning(f"Student VM {vmid} already exists in Proxmox - skipping (index {current_index})")
-                    # Check if assignment exists
+                    logger.info(f"Student VM {vmid} already exists at index {current_index} - skipping to find next empty slot")
+                    # VM exists - ensure assignment exists, then skip to next index
                     existing_assignment = VMAssignment.query.filter_by(proxmox_vmid=vmid).first()
                     if not existing_assignment:
                         logger.info(f"Creating missing VMAssignment record for existing student VM {vmid}")
@@ -1487,8 +1489,18 @@ def create_class_vms(
                             is_teacher_vm=False,
                         )
                         db.session.add(assignment)
-                        students_created += 1
+                    
+                    # ✅ DO NOT increment students_created - we want to CREATE N new VMs, not count existing ones
+                    # Just move to next index and try again
                     current_index += 1
+                    iterations_without_progress += 1
+                    
+                    # Safety check: prevent infinite loop if all remaining slots are full
+                    if iterations_without_progress >= MAX_ITERATIONS_WITHOUT_PROGRESS:
+                        logger.error(f"Tried {MAX_ITERATIONS_WITHOUT_PROGRESS} indices without creating a VM - stopping")
+                        logger.error(f"Created {students_created}/{pool_size} VMs before hitting this limit")
+                        break
+                    
                     continue
                 
                 student_name = f"{class_prefix}-student-{current_index}"
@@ -1619,21 +1631,36 @@ def create_class_vms(
                     if 'already exists' in error_str or ('vmid' in error_str and 'exist' in error_str):
                         logger.warning(f"VMID {vmid} collision detected - auto-incrementing to next index")
                         current_index += 1  # Try next index
+                        iterations_without_progress += 1  # Count as no progress
                         continue  # Don't increment students_created or failed counter
                     else:
                         logger.exception(f"Error creating student VM {vmid}: {e}")
                         result.failed += 1
                         current_index += 1  # Move to next index
+                        iterations_without_progress += 1  # Count as no progress
+                        
+                        # Safety check: break if too many consecutive failures
+                        if iterations_without_progress >= MAX_ITERATIONS_WITHOUT_PROGRESS:
+                            logger.error(f"Too many consecutive failures ({MAX_ITERATIONS_WITHOUT_PROGRESS}) - stopping")
+                            break
+                        
                         continue
                 
-                # Successfully created student VM - increment counters
+                # Successfully created student VM - increment counters and reset safety counter
                 students_created += 1
                 current_index += 1  # Move to next index for next iteration
                 vms_in_current_batch += 1
+                iterations_without_progress = 0  # Reset safety counter - we made progress!
                 
                 # Log progress less frequently for large deployments
                 if students_created % PROGRESS_UPDATE_INTERVAL == 0 or students_created == pool_size:
                     logger.info(f"Student VM progress: {students_created}/{pool_size} complete (batch {(students_created // batch_size) + 1})")
+        
+            # Check if we exited loop early due to too many existing VMs
+            if students_created < pool_size:
+                warning_msg = f"Only created {students_created}/{pool_size} VMs - ran into too many existing VMs in sequential slots"
+                logger.warning(warning_msg)
+                result.details.append(f"Warning: {warning_msg}")
         
         # Step 4: Start VMs if requested (with rate limiting)
         if auto_start and result.teacher_vmid:

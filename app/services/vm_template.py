@@ -41,6 +41,11 @@ from app.services.vm_utils import (
 
 logger = logging.getLogger(__name__)
 
+# Module-level cache for template EFI/TPM status
+# Prevents re-checking template config for every VM (reduces SSH commands)
+# Key: template_vmid, Value: (has_efi, has_tpm)
+_template_efi_tpm_cache = {}
+
 
 # ---------------------------------------------------------------------------
 # Template Export Operations
@@ -406,9 +411,14 @@ def create_overlay_vm(
             logger.info(f"Template {template_vmid} is on node: {template_node}")
             
             # Check if template has EFI/TPM disks that need to be created
-            has_efi, has_tpm = check_template_has_efi_tpm(ssh_executor, template_vmid, template_node)
-            
-            logger.info(f"Template {template_vmid} EFI/TPM check: has_efi={has_efi}, has_tpm={has_tpm}")
+            # Use cache to avoid re-checking for every VM
+            if template_vmid in _template_efi_tpm_cache:
+                has_efi, has_tpm = _template_efi_tpm_cache[template_vmid]
+                logger.debug(f"Template {template_vmid} EFI/TPM status from cache: has_efi={has_efi}, has_tpm={has_tpm}")
+            else:
+                has_efi, has_tpm = check_template_has_efi_tpm(ssh_executor, template_vmid, template_node)
+                _template_efi_tpm_cache[template_vmid] = (has_efi, has_tpm)
+                logger.info(f"Template {template_vmid} EFI/TPM check (cached): has_efi={has_efi}, has_tpm={has_tpm}")
             
             # Ensure overlay directory exists (should already exist from overlay disk creation)
             ssh_executor.execute(f"mkdir -p {overlay_dir}", check=False)
