@@ -23,6 +23,18 @@
     </div>
 </div>
 
+{% if is_admin and request.endpoint == 'admin_view' %}
+<div class="admin-actions" style="margin: 0 0 12px 0;">
+    <button type="button" id="refresh-btn" class="btn-secondary" onclick="refreshVMs()">
+        <i class="ti ti-refresh"></i> Refresh Cache
+    </button>
+    <button type="button" id="cleanup-btn" class="btn-secondary" onclick="syncAndClean()">
+        <i class="ti ti-broom"></i> Sync & Clean
+    </button>
+    <small>Admin only: Force reload VM data and remove orphaned records</small>
+</div>
+{% endif %}
+
 <!-- Compact Summary Cards -->
 <div class="summary-cards-compact">
     <div class="summary-card-compact">
