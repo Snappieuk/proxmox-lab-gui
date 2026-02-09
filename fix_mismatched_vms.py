@@ -37,7 +37,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'app'))
 
 from app import create_app
 from app.models import Class, VMAssignment, db
-from app.services.ssh_executor import get_pooled_ssh_executor_from_config
+from app.services.ssh_executor import get_pooled_ssh_executor
+from app.services.proxmox_service import get_clusters_from_db
 from app.services.vm_template import create_overlay_vm
 
 # Get storage name from environment (same as services use)
@@ -316,6 +317,45 @@ def scan_class(ssh_executor, class_obj: Class) -> Tuple[List[Tuple[int, VMAssign
     return mismatched_vms, len(assignments)
 
 
+def _resolve_cluster_for_class(class_obj: Class) -> Dict:
+    """
+    Resolve cluster config for a class.
+
+    Rules:
+    1) If class has a template with cluster_ip, use that cluster
+    2) Otherwise use the default cluster (is_default=True)
+    3) Fallback: first active cluster
+    """
+    clusters = get_clusters_from_db()
+    if not clusters:
+        raise RuntimeError("No active clusters found in database")
+
+    if class_obj.template and class_obj.template.cluster_ip:
+        for cluster in clusters:
+            if cluster.get("host") == class_obj.template.cluster_ip:
+                return cluster
+        raise RuntimeError(
+            f"Template cluster not found for class '{class_obj.name}': {class_obj.template.cluster_ip}"
+        )
+
+    for cluster in clusters:
+        if cluster.get("is_default"):
+            return cluster
+
+    return clusters[0]
+
+
+def _get_ssh_executor_for_cluster(cluster: Dict):
+    """Create pooled SSH executor for a specific cluster config."""
+    username = cluster["user"].split("@")[0] if "@" in cluster["user"] else cluster["user"]
+    return get_pooled_ssh_executor(
+        host=cluster["host"],
+        username=username,
+        password=cluster["password"],
+        port=cluster.get("port", 22),
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(
         description='Fix mismatched VMs by recreating them with proper config',
@@ -359,21 +399,21 @@ def main():
                 logger.debug(f"Skipping class '{class_obj.name}' - no VMID prefix allocated")
                 continue
             
-            # Get cluster connection info
-            cluster_ip = None
-            if class_obj.template and class_obj.template.cluster_ip:
-                cluster_ip = class_obj.template.cluster_ip
-            else:
-                cluster_ip = "10.220.15.249"  # Default cluster
-            
+            # Resolve cluster for this class
+            try:
+                cluster = _resolve_cluster_for_class(class_obj)
+            except Exception as e:
+                logger.error(f"Failed to resolve cluster for class '{class_obj.name}': {e}")
+                continue
+
             logger.info(f"\n{'='*70}")
             logger.info(f"Class: {class_obj.name} (ID: {class_obj.id}, Prefix: {class_obj.vmid_prefix})")
             logger.info(f"{'='*70}")
             
             # Connect to SSH
-            ssh_executor = get_pooled_ssh_executor_from_config(cluster_ip)
+            ssh_executor = _get_ssh_executor_for_cluster(cluster)
             if not ssh_executor:
-                logger.error(f"Failed to connect to cluster {cluster_ip} - skipping class")
+                logger.error(f"Failed to connect to cluster {cluster['host']} - skipping class")
                 continue
             
             try:
@@ -426,16 +466,17 @@ def main():
             for class_id, (class_obj, mismatched_vms) in all_mismatched.items():
                 logger.info(f"\nFixing class '{class_obj.name}'...")
                 
-                # Get cluster connection
-                cluster_ip = None
-                if class_obj.template and class_obj.template.cluster_ip:
-                    cluster_ip = class_obj.template.cluster_ip
-                else:
-                    cluster_ip = "10.220.15.249"
-                
-                ssh_executor = get_pooled_ssh_executor_from_config(cluster_ip)
+                # Resolve cluster for this class
+                try:
+                    cluster = _resolve_cluster_for_class(class_obj)
+                except Exception as e:
+                    logger.error(f"Failed to resolve cluster for class '{class_obj.name}': {e}")
+                    total_failed += len(mismatched_vms)
+                    continue
+
+                ssh_executor = _get_ssh_executor_for_cluster(cluster)
                 if not ssh_executor:
-                    logger.error(f"Failed to connect to cluster {cluster_ip}")
+                    logger.error(f"Failed to connect to cluster {cluster['host']}")
                     total_failed += len(mismatched_vms)
                     continue
                 

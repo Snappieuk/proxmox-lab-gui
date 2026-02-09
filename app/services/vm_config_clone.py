@@ -178,14 +178,30 @@ def clone_vm_config(
                 
                 # Split on comma to separate path from options
                 parts = disk_config.split(',', 1)  # Split only on FIRST comma
-                options_part = ',' + parts[1] if len(parts) > 1 else ''  # ",option1=val1,..."
+                options_part = parts[1] if len(parts) > 1 else ''  # "option1=val1,..."
                 
-                # Replace just the storage:path part
-                new_disk_path = f"{storage}:{overlay_disk_path}"
-                new_disk_full = new_disk_path + options_part
+                # CRITICAL FIX: Explicitly set format=qcow2 for overlay disks
+                # Remove any existing format= option and add format=qcow2
+                if options_part:
+                    # Parse options and filter out format= if present
+                    options_list = [opt.strip() for opt in options_part.split(',')]
+                    options_list = [opt for opt in options_list if not opt.startswith('format=')]
+                    
+                    # Add format=qcow2 as first option (for QCOW2 overlay disks)
+                    if overlay_disk_path.endswith('.qcow2'):
+                        options_list.insert(0, 'format=qcow2')
+                    
+                    options_part = ','.join(options_list)
+                    new_disk_full = f"{storage}:{overlay_disk_path},{options_part}"
+                else:
+                    # No options - add format=qcow2 if it's a QCOW2 disk
+                    if overlay_disk_path.endswith('.qcow2'):
+                        new_disk_full = f"{storage}:{overlay_disk_path},format=qcow2"
+                    else:
+                        new_disk_full = f"{storage}:{overlay_disk_path}"
                 
                 new_lines.append(f"{disk_slot}: {new_disk_full}")
-                logger.info(f"Updated disk {disk_slot}: {new_disk_path} (preserved {len(options_part)} chars of options)")
+                logger.info(f"Updated disk {disk_slot}: {storage}:{overlay_disk_path} with format=qcow2")
                 continue
             
             # Update EFI disk path - use relative path like main disk
