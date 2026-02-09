@@ -905,9 +905,9 @@ def create_class_vms(
             teacher_mac = None
             teacher_actual_node = None
             
-            # Check if teacher VM exists in Proxmox (check config file, not status)
-            # qm status can fail for stopped VMs, but config file is definitive
-            check_vm_cmd = f"test -f /etc/pve/qemu-server/{teacher_vmid}.conf"
+            # Check if teacher VM exists in Proxmox using qm list (cluster-wide check)
+            # This reliably detects VMs across all nodes, avoiding sync issues
+            check_vm_cmd = f"qm list | grep -q '^\\s*{teacher_vmid}\\s'"
             exit_code, _, _ = ssh_executor.execute(check_vm_cmd, check=False)
             teacher_exists_in_proxmox = (exit_code == 0)
             
@@ -1001,9 +1001,9 @@ def create_class_vms(
             class_base_vmid = class_.vmid_prefix * 100 + 99  # e.g., 234 * 100 + 99 = 23499
             class_base_name = f"{class_prefix}-base"
             
-            # Check if class-base VM already exists (check config file, not status)
-            # qm status can fail for stopped/suspended VMs, but config file is definitive
-            check_base_cmd = f"test -f /etc/pve/qemu-server/{class_base_vmid}.conf"
+            # Check if class-base VM already exists using qm list (cluster-wide check)
+            # This reliably detects VMs across all nodes, avoiding sync issues
+            check_base_cmd = f"qm list | grep -q '^\\s*{class_base_vmid}\\s'"
             exit_code, _, _ = ssh_executor.execute(check_base_cmd, check=False)
             class_base_vm_exists = (exit_code == 0)
             
@@ -1100,9 +1100,9 @@ def create_class_vms(
             teacher_vmid = get_vmid_for_class_vm(class_id, 0)
             teacher_name = f"{class_prefix}-teacher"
             
-            # Check if teacher VM already exists (check config file, not status)
-            # qm status can return non-zero for stopped VMs, but config file is definitive
-            check_vm_cmd = f"test -f /etc/pve/qemu-server/{teacher_vmid}.conf"
+            # Check if teacher VM already exists using qm list (cluster-wide check)
+            # This reliably detects VMs across all nodes, avoiding sync issues
+            check_vm_cmd = f"qm list | grep -q '^\\s*{teacher_vmid}\\s'"
             exit_code, _, _ = ssh_executor.execute(check_vm_cmd, check=False)
             teacher_exists = (exit_code == 0)
             
@@ -1223,9 +1223,9 @@ def create_class_vms(
             class_base_vmid = class_.vmid_prefix * 100 + 99  # e.g., 234 * 100 + 99 = 23499
             class_base_name = f"{class_prefix}-base"
             
-            # Check if class-base VM already exists (check config file, not status)
-            # qm status can fail for stopped/suspended VMs, but config file is definitive
-            check_base_cmd = f"test -f /etc/pve/qemu-server/{class_base_vmid}.conf"
+            # Check if class-base VM already exists using qm list (cluster-wide check)
+            # This is more reliable than checking config files, especially across nodes
+            check_base_cmd = f"qm list | grep -q '^\\s*{class_base_vmid}\\s'"
             exit_code, _, _ = ssh_executor.execute(check_base_cmd, check=False)
             base_exists = (exit_code == 0)
             
