@@ -52,7 +52,13 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def check_vm_config(ssh_executor, vmid: int, reference_vmid: int) -> Dict:
+def check_vm_config(
+    ssh_executor,
+    vmid: int,
+    reference_vmid: int,
+    vm_node: str = "",
+    reference_node: str = "",
+) -> Dict:
     """
     Compare VM configuration with reference VM (class-base).
     
@@ -70,13 +76,13 @@ def check_vm_config(ssh_executor, vmid: int, reference_vmid: int) -> Dict:
     }
     
     # Get both VM configs (cluster-aware)
-    vm_config_out = _get_vm_config(ssh_executor, vmid)
+    vm_config_out = _get_vm_config(ssh_executor, vmid, vm_node)
     if not vm_config_out:
         result['matched'] = False
         result['missing_features'].append('VM_NOT_FOUND')
         return result
     
-    ref_config_out = _get_vm_config(ssh_executor, reference_vmid)
+    ref_config_out = _get_vm_config(ssh_executor, reference_vmid, reference_node)
     if not ref_config_out:
         result['matched'] = False
         result['missing_features'].append('REFERENCE_VM_NOT_FOUND')
@@ -288,11 +294,14 @@ def scan_class(ssh_executor, class_obj: Class) -> Tuple[List[Tuple[int, VMAssign
     ).first()
     if class_base_assignment:
         class_base_vmid = class_base_assignment.proxmox_vmid
+        class_base_node = class_base_assignment.node or ""
     else:
         class_base_vmid = class_obj.vmid_prefix * 100 + 99
+        class_base_node = ""
     
     # Verify class-base VM exists (cluster-aware)
-    class_base_node = _find_vm_node(ssh_executor, class_base_vmid)
+    if not class_base_node:
+        class_base_node = _find_vm_node(ssh_executor, class_base_vmid)
     if not class_base_node:
         logger.warning(f"Class-base VM {class_base_vmid} not found for class '{class_obj.name}'! Skipping.")
         return [], 0, class_base_vmid
@@ -313,7 +322,13 @@ def scan_class(ssh_executor, class_obj: Class) -> Tuple[List[Tuple[int, VMAssign
     for assignment in assignments:
         vmid = assignment.proxmox_vmid
         
-        result = check_vm_config(ssh_executor, vmid, class_base_vmid)
+        result = check_vm_config(
+            ssh_executor,
+            vmid,
+            class_base_vmid,
+            vm_node=assignment.node or "",
+            reference_node=class_base_node,
+        )
         
         if not result['matched']:
             mismatched_vms.append((vmid, assignment, result['missing_features']))
@@ -380,9 +395,10 @@ def _find_vm_node(ssh_executor, vmid: int) -> str:
     return ""
 
 
-def _get_vm_config(ssh_executor, vmid: int) -> str:
-    """Get VM config using cluster-aware lookup with pvesh fallback."""
-    node = _find_vm_node(ssh_executor, vmid)
+def _get_vm_config(ssh_executor, vmid: int, node: str = "") -> str:
+    """Get VM config using explicit node when available, fallback to cluster lookup."""
+    if not node:
+        node = _find_vm_node(ssh_executor, vmid)
     if not node:
         return ""
 
