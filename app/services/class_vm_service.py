@@ -1296,26 +1296,26 @@ def create_class_vms(
                 result.class_base_vmid = class_base_vmid
                 result.details.append(f"Class-base VM created: {class_base_vmid} ({class_base_name})")
                 
-                # Query actual node for class-base VM
+                # Query actual node for class-base VM and create VMAssignment
                 class_base_actual_node = get_vm_current_node(ssh_executor, class_base_vmid)
                 if not class_base_actual_node:
                     logger.warning(f"Could not determine node for class-base VM {class_base_vmid}, using template_node")
                     class_base_actual_node = template_node
-            
-            # Create VMAssignment for class-base (marked as template VM so it's hidden from students)
-            base_mac = get_vm_mac_address(ssh_executor, class_base_vmid)
-            class_base_assignment = VMAssignment(
-                class_id=class_id,
-                proxmox_vmid=class_base_vmid,
-                vm_name=class_base_name,
-                mac_address=base_mac,
-                node=class_base_actual_node,  # Use actual node
-                assigned_user_id=None,
-                status='reserved',  # CRITICAL: Never assign to students (reserved for class management)
-                is_template_vm=True,  # Mark as template so it's hidden from student view
-                is_teacher_vm=False,
-            )
-            db.session.add(class_base_assignment)
+                
+                # Create VMAssignment for newly created class-base VM
+                base_mac = get_vm_mac_address(ssh_executor, class_base_vmid)
+                class_base_assignment = VMAssignment(
+                    class_id=class_id,
+                    proxmox_vmid=class_base_vmid,
+                    vm_name=class_base_name,
+                    mac_address=base_mac,
+                    node=class_base_actual_node,
+                    assigned_user_id=None,
+                    status='reserved',  # CRITICAL: Never assign to students (reserved for class management)
+                    is_template_vm=True,  # Mark as template so it's hidden from student view
+                    is_teacher_vm=False,
+                )
+                db.session.add(class_base_assignment)
         
         result.teacher_vmid = teacher_vmid
         result.details.append(f"Teacher VM created: {teacher_vmid} ({teacher_name})")
