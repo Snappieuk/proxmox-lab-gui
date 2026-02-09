@@ -434,9 +434,10 @@ def sync_templates_from_proxmox(full_sync=True):
                     # Use debug level for expected connection issues
                     if 'hostname lookup' in str(e) or 'No route to host' in str(e) or '595 Errors' in str(e):
                         logger.debug(f"Node {cluster_ip}/{node_name} unreachable (expected if node is offline): {e}")
+                        # Don't add expected offline errors to error list - they're normal
                     else:
                         logger.error(f"Error syncing templates from {cluster_ip}/{node_name}: {e}")
-                    stats['errors'].append(f"{cluster_ip}/{node_name}: {str(e)}")
+                        stats['errors'].append(f"{cluster_ip}/{node_name}: {str(e)}")
         
         except Exception as e:
             logger.error(f"Error connecting to cluster {cluster_id} ({cluster_ip}): {e}")

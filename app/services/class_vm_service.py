@@ -757,8 +757,10 @@ def create_class_vms(
         
         # Allow adding VMs to existing class (removed the check that prevented this)
         existing_vms = VMAssignment.query.filter_by(class_id=class_id).count()
-        if existing_vms > 0:
-            logger.info(f"Adding {pool_size} additional VMs to class {class_id} (currently has {existing_vms} VMs)")
+        adding_to_existing_class = existing_vms > 0
+        if adding_to_existing_class:
+            logger.info(f"Adding {pool_size} additional VMs to existing class {class_id} (currently has {existing_vms} VMs)")
+            logger.info("Skipping teacher and class-base VM creation - using existing infrastructure")
         
         if not class_.vmid_prefix:
             vmid_prefix = allocate_vmid_prefix_for_class(ssh_executor)
@@ -786,48 +788,48 @@ def create_class_vms(
         # Track simulated VM allocations across nodes for load balancing
         simulated_vms_per_node = {}
         
-        # Step 1: Handle template vs no-template workflow
-        if template_vmid:
-            # WITH TEMPLATE: Export template to class base QCOW2
-            # CRITICAL: Include template VMID in filename to prevent reusing wrong template's base
-            # Different templates with same class name would otherwise share the same base file
-            base_qcow2_path = f"{DEFAULT_TEMPLATE_STORAGE_PATH}/{class_prefix}-t{template_vmid}-base.qcow2"
+        # CRITICAL: When adding to existing class, skip teacher/class-base creation
+        # and jump straight to student VM creation
+        if adding_to_existing_class:
+            logger.info("=== ADDING TO EXISTING CLASS - Skipping infrastructure creation ===")
             
-            # Check if base QCOW2 already exists (when adding VMs to existing class)
-            check_cmd = f"test -f {base_qcow2_path} && echo 'exists' || echo 'not_found'"
-            exit_code, stdout, stderr = ssh_executor.execute(check_cmd, check=False)
-            base_qcow2_exists = stdout.strip() == 'exists'
+            # Retrieve existing teacher VMID
+            teacher_vmid = get_vmid_for_class_vm(class_id, 0)
+            teacher_assignment = VMAssignment.query.filter_by(class_id=class_id, is_teacher_vm=True).first()
+            if not teacher_assignment:
+                result.error = f"Cannot add VMs: teacher VM not found for class {class_id}"
+                return result
             
-            if base_qcow2_exists:
-                logger.info(f"Base QCOW2 already exists for class {class_id} (template {template_vmid}): {base_qcow2_path}")
-                logger.info("Skipping template export - using existing base for new VMs")
-                result.details.append(f"Using existing class base: {base_qcow2_path}")
+            teacher_vmid = teacher_assignment.proxmox_vmid
+            teacher_name = teacher_assignment.vm_name
+            teacher_actual_node = teacher_assignment.node
+            result.teacher_vmid = teacher_vmid
+            logger.info(f"Using existing teacher VM: {teacher_vmid} ({teacher_name}) on node {teacher_actual_node}")
+            
+            # Retrieve existing class-base VMID
+            class_base_vmid = class_.vmid_prefix * 100 + 99
+            class_base_assignment = VMAssignment.query.filter_by(class_id=class_id, is_template_vm=True).first()
+            if class_base_assignment:
+                result.class_base_vmid = class_base_assignment.proxmox_vmid
+                logger.info(f"Using existing class-base VM: {class_base_assignment.proxmox_vmid}")
+            
+            # Get metadata from existing teacher VM for student creation
+            if template_vmid:
+                # Template-based class
+                base_qcow2_path = f"{DEFAULT_TEMPLATE_STORAGE_PATH}/{class_prefix}-t{template_vmid}-base.qcow2"
+                logger.info(f"Template-based class: Using base QCOW2 path: {base_qcow2_path}")
                 
-                # Get template metadata from existing base (for VM creation)
-                # Default values if we can't determine from existing VMs
-                disk_controller_type = 'scsi'
-                ostype = 'l26'
-                bios = 'seabios'
-                machine = 'pc'
-                cpu = 'host'
-                scsihw = 'virtio-scsi-single'
-                memory = 2048
-                cores = 2
-                sockets = 1
-                efi_disk = None
-                tpm_state = None
-                boot_order = None  # No boot order for existing base
-                net_model = 'virtio'  # Default network model
-                disk_options_str = ''  # No disk options
-                net_options_str = ''  # No network options
-                other_settings = {}  # No other settings
-                
-                # Try to get metadata from teacher VM if it exists
-                teacher_vmid = get_vmid_for_class_vm(class_id, 0)
+                # Get existing metadata from teacher VM config
                 teacher_config_cmd = f"qm config {teacher_vmid} 2>/dev/null"
                 exit_code, config_out, _ = ssh_executor.execute(teacher_config_cmd, check=False)
                 if exit_code == 0:
                     # Parse config to extract metadata
+                    disk_controller_type = 'scsi'
+                    ostype = 'l26'
+                    bios = 'seabios'
+                    scsihw = 'virtio-scsi-single'
+                    memory = 2048
+                    cores = 2
                     for line in config_out.split('\n'):
                         if line.startswith('scsihw:'):
                             scsihw = line.split(':', 1)[1].strip()
@@ -840,10 +842,84 @@ def create_class_vms(
                         elif line.startswith('bios:'):
                             bios = line.split(':', 1)[1].strip()
                     logger.info(f"Retrieved metadata from teacher VM: {scsihw}, {memory}MB, {cores} cores, {ostype}, {bios}")
+                else:
+                    result.error = "Cannot read teacher VM config for metadata"
+                    return result
             else:
-                # Base doesn't exist - export template (first time creating VMs for this class)
-                result.details.append(f"Exporting template {template_vmid} to class base (this may take several minutes for large disks)...")
-                logger.info(f"Starting template export: VMID {template_vmid}, node {template_node}, output {base_qcow2_path}")
+                # Template-less class  
+                base_qcow2_path = None
+                logger.info("Template-less class: Students will be created as empty shells")
+                
+                # Get specs from class settings or defaults
+                disk_controller_type = 'scsi'
+                ostype = 'l26'
+                # memory and cores already set from function parameters
+            
+            # Skip to student VM creation (jump to Step 3)
+            logger.info(f"Infrastructure setup complete - proceeding to create {pool_size} new student VMs")
+
+        else:
+            # NEW CLASS: Create full infrastructure (teacher + class-base + students)
+            logger.info("=== CREATING NEW CLASS - Full infrastructure deployment ===")
+        
+            # Step 1: Handle template vs no-template workflow (ONLY for new classes)
+            if template_vmid:
+                # WITH TEMPLATE: Export template to class base QCOW2
+                # CRITICAL: Include template VMID in filename to prevent reusing wrong template's base
+                # Different templates with same class name would otherwise share the same base file
+                base_qcow2_path = f"{DEFAULT_TEMPLATE_STORAGE_PATH}/{class_prefix}-t{template_vmid}-base.qcow2"
+            
+                # Check if base QCOW2 already exists (when adding VMs to existing class)
+                check_cmd = f"test -f {base_qcow2_path} && echo 'exists' || echo 'not_found'"
+                exit_code, stdout, stderr = ssh_executor.execute(check_cmd, check=False)
+                base_qcow2_exists = stdout.strip() == 'exists'
+                
+                if base_qcow2_exists:
+                    logger.info(f"Base QCOW2 already exists for class {class_id} (template {template_vmid}): {base_qcow2_path}")
+                    logger.info("Skipping template export - using existing base for new VMs")
+                    result.details.append(f"Using existing class base: {base_qcow2_path}")
+                    
+                    # Get template metadata from existing base (for VM creation)
+                    # Default values if we can't determine from existing VMs
+                    disk_controller_type = 'scsi'
+                    ostype = 'l26'
+                    bios = 'seabios'
+                    machine = 'pc'
+                    cpu = 'host'
+                    scsihw = 'virtio-scsi-single'
+                    memory = 2048
+                    cores = 2
+                    sockets = 1
+                    efi_disk = None
+                    tpm_state = None
+                    boot_order = None  # No boot order for existing base
+                    net_model = 'virtio'  # Default network model
+                    disk_options_str = ''  # No disk options
+                    net_options_str = ''  # No network options
+                    other_settings = {}  # No other settings
+                    
+                    # Try to get metadata from teacher VM if it exists
+                    teacher_vmid = get_vmid_for_class_vm(class_id, 0)
+                    teacher_config_cmd = f"qm config {teacher_vmid} 2>/dev/null"
+                    exit_code, config_out, _ = ssh_executor.execute(teacher_config_cmd, check=False)
+                    if exit_code == 0:
+                        # Parse config to extract metadata
+                        for line in config_out.split('\n'):
+                            if line.startswith('scsihw:'):
+                                scsihw = line.split(':', 1)[1].strip()
+                            elif line.startswith('memory:'):
+                                memory = int(line.split(':', 1)[1].strip())
+                            elif line.startswith('cores:'):
+                                cores = int(line.split(':', 1)[1].strip())
+                            elif line.startswith('ostype:'):
+                                ostype = line.split(':', 1)[1].strip()
+                            elif line.startswith('bios:'):
+                                bios = line.split(':', 1)[1].strip()
+                        logger.info(f"Retrieved metadata from teacher VM: {scsihw}, {memory}MB, {cores} cores, {ostype}, {bios}")
+                else:
+                    # Base doesn't exist - export template (first time creating VMs for this class)
+                    result.details.append(f"Exporting template {template_vmid} to class base (this may take several minutes for large disks)...")
+                    logger.info(f"Starting template export: VMID {template_vmid}, node {template_node}, output {base_qcow2_path}")
                 logger.info("NOTE: Disk export is a blocking operation - no VMs can be created until export completes")
                 logger.info(f"Starting template export: VMID {template_vmid}, node {template_node}, output {base_qcow2_path}")
                 logger.info("NOTE: Disk export is a blocking operation - no VMs can be created until export completes")
@@ -1088,9 +1164,9 @@ def create_class_vms(
                     progress_percent=35
                 )
             
-        else:
-            # WITHOUT TEMPLATE: Create empty VM shells
-            result.details.append("Creating teacher VM shell (no template)...")
+            else:
+                # WITHOUT TEMPLATE: Create empty VM shells
+                result.details.append("Creating teacher VM shell (no template)...")
             
             # Default to scsi for template-less classes
             disk_controller_type = 'scsi'
@@ -1317,82 +1393,89 @@ def create_class_vms(
                 )
                 db.session.add(class_base_assignment)
         
-        result.teacher_vmid = teacher_vmid
-        result.details.append(f"Teacher VM created: {teacher_vmid} ({teacher_name})")
-        
-        # Update progress: teacher VM complete
-        if class_.clone_task_id:
-            update_clone_progress(
-                class_.clone_task_id,
-                completed=1 if base_qcow2_path else 0,
-                message="Teacher VM created, preparing student VMs..." if pool_size > 0 else "Teacher VM created",
-                progress_percent=30
-            )
-        
-        # Use MAC address returned by create_overlay_vm (already retrieved)
-        # No need to fetch it again with get_vm_mac_address()
-        
-        # Create VMAssignment for teacher (only if not already created when skipping)
-        if not VMAssignment.query.filter_by(proxmox_vmid=teacher_vmid).first():
-            teacher_assignment = VMAssignment(
-                class_id=class_id,
-                proxmox_vmid=teacher_vmid,
-                vm_name=teacher_name,
-                mac_address=teacher_mac,
-                node=teacher_actual_node,  # Use actual node where VM was created
-                assigned_user_id=teacher_id,
-                status='assigned',
-                is_template_vm=False,
-                is_teacher_vm=True,
-                assigned_at=datetime.utcnow(),
-            )
-            db.session.add(teacher_assignment)
-            logger.info(f"Created teacher VM assignment: VMID={teacher_vmid}, node={teacher_actual_node}")
-        else:
-            logger.info(f"Teacher VM assignment already exists for VMID={teacher_vmid}")
-        
-        db.session.commit()  # Commit immediately so VMAssignments are available
-        
-        # Update VMInventory immediately for teacher VM (makes it visible in UI right away)
-        try:
-            from app.services.proxmox_service import get_clusters_from_db
-            from app.services.inventory_service import persist_vm_inventory
+            result.teacher_vmid = teacher_vmid
+            result.details.append(f"Teacher VM created: {teacher_vmid} ({teacher_name})")
+            
+            # Update progress: teacher VM complete
+            if class_.clone_task_id:
+                update_clone_progress(
+                    class_.clone_task_id,
+                    completed=1 if base_qcow2_path else 0,
+                    message="Teacher VM created, preparing student VMs..." if pool_size > 0 else "Teacher VM created",
+                    progress_percent=30
+                )
+            
+            # Use MAC address returned by create_overlay_vm (already retrieved)
+            # No need to fetch it again with get_vm_mac_address()
+            
+            # Create VMAssignment for teacher (only if not already created when skipping)
+            if not VMAssignment.query.filter_by(proxmox_vmid=teacher_vmid).first():
+                teacher_assignment = VMAssignment(
+                    class_id=class_id,
+                    proxmox_vmid=teacher_vmid,
+                    vm_name=teacher_name,
+                    mac_address=teacher_mac,
+                    node=teacher_actual_node,  # Use actual node where VM was created
+                    assigned_user_id=teacher_id,
+                    status='assigned',
+                    is_template_vm=False,
+                    is_teacher_vm=True,
+                    assigned_at=datetime.utcnow(),
+                )
+                db.session.add(teacher_assignment)
+                logger.info(f"Created teacher VM assignment: VMID={teacher_vmid}, node={teacher_actual_node}")
+            else:
+                logger.info(f"Teacher VM assignment already exists for VMID={teacher_vmid}")
+            
+            db.session.commit()  # Commit immediately so VMAssignments are available
+            
+            # Update VMInventory immediately for teacher VM (makes it visible in UI right away)
+            try:
+                from app.services.proxmox_service import get_clusters_from_db
+                from app.services.inventory_service import persist_vm_inventory
 
-            # Get cluster_ip from class template, or fallback to default
-            cluster_ip = None
-            if class_.template and class_.template.cluster_ip:
-                cluster_ip = class_.template.cluster_ip
-            else:
-                # Fallback to default cluster
-                cluster_ip = "10.220.15.249"
+                # Get cluster_ip from class template, or fallback to default
+                cluster_ip = None
+                if class_.template and class_.template.cluster_ip:
+                    cluster_ip = class_.template.cluster_ip
+                else:
+                    # Fallback to default cluster
+                    cluster_ip = "10.220.15.249"
+                
+                # Find cluster_id from cluster_ip
+                cluster_id = None
+                for cluster in get_clusters_from_db():
+                    if cluster["host"] == cluster_ip:
+                        cluster_id = cluster["id"]
+                        break
+                
+                if not cluster_id:
+                    logger.warning(f"Cannot add teacher VM to VMInventory - cluster not found for IP {cluster_ip}")
+                else:
+                    # persist_vm_inventory expects a list of VM dicts
+                    teacher_vm_dict = {
+                        'cluster_id': cluster_id,
+                        'vmid': teacher_vmid,
+                        'name': teacher_name,
+                        'node': teacher_actual_node,
+                        'status': 'stopped',  # VM just created, not started yet
+                        'type': 'qemu',
+                        'mac_address': teacher_mac,
+                        'is_template': False,
+                    }
+                    persist_vm_inventory([teacher_vm_dict], cleanup_missing=False)
+                    logger.info(f"Teacher VM {teacher_vmid} added to VMInventory - visible in UI immediately")
+            except Exception as e:
+                logger.warning(f"Failed to add teacher VM to VMInventory: {e}")
             
-            # Find cluster_id from cluster_ip
-            cluster_id = None
-            for cluster in get_clusters_from_db():
-                if cluster["host"] == cluster_ip:
-                    cluster_id = cluster["id"]
-                    break
-            
-            if not cluster_id:
-                logger.warning(f"Cannot add teacher VM to VMInventory - cluster not found for IP {cluster_ip}")
-            else:
-                # persist_vm_inventory expects a list of VM dicts
-                teacher_vm_dict = {
-                    'cluster_id': cluster_id,
-                    'vmid': teacher_vmid,
-                    'name': teacher_name,
-                    'node': teacher_actual_node,
-                    'status': 'stopped',  # VM just created, not started yet
-                    'type': 'qemu',
-                    'mac_address': teacher_mac,
-                    'is_template': False,
-                }
-                persist_vm_inventory([teacher_vm_dict], cleanup_missing=False)
-                logger.info(f"Teacher VM {teacher_vmid} added to VMInventory - visible in UI immediately")
-        except Exception as e:
-            logger.warning(f"Failed to add teacher VM to VMInventory: {e}")
+            # End of new class creation workflow
+            logger.info("New class infrastructure creation complete")
+        
+        # End of if/else for adding_to_existing_class
+        # Student VM creation runs for BOTH new and existing classes
         
         # Step 3: Create student VMs as QCOW2 overlays
+        # This runs for BOTH new classes AND adding VMs to existing classes
         if pool_size > 0:
             result.details.append(f"Creating {pool_size} student VMs...")
             

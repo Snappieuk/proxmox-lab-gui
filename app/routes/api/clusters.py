@@ -476,8 +476,11 @@ def get_cluster_resources(cluster_id: str):
                 successful_nodes.append(node_name)
                 
             except Exception as e:
-                logger.error(f"Failed to get status for node {node_name}: {type(e).__name__}: {e}")
-                logger.exception(f"Full traceback for node {node_name} failure:")
+                # Use debug level for expected connection issues (offline nodes)
+                if 'hostname lookup' in str(e) or 'No route to host' in str(e):
+                    logger.debug(f"Node {node_name} unreachable (expected if offline): {e}")
+                else:
+                    logger.error(f"Failed to get status for node {node_name}: {type(e).__name__}: {e}")
                 failed_nodes.append(node_name)
                 continue
         
