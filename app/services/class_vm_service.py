@@ -822,22 +822,16 @@ def create_class_vms(
             else:
                 logger.warning(f"Class-base VM assignment missing for class {class_id}; using VMID {class_base_vmid}")
             
-            # Get metadata from existing teacher VM for student creation
-            if template_vmid:
-                # Template-based class
-                base_qcow2_path = f"{DEFAULT_TEMPLATE_STORAGE_PATH}/{class_prefix}-t{template_vmid}-base.qcow2"
-                logger.info(f"Template-based class: Using base QCOW2 path: {base_qcow2_path}")
-            else:
-                # No class template stored - fall back to class-base VM for overlays
-                class_base_disk_path = f"{DEFAULT_VM_IMAGES_PATH}/{class_base_vmid}/vm-{class_base_vmid}-disk-0.qcow2"
-                base_qcow2_path = class_base_disk_path
-                if class_base_assignment and class_base_assignment.node:
-                    template_node_name = class_base_assignment.node
-                template_vmid = class_base_vmid
-                logger.info(
-                    f"No class template configured; using class-base VM {class_base_vmid} for config cloning "
-                    f"and backing file {class_base_disk_path}"
-                )
+            # Always use class-base VM as the config source and backing disk when adding VMs
+            class_base_disk_path = f"{DEFAULT_VM_IMAGES_PATH}/{class_base_vmid}/vm-{class_base_vmid}-disk-0.qcow2"
+            base_qcow2_path = class_base_disk_path
+            if class_base_assignment and class_base_assignment.node:
+                template_node_name = class_base_assignment.node
+            template_vmid = class_base_vmid
+            logger.info(
+                f"Adding VMs using class-base VM {class_base_vmid} for config cloning "
+                f"and backing file {class_base_disk_path}"
+            )
 
             # Get existing metadata from teacher VM config
             teacher_config_cmd = f"qm config {teacher_vmid} 2>/dev/null"
