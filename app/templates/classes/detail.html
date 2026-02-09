@@ -2493,7 +2493,9 @@ async function bulkStartVMs() {
     for (const cb of checkboxes) {
         const vmid = parseInt(cb.value);
         const statusBadge = document.getElementById(`status-${vmid}`);
-        const status = statusBadge ? statusBadge.textContent.trim().toLowerCase() : '';
+        const status = statusBadge
+            ? statusBadge.textContent.replace('●', '').trim().toLowerCase()
+            : '';
         
         // Only include stopped VMs
         if (status === 'stopped') {
@@ -2553,7 +2555,9 @@ async function bulkStopVMs() {
     for (const cb of checkboxes) {
         const vmid = parseInt(cb.value);
         const statusBadge = document.getElementById(`status-${vmid}`);
-        const status = statusBadge ? statusBadge.textContent.trim().toLowerCase() : '';
+        const status = statusBadge
+            ? statusBadge.textContent.replace('●', '').trim().toLowerCase()
+            : '';
         
         // Only include running VMs
         if (status === 'running') {
