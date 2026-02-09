@@ -872,23 +872,29 @@ def create_class_vms(class_id: int):
     # Ensure template selection aligns with class configuration
     if requested_template_vmid:
         requested_template_vmid = int(requested_template_vmid)
-        if class_.template and class_.template.proxmox_vmid != requested_template_vmid:
-            return jsonify({
-                "ok": False,
-                "error": "Selected template does not match class template"
-            }), 400
-        if not class_.template:
-            # Allow class-base VMID (prefix*100+99) even if not registered as a Template
-            if class_.vmid_prefix:
-                class_base_vmid = (class_.vmid_prefix * 100) + 99
-                if requested_template_vmid == class_base_vmid:
-                    requested_template_vmid = None
-                else:
+        # Allow class-base VMID (prefix*100+99) even if not registered as a Template
+        if class_.vmid_prefix:
+            class_base_vmid = (class_.vmid_prefix * 100) + 99
+            if requested_template_vmid == class_base_vmid:
+                requested_template_vmid = None
+            else:
+                if class_.template and class_.template.proxmox_vmid != requested_template_vmid:
+                    return jsonify({
+                        "ok": False,
+                        "error": "Selected template does not match class template"
+                    }), 400
+                if not class_.template:
                     return jsonify({
                         "ok": False,
                         "error": "Selected template not found in database"
                     }), 404
-            else:
+        else:
+            if class_.template and class_.template.proxmox_vmid != requested_template_vmid:
+                return jsonify({
+                    "ok": False,
+                    "error": "Selected template does not match class template"
+                }), 400
+            if not class_.template:
                 return jsonify({
                     "ok": False,
                     "error": "Selected template not found in database"
