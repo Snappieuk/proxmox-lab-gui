@@ -23,7 +23,7 @@
     </div>
 </div>
 
-{% if is_admin and request.endpoint == 'admin_view' %}
+{% if is_admin and (request.endpoint == 'admin.admin_view' or request.endpoint == 'admin_view') %}
 <div class="admin-actions" style="margin: 0 0 12px 0;">
     <button type="button" id="refresh-btn" class="btn-secondary" onclick="refreshVMs()">
         <i class="ti ti-refresh"></i> Refresh Cache
