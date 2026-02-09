@@ -231,6 +231,105 @@ def drop_template_source_columns():
         return False
 
 
+def rebuild_templates_table_with_constraints():
+    """
+    Rebuild templates table to restore primary key and constraints.
+
+    The refactor migration used CREATE TABLE AS SELECT, which drops the PK.
+    This rebuilds the table with the proper schema and de-duplicates rows by ID.
+    """
+    if not check_table_exists('templates'):
+        logger.info("templates table doesn't exist, skipping rebuild")
+        return True
+
+    try:
+        result = db.session.execute(db.text("PRAGMA table_info(templates)"))
+        columns = result.fetchall()
+        id_pk = any(col[1] == 'id' and col[5] == 1 for col in columns)
+        if id_pk:
+            logger.info("templates table already has a primary key, skipping rebuild")
+            return True
+    except Exception as e:
+        logger.error(f"Failed to inspect templates schema: {e}")
+        return False
+
+    try:
+        dup_count = db.session.execute(db.text(
+            "SELECT COUNT(*) FROM (SELECT id FROM templates GROUP BY id HAVING COUNT(*) > 1)"
+        )).scalar() or 0
+        if dup_count:
+            logger.warning("Found %d duplicate template IDs; de-duplicating by latest rowid", dup_count)
+
+        logger.info("Rebuilding templates table with primary key and indexes...")
+
+        db.session.execute(db.text("""
+            CREATE TABLE templates_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name VARCHAR(120) NOT NULL,
+                proxmox_vmid INTEGER NOT NULL,
+                cluster_ip VARCHAR(45) DEFAULT '10.220.15.249',
+                node VARCHAR(80),
+                is_replica BOOLEAN DEFAULT 0,
+                created_by_id INTEGER,
+                is_class_template BOOLEAN DEFAULT 0,
+                class_id INTEGER,
+                original_template_id INTEGER,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_verified_at TIMESTAMP,
+                cpu_cores INTEGER,
+                cpu_sockets INTEGER,
+                memory_mb INTEGER,
+                disk_size_gb REAL,
+                disk_storage VARCHAR(80),
+                disk_path VARCHAR(255),
+                disk_format VARCHAR(20),
+                network_bridge VARCHAR(80),
+                os_type VARCHAR(20),
+                specs_cached_at TIMESTAMP
+            )
+        """))
+
+        db.session.execute(db.text("""
+            INSERT INTO templates_new (
+                id, name, proxmox_vmid, cluster_ip, node, is_replica, created_by_id,
+                is_class_template, class_id, original_template_id, created_at, last_verified_at,
+                cpu_cores, cpu_sockets, memory_mb, disk_size_gb, disk_storage, disk_path,
+                disk_format, network_bridge, os_type, specs_cached_at
+            )
+            SELECT
+                t.id, t.name, t.proxmox_vmid, t.cluster_ip, t.node, t.is_replica, t.created_by_id,
+                t.is_class_template, t.class_id, t.original_template_id, t.created_at, t.last_verified_at,
+                t.cpu_cores, t.cpu_sockets, t.memory_mb, t.disk_size_gb, t.disk_storage, t.disk_path,
+                t.disk_format, t.network_bridge, t.os_type, t.specs_cached_at
+            FROM templates t
+            JOIN (
+                SELECT id, MAX(rowid) AS max_rowid
+                FROM templates
+                GROUP BY id
+            ) d ON t.id = d.id AND t.rowid = d.max_rowid
+        """))
+
+        db.session.execute(db.text("DROP TABLE templates"))
+        db.session.execute(db.text("ALTER TABLE templates_new RENAME TO templates"))
+
+        db.session.execute(db.text("""
+            CREATE UNIQUE INDEX IF NOT EXISTS uix_cluster_node_vmid
+            ON templates (cluster_ip, node, proxmox_vmid)
+        """))
+        db.session.execute(db.text("CREATE INDEX IF NOT EXISTS ix_templates_proxmox_vmid ON templates (proxmox_vmid)"))
+        db.session.execute(db.text("CREATE INDEX IF NOT EXISTS ix_templates_cluster_ip ON templates (cluster_ip)"))
+        db.session.execute(db.text("CREATE INDEX IF NOT EXISTS ix_templates_node ON templates (node)"))
+        db.session.execute(db.text("CREATE INDEX IF NOT EXISTS ix_templates_is_replica ON templates (is_replica)"))
+
+        db.session.commit()
+        logger.info("✓ Rebuilt templates table with primary key and indexes")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to rebuild templates table: {e}", exc_info=True)
+        db.session.rollback()
+        return False
+
+
 def verify_migrations():
     """Verify that migrations were applied successfully."""
     logger.info("\nVerifying migrations...")
@@ -296,7 +395,14 @@ def main():
             logger.info(f"Database backup available at: {backup_path}")
             return False
         
-        # Step 5: Verify migrations
+        # Step 5: Rebuild templates table with constraints (fixes lost PK)
+        logger.info("\n5. Rebuilding templates table with constraints...")
+        if not rebuild_templates_table_with_constraints():
+            logger.error("Failed to rebuild templates table. Aborting migration.")
+            logger.info(f"Database backup available at: {backup_path}")
+            return False
+
+        # Step 6: Verify migrations
         if not verify_migrations():
             logger.error("\n✗ Migration verification failed!")
             logger.info(f"Database backup available at: {backup_path}")

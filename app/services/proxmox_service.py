@@ -162,7 +162,6 @@ def get_proxmox_admin_for_cluster(cluster_id: str) -> ProxmoxAPI:
             user=cluster["user"],
             password=cluster["password"],
             verify_ssl=cluster.get("verify_ssl", False),
-            service='requests',
         )
         # Monkey-patch the session after creation
         if hasattr(new_connection, '_backend') and hasattr(new_connection._backend, 'session'):
@@ -218,7 +217,6 @@ def get_proxmox_admin() -> ProxmoxAPI:
                     user=cluster["user"],
                     password=cluster["password"],
                     verify_ssl=cluster.get("verify_ssl", False),
-                    service='requests',  # Explicitly use requests backend
                 )
                 # Monkey-patch the session after creation
                 if hasattr(_proxmox_connections[cluster_id], '_backend') and hasattr(_proxmox_connections[cluster_id]._backend, 'session'):
@@ -279,7 +277,6 @@ def create_proxmox_client() -> ProxmoxAPI:
             user=cluster["user"],
             password=cluster["password"],
             verify_ssl=cluster.get("verify_ssl", False),
-            service='requests',
         )
         # Monkey-patch session after creation
         if hasattr(client, '_backend') and hasattr(client._backend, 'session'):
@@ -396,7 +393,7 @@ def _load_vm_cache() -> None:
     _vm_cache_data[cache_key] = None
     _vm_cache_ts[cache_key] = 0.0
     _vm_cache_loaded[cache_key] = True
-    logger.info("VM cache loading from JSON disabled - using database (VMInventory) instead")
+    logger.info("VM cache file disabled - using database (VMInventory) instead")
     _vm_cache_loaded[cache_key] = True
     return
 
@@ -548,7 +545,7 @@ def _get_cached_ip_from_db(cluster_id: str, vmid: int) -> Optional[str]:
     
     try:
         # Check VMAssignment first (class VMs)
-        assignment = VMAssignment.query.filter_by(vmid=vmid).first()
+        assignment = VMAssignment.query.filter_by(proxmox_vmid=vmid).first()
         if assignment and assignment.cached_ip and assignment.ip_updated_at:
             age = datetime.utcnow() - assignment.ip_updated_at
             if age.total_seconds() < DB_IP_CACHE_TTL:
@@ -587,13 +584,13 @@ def _get_cached_ips_batch(cluster_id: str, vmids: List[int]) -> Dict[int, str]:
     try:
         # Get all VMAssignments for these VMs
         assignments = VMAssignment.query.filter(
-            VMAssignment.vmid.in_(vmids),
+            VMAssignment.proxmox_vmid.in_(vmids),
             VMAssignment.cached_ip.isnot(None),
             VMAssignment.ip_updated_at >= cutoff
         ).all()
         
         for assignment in assignments:
-            results[assignment.vmid] = assignment.cached_ip
+            results[assignment.proxmox_vmid] = assignment.cached_ip
         
         # Get remaining VMs from VMInventory (primary source of truth)
         remaining_vmids = [v for v in vmids if v not in results]
@@ -638,7 +635,7 @@ def _cache_ip_to_db(cluster_id: str, vmid: int, ip: Optional[str], mac: Optional
         now = datetime.utcnow()
         
         # Try to update VMAssignment first
-        assignment = VMAssignment.query.filter_by(vmid=vmid).first()
+        assignment = VMAssignment.query.filter_by(proxmox_vmid=vmid).first()
         if assignment:
             assignment.cached_ip = ip
             assignment.ip_updated_at = now
@@ -683,7 +680,7 @@ def _clear_vm_ip_cache(cluster_id: str, vmid: int) -> None:
     
     try:
         # Clear VMAssignment cache
-        assignment = VMAssignment.query.filter_by(vmid=vmid).first()
+        assignment = VMAssignment.query.filter_by(proxmox_vmid=vmid).first()
         if assignment and assignment.cached_ip:
             assignment.cached_ip = None
             assignment.ip_updated_at = None
@@ -1643,7 +1640,7 @@ def _save_ips_to_db(vms: List[Dict[str, Any]], vm_mac_map: Dict[int, str]) -> No
 _background_scanner_thread = None
 _background_scanner_running = False
 
-def start_background_ip_scanner():
+def start_background_ip_scanner(app=None):
     """Start background thread to continuously scan for IPs and populate database."""
     global _background_scanner_thread, _background_scanner_running
     
@@ -1654,12 +1651,13 @@ def start_background_ip_scanner():
     _background_scanner_running = True
     
     # Pass Flask app to background thread for context
-    from flask import current_app
-    try:
-        app = current_app._get_current_object()
-    except RuntimeError:
-        logger.warning("Background IP scanner: No Flask app context, scanner disabled")
-        return
+    if app is None:
+        from flask import current_app
+        try:
+            app = current_app._get_current_object()
+        except RuntimeError:
+            logger.warning("Background IP scanner: No Flask app context, scanner disabled")
+            return
     
     _background_scanner_thread = threading.Thread(target=_background_ip_scan_loop, args=(app,), daemon=True)
     _background_scanner_thread.start()

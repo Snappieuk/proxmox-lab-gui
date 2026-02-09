@@ -330,7 +330,6 @@ def sync_templates_from_proxmox(full_sync=True):
     """
     from app.services.proxmox_service import get_clusters_from_db, get_proxmox_admin_for_cluster
     from app.models import Template, db
-    from sqlalchemy import func
     
     logger.info(f"Starting template sync (full_sync={full_sync})")
     
@@ -348,13 +347,6 @@ def sync_templates_from_proxmox(full_sync=True):
     # Track all templates found in Proxmox (cluster_ip, node, vmid tuples)
     found_templates = set()
 
-    next_id = (db.session.query(func.max(Template.id)).scalar() or 0) + 1
-
-    def _next_template_id() -> int:
-        nonlocal next_id
-        value = next_id
-        next_id += 1
-        return value
     
     # Sync each cluster
     for cluster in get_clusters_from_db():
@@ -431,10 +423,6 @@ def sync_templates_from_proxmox(full_sync=True):
                                 last_verified_at=datetime.utcnow()
                             )
 
-                            # Defensive: assign ID if DB isn't auto-generating it
-                            if new_template.id is None:
-                                new_template.id = _next_template_id()
-                            
                             if full_sync:
                                 # Fetch and cache specs
                                 _update_template_specs(new_template, proxmox, node_name, vmid)

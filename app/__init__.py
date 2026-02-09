@@ -165,7 +165,7 @@ def create_app(config=None):
     # Start background IP scanner
     try:
         from app.services.proxmox_service import start_background_ip_scanner
-        start_background_ip_scanner()
+        start_background_ip_scanner(app)
         logger.info("Background IP scanner started")
     except Exception as e:
         logger.error(f"Failed to start background IP scanner: {e}", exc_info=True)
