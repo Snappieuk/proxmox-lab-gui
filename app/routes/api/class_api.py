@@ -839,9 +839,6 @@ def list_class_vms(class_id: int):
         status = get_vm_status_from_inventory(assignment.proxmox_vmid, cluster_ip)
         vm_data.update(status)
         
-        # Debug logging to trace MAC address data flow
-        logger.info(f"VM {assignment.proxmox_vmid}: assignment.mac={assignment.mac_address}, status.mac={status.get('mac')}, vm_data.mac={vm_data.get('mac')}")
-        
         vms.append(vm_data)
     
     return jsonify({
