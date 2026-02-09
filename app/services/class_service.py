@@ -232,8 +232,8 @@ def create_class(name: str, teacher_id: int, description: str = None,
                 else:
                     raise
 
-        # Auto-generate join token (7-day default) if none
-        class_.generate_join_token(expires_in_days=7)
+        # Auto-generate join token (never expires) if none
+        class_.generate_join_token(expires_in_days=0)
 
         _commit_with_retry()
         
@@ -395,7 +395,7 @@ def delete_class(class_id: int) -> Tuple[bool, str, List[int]]:
 # Invite Token Management
 # ---------------------------------------------------------------------------
 
-def generate_class_invite(class_id: int, never_expires: bool = False) -> Tuple[Optional[str], str]:
+def generate_class_invite(class_id: int, never_expires: bool = True) -> Tuple[Optional[str], str]:
     """Generate or regenerate invite token for a class.
     
     Returns: (token, message/error)
@@ -404,7 +404,7 @@ def generate_class_invite(class_id: int, never_expires: bool = False) -> Tuple[O
     if not class_:
         return None, "Class not found"
     
-    # Generate token (7 days expiry or never)
+    # Generate token (never expires by default)
     expires_in_days = 0 if never_expires else 7
     token = class_.generate_join_token(expires_in_days)
     

@@ -45,8 +45,8 @@ def diagnose_and_fix_invites():
                 
                 elif class_.token_expires_at and datetime.utcnow() > class_.token_expires_at:
                     print(f"  ⚠️  Issue: Token expired on {class_.token_expires_at}")
-                    print("  🔧  FIX: Regenerating token with 7-day expiry")
-                    class_.generate_join_token(expires_in_days=7)
+                    print("  🔧  FIX: Regenerating token that never expires")
+                    class_.generate_join_token(expires_in_days=0)
                     fixed_count += 1
             
             elif not class_.join_token:
