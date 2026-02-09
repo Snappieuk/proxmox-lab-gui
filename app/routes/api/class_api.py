@@ -873,6 +873,10 @@ def create_class_vms(class_id: int):
     if requested_template_vmid:
         requested_template_vmid = int(requested_template_vmid)
         # Allow class-base VMID (prefix*100+99) even if not registered as a Template
+        if not class_.vmid_prefix and requested_template_vmid % 100 == 99:
+            class_.vmid_prefix = requested_template_vmid // 100
+            db.session.commit()
+
         if class_.vmid_prefix:
             class_base_vmid = (class_.vmid_prefix * 100) + 99
             if requested_template_vmid == class_base_vmid:
