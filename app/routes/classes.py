@@ -142,10 +142,12 @@ def join_class_page(token: str):
     # Check if token is valid
     class_ = get_class_by_token(token)
     if not class_:
+        logger.warning(f"Invite token not found: {token}")
         flash("Invalid or expired invite link.", "error")
         return redirect(url_for('classes.classes_list'))
     
     if not class_.is_token_valid():
+        logger.warning(f"Invite token expired for class {class_.id}: token={class_.join_token}, never_expires={class_.token_never_expires}, expires_at={class_.token_expires_at}")
         flash("This invite link has expired.", "error")
         return redirect(url_for('classes.classes_list'))
     

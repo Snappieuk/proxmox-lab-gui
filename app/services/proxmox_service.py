@@ -25,6 +25,10 @@ from requests.adapters import HTTPAdapter
 from urllib3.util import Retry
 import urllib3
 
+from app.config import PROXMOX_CACHE_TTL, DB_IP_CACHE_TTL
+from app.services.user_manager import is_admin_user
+from app.services.arp_scanner import has_rdp_port_open, invalidate_arp_cache
+
 # Suppress SSL warnings for self-signed certificates
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -1007,7 +1011,7 @@ def _lookup_vm_ip_thread_safe(node: str, vmid: int, vmtype: str) -> Optional[str
         return None
     
     try:
-        client = _create_proxmox_client()
+        client = create_proxmox_client()
         
         # QEMU VMs - try guest agent
         if vmtype == "qemu":
@@ -1482,7 +1486,7 @@ def _enrich_vms_with_arp_ips(vms: List[Dict[str, Any]], force_sync: bool = False
     # Get ARP subnets from first available cluster (background sync uses all clusters)
     from app.services.settings_service import get_arp_subnets
     from app.services.proxmox_service import get_clusters_from_db
-    from app.services.arp_scanner import discover_ips_via_arp
+    from app.services.arp_scanner import discover_ips_via_arp, has_rdp_port_open
     clusters = get_clusters_from_db()
     subnets = get_arp_subnets(clusters[0]) if clusters else []
     discovered_ips = discover_ips_via_arp(vm_mac_map, subnets=subnets, background=not force_sync)

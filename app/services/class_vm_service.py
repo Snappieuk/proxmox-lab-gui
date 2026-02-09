@@ -51,6 +51,26 @@ from app.services.vm_utils import sanitize_vm_name as _sanitize_vm_name_canonica
 
 logger = logging.getLogger(__name__)
 
+# =============================================================================
+# DEPLOYMENT OPTIMIZATION SETTINGS
+# =============================================================================
+
+# Batch processing settings to prevent server overload with large classes
+VM_CREATION_BATCH_SIZE = 5  # Create N VMs before pausing
+VM_CREATION_BATCH_DELAY = 2  # Seconds to wait between batches
+VM_START_BATCH_SIZE = 3  # Start N VMs at a time
+PROGRESS_UPDATE_INTERVAL = 5  # Update progress every N VMs (reduces database writes)
+DATABASE_COMMIT_INTERVAL = 5  # Commit database every N VMs (frees memory)
+
+# For classes larger than this, use extra throttling
+LARGE_CLASS_THRESHOLD = 15
+LARGE_CLASS_BATCH_SIZE = 3  # Smaller batches for large deployments
+LARGE_CLASS_BATCH_DELAY = 3  # Longer delays for large deployments
+
+# =============================================================================
+# GLOBAL STATE
+# =============================================================================
+
 # Global lock for VMID allocation to prevent race conditions
 # when multiple users create classes simultaneously
 _vmid_allocation_lock = threading.Lock()
@@ -887,12 +907,13 @@ def create_class_vms(
             
             # Check if teacher VM exists in Proxmox (not just database)
             check_vm_cmd = f"qm status {teacher_vmid} 2>/dev/null"
-            exit_code, _, _ = ssh_executor.execute(check_vm_cmd, check=False)
+            exit_code, status_out, _ = ssh_executor.execute(check_vm_cmd, check=False)
             teacher_exists_in_proxmox = (exit_code == 0)
             
             if teacher_exists_in_proxmox:
-                logger.info(f"Teacher VM {teacher_vmid} already exists in Proxmox - skipping creation")
+                logger.info(f"Teacher VM {teacher_vmid} already exists in Proxmox (status: {status_out.strip()}) - skipping creation")
                 result.details.append(f"Teacher VM already exists (VMID: {teacher_vmid})")
+                result.teacher_vmid = teacher_vmid  # Set result even when skipping
                 
                 # Get teacher MAC from existing VM
                 mac_cmd = f"qm config {teacher_vmid} | grep 'net0:' | grep -oP 'virtio=[0-9A-F:]+'"
@@ -909,6 +930,27 @@ def create_class_vms(
                 if not teacher_actual_node:
                     logger.warning(f"Could not determine node for teacher VM {teacher_vmid}, using template_node as fallback")
                     teacher_actual_node = template_node
+                
+                # Ensure VMAssignment exists for existing teacher VM
+                existing_teacher_assignment = VMAssignment.query.filter_by(proxmox_vmid=teacher_vmid).first()
+                if not existing_teacher_assignment:
+                    logger.info(f"Creating missing VMAssignment record for existing teacher VM {teacher_vmid}")
+                    teacher_assignment = VMAssignment(
+                        class_id=class_id,
+                        proxmox_vmid=teacher_vmid,
+                        vm_name=teacher_name,
+                        mac_address=teacher_mac,
+                        node=teacher_actual_node,
+                        assigned_user_id=teacher_id,
+                        status='assigned',
+                        is_template_vm=False,
+                        is_teacher_vm=True,
+                        assigned_at=datetime.utcnow(),
+                    )
+                    db.session.add(teacher_assignment)
+                    logger.info(f"Created VMAssignment for existing teacher VM {teacher_vmid}")
+                else:
+                    logger.info(f"VMAssignment already exists for teacher VM {teacher_vmid}")
             else:
                 # Teacher VM doesn't exist in Proxmox - recreate it (even if DB record exists)
                 logger.info(f"Teacher VM {teacher_vmid} not found in Proxmox - creating/recreating")
@@ -960,13 +1002,36 @@ def create_class_vms(
             
             # Check if class-base VM already exists
             check_base_cmd = f"qm status {class_base_vmid} 2>/dev/null"
-            exit_code, _, _ = ssh_executor.execute(check_base_cmd, check=False)
+            exit_code, base_status_out, _ = ssh_executor.execute(check_base_cmd, check=False)
             base_exists = (exit_code == 0)
             
             if base_exists:
-                logger.info(f"Class-base VM {class_base_vmid} already exists - skipping creation")
+                logger.info(f"Class-base VM {class_base_vmid} already exists (status: {base_status_out.strip()}) - skipping creation")
                 result.details.append(f"Class-base VM already exists (VMID: {class_base_vmid})")
                 result.class_base_vmid = class_base_vmid
+                
+                # Ensure class-base has VMAssignment record
+                existing_assignment = VMAssignment.query.filter_by(proxmox_vmid=class_base_vmid).first()
+                if not existing_assignment:
+                    logger.info(f"Creating missing VMAssignment record for existing class-base VM {class_base_vmid}")
+                    # Get MAC address from existing VM
+                    mac_cmd = f"qm config {class_base_vmid} | grep 'net0:' | grep -oP 'virtio=[0-9A-F:]+'"
+                    exit_code, mac_out, _ = ssh_executor.execute(mac_cmd, check=False)
+                    base_mac = mac_out.strip().replace('virtio=', '') if exit_code == 0 and mac_out.strip() else None
+                    
+                    class_base_assignment = VMAssignment(
+                        class_id=class_id,
+                        proxmox_vmid=class_base_vmid,
+                        vm_name=class_base_name,
+                        mac_address=base_mac,
+                        node=template_node_name,
+                        assigned_user_id=None,
+                        status='reserved',
+                        is_template_vm=True,
+                        is_teacher_vm=False,
+                    )
+                    db.session.add(class_base_assignment)
+                    logger.info(f"Created VMAssignment for existing class-base VM {class_base_vmid}")
             else:
                 result.details.append("Creating class-base VM (reserved for template management)...")
                 logger.info(f"Creating class-base VM with VMID {class_base_vmid}")
@@ -1029,23 +1094,51 @@ def create_class_vms(
             disk_controller_type = 'scsi'
             ostype = 'l26'  # Default to Linux
             
-            # Select optimal node for teacher VM (with simulated load balancing or override)
-            if class_.deployment_node:
-                teacher_optimal_node = class_.deployment_node
-                logger.info(f"Using deployment override node for teacher VM: {teacher_optimal_node}")
+            # Get teacher VMID
+            teacher_vmid = get_vmid_for_class_vm(class_id, 0)
+            teacher_name = f"{class_prefix}-teacher"
+            
+            # Check if teacher VM already exists
+            check_vm_cmd = f"qm status {teacher_vmid} 2>/dev/null"
+            exit_code, status_out, _ = ssh_executor.execute(check_vm_cmd, check=False)
+            teacher_exists = (exit_code == 0)
+            
+            if teacher_exists:
+                logger.info(f"Teacher VM {teacher_vmid} already exists (status: {status_out.strip()}) - skipping creation")
+                result.details.append(f"Teacher VM already exists (VMID: {teacher_vmid})")
+                result.teacher_vmid = teacher_vmid
+                
+                # Get existing teacher VM details
+                teacher_mac = get_vm_mac_address(ssh_executor, teacher_vmid)
+                teacher_actual_node = get_vm_current_node(ssh_executor, teacher_vmid) or template_node
+                
+                # Ensure VMAssignment exists
+                if not VMAssignment.query.filter_by(proxmox_vmid=teacher_vmid).first():
+                    logger.info(f"Creating missing VMAssignment for existing teacher VM {teacher_vmid}")
+                    teacher_assignment = VMAssignment(
+                        class_id=class_id,
+                        proxmox_vmid=teacher_vmid,
+                        vm_name=teacher_name,
+                        mac_address=teacher_mac,
+                        node=teacher_actual_node,
+                        assigned_user_id=teacher_id,
+                        status='assigned',
+                        is_template_vm=False,
+                        is_teacher_vm=True,
+                        assigned_at=datetime.utcnow(),
+                    )
+                    db.session.add(teacher_assignment)
             else:
-                teacher_optimal_node = get_optimal_node(ssh_executor, proxmox, vm_memory_mb=memory, simulated_vms_per_node=simulated_vms_per_node)
-                logger.info(f"Selected optimal node for teacher VM: {teacher_optimal_node}")
-            
-            # Retry logic for VMID conflicts
-            max_retries = 30
-            teacher_vmid = None
-            teacher_mac = None
-            
-            for retry in range(max_retries):
-                # Use prefix-based VMID allocation (teacher VM is index 0)
-                teacher_vmid = get_vmid_for_class_vm(class_id, 0)
-                teacher_name = f"{class_prefix}-teacher"
+                # Teacher VM doesn't exist - create it
+                logger.info(f"Teacher VM {teacher_vmid} not found - creating new VM")
+                
+                # Select optimal node for teacher VM (with simulated load balancing or override)
+                if class_.deployment_node:
+                    teacher_optimal_node = class_.deployment_node
+                    logger.info(f"Using deployment override node for teacher VM: {teacher_optimal_node}")
+                else:
+                    teacher_optimal_node = get_optimal_node(ssh_executor, proxmox, vm_memory_mb=memory, simulated_vms_per_node=simulated_vms_per_node)
+                    logger.info(f"Selected optimal node for teacher VM: {teacher_optimal_node}")
                 
                 # Create empty VM shell with proper hardware settings
                 from app.services.vm_core import create_vm_shell
@@ -1069,52 +1162,55 @@ def create_class_vms(
                 agent_cmd = f"qm set {teacher_vmid} --agent enabled=1,fstrim_cloned_disks=1"
                 ssh_executor.execute(agent_cmd, timeout=30, check=False)
                 
-                break
+                result.details.append(f"Teacher VM shell created (VMID: {teacher_vmid})")
+                
+                # Migrate to optimal node BEFORE attaching storage
+                result.details.append(f"Migrating teacher VM to optimal node {teacher_optimal_node}...")
+                success, error_msg = migrate_vm_to_node(ssh_executor, teacher_vmid, teacher_optimal_node, timeout=120)
+                if not success:
+                    logger.warning(f"Failed to migrate teacher VM to {teacher_optimal_node}: {error_msg}. Continuing on current node.")
+                    result.details.append("Warning: Migration failed, teacher VM remains on current node")
+                    # Use the node where VM was created (connected SSH node)
+                    teacher_optimal_node = template_node
+                else:
+                    result.details.append(f"Teacher VM migrated to {teacher_optimal_node}")
+                    # Wait briefly for migration to fully complete
+                    import time
+                    time.sleep(2)
+                
+                # Get teacher VM MAC address after migration completes
+                teacher_mac = get_vm_mac_address(ssh_executor, teacher_vmid)
+                
+                # Now attach storage after migration (was included in qm create, need to add separately)
+                result.details.append(f"Attaching storage to teacher VM ({disk_size_gb}GB)...")
+                
+                # Get VM's current node after migration
+                current_node = get_vm_current_node(ssh_executor, teacher_vmid)
+                if not current_node:
+                    current_node = teacher_optimal_node  # Fallback to expected node
+                
+                # Use pvesh to set storage (works cluster-wide regardless of which node VM is on)
+                exit_code, stdout, stderr = ssh_executor.execute(
+                    f"pvesh set /nodes/{current_node}/qemu/{teacher_vmid}/config -scsi0 {PROXMOX_STORAGE_NAME}:{disk_size_gb} -boot order=scsi0",
+                    timeout=120,
+                    check=False
+                )
+                
+                if exit_code != 0:
+                    result.error = f"Failed to attach storage to teacher VM: {stderr}"
+                    # Clean up the VM
+                    ssh_executor.execute(f"qm destroy {teacher_vmid}", check=False)
+                    return result
+                
+                result.details.append(f"Teacher VM storage attached ({disk_size_gb}GB disk)")
+                
+                # Store the actual node where teacher VM ended up (after migration)
+                teacher_actual_node = current_node
             
-            result.details.append(f"Teacher VM shell created (VMID: {teacher_vmid})")
-            
-            # Migrate to optimal node BEFORE attaching storage
-            result.details.append(f"Migrating teacher VM to optimal node {teacher_optimal_node}...")
-            success, error_msg = migrate_vm_to_node(ssh_executor, teacher_vmid, teacher_optimal_node, timeout=120)
-            if not success:
-                logger.warning(f"Failed to migrate teacher VM to {teacher_optimal_node}: {error_msg}. Continuing on current node.")
-                result.details.append("Warning: Migration failed, teacher VM remains on current node")
-                # Use the node where VM was created (connected SSH node)
-                teacher_optimal_node = template_node
-            else:
-                result.details.append(f"Teacher VM migrated to {teacher_optimal_node}")
-                # Wait briefly for migration to fully complete
-                import time
-                time.sleep(2)
-            
-            # Get teacher VM MAC address after migration completes
-            teacher_mac = get_vm_mac_address(ssh_executor, teacher_vmid)
-            
-            # Now attach storage after migration (was included in qm create, need to add separately)
-            result.details.append(f"Attaching storage to teacher VM ({disk_size_gb}GB)...")
-            
-            # Get VM's current node after migration
-            current_node = get_vm_current_node(ssh_executor, teacher_vmid)
-            if not current_node:
-                current_node = teacher_optimal_node  # Fallback to expected node
-            
-            # Use pvesh to set storage (works cluster-wide regardless of which node VM is on)
-            exit_code, stdout, stderr = ssh_executor.execute(
-                f"pvesh set /nodes/{current_node}/qemu/{teacher_vmid}/config -scsi0 {PROXMOX_STORAGE_NAME}:{disk_size_gb} -boot order=scsi0",
-                timeout=120,
-                check=False
-            )
-            
-            if exit_code != 0:
-                result.error = f"Failed to attach storage to teacher VM: {stderr}"
-                # Clean up the VM
-                ssh_executor.execute(f"qm destroy {teacher_vmid}", check=False)
-                return result
-            
-            result.details.append(f"Teacher VM storage attached ({disk_size_gb}GB disk)")
-            
-            # Store the actual node where teacher VM ended up (after migration)
-            teacher_actual_node = current_node
+            # Continue with class-base creation (needed for both new and existing teacher VMs)
+            # Default to scsi for template-less classes
+            disk_controller_type = 'scsi'
+            ostype = 'l26'  # Default to Linux
             
             # No base_qcow2_path in template-less workflow (students get empty disks)
             base_qcow2_path = None
@@ -1124,53 +1220,83 @@ def create_class_vms(
             class_base_vmid = class_.vmid_prefix * 100 + 99  # e.g., 234 * 100 + 99 = 23499
             class_base_name = f"{class_prefix}-base"
             
-            result.details.append("Creating class-base VM shell (no template)...")
-            from app.services.vm_core import create_vm_shell
+            # Check if class-base VM already exists
+            check_base_cmd = f"qm status {class_base_vmid} 2>/dev/null"
+            exit_code, base_status_out, _ = ssh_executor.execute(check_base_cmd, check=False)
+            base_exists = (exit_code == 0)
             
-            success, error = create_vm_shell(
-                ssh_executor=ssh_executor,
-                vmid=class_base_vmid,
-                name=class_base_name,
-                memory=memory,
-                cores=cores,
-                ostype=ostype,
-                storage=PROXMOX_STORAGE_NAME,
-                net_model='virtio',
-            )
-            
-            if not success:
-                result.error = f"Failed to create class-base VM shell: {error}"
-                return result
-            
-            # Enable guest agent
-            agent_cmd = f"qm set {class_base_vmid} --agent enabled=1,fstrim_cloned_disks=1"
-            ssh_executor.execute(agent_cmd, timeout=30, check=False)
-            
-            # Attach storage to class-base VM
-            current_node = get_vm_current_node(ssh_executor, class_base_vmid)
-            if not current_node:
-                current_node = template_node  # Fallback
-            
-            exit_code, stdout, stderr = ssh_executor.execute(
-                f"pvesh set /nodes/{current_node}/qemu/{class_base_vmid}/config -scsi0 {PROXMOX_STORAGE_NAME}:{disk_size_gb} -boot order=scsi0",
-                timeout=120,
-                check=False
-            )
-            
-            if exit_code != 0:
-                result.error = f"Failed to attach storage to class-base VM: {stderr}"
-                # Clean up the VM
-                ssh_executor.execute(f"qm destroy {class_base_vmid}", check=False)
-                return result
-            
-            result.class_base_vmid = class_base_vmid
-            result.details.append(f"Class-base VM created: {class_base_vmid} ({class_base_name})")
-            
-            # Query actual node for class-base VM
-            class_base_actual_node = get_vm_current_node(ssh_executor, class_base_vmid)
-            if not class_base_actual_node:
-                logger.warning(f"Could not determine node for class-base VM {class_base_vmid}, using template_node")
-                class_base_actual_node = template_node
+            if base_exists:
+                logger.info(f"Class-base VM {class_base_vmid} already exists (status: {base_status_out.strip()}) - skipping creation")
+                result.details.append(f"Class-base VM already exists (VMID: {class_base_vmid})")
+                result.class_base_vmid = class_base_vmid
+                
+                # Ensure assignment exists
+                if not VMAssignment.query.filter_by(proxmox_vmid=class_base_vmid).first():
+                    logger.info(f"Creating missing VMAssignment for existing class-base VM {class_base_vmid}")
+                    base_mac = get_vm_mac_address(ssh_executor, class_base_vmid)
+                    class_base_actual_node = get_vm_current_node(ssh_executor, class_base_vmid) or template_node
+                    
+                    class_base_assignment = VMAssignment(
+                        class_id=class_id,
+                        proxmox_vmid=class_base_vmid,
+                        vm_name=class_base_name,
+                        mac_address=base_mac,
+                        node=class_base_actual_node,
+                        assigned_user_id=None,
+                        status='reserved',
+                        is_template_vm=True,
+                        is_teacher_vm=False,
+                    )
+                    db.session.add(class_base_assignment)
+            else:
+                # Class-base VM doesn't exist - create it
+                result.details.append("Creating class-base VM shell (no template)...")
+                from app.services.vm_core import create_vm_shell
+                
+                success, error = create_vm_shell(
+                    ssh_executor=ssh_executor,
+                    vmid=class_base_vmid,
+                    name=class_base_name,
+                    memory=memory,
+                    cores=cores,
+                    ostype=ostype,
+                    storage=PROXMOX_STORAGE_NAME,
+                    net_model='virtio',
+                )
+                
+                if not success:
+                    result.error = f"Failed to create class-base VM shell: {error}"
+                    return result
+                
+                # Enable guest agent
+                agent_cmd = f"qm set {class_base_vmid} --agent enabled=1,fstrim_cloned_disks=1"
+                ssh_executor.execute(agent_cmd, timeout=30, check=False)
+                
+                # Attach storage to class-base VM
+                current_node = get_vm_current_node(ssh_executor, class_base_vmid)
+                if not current_node:
+                    current_node = template_node  # Fallback
+                
+                exit_code, stdout, stderr = ssh_executor.execute(
+                    f"pvesh set /nodes/{current_node}/qemu/{class_base_vmid}/config -scsi0 {PROXMOX_STORAGE_NAME}:{disk_size_gb} -boot order=scsi0",
+                    timeout=120,
+                    check=False
+                )
+                
+                if exit_code != 0:
+                    result.error = f"Failed to attach storage to class-base VM: {stderr}"
+                    # Clean up the VM
+                    ssh_executor.execute(f"qm destroy {class_base_vmid}", check=False)
+                    return result
+                
+                result.class_base_vmid = class_base_vmid
+                result.details.append(f"Class-base VM created: {class_base_vmid} ({class_base_name})")
+                
+                # Query actual node for class-base VM
+                class_base_actual_node = get_vm_current_node(ssh_executor, class_base_vmid)
+                if not class_base_actual_node:
+                    logger.warning(f"Could not determine node for class-base VM {class_base_vmid}, using template_node")
+                    class_base_actual_node = template_node
             
             # Create VMAssignment for class-base (marked as template VM so it's hidden from students)
             base_mac = get_vm_mac_address(ssh_executor, class_base_vmid)
@@ -1202,22 +1328,26 @@ def create_class_vms(
         # Use MAC address returned by create_overlay_vm (already retrieved)
         # No need to fetch it again with get_vm_mac_address()
         
-        # Create VMAssignment for teacher
-        teacher_assignment = VMAssignment(
-            class_id=class_id,
-            proxmox_vmid=teacher_vmid,
-            vm_name=teacher_name,
-            mac_address=teacher_mac,
-            node=teacher_actual_node,  # Use actual node where VM was created
-            assigned_user_id=teacher_id,
-            status='assigned',
-            is_template_vm=False,
-            is_teacher_vm=True,
-            assigned_at=datetime.utcnow(),
-        )
-        db.session.add(teacher_assignment)
-        db.session.commit()  # Commit immediately so VMAssignment is available
-        logger.info(f"Teacher VM assignment saved: VMID={teacher_vmid}, node={teacher_actual_node}")
+        # Create VMAssignment for teacher (only if not already created when skipping)
+        if not VMAssignment.query.filter_by(proxmox_vmid=teacher_vmid).first():
+            teacher_assignment = VMAssignment(
+                class_id=class_id,
+                proxmox_vmid=teacher_vmid,
+                vm_name=teacher_name,
+                mac_address=teacher_mac,
+                node=teacher_actual_node,  # Use actual node where VM was created
+                assigned_user_id=teacher_id,
+                status='assigned',
+                is_template_vm=False,
+                is_teacher_vm=True,
+                assigned_at=datetime.utcnow(),
+            )
+            db.session.add(teacher_assignment)
+            logger.info(f"Created teacher VM assignment: VMID={teacher_vmid}, node={teacher_actual_node}")
+        else:
+            logger.info(f"Teacher VM assignment already exists for VMID={teacher_vmid}")
+        
+        db.session.commit()  # Commit immediately so VMAssignments are available
         
         # Update VMInventory immediately for teacher VM (makes it visible in UI right away)
         try:
@@ -1279,18 +1409,44 @@ def create_class_vms(
             next_student_index = max(existing_indices) + 1 if existing_indices else 1
             logger.info(f"Starting student VM creation from index {next_student_index} (existing indices: {sorted(existing_indices)})")
             
+            # OPTIMIZATION: Adjust batch settings based on class size
+            # Large classes use smaller batches with longer delays
+            if pool_size >= LARGE_CLASS_THRESHOLD:
+                batch_size = LARGE_CLASS_BATCH_SIZE
+                batch_delay = LARGE_CLASS_BATCH_DELAY
+                logger.warning(f"Large class detected ({pool_size} VMs) - using conservative settings: {batch_size} VMs/batch, {batch_delay}s delay")
+            else:
+                batch_size = VM_CREATION_BATCH_SIZE
+                batch_delay = VM_CREATION_BATCH_DELAY
+                logger.info(f"Using standard batch processing: {batch_size} VMs per batch with {batch_delay}s delay")
+            
             students_created = 0
             current_index = next_student_index
+            vms_in_current_batch = 0
             
             while students_created < pool_size:
-                # Update progress for each student VM
-                if class_.clone_task_id:
+                # OPTIMIZATION: Batch delay to prevent server overload
+                if vms_in_current_batch >= batch_size and students_created < pool_size:
+                    logger.info(f"Batch complete ({vms_in_current_batch} VMs). Waiting {batch_delay}s before next batch...")
+                    import time
+                    time.sleep(batch_delay)
+                    vms_in_current_batch = 0
+                    
+                    # Commit database changes after each batch to free memory
+                    try:
+                        db.session.commit()
+                        logger.info(f"Batch committed to database ({students_created}/{pool_size} VMs complete)")
+                    except Exception as e:
+                        logger.warning(f"Batch commit failed: {e}")
+                        db.session.rollback()
+                # OPTIMIZATION: Update progress less frequently
+                if class_.clone_task_id and (students_created % PROGRESS_UPDATE_INTERVAL == 0 or students_created == pool_size - 1):
                     student_progress = 35 + (60 * (students_created / pool_size))  # Progress from 35% to 95%
                     update_clone_progress(
                         class_.clone_task_id,
                         completed=1 + students_created,
                         current_vm=f"student-{current_index}",
-                        message=f"Creating student VM {students_created + 1} of {pool_size} (index {current_index})...",
+                        message=f"Creating student VM {students_created + 1} of {pool_size} (batch {(students_created // batch_size) + 1})...",
                         progress_percent=student_progress
                     )
                 
@@ -1307,6 +1463,34 @@ def create_class_vms(
                     current_index += 1  # Try next index
                     continue
                 
+                # Check if VM already exists in Proxmox before creating
+                check_student_cmd = f"qm status {vmid} 2>/dev/null"
+                exit_code, _, _ = ssh_executor.execute(check_student_cmd, check=False)
+                if exit_code == 0:
+                    logger.warning(f"Student VM {vmid} already exists in Proxmox - skipping (index {current_index})")
+                    # Check if assignment exists
+                    existing_assignment = VMAssignment.query.filter_by(proxmox_vmid=vmid).first()
+                    if not existing_assignment:
+                        logger.info(f"Creating missing VMAssignment record for existing student VM {vmid}")
+                        student_name = f"{class_prefix}-student-{current_index}"
+                        student_mac = get_vm_mac_address(ssh_executor, vmid)
+                        actual_node = get_vm_current_node(ssh_executor, vmid) or template_node_name
+                        assignment = VMAssignment(
+                            class_id=class_id,
+                            proxmox_vmid=vmid,
+                            vm_name=student_name,
+                            mac_address=student_mac,
+                            node=actual_node,
+                            assigned_user_id=None,
+                            status='available',
+                            is_template_vm=False,
+                            is_teacher_vm=False,
+                        )
+                        db.session.add(assignment)
+                        students_created += 1
+                    current_index += 1
+                    continue
+                
                 student_name = f"{class_prefix}-student-{current_index}"
                 
                 # Select optimal node for this student VM (with simulated load balancing or override)
@@ -1317,6 +1501,9 @@ def create_class_vms(
                     logger.info(f"Selected optimal node for {student_name}: {student_optimal_node} (current allocation: {simulated_vms_per_node})")
                 
                 try:
+                    # OPTIMIZATION: Reduce logging verbosity for large deployments
+                    log_level = logging.INFO if students_created % 5 == 0 else logging.DEBUG
+                    
                     # Create VM with template config cloning (WITH TEMPLATE workflow)
                     if base_qcow2_path:
                         # Use create_overlay_vm with template_vmid to clone ALL config
@@ -1338,9 +1525,14 @@ def create_class_vms(
                         if not success:
                             logger.error(f"Failed to create student VM {vmid}: {error}")
                             result.failed += 1
+                            current_index += 1
                             continue
                         
-                        logger.info(f"Created student VM {vmid} with config cloned from template {template_vmid}")
+                        # Log at appropriate level
+                        if log_level == logging.INFO:
+                            logger.info(f"Created student VM {vmid} with config cloned from template {template_vmid}")
+                        else:
+                            logger.debug(f"Created student VM {vmid}")
                     else:
                         # Template-less: create VM shell with proper hardware settings
                         from app.services.vm_core import create_vm_shell
@@ -1437,17 +1629,37 @@ def create_class_vms(
                 # Successfully created student VM - increment counters
                 students_created += 1
                 current_index += 1  # Move to next index for next iteration
-                logger.info(f"Student VM progress: {students_created}/{pool_size} complete")
+                vms_in_current_batch += 1
+                
+                # Log progress less frequently for large deployments
+                if students_created % PROGRESS_UPDATE_INTERVAL == 0 or students_created == pool_size:
+                    logger.info(f"Student VM progress: {students_created}/{pool_size} complete (batch {(students_created // batch_size) + 1})")
         
-        # Step 4: Start VMs if requested
+        # Step 4: Start VMs if requested (with rate limiting)
         if auto_start and result.teacher_vmid:
             result.details.append("Starting VMs...")
             ssh_executor.execute(f"qm start {result.teacher_vmid}", check=False)
-            for vmid in result.student_vmids:
-                ssh_executor.execute(f"qm start {vmid}", check=False)
+            
+            # OPTIMIZATION: Start VMs in batches to avoid overwhelming cluster
+            for i in range(0, len(result.student_vmids), VM_START_BATCH_SIZE):
+                batch = result.student_vmids[i:i + VM_START_BATCH_SIZE]
+                for vmid in batch:
+                    ssh_executor.execute(f"qm start {vmid}", check=False)
+                
+                # Small delay between start batches
+                if i + VM_START_BATCH_SIZE < len(result.student_vmids):
+                    import time
+                    time.sleep(1)
+                    logger.info(f"Started {min(i + VM_START_BATCH_SIZE, len(result.student_vmids))}/{len(result.student_vmids)} VMs")
         
-        # Commit all VMAssignment records
-        db.session.commit()
+        # Commit all VMAssignment records (final commit)
+        try:
+            db.session.commit()
+            logger.info("All VM assignments committed to database")
+        except Exception as e:
+            logger.error(f"Failed to commit VM assignments: {e}")
+            db.session.rollback()
+            raise
         
         # Final progress update
         if class_.clone_task_id:
