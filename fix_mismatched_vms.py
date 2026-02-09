@@ -352,7 +352,8 @@ def _get_ssh_executor_for_cluster(cluster: Dict):
         host=cluster["host"],
         username=username,
         password=cluster["password"],
-        port=cluster.get("port", 22),
+        # Cluster port is the Proxmox API port (default 8006). SSH is always 22.
+        port=22,
     )
 
 
@@ -411,9 +412,10 @@ def main():
             logger.info(f"{'='*70}")
             
             # Connect to SSH
-            ssh_executor = _get_ssh_executor_for_cluster(cluster)
-            if not ssh_executor:
-                logger.error(f"Failed to connect to cluster {cluster['host']} - skipping class")
+            try:
+                ssh_executor = _get_ssh_executor_for_cluster(cluster)
+            except Exception as e:
+                logger.error(f"Failed to connect to cluster {cluster['host']} - skipping class: {e}")
                 continue
             
             try:
@@ -474,9 +476,10 @@ def main():
                     total_failed += len(mismatched_vms)
                     continue
 
-                ssh_executor = _get_ssh_executor_for_cluster(cluster)
-                if not ssh_executor:
-                    logger.error(f"Failed to connect to cluster {cluster['host']}")
+                try:
+                    ssh_executor = _get_ssh_executor_for_cluster(cluster)
+                except Exception as e:
+                    logger.error(f"Failed to connect to cluster {cluster['host']}: {e}")
                     total_failed += len(mismatched_vms)
                     continue
                 
