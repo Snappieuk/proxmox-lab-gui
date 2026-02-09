@@ -343,14 +343,25 @@ class Class(db.Model):
         """Check if the join token is still valid."""
         if not self.join_token:
             return False
+        
         # Check for never-expires flag (must be explicitly True, not just truthy)
         if self.token_never_expires is True:
             return True
+        
         # If expiration is set and has passed, token is invalid
         if self.token_expires_at:
             if datetime.utcnow() > self.token_expires_at:
                 return False
-        # Token exists and hasn't expired (or no expiration set)
+            # Token has expiration date and hasn't expired
+            return True
+        
+        # Edge case: token exists but no expiration info
+        # This can happen with old classes created before token_never_expires field
+        # Treat as invalid to force regeneration
+        if not self.token_never_expires and not self.token_expires_at:
+            return False
+        
+        # Fallback: token exists and is valid
         return True
     
     def invalidate_token(self) -> None:

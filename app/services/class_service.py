@@ -410,8 +410,10 @@ def generate_class_invite(class_id: int, never_expires: bool = False) -> Tuple[O
     
     try:
         db.session.commit()
-        logger.info("Generated invite token for class %s (expires: %s)", 
-                    class_.name, "never" if never_expires else "7 days")
+        logger.info("Generated invite token for class %s: token=%s, expires=%s, never_expires=%s", 
+                    class_.name, token, 
+                    class_.token_expires_at.isoformat() if class_.token_expires_at else "N/A",
+                    class_.token_never_expires)
         return token, "Invite token generated"
     except Exception as e:
         db.session.rollback()

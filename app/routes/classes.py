@@ -146,9 +146,12 @@ def join_class_page(token: str):
         flash("Invalid or expired invite link.", "error")
         return redirect(url_for('classes.classes_list'))
     
+    # Debug logging for token validation
+    logger.info(f"Checking invite for class {class_.id} ({class_.name}): token={class_.join_token}, never_expires={class_.token_never_expires}, expires_at={class_.token_expires_at}")
+    
     if not class_.is_token_valid():
         logger.warning(f"Invite token expired for class {class_.id}: token={class_.join_token}, never_expires={class_.token_never_expires}, expires_at={class_.token_expires_at}")
-        flash("This invite link has expired.", "error")
+        flash("This invite link has expired. Please ask your teacher to generate a new one.", "error")
         return redirect(url_for('classes.classes_list'))
     
     # Check if user already has a VM in this class
