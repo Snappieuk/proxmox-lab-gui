@@ -399,6 +399,9 @@
     <button type="button" id="refresh-btn" class="btn-secondary" onclick="refreshVMs()">
         <i class="ti ti-refresh"></i> Refresh Cache
     </button>
+    <button type="button" id="cleanup-btn" class="btn-secondary" onclick="syncAndClean()">
+        <i class="ti ti-broom"></i> Sync & Clean
+    </button>
     <small>Admin only: Force reload VM data from Proxmox server</small>
 </div>
 {% endif %}
@@ -1047,6 +1050,40 @@ async function refreshVMs() {
             refreshBtn.disabled = false;
             refreshBtn.innerHTML = originalText;
             icon.classList.remove('spin');
+        }, 2000);
+    }
+}
+
+// Sync inventory and clean orphaned assignments (admin only)
+async function syncAndClean() {
+    const cleanupBtn = document.getElementById('cleanup-btn');
+    if (!cleanupBtn) return;
+
+    const originalText = cleanupBtn.innerHTML;
+
+    try {
+        cleanupBtn.disabled = true;
+        cleanupBtn.innerHTML = '<i class="ti ti-broom"></i> Cleaning...';
+
+        const resp = await fetch('/api/sync/cleanup', { method: 'POST' });
+        const payload = await resp.json();
+
+        if (!resp.ok || !payload.ok) {
+            throw new Error(payload.error || `Cleanup failed: ${resp.status}`);
+        }
+
+        cleanupBtn.innerHTML = '<i class="ti ti-circle-check"></i> Cleaned!';
+
+        // Reload VMs after cleanup
+        await new Promise(resolve => setTimeout(resolve, 1500));
+        await loadVMs();
+    } catch (error) {
+        console.error('Sync & clean failed:', error);
+        cleanupBtn.innerHTML = '<i class="ti ti-alert-triangle"></i> Failed';
+    } finally {
+        setTimeout(() => {
+            cleanupBtn.disabled = false;
+            cleanupBtn.innerHTML = originalText;
         }, 2000);
     }
 }

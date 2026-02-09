@@ -67,6 +67,54 @@ def trigger_sync():
         }), 500
 
 
+@sync_bp.route('/cleanup', methods=['POST'])
+@admin_required
+def cleanup_orphaned_records():
+    """Full sync + cleanup orphaned VMAssignments (admin only).
+    
+    This removes assignments for VMs that no longer exist in Proxmox.
+    """
+    from app.services.proxmox_service import get_all_vms
+    from app.services.inventory_service import persist_vm_inventory
+    from app.models import VMAssignment, VMInventory, db
+
+    try:
+        # Force refresh inventory from Proxmox, then cleanup missing inventory entries
+        vms = get_all_vms(skip_ips=False, force_refresh=True)
+        persist_vm_inventory(vms, cleanup_missing=True)
+
+        existing_vmids = {row[0] for row in db.session.query(VMInventory.vmid).all()}
+        if not existing_vmids:
+            return jsonify({
+                'ok': False,
+                'error': 'No inventory records found after sync; cleanup aborted.'
+            }), 500
+
+        orphaned = VMAssignment.query.filter(
+            ~VMAssignment.proxmox_vmid.in_(existing_vmids)
+        ).all()
+        removed = len(orphaned)
+
+        for assignment in orphaned:
+            db.session.delete(assignment)
+
+        db.session.commit()
+
+        return jsonify({
+            'ok': True,
+            'message': f'Cleanup complete: {removed} orphaned assignments removed',
+            'removed_assignments': removed,
+            'inventory_count': len(existing_vmids),
+        })
+    except Exception as e:
+        db.session.rollback()
+        logger.exception("Failed to cleanup orphaned records")
+        return jsonify({
+            'ok': False,
+            'error': str(e)
+        }), 500
+
+
 @sync_bp.route('/inventory/summary', methods=['GET'])
 @login_required
 def inventory_summary():
