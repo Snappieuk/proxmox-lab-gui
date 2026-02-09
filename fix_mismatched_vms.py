@@ -382,11 +382,6 @@ def _find_vm_node(ssh_executor, vmid: int) -> str:
 
 def _get_vm_config(ssh_executor, vmid: int) -> str:
     """Get VM config using cluster-aware lookup with pvesh fallback."""
-    cmd = f"qm config {vmid}"
-    exit_code, stdout, _ = ssh_executor.execute(cmd, check=False)
-    if exit_code == 0 and stdout.strip():
-        return stdout
-
     node = _find_vm_node(ssh_executor, vmid)
     if not node:
         return ""
