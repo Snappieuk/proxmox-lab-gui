@@ -31,6 +31,9 @@
     <button type="button" id="cleanup-btn" class="btn-secondary" onclick="syncAndClean()">
         <i class="ti ti-broom"></i> Sync & Clean
     </button>
+    <button type="button" id="template-sync-btn" class="btn-secondary" onclick="syncTemplates()">
+        <i class="ti ti-template"></i> Sync Templates
+    </button>
     <small>Admin only: Force reload VM data and remove orphaned records</small>
 </div>
 {% endif %}
@@ -1096,6 +1099,35 @@ async function syncAndClean() {
         setTimeout(() => {
             cleanupBtn.disabled = false;
             cleanupBtn.innerHTML = originalText;
+        }, 2000);
+    }
+}
+
+// Sync templates now (admin only)
+async function syncTemplates() {
+    const btn = document.getElementById('template-sync-btn');
+    if (!btn) return;
+
+    const originalText = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<i class="ti ti-template"></i> Syncing...';
+
+    try {
+        const resp = await fetch('/api/sync/templates/trigger', { method: 'POST' });
+        const payload = await resp.json();
+
+        if (!resp.ok || !payload.ok) {
+            throw new Error(payload.error || `Template sync failed: ${resp.status}`);
+        }
+
+        btn.innerHTML = '<i class="ti ti-circle-check"></i> Templates Synced';
+    } catch (error) {
+        console.error('Template sync failed:', error);
+        btn.innerHTML = '<i class="ti ti-alert-triangle"></i> Sync Failed';
+    } finally {
+        setTimeout(() => {
+            btn.disabled = false;
+            btn.innerHTML = originalText;
         }, 2000);
     }
 }

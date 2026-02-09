@@ -74,25 +74,56 @@ def cleanup_orphaned_records():
     
     This removes assignments for VMs that no longer exist in Proxmox.
     """
-    from app.services.proxmox_service import get_all_vms
+    from app.services.proxmox_service import get_all_vms, get_clusters_from_db
     from app.services.inventory_service import persist_vm_inventory
-    from app.models import VMAssignment, VMInventory, db
+    from app.models import Class, VMAssignment, VMInventory, db
 
     try:
         # Force refresh inventory from Proxmox, then cleanup missing inventory entries
         vms = get_all_vms(skip_ips=False, force_refresh=True)
         persist_vm_inventory(vms, cleanup_missing=True)
 
-        existing_vmids = {row[0] for row in db.session.query(VMInventory.vmid).all()}
-        if not existing_vmids:
+        # Build cluster-aware VMID sets (avoid collisions across clusters)
+        vmids_by_cluster = {}
+        for vm in vms:
+            cluster_id = vm.get('cluster_id')
+            vmid = vm.get('vmid')
+            if cluster_id is None or vmid is None:
+                continue
+            vmids_by_cluster.setdefault(cluster_id, set()).add(vmid)
+
+        if not vmids_by_cluster:
             return jsonify({
                 'ok': False,
-                'error': 'No inventory records found after sync; cleanup aborted.'
+                'error': 'No VMs returned from Proxmox; cleanup aborted.'
             }), 500
 
-        orphaned = VMAssignment.query.filter(
-            ~VMAssignment.proxmox_vmid.in_(existing_vmids)
-        ).all()
+        # Resolve default cluster id
+        clusters = get_clusters_from_db()
+        default_cluster_id = None
+        if clusters:
+            default = next((c for c in clusters if c.get('is_default')), None)
+            default_cluster_id = default.get('id') if default else clusters[0].get('id')
+
+        # Remove orphaned assignments per class cluster
+        orphaned = []
+        assignments = VMAssignment.query.all()
+        for assignment in assignments:
+            class_id = assignment.class_id
+            cluster_id = default_cluster_id
+            if class_id:
+                class_obj = Class.query.get(class_id)
+                if class_obj and class_obj.template and class_obj.template.cluster_ip:
+                    # Map template cluster host -> cluster_id
+                    match = next((c for c in clusters if c.get('host') == class_obj.template.cluster_ip), None)
+                    if match:
+                        cluster_id = match.get('id')
+            if not cluster_id:
+                continue
+
+            existing_vmids = vmids_by_cluster.get(cluster_id, set())
+            if assignment.proxmox_vmid not in existing_vmids:
+                orphaned.append(assignment)
         removed = len(orphaned)
 
         for assignment in orphaned:
