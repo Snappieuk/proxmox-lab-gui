@@ -11,7 +11,7 @@ import uuid
 
 from flask import Blueprint, jsonify, request
 
-from app.models import VMAssignment, db
+from app.models import Template, VMAssignment, db
 from app.services.class_service import (  # Class management; Invite management; Template management
     assign_vm_to_user,
     auto_assign_vms_to_waiting_students,
@@ -865,8 +865,26 @@ def create_class_vms(class_id: int):
     if not user.is_adminer and not class_.is_owner(user):
         return jsonify({"ok": False, "error": "Access denied"}), 403
     
-    data = request.get_json()
+    data = request.get_json() or {}
     count = data.get('count', 1)
+    requested_template_vmid = data.get('template_vmid')
+
+    # Ensure template selection aligns with class configuration
+    if requested_template_vmid:
+        if class_.template and class_.template.proxmox_vmid != int(requested_template_vmid):
+            return jsonify({
+                "ok": False,
+                "error": "Selected template does not match class template"
+            }), 400
+        if not class_.template:
+            template = Template.query.filter_by(proxmox_vmid=int(requested_template_vmid)).first()
+            if not template:
+                return jsonify({
+                    "ok": False,
+                    "error": "Selected template not found in database"
+                }), 404
+            class_.template_id = template.id
+            db.session.commit()
     
     # Use the modern disk export + overlay deployment method
     # This creates VM shells via SSH and uses QCOW2 overlays for efficient disk cloning

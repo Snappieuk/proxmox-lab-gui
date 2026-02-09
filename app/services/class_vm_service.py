@@ -755,13 +755,6 @@ def create_class_vms(
             result.error = f"Class {class_id} not found"
             return result
         
-        # Allow adding VMs to existing class (removed the check that prevented this)
-        existing_vms = VMAssignment.query.filter_by(class_id=class_id).count()
-        adding_to_existing_class = existing_vms > 0
-        if adding_to_existing_class:
-            logger.info(f"Adding {pool_size} additional VMs to existing class {class_id} (currently has {existing_vms} VMs)")
-            logger.info("Skipping teacher and class-base VM creation - using existing infrastructure")
-        
         if not class_.vmid_prefix:
             vmid_prefix = allocate_vmid_prefix_for_class(ssh_executor)
             if not vmid_prefix:
@@ -773,6 +766,20 @@ def create_class_vms(
             logger.info(f"Allocated VMID prefix {vmid_prefix} for class {class_id} (range: {vmid_prefix}00-{vmid_prefix}99)")
         else:
             logger.info(f"Class {class_id} already has VMID prefix {class_.vmid_prefix}")
+
+        # Allow adding VMs to existing class (prefer class-base VM existence over DB assignments)
+        existing_vms = VMAssignment.query.filter_by(class_id=class_id).count()
+        class_base_vmid = class_.vmid_prefix * 100 + 99
+        check_base_cmd = f"qm list | grep -q '^\\s*{class_base_vmid}\\s'"
+        exit_code, _, _ = ssh_executor.execute(check_base_cmd, check=False)
+        class_base_vm_exists = (exit_code == 0)
+        adding_to_existing_class = existing_vms > 0 or class_base_vm_exists
+        if adding_to_existing_class:
+            logger.info(
+                f"Adding {pool_size} additional VMs to existing class {class_id} "
+                f"(assignments: {existing_vms}, class-base exists: {class_base_vm_exists})"
+            )
+            logger.info("Skipping teacher and class-base VM creation - using existing infrastructure")
         
         # Node selection will be done per-VM for better distribution
         from app.services.vm_utils import get_optimal_node
@@ -812,48 +819,52 @@ def create_class_vms(
             if class_base_assignment:
                 result.class_base_vmid = class_base_assignment.proxmox_vmid
                 logger.info(f"Using existing class-base VM: {class_base_assignment.proxmox_vmid}")
+            else:
+                logger.warning(f"Class-base VM assignment missing for class {class_id}; using VMID {class_base_vmid}")
             
             # Get metadata from existing teacher VM for student creation
             if template_vmid:
                 # Template-based class
                 base_qcow2_path = f"{DEFAULT_TEMPLATE_STORAGE_PATH}/{class_prefix}-t{template_vmid}-base.qcow2"
                 logger.info(f"Template-based class: Using base QCOW2 path: {base_qcow2_path}")
-                
-                # Get existing metadata from teacher VM config
-                teacher_config_cmd = f"qm config {teacher_vmid} 2>/dev/null"
-                exit_code, config_out, _ = ssh_executor.execute(teacher_config_cmd, check=False)
-                if exit_code == 0:
-                    # Parse config to extract metadata
-                    disk_controller_type = 'scsi'
-                    ostype = 'l26'
-                    bios = 'seabios'
-                    scsihw = 'virtio-scsi-single'
-                    memory = 2048
-                    cores = 2
-                    for line in config_out.split('\n'):
-                        if line.startswith('scsihw:'):
-                            scsihw = line.split(':', 1)[1].strip()
-                        elif line.startswith('memory:'):
-                            memory = int(line.split(':', 1)[1].strip())
-                        elif line.startswith('cores:'):
-                            cores = int(line.split(':', 1)[1].strip())
-                        elif line.startswith('ostype:'):
-                            ostype = line.split(':', 1)[1].strip()
-                        elif line.startswith('bios:'):
-                            bios = line.split(':', 1)[1].strip()
-                    logger.info(f"Retrieved metadata from teacher VM: {scsihw}, {memory}MB, {cores} cores, {ostype}, {bios}")
-                else:
-                    result.error = "Cannot read teacher VM config for metadata"
-                    return result
             else:
-                # Template-less class  
-                base_qcow2_path = None
-                logger.info("Template-less class: Students will be created as empty shells")
-                
-                # Get specs from class settings or defaults
+                # No class template stored - fall back to class-base VM for overlays
+                class_base_disk_path = f"{DEFAULT_VM_IMAGES_PATH}/{class_base_vmid}/vm-{class_base_vmid}-disk-0.qcow2"
+                base_qcow2_path = class_base_disk_path
+                if class_base_assignment and class_base_assignment.node:
+                    template_node_name = class_base_assignment.node
+                template_vmid = class_base_vmid
+                logger.info(
+                    f"No class template configured; using class-base VM {class_base_vmid} for config cloning "
+                    f"and backing file {class_base_disk_path}"
+                )
+
+            # Get existing metadata from teacher VM config
+            teacher_config_cmd = f"qm config {teacher_vmid} 2>/dev/null"
+            exit_code, config_out, _ = ssh_executor.execute(teacher_config_cmd, check=False)
+            if exit_code == 0:
+                # Parse config to extract metadata
                 disk_controller_type = 'scsi'
                 ostype = 'l26'
-                # memory and cores already set from function parameters
+                bios = 'seabios'
+                scsihw = 'virtio-scsi-single'
+                memory = 2048
+                cores = 2
+                for line in config_out.split('\n'):
+                    if line.startswith('scsihw:'):
+                        scsihw = line.split(':', 1)[1].strip()
+                    elif line.startswith('memory:'):
+                        memory = int(line.split(':', 1)[1].strip())
+                    elif line.startswith('cores:'):
+                        cores = int(line.split(':', 1)[1].strip())
+                    elif line.startswith('ostype:'):
+                        ostype = line.split(':', 1)[1].strip()
+                    elif line.startswith('bios:'):
+                        bios = line.split(':', 1)[1].strip()
+                logger.info(f"Retrieved metadata from teacher VM: {scsihw}, {memory}MB, {cores} cores, {ostype}, {bios}")
+            else:
+                result.error = "Cannot read teacher VM config for metadata"
+                return result
             
             # Skip to student VM creation (jump to Step 3)
             logger.info(f"Infrastructure setup complete - proceeding to create {pool_size} new student VMs")
