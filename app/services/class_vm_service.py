@@ -1605,8 +1605,9 @@ def create_class_vms(
                     
                     # Create VM with template config cloning (WITH TEMPLATE workflow)
                     if base_qcow2_path:
-                        # Use create_overlay_vm with template_vmid to clone ALL config
-                        # This is the same approach used for teacher VM - guarantees identical config
+                        # Use create_overlay_vm with class_base_vmid to clone ALL config
+                        # CRITICAL: Clone from class-base VM (not original template) to ensure
+                        # all student VMs have identical config (hardware, EFI, TPM, options)
                         from app.services.vm_template import create_overlay_vm
                         
                         # Student VMs use class-base VM disk as backing file (3-tier hierarchy)
@@ -1618,7 +1619,7 @@ def create_class_vms(
                             name=student_name,
                             base_qcow2_path=class_base_disk_path,
                             node=template_node_name,
-                            template_vmid=template_vmid,  # Clone ALL config from template (not just hardware)
+                            template_vmid=class_base_vmid,  # Clone ALL config from class-base VM (hardware, EFI, TPM, options)
                         )
                         
                         if not success:
@@ -1629,7 +1630,7 @@ def create_class_vms(
                         
                         # Log at appropriate level
                         if log_level == logging.INFO:
-                            logger.info(f"Created student VM {vmid} with config cloned from template {template_vmid}")
+                            logger.info(f"Created student VM {vmid} with config cloned from class-base VM {class_base_vmid}")
                         else:
                             logger.debug(f"Created student VM {vmid}")
                     else:
