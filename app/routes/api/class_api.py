@@ -872,37 +872,18 @@ def create_class_vms(class_id: int):
     # Ensure template selection aligns with class configuration
     if requested_template_vmid:
         requested_template_vmid = int(requested_template_vmid)
-        # Allow class-base VMID (prefix*100+99) even if not registered as a Template
-        if not class_.vmid_prefix and requested_template_vmid % 100 == 99:
-            class_.vmid_prefix = requested_template_vmid // 100
-            db.session.commit()
 
-        if class_.vmid_prefix:
-            class_base_vmid = (class_.vmid_prefix * 100) + 99
-            if requested_template_vmid == class_base_vmid:
-                requested_template_vmid = None
-            else:
-                if class_.template and class_.template.proxmox_vmid != requested_template_vmid:
-                    return jsonify({
-                        "ok": False,
-                        "error": "Selected template does not match class template"
-                    }), 400
-                if not class_.template:
-                    return jsonify({
-                        "ok": False,
-                        "error": "Selected template not found in database"
-                    }), 404
+        # If class has no template, ignore template validation and use class-base VMID if provided
+        if not class_.template:
+            if not class_.vmid_prefix and requested_template_vmid % 100 == 99:
+                class_.vmid_prefix = requested_template_vmid // 100
+                db.session.commit()
         else:
-            if class_.template and class_.template.proxmox_vmid != requested_template_vmid:
+            if class_.template.proxmox_vmid != requested_template_vmid:
                 return jsonify({
                     "ok": False,
                     "error": "Selected template does not match class template"
                 }), 400
-            if not class_.template:
-                return jsonify({
-                    "ok": False,
-                    "error": "Selected template not found in database"
-                }), 404
     
     # Use the modern disk export + overlay deployment method
     # This creates VM shells via SSH and uses QCOW2 overlays for efficient disk cloning
