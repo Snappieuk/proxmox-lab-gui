@@ -18,6 +18,7 @@ from app.services.proxmox_service import (
     save_user_vm_map,
 )
 from app.services.user_manager import get_pve_users, require_user
+from app.models import User, VMAssignment, db
 from app.utils.decorators import admin_required
 
 logger = logging.getLogger(__name__)
@@ -79,7 +80,10 @@ def list_mappings():
 @api_mappings_bp.route("/mappings/update", methods=["POST"])
 @admin_required
 def update_mappings():
-    """Update mapping for a single user. Body: {user: str, vmids: [int]}."""
+    """Update mapping for a single user. Body: {user: str, vmids: [int]}.
+    
+    Syncs to both legacy mappings.json AND database VMAssignment table (class_id=NULL).
+    """
     try:
         data = request.get_json(force=True) or {}
         user = (data.get("user") or "").strip()
@@ -94,18 +98,76 @@ def update_mappings():
         except (ValueError, TypeError):
             return jsonify({"ok": False, "error": "Invalid VM IDs"}), 400
 
-        mapping = get_user_vm_map()
+        # Find user in database
+        user_obj = User.query.filter_by(username=user).first()
+        if not user_obj:
+            return jsonify({"ok": False, "error": f"User '{user}' not found in database"}), 404
 
+        # Update legacy mappings.json
+        mapping = get_user_vm_map()
         if vmids:
             mapping[user] = vmids
         else:
             mapping.pop(user, None)
-
         save_user_vm_map(mapping)
+
+        # Sync to database VMAssignment table (direct assignments, class_id=NULL)
+        # Clear session cache to avoid stale data
+        db.session.expire_all()
+        
+        # Get current direct assignments for this user
+        current_assignments = VMAssignment.query.filter_by(
+            assigned_user_id=user_obj.id,
+            class_id=None
+        ).all()
+        current_vmids = {a.proxmox_vmid for a in current_assignments}
+        
+        # Find VMs to add and remove
+        vmids_to_add = set(vmids) - current_vmids
+        vmids_to_remove = current_vmids - set(vmids)
+        
+        # Remove assignments no longer in list
+        for vmid in vmids_to_remove:
+            assignment = VMAssignment.query.filter_by(
+                proxmox_vmid=vmid,
+                assigned_user_id=user_obj.id,
+                class_id=None
+            ).first()
+            if assignment:
+                db.session.delete(assignment)
+                logger.info("Deleted direct assignment: user=%s, vmid=%d", user, vmid)
+        
+        # Add new assignments
+        for vmid in vmids_to_add:
+            # Check if VM already assigned to someone else
+            existing = VMAssignment.query.filter_by(
+                proxmox_vmid=vmid,
+                class_id=None
+            ).first()
+            if existing:
+                logger.warning("VM %d already assigned to %s, skipping", vmid, existing.assigned_user.username if existing.assigned_user else "unknown")
+                continue
+            
+            assignment = VMAssignment(
+                class_id=None,  # Direct assignment
+                proxmox_vmid=vmid,
+                assigned_user_id=user_obj.id,
+                status='assigned'
+            )
+            db.session.add(assignment)
+            logger.info("Created direct assignment: user=%s, vmid=%d", user, vmid)
+        
+        # Commit all changes
+        db.session.commit()
+        
+        # Clear cache again after commit so next queries get fresh data
+        db.session.expire_all()
+        
         acting = require_user()
-        logger.info("User %s updated mappings for %s -> %s", acting, user, vmids)
+        logger.info("User %s synced mappings for %s: vmids=%s", acting, user, vmids)
 
         return jsonify({"ok": True, "mapping": mapping.get(user, [])})
     except Exception as e:
+        db.session.rollback()
         logger.exception("Failed to update mappings")
         return jsonify({"ok": False, "error": str(e)}), 500
