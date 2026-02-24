@@ -70,10 +70,47 @@
         <button onclick="testMaintenanceAPI()" class="btn-secondary" style="margin-top: 1rem; margin-right: 0.5rem;">
             <i class="ti ti-alert-triangle"></i> Test API Connection
         </button>
+        <button onclick="showAllVMs()" class="btn-secondary" style="margin-top: 1rem; margin-right: 0.5rem;">
+            <i class="ti ti-list"></i> Show All VMs
+        </button>
         <button onclick="recoverVMsFromProxmox()" class="btn-primary" style="margin-top: 1rem;">
             <i class="ti ti-refresh"></i> Scan & Recover VMs from Proxmox
         </button>
         <span id="recovery-status" class="ms-2"></span>
+    </div>
+
+    <!-- Manual Recovery Section -->
+    <div class="content-card" style="margin-top: 2rem; border: 2px solid #17a2b8; background: #f0f8ff;">
+        <div style="display: flex; justify-content: space-between; align-items: start;">
+            <div>
+                <h2 style="margin: 0; color: #0c5460;"><i class="ti ti-hand-move"></i> Manual VM Recovery</h2>
+                <p style="color: #0c5460; font-size: 0.9rem; margin: 0.5rem 0 0 0;">
+                    Manually select VMs from Proxmox and add them to a class
+                </p>
+            </div>
+        </div>
+        
+        <div style="margin-top: 1.5rem;">
+            <label for="manual-class-select" style="display: block; font-weight: 600; margin-bottom: 0.5rem;">Select Class:</label>
+            <select id="manual-class-select" class="form-control" style="padding: 0.5rem; border: 1px solid #ccc; border-radius: 4px; margin-bottom: 1rem;">
+                <option value="">-- Choose a class --</option>
+            </select>
+            
+            <div style="margin-bottom: 1rem;">
+                <button onclick="loadVMsForManualRecovery()" class="btn-secondary" style="margin-top: 0;">
+                    <i class="ti ti-refresh"></i> Load Available VMs
+                </button>
+            </div>
+            
+            <div id="manual-vm-list" style="max-height: 400px; overflow-y: auto; border: 1px solid #ccc; border-radius: 4px; padding: 1rem; background: white; margin-bottom: 1rem; display: none;">
+                <p style="color: #999;">Click "Load Available VMs" to see the list</p>
+            </div>
+            
+            <button onclick="addSelectedVMsToClass()" class="btn-primary" style="margin-top: 0;">
+                <i class="ti ti-check"></i> Add Selected VMs to Class
+            </button>
+            <span id="manual-recovery-status" class="ms-2"></span>
+        </div>
     </div>
 </div>
 
@@ -320,6 +357,36 @@ async function testMaintenanceAPI() {
     }
 }
 
+async function showAllVMs() {
+    try {
+        const resp = await fetch('/api/admin/maintenance/recover-vms/list-all-vms');
+        const data = await resp.json();
+        
+        if (!data.ok) {
+            alert('Failed to load VMs: ' + data.error);
+            return;
+        }
+        
+        const vms = data.vms;
+        let msg = `Total VMs in Proxmox: ${vms.length}\n\n`;
+        msg += 'VMID | Name | Status | In DB?\n';
+        msg += '-----+----+-----+---\n';
+        
+        vms.forEach(vm => {
+            const inDb = vm.in_db ? 'YES' : 'NO';
+            msg += `${vm.vmid.toString().padEnd(5)} | ${vm.name.substring(0, 20).padEnd(20)} | ${vm.status.padEnd(7)} | ${inDb}\n`;
+        });
+        
+        console.log('All VMs:', vms);
+        console.log('\n' + msg);
+        
+        alert(msg + '\n\nFull list logged to browser console (F12)');
+    } catch (e) {
+        console.error('Error:', e);
+        alert('Failed to load VMs: ' + e.message);
+    }
+}
+
 async function scanRecoverableVMs() {
     try {
         document.getElementById('recovery-status').innerHTML = '<span class="badge bg-secondary">Scanning...</span>';
@@ -372,8 +439,12 @@ async function recoverVMsFromProxmox() {
         
         const total = scanResult.total_recoverable;
         
+        console.log('Scan result:', scanResult);
+        console.log('Total recoverable:', total);
+        console.log('Recoverable by class:', scanResult.recoverable);
+        
         if (total === 0) {
-            alert('✓ No recoverable VMs found - all class VMs are already in the database');
+            alert('✓ No recoverable VMs found\n\nThis could mean:\n- All class VMs are already in the database\n- No VMs match the class ID pattern (class 5 → VMID 50xxx)\n- Check browser console for debug details');
             document.getElementById('recovery-status').innerHTML = '<span class="badge bg-success">No VMs to recover</span>';
             return;
         }
@@ -382,6 +453,9 @@ async function recoverVMsFromProxmox() {
         let preview = `Found ${total} VMs to recover:\n\n`;
         for (const [classId, data] of Object.entries(scanResult.recoverable)) {
             preview += `Class ${classId} (${data.class_name}): ${data.count} VMs\n`;
+            data.vms.forEach(vm => {
+                preview += `  • VMID ${vm.vmid} (${vm.name})\n`;
+            });
         }
         preview += '\nProceed with recovery?';
         
@@ -409,7 +483,7 @@ async function recoverVMsFromProxmox() {
     } catch (e) {
         console.error('Error:', e);
         document.getElementById('recovery-status').innerHTML = '<span class="badge bg-danger">Error</span>';
-        alert('Recovery failed: ' + e.message);
+        alert('Recovery failed: ' + e.message + '\n\nCheck browser console for details');
     }
 }
 

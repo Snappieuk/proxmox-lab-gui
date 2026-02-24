@@ -2,7 +2,7 @@
 """Admin maintenance API endpoints for cleanup operations."""
 
 import logging
-from flask import Blueprint, jsonify
+from flask import Blueprint, jsonify, request
 from app.models import db, VMAssignment, Class
 from app.utils.decorators import admin_required
 from sqlalchemy import func
@@ -241,15 +241,26 @@ def scan_recoverable_vms():
         classes = Class.query.all()
         logger.info(f"Found {len(classes)} classes")
         
+        # Log all VMIDs for debugging
+        all_vmids = [vm['vmid'] for vm in all_vms]
+        logger.info(f"All VMIDs: {sorted(all_vmids)}")
+        
         # Find VMs matching class ID patterns
         # Pattern: class_id=5 → look for VMIDs starting with 50 (50001, 50002, etc)
         recoverable = {}
+        diagnostics = {
+            'all_vms': len(all_vms),
+            'all_classes': len(classes),
+            'all_vmids': sorted(all_vmids),
+            'class_patterns_checked': []
+        }
         
         for cls in classes:
             class_id = cls.id
             class_prefix = str(class_id).zfill(2)  # "05" for class 5
             
             matching_vms = []
+            
             for vm in all_vms:
                 vmid = vm['vmid']
                 vmid_str = str(vmid)
@@ -271,6 +282,17 @@ def scan_recoverable_vms():
                             'type': vm.get('type', 'qemu')
                         })
             
+            # Log this class's pattern check
+            pattern_check = {
+                'class_id': class_id,
+                'class_name': cls.name,
+                'pattern': class_prefix,
+                'matching_count': len(matching_vms),
+                'matching_vmids': [vm['vmid'] for vm in matching_vms]
+            }
+            diagnostics['class_patterns_checked'].append(pattern_check)
+            logger.info(f"Class {class_id} pattern '{class_prefix}': found {len(matching_vms)} VMs")
+            
             if matching_vms:
                 recoverable[str(class_id)] = {
                     'class_name': cls.name,
@@ -279,12 +301,13 @@ def scan_recoverable_vms():
                 }
         
         total_recoverable = sum(d['count'] for d in recoverable.values())
-        logger.info(f"Found {total_recoverable} recoverable VMs")
+        logger.info(f"Found {total_recoverable} total recoverable VMs")
         
         return jsonify({
             "ok": True,
             "recoverable": recoverable,
-            "total_recoverable": total_recoverable
+            "total_recoverable": total_recoverable,
+            "diagnostics": diagnostics
         })
     
     except Exception as e:
@@ -292,7 +315,113 @@ def scan_recoverable_vms():
         return jsonify({"ok": False, "error": f"Scan error: {str(e)}"}), 500
 
 
-@maintenance_bp.route("/recover-vms/recover", methods=["POST"])
+@maintenance_bp.route("/recover-vms/list-all-vms", methods=["GET"])
+@admin_required
+def list_all_proxmox_vms():
+    """List all VMs in Proxmox for diagnostic purposes."""
+    try:
+        from app.services.proxmox_service import get_all_vms
+        
+        all_vms = get_all_vms(skip_ips=True)
+        
+        vm_list = []
+        for vm in all_vms:
+            vm_list.append({
+                'vmid': vm['vmid'],
+                'name': vm.get('name', 'unknown'),
+                'status': vm.get('status', 'unknown'),
+                'node': vm.get('node', 'unknown'),
+                'type': vm.get('type', 'qemu'),
+                'in_db': bool(VMAssignment.query.filter_by(proxmox_vmid=vm['vmid']).first())
+            })
+        
+        # Sort by VMID
+        vm_list.sort(key=lambda x: x['vmid'])
+        
+        return jsonify({
+            "ok": True,
+            "total_vms": len(vm_list),
+            "vms": vm_list
+        })
+    
+    except Exception as e:
+        logger.exception("Failed to list VMs")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@maintenance_bp.route("/recover-vms/manually-add", methods=["POST"])
+@admin_required
+def manually_add_vms_to_class():
+    """Manually add VMs to a class."""
+    try:
+        data = request.get_json()
+        class_id = data.get('class_id')
+        vmids = data.get('vmids', [])  # List of VM IDs to add
+        
+        if not class_id or not vmids:
+            return jsonify({"ok": False, "error": "class_id and vmids required"}), 400
+        
+        # Verify class exists
+        cls = Class.query.get(class_id)
+        if not cls:
+            return jsonify({"ok": False, "error": f"Class {class_id} not found"}), 404
+        
+        # Get VM names from Proxmox
+        from app.services.proxmox_service import get_all_vms
+        all_vms = get_all_vms(skip_ips=True)
+        vm_map = {vm['vmid']: vm for vm in all_vms}
+        
+        added = 0
+        skipped = 0
+        
+        for vmid in vmids:
+            # Check if already assigned to this class
+            existing = VMAssignment.query.filter_by(
+                proxmox_vmid=vmid,
+                class_id=class_id
+            ).first()
+            
+            if existing:
+                logger.info(f"VM {vmid} already assigned to class {class_id}, skipping")
+                skipped += 1
+                continue
+            
+            # Get VM info
+            vm_info = vm_map.get(vmid)
+            if not vm_info:
+                logger.warning(f"VM {vmid} not found in Proxmox")
+                continue
+            
+            try:
+                assign = VMAssignment(
+                    class_id=class_id,
+                    proxmox_vmid=vmid,
+                    vm_name=vm_info.get('name'),
+                    node=vm_info.get('node'),
+                    status='available',
+                    assigned_user_id=None
+                )
+                db.session.add(assign)
+                added += 1
+                logger.info(f"Added VM {vmid} ({vm_info.get('name')}) to class {class_id}")
+            except Exception as e:
+                logger.error(f"Failed to add VM {vmid}: {e}")
+                continue
+        
+        db.session.commit()
+        
+        return jsonify({
+            "ok": True,
+            "message": f"Added {added} VMs to class {cls.name}",
+            "added": added,
+            "skipped": skipped
+        })
+    
+    except Exception as e:
+        db.session.rollback()
+        logger.exception("Failed to manually add VMs")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
 @admin_required
 def recover_deleted_vms():
     """Recover deleted class VM assignments from Proxmox."""
