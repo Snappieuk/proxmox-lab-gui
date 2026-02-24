@@ -8,8 +8,8 @@ Run this to immediately sync all ISOs from Proxmox to database.
 import sys
 import os
 
-# Add app directory to path
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Add parent directory to path so 'app' module is importable
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app import create_app
 from app.services.iso_sync import sync_isos_from_proxmox

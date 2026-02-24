@@ -33,8 +33,8 @@ import logging
 import argparse
 from typing import Dict, List, Tuple
 
-# Add app directory to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'app'))
+# Add parent directory to path so 'app' module is importable
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app import create_app
 from app.models import Class, VMAssignment, db
