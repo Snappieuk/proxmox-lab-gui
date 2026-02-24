@@ -81,6 +81,10 @@
                    href="{{ url_for('admin.vm_class_mappings') }}">
                     <i class="ti ti-topology-star-3"></i> VM:Class Mappings
                 </a>
+                <a class="sidebar-link {% if request.endpoint == 'admin.recover_vms' %}sidebar-link-active{% endif %}"
+                   href="{{ url_for('admin.recover_vms') }}">
+                    <i class="ti ti-refresh"></i> Recover VMs
+                </a>
                 
             {% endif %}
     {% endif %}

@@ -1,0 +1,212 @@
+{% extends "base.html" %}
+
+{% block title %}Recover VMs to Classes{% endblock %}
+
+{% block content %}
+<div style="max-width: 1200px; margin: 0 auto; padding: 2rem 1rem;">
+    <h1><i class="ti ti-refresh"></i> Recover VMs to Classes</h1>
+    <p style="color: #666; margin-bottom: 2rem;">Add cached VMs back to classes</p>
+
+    <div style="background: white; border-radius: 8px; padding: 2rem; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+        
+        <!-- Class Selector -->
+        <div style="margin-bottom: 2rem;">
+            <label for="class-select" style="display: block; font-weight: 600; margin-bottom: 0.5rem;">
+                Select Class:
+            </label>
+            <select id="class-select" style="width: 100%; padding: 0.75rem; border: 1px solid #ccc; border-radius: 4px; font-size: 1rem;">
+                <option value="">-- Choose a class --</option>
+                {% for cls in classes %}
+                <option value="{{ cls.id }}">{{ cls.name }} (ID: {{ cls.id }})</option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <!-- Load VMs Button -->
+        <button onclick="loadVMs()" style="padding: 0.75rem 1.5rem; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 1rem; margin-bottom: 2rem;">
+            <i class="ti ti-refresh"></i> Load Available VMs
+        </button>
+
+        <!-- VM List -->
+        <div id="vm-list" style="display: none; margin-bottom: 2rem; max-height: 400px; overflow-y: auto; border: 1px solid #ccc; border-radius: 4px; padding: 1rem; background: #f9f9f9;">
+            <p style="color: #999;">VMs will appear here...</p>
+        </div>
+
+        <!-- Submit Button -->
+        <button onclick="addVMsToClass()" style="padding: 0.75rem 1.5rem; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 1rem; margin-right: 1rem;">
+            <i class="ti ti-check"></i> Add Selected VMs to Class
+        </button>
+        <span id="status" style="margin-left: 1rem; font-weight: 600;"></span>
+    </div>
+</div>
+
+<script>
+let allVMs = [];
+
+async function loadVMs() {
+    const classId = document.getElementById('class-select').value;
+    
+    if (!classId) {
+        alert('Please select a class first');
+        return;
+    }
+
+    const button = event.target;
+    button.disabled = true;
+    button.textContent = '⏳ Loading...';
+
+    try {
+        const response = await fetch('/api/recover-vms/vms');
+        const data = await response.json();
+
+        if (!data.ok) {
+            alert(`Error: ${data.error}`);
+            return;
+        }
+
+        allVMs = data.vms || [];
+        displayVMs(allVMs);
+
+    } catch (error) {
+        console.error('Error:', error);
+        alert(`Error: ${error.message}`);
+    } finally {
+        button.disabled = false;
+        button.textContent = '🔄 Load Available VMs';
+    }
+}
+
+function displayVMs(vms) {
+    const container = document.getElementById('vm-list');
+    container.style.display = 'block';
+    container.innerHTML = '';
+
+    if (!vms || vms.length === 0) {
+        container.innerHTML = '<p style="color: #999; text-align: center;">No unassigned VMs found</p>';
+        return;
+    }
+
+    vms.forEach(vm => {
+        const label = document.createElement('label');
+        label.style.display = 'flex';
+        label.style.alignItems = 'center';
+        label.style.padding = '0.75rem';
+        label.style.borderBottom = '1px solid #ddd';
+        label.style.cursor = 'pointer';
+
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.value = vm.vmid;
+        checkbox.className = 'vm-checkbox';
+        checkbox.style.marginRight = '1rem';
+        checkbox.style.width = '18px';
+        checkbox.style.height = '18px';
+        checkbox.style.cursor = 'pointer';
+
+        const info = document.createElement('span');
+        info.style.fontSize = '0.95rem';
+        info.innerHTML = `
+            <strong>VMID ${vm.vmid}</strong>: ${vm.name} 
+            <span style="color: #999; font-size: 0.88rem;">
+                (${vm.type}, on ${vm.node})
+            </span>
+        `;
+
+        label.appendChild(checkbox);
+        label.appendChild(info);
+        container.appendChild(label);
+    });
+}
+
+async function addVMsToClass() {
+    const classId = document.getElementById('class-select').value;
+    const checkboxes = document.querySelectorAll('.vm-checkbox:checked');
+    const vmids = Array.from(checkboxes).map(cb => parseInt(cb.value));
+
+    if (!classId) {
+        alert('Please select a class');
+        return;
+    }
+
+    if (vmids.length === 0) {
+        alert('Please select at least one VM');
+        return;
+    }
+
+    const button = event.target;
+    button.disabled = true;
+    const status = document.getElementById('status');
+    status.textContent = '⏳ Adding...';
+    status.style.color = 'blue';
+
+    try {
+        const response = await fetch('/api/recover-vms/add-to-class', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                class_id: parseInt(classId),
+                vmids: vmids
+            })
+        });
+
+        const data = await response.json();
+
+        if (!data.ok) {
+            status.textContent = `❌ Error: ${data.error}`;
+            status.style.color = 'red';
+            return;
+        }
+
+        let message = `✅ Added ${data.added} VM(s)`;
+        if (data.skipped > 0) {
+            message += ` (${data.skipped} already assigned)`;
+        }
+        if (data.errors && data.errors.length > 0) {
+            message += `\n\nErrors:\n${data.errors.join('\n')}`;
+            alert(message);
+        }
+
+        status.textContent = message.split('\n')[0];
+        status.style.color = 'green';
+
+        // Clear selection
+        document.querySelectorAll('.vm-checkbox').forEach(cb => cb.checked = false);
+        document.getElementById('vm-list').innerHTML = '';
+        allVMs = [];
+
+        // Reset
+        setTimeout(() => {
+            status.textContent = '';
+        }, 3000);
+
+    } catch (error) {
+        console.error('Error:', error);
+        status.textContent = `❌ Error: ${error.message}`;
+        status.style.color = 'red';
+    } finally {
+        button.disabled = false;
+    }
+}
+</script>
+
+<style>
+button:hover:not(:disabled) {
+    opacity: 0.9;
+}
+
+button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+label {
+    user-select: none;
+}
+
+label:hover {
+    background: #f0f0f0;
+}
+</style>
+{% endblock %}

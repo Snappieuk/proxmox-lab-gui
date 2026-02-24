@@ -12,6 +12,7 @@ from app.routes.api.clusters import api_clusters_bp
 from app.routes.api.console import console_bp
 from app.routes.api.mappings import api_mappings_bp
 from app.routes.api.profile import api_profile_bp
+from app.routes.api.recover_vms import recover_vms_bp
 from app.routes.api.publish_template import api_publish_template_bp
 from app.routes.api.rdp import api_rdp_bp
 from app.routes.api.ssh import api_ssh_bp
@@ -40,7 +41,7 @@ def register_blueprints(app):
     app.register_blueprint(admin_bp)
     app.register_blueprint(api_vms_bp)
     app.register_blueprint(api_mappings_bp)
-    app.register_blueprint(maintenance_bp)
+    app.register_blueprint(recover_vms_bp)
     app.register_blueprint(api_clusters_bp)
     app.register_blueprint(api_rdp_bp)
     app.register_blueprint(api_ssh_bp)

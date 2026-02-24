@@ -186,6 +186,19 @@ def admin_settings():
 
 
 # ==============================================================================
+# VM RECOVERY
+# ==============================================================================
+
+@admin_bp.route("/recover-vms")
+@admin_required
+def recover_vms():
+    """Simple VM recovery page - add cached VMs back to classes."""
+    from app.models import Class
+    classes = Class.query.all()
+    return render_template("admin/recover_vms.html", classes=classes)
+
+
+# ==============================================================================
 # LEGACY MAPPINGS UI
 # ==============================================================================
 
