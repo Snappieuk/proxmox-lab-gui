@@ -232,7 +232,6 @@ def create_new_class():
                 
                 # Fetch template object if it exists (inside the session context!)
                 template_obj = class_obj.template if class_obj.template_id else None
-                template_cluster_id = template_obj.cluster_id if template_obj else None
             
             # Use selected deployment method
             if deployment_method == "linked_clone":
@@ -251,8 +250,7 @@ def create_new_class():
                     class_id=class_id_for_error,
                     template_vmid=template_id,
                     num_students=pool_size,
-                    deployment_node=deployment_node,
-                    cluster_id=template_cluster_id
+                    deployment_node=deployment_node
                 )
                 
                 if success:
