@@ -2,7 +2,7 @@
 """Admin maintenance API endpoints for cleanup operations."""
 
 import logging
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify
 from app.models import db, VMAssignment, Class
 from app.utils.decorators import admin_required
 from sqlalchemy import func
@@ -19,7 +19,7 @@ def get_assignment_stats():
     try:
         total = VMAssignment.query.count()
         unassigned = VMAssignment.query.filter_by(assigned_user_id=None).count()
-        assigned = assigned_count = VMAssignment.query.filter(
+        assigned_count = VMAssignment.query.filter(
             VMAssignment.assigned_user_id.isnot(None)
         ).count()
         
@@ -50,22 +50,26 @@ def get_assignment_stats():
 @maintenance_bp.route("/assignments/unassigned", methods=["GET"])
 @admin_required
 def get_unassigned_assignments():
-    """List all unassigned assignments."""
+    """
+    List orphaned direct assignments (no user AND no class).
+    
+    Note: Class pool VMs (with class_id but no user) are NOT shown here
+    as they are not orphaned - they're legitimate unassigned pool VMs.
+    """
     try:
-        unassigned = VMAssignment.query.filter_by(assigned_user_id=None).all()
+        # Only show DIRECT assignments that are orphaned (no user AND no class)
+        orphaned = VMAssignment.query.filter(
+            VMAssignment.assigned_user_id.is_(None),
+            VMAssignment.class_id.is_(None)
+        ).all()
         
         result = []
-        for assign in unassigned:
-            cls_name = None
-            if assign.class_id:
-                cls = Class.query.get(assign.class_id)
-                cls_name = cls.name if cls else "UNKNOWN"
-            
+        for assign in orphaned:
             result.append({
                 'id': assign.id,
                 'vmid': assign.proxmox_vmid,
                 'class_id': assign.class_id,
-                'class_name': cls_name or "DIRECT",
+                'class_name': "DIRECT",
                 'status': assign.status,
                 'assigned_user_id': assign.assigned_user_id
             })
@@ -76,7 +80,7 @@ def get_unassigned_assignments():
             "count": len(result)
         })
     except Exception as e:
-        logger.exception("Failed to get unassigned assignments")
+        logger.exception("Failed to get orphaned assignments")
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
@@ -137,25 +141,35 @@ def get_duplicate_assignments():
 @maintenance_bp.route("/assignments/delete-unassigned", methods=["POST"])
 @admin_required
 def delete_unassigned_assignments():
-    """Delete all unassigned assignments."""
+    """
+    Delete orphaned direct assignments (no user, no class).
+    
+    IMPORTANT: This does NOT delete class pool VMs that are unassigned!
+    Class pool VMs (with class_id but no assigned_user) are legitimate
+    unassigned VMs waiting for students to join.
+    """
     try:
-        unassigned = VMAssignment.query.filter_by(assigned_user_id=None).all()
-        count = len(unassigned)
+        # Only delete DIRECT assignments that are orphaned (no user AND no class)
+        orphaned = VMAssignment.query.filter(
+            VMAssignment.assigned_user_id.is_(None),
+            VMAssignment.class_id.is_(None)
+        ).all()
+        count = len(orphaned)
         
-        for assign in unassigned:
+        for assign in orphaned:
             db.session.delete(assign)
         
         db.session.commit()
-        logger.info(f"Deleted {count} unassigned assignments")
+        logger.info(f"Deleted {count} orphaned direct assignments (no class, no user)")
         
         return jsonify({
             "ok": True,
-            "message": f"Deleted {count} unassigned assignments",
+            "message": f"Deleted {count} orphaned assignments",
             "deleted": count
         })
     except Exception as e:
         db.session.rollback()
-        logger.exception("Failed to delete unassigned assignments")
+        logger.exception("Failed to delete orphaned assignments")
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
@@ -190,4 +204,125 @@ def delete_assignment(assignment_id: int):
     except Exception as e:
         db.session.rollback()
         logger.exception(f"Failed to delete assignment {assignment_id}")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@maintenance_bp.route("/recover-vms/scan", methods=["GET"])
+@admin_required
+def scan_recoverable_vms():
+    """Scan Proxmox for VMs that match class ID patterns."""
+    try:
+        from app.services.proxmox_service import get_all_vms
+        
+        # Get all VMs from Proxmox
+        all_vms = get_all_vms(skip_ips=True)
+        
+        # Get all classes
+        classes = Class.query.all()
+        
+        # Find VMs matching class ID patterns
+        # Pattern: class_id=5 → look for VMIDs starting with 50 (50001, 50002, etc)
+        recoverable = {}
+        
+        for cls in classes:
+            class_id = cls.id
+            class_prefix = str(class_id).zfill(2)  # "05" for class 5
+            
+            matching_vms = []
+            for vm in all_vms:
+                vmid = vm['vmid']
+                vmid_str = str(vmid)
+                
+                # Check if VMID starts with class ID pattern
+                if vmid_str.startswith(class_prefix) and len(vmid_str) >= 5:
+                    # Also check it's not already assigned to this class
+                    existing = VMAssignment.query.filter_by(
+                        proxmox_vmid=vmid,
+                        class_id=class_id
+                    ).first()
+                    
+                    if not existing:
+                        matching_vms.append({
+                            'vmid': vmid,
+                            'name': vm.get('name', 'unknown'),
+                            'status': vm.get('status', 'unknown'),
+                            'node': vm.get('node', 'unknown'),
+                            'type': vm.get('type', 'qemu')
+                        })
+            
+            if matching_vms:
+                recoverable[str(class_id)] = {
+                    'class_name': cls.name,
+                    'vms': matching_vms,
+                    'count': len(matching_vms)
+                }
+        
+        return jsonify({
+            "ok": True,
+            "recoverable": recoverable,
+            "total_recoverable": sum(d['count'] for d in recoverable.values())
+        })
+    
+    except Exception as e:
+        logger.exception("Failed to scan recoverable VMs")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@maintenance_bp.route("/recover-vms/recover", methods=["POST"])
+@admin_required
+def recover_deleted_vms():
+    """Recover deleted class VM assignments from Proxmox."""
+    try:
+        from app.services.proxmox_service import get_all_vms
+        
+        # Scan for recoverable VMs
+        all_vms = get_all_vms(skip_ips=True)
+        classes = Class.query.all()
+        
+        recovered = 0
+        
+        for cls in classes:
+            class_id = cls.id
+            class_prefix = str(class_id).zfill(2)
+            
+            for vm in all_vms:
+                vmid = vm['vmid']
+                vmid_str = str(vmid)
+                
+                # Check if VMID matches class pattern
+                if vmid_str.startswith(class_prefix) and len(vmid_str) >= 5:
+                    # Check it's not already assigned
+                    existing = VMAssignment.query.filter_by(
+                        proxmox_vmid=vmid,
+                        class_id=class_id
+                    ).first()
+                    
+                    if not existing:
+                        try:
+                            assign = VMAssignment(
+                                class_id=class_id,
+                                proxmox_vmid=vmid,
+                                vm_name=vm.get('name'),
+                                node=vm.get('node'),
+                                status='available',
+                                assigned_user_id=None
+                            )
+                            db.session.add(assign)
+                            recovered += 1
+                        except Exception as e:
+                            logger.error(f"Failed to recover VM {vmid}: {e}")
+                            continue
+        
+        db.session.commit()
+        logger.info(f"Recovered {recovered} VMs to classes")
+        
+        return jsonify({
+            "ok": True,
+            "message": f"Successfully recovered {recovered} VMs to classes",
+            "recovered": recovered
+        })
+    
+    except Exception as e:
+        db.session.rollback()
+        logger.exception("Failed to recover VMs")
         return jsonify({"ok": False, "error": str(e)}), 500
