@@ -15,8 +15,11 @@ with app.app_context():
         sys.exit(1)
     
     print(f"✓ Found class: Sys-Security (ID: {class_obj.id})")
-    print(f"  Enrolled students: {len(class_obj.students)}")
-    for student in class_obj.students:
+    
+    # Get enrolled students properly
+    students = class_obj.students.all()
+    print(f"  Enrolled students: {len(students)}")
+    for student in students:
         print(f"    - {student.username} (user_id: {student.id})")
     print()
     
@@ -43,7 +46,8 @@ with app.app_context():
     
     # Check what the query returns
     print("=== WHAT THE CLASS PAGE QUERY RETURNS ===")
-    for student in class_obj.students:
+    students = class_obj.students.all()
+    for student in students:
         assignment = VMAssignment.query.filter_by(
             class_id=class_obj.id,
             assigned_user_id=student.id
@@ -56,7 +60,8 @@ with app.app_context():
     
     print()
     print("=== DEBUG: Check ALL assignments for all enrolled students ===")
-    for student in class_obj.students:
+    students = class_obj.students.all()
+    for student in students:
         all_assignments = VMAssignment.query.filter_by(assigned_user_id=student.id).all()
         print(f"\n{student.username} (user_id: {student.id}) has {len(all_assignments)} total assignment(s):")
         for assign in all_assignments:
