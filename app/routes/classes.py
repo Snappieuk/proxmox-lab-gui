@@ -116,9 +116,14 @@ def view_class(class_id: int):
     # Get VM assignments for this class
     if can_manage:
         vm_assignments = get_vm_assignments_for_class(class_id)
+        # Explicitly load relationships for fresh data
+        for va in vm_assignments:
+            db.session.refresh(va)
     else:
         # Student only sees their own VM (if they have one)
         student_vm = get_user_vm_in_class(user.id if user else 0, class_id)
+        if student_vm:
+            db.session.refresh(student_vm)
         vm_assignments = [student_vm] if student_vm else []
     
     return render_template(

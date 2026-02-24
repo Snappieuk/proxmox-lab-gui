@@ -864,6 +864,9 @@ def list_class_vms(class_id: int):
         if not assignment:
             return jsonify({"ok": False, "error": "Access denied"}), 403
         
+        # Explicitly refresh the assignment to get fresh relationships
+        db.session.refresh(assignment)
+        
         # Get status from VMInventory (database-first, no Proxmox API call)
         status = get_vm_status_from_inventory(assignment.proxmox_vmid, cluster_ip)
         vm_data = assignment.to_dict()
@@ -881,6 +884,10 @@ def list_class_vms(class_id: int):
     # Refresh session cache before teacher/admin query
     db.session.expire_all()
     assignments = get_vm_assignments_for_class(class_id)
+    
+    # Explicitly refresh all assignments to get fresh relationships
+    for assignment in assignments:
+        db.session.refresh(assignment)
     vms = []
     
     for assignment in assignments:
