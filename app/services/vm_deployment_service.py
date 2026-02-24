@@ -525,6 +525,13 @@ def _sync_isos_background(cluster_id: str, app=None):
                                         db.session.add(new_iso)
                                         logger.debug(f"[ISO Sync] Added new ISO: {volid}")
                                 except Exception as db_error:
+                                    # Flush session to detect constraint errors early
+                                    # This is safer than silently adding to session
+                                    try:
+                                        db.session.flush()
+                                    except Exception:
+                                        # UNIQUE constraint or other conflict - roll back just this object
+                                        db.session.expunge_all()
                                     logger.warning(f"[ISO Sync] Failed to cache ISO {volid}: {db_error}")
                                     
                         except Exception as e:

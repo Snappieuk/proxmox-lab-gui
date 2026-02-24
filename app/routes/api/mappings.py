@@ -82,7 +82,8 @@ def list_mappings():
 def update_mappings():
     """Update mapping for a single user. Body: {user: str, vmids: [int]}.
     
-    Syncs to both legacy mappings.json AND database VMAssignment table (class_id=NULL).
+    Syncs to both legacy mappings.json AND database VMAssignment table.
+    Handles both direct assignments (class_id=NULL) and class-based assignments.
     """
     try:
         data = request.get_json(force=True) or {}
@@ -111,51 +112,59 @@ def update_mappings():
             mapping.pop(user, None)
         save_user_vm_map(mapping)
 
-        # Sync to database VMAssignment table (direct assignments, class_id=NULL)
+        # Sync to database VMAssignment table
         # Clear session cache to avoid stale data
         db.session.expire_all()
         
-        # Get current direct assignments for this user
+        # Get current assignments for this user (ANY type - class or direct)
         current_assignments = VMAssignment.query.filter_by(
-            assigned_user_id=user_obj.id,
-            class_id=None
+            assigned_user_id=user_obj.id
         ).all()
         current_vmids = {a.proxmox_vmid for a in current_assignments}
         
-        # Find VMs to add and remove
-        vmids_to_add = set(vmids) - current_vmids
-        vmids_to_remove = current_vmids - set(vmids)
+        # Find VMs to assign and unassign
+        vmids_to_assign = set(vmids) - current_vmids
+        vmids_to_unassign = current_vmids - set(vmids)
         
-        # Remove assignments no longer in list
-        for vmid in vmids_to_remove:
+        # Assign VMs to this user
+        for vmid in vmids_to_assign:
+            # Check if VM is already assigned to someone else
+            existing = VMAssignment.query.filter_by(proxmox_vmid=vmid).first()
+            
+            if existing:
+                if existing.assigned_user_id and existing.assigned_user_id != user_obj.id:
+                    # VM assigned to different user - log and skip
+                    other_user = existing.assigned_user.username if existing.assigned_user else "unknown"
+                    logger.warning("VM %d already assigned to %s, skipping", vmid, other_user)
+                    continue
+                
+                # Update existing assignment (whether class or direct)
+                existing.assigned_user_id = user_obj.id
+                existing.status = 'assigned'
+                logger.info("Updated assignment: user=%s, vmid=%d (class_id=%s)", user, vmid, existing.class_id)
+            else:
+                # Create new direct assignment (class_id=NULL)
+                assignment = VMAssignment(
+                    class_id=None,
+                    proxmox_vmid=vmid,
+                    assigned_user_id=user_obj.id,
+                    status='assigned'
+                )
+                db.session.add(assignment)
+                logger.info("Created direct assignment: user=%s, vmid=%d", user, vmid)
+        
+        # Unassign VMs from this user
+        for vmid in vmids_to_unassign:
             assignment = VMAssignment.query.filter_by(
                 proxmox_vmid=vmid,
-                assigned_user_id=user_obj.id,
-                class_id=None
+                assigned_user_id=user_obj.id
             ).first()
-            if assignment:
-                db.session.delete(assignment)
-                logger.info("Deleted direct assignment: user=%s, vmid=%d", user, vmid)
-        
-        # Add new assignments
-        for vmid in vmids_to_add:
-            # Check if VM already assigned to someone else
-            existing = VMAssignment.query.filter_by(
-                proxmox_vmid=vmid,
-                class_id=None
-            ).first()
-            if existing:
-                logger.warning("VM %d already assigned to %s, skipping", vmid, existing.assigned_user.username if existing.assigned_user else "unknown")
-                continue
             
-            assignment = VMAssignment(
-                class_id=None,  # Direct assignment
-                proxmox_vmid=vmid,
-                assigned_user_id=user_obj.id,
-                status='assigned'
-            )
-            db.session.add(assignment)
-            logger.info("Created direct assignment: user=%s, vmid=%d", user, vmid)
+            if assignment:
+                # Unassign but don't delete - keeps assignment record
+                assignment.assigned_user_id = None
+                assignment.status = 'available'
+                logger.info("Unassigned: user=%s, vmid=%d (class_id=%s)", user, vmid, assignment.class_id)
         
         # Commit all changes
         db.session.commit()
@@ -164,7 +173,7 @@ def update_mappings():
         db.session.expire_all()
         
         acting = require_user()
-        logger.info("User %s synced mappings for %s: vmids=%s", acting, user, vmids)
+        logger.info("User %s synced mappings: assigned=%s, unassigned=%s", acting, vmids_to_assign, vmids_to_unassign)
 
         return jsonify({"ok": True, "mapping": mapping.get(user, [])})
     except Exception as e:
