@@ -15,23 +15,16 @@ recover_vms_bp = Blueprint('recover_vms', __name__, url_prefix='/api/recover-vms
 @recover_vms_bp.route("/vms", methods=["GET"])
 @admin_required
 def get_cached_vms():
-    """Get all cached VMs (not in database yet)."""
+    """Get all cached VMs (including those in other classes)."""
     try:
         all_vms = get_all_vms()
         
-        # Get all VMIDs that are already in database
-        assigned_vmids = set(
-            db.session.query(VMAssignment.proxmox_vmid).select_from(VMAssignment).all()
-        )
-        assigned_vmids = {vmid for (vmid,) in assigned_vmids}
-        
-        # Filter to only unassigned VMs
-        unassigned = [vm for vm in all_vms if vm['vmid'] not in assigned_vmids]
-        
+        # Return all VMs - user can add any VM to any class
+        # (allows moving VMs between classes or adding duplicates if needed)
         return jsonify({
             "ok": True,
-            "vms": unassigned,
-            "total": len(unassigned)
+            "vms": all_vms,
+            "total": len(all_vms)
         })
     except Exception as e:
         logger.exception("Failed to get cached VMs")

@@ -82,7 +82,7 @@ function displayVMs(vms) {
     container.innerHTML = '';
 
     if (!vms || vms.length === 0) {
-        container.innerHTML = '<p style="color: #999; text-align: center;">No unassigned VMs found</p>';
+        container.innerHTML = '<p style="color: #999; text-align: center;">No VMs found</p>';
         return;
     }
 
@@ -105,10 +105,19 @@ function displayVMs(vms) {
 
         const info = document.createElement('span');
         info.style.fontSize = '0.95rem';
+        
+        // Show if VM is already in a class
+        let statusText = `(${vm.type}, on ${vm.node})`;
+        if (vm.class_id) {
+            statusText += ` <span style="color: #ff9800; font-size: 0.88rem;">→ In class ${vm.class_id}</span>`;
+        } else if (vm.assigned_user_id) {
+            statusText += ` <span style="color: #ff9800; font-size: 0.88rem;">→ Assigned to user</span>`;
+        }
+        
         info.innerHTML = `
             <strong>VMID ${vm.vmid}</strong>: ${vm.name} 
             <span style="color: #999; font-size: 0.88rem;">
-                (${vm.type}, on ${vm.node})
+                ${statusText}
             </span>
         `;
 
