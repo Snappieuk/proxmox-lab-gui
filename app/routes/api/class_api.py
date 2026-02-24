@@ -96,6 +96,9 @@ def list_classes():
     if not user:
         return jsonify({"ok": False, "error": "Not authenticated"}), 401
     
+    # Clear SQLAlchemy session cache to ensure fresh data from database
+    db.session.expire_all()
+    
     if user.is_adminer:
         classes = list_all_classes()
     elif user.is_teacher:
@@ -314,6 +317,10 @@ def get_class(class_id: int):
     user = get_current_user()
     if not user:
         return jsonify({"ok": False, "error": "Not authenticated"}), 401
+    
+    # Clear SQLAlchemy session cache to ensure fresh data from database
+    # This is critical when assignments are manually edited outside the app
+    db.session.expire_all()
     
     class_ = get_class_by_id(class_id)
     if not class_:
