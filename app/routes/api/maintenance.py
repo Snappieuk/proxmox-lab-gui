@@ -36,15 +36,18 @@ def get_assignment_stats():
             VMAssignment.assigned_user_id.isnot(None)
         ).count()
         
-        # Find duplicate groups
+        # Find duplicate groups (same VM assigned to multiple DIFFERENT users in same class)
+        # Note: A VM can have one unassigned + one assigned record - that's NOT a duplicate
         duplicates = db.session.query(
             VMAssignment.proxmox_vmid,
             VMAssignment.class_id,
-            func.count(VMAssignment.id).label('count')
+            func.count(func.distinct(VMAssignment.assigned_user_id)).label('user_count')
+        ).filter(
+            VMAssignment.assigned_user_id.isnot(None)  # Only count ASSIGNED records
         ).group_by(
             VMAssignment.proxmox_vmid,
             VMAssignment.class_id
-        ).having(func.count(VMAssignment.id) > 1).count()
+        ).having(func.count(func.distinct(VMAssignment.assigned_user_id)) > 1).count()
         
         return jsonify({
             "ok": True,
@@ -100,19 +103,23 @@ def get_unassigned_assignments():
 @maintenance_bp.route("/assignments/duplicates", methods=["GET"])
 @admin_required
 def get_duplicate_assignments():
-    """List duplicate assignments (same VM in same class)."""
+    """List duplicate assignments (same VM assigned to multiple different users)."""  
     try:
+        # Find VMs assigned to multiple DIFFERENT users in the same class
         duplicates_query = db.session.query(
             VMAssignment.proxmox_vmid,
             VMAssignment.class_id,
-            func.count(VMAssignment.id).label('count')
+            func.count(func.distinct(VMAssignment.assigned_user_id)).label('user_count')
+        ).filter(
+            VMAssignment.assigned_user_id.isnot(None)  # Only count ASSIGNED records
         ).group_by(
             VMAssignment.proxmox_vmid,
             VMAssignment.class_id
-        ).having(func.count(VMAssignment.id) > 1).all()
+        ).having(func.count(func.distinct(VMAssignment.assigned_user_id)) > 1).all()
         
         result = []
-        for vmid, class_id, count in duplicates_query:
+        for vmid, class_id, user_count in duplicates_query:
+            # Get all assignments for this VM (including unassigned ones for context)
             assignments = VMAssignment.query.filter_by(
                 proxmox_vmid=vmid,
                 class_id=class_id
@@ -137,7 +144,7 @@ def get_duplicate_assignments():
                 'vmid': vmid,
                 'class_id': class_id,
                 'class_name': cls_name or "DIRECT",
-                'count': count,
+                'count': user_count,
                 'assignments': assignment_list
             })
         
