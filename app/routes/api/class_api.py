@@ -229,6 +229,10 @@ def create_new_class():
                 class_name = class_obj.name
                 template_id = class_obj.template_id
                 pool_size = class_obj.pool_size
+                
+                # Fetch template object if it exists (inside the session context!)
+                template_obj = class_obj.template if class_obj.template_id else None
+                template_cluster_id = template_obj.cluster_id if template_obj else None
             
             # Use selected deployment method
             if deployment_method == "linked_clone":
@@ -237,8 +241,7 @@ def create_new_class():
                     logger.error("Linked clone deployment requires a template")
                     return
                 
-                template = class_obj.template
-                if not template:
+                if not template_obj:
                     logger.error(f"Template {template_id} not found")
                     return
                 
@@ -249,7 +252,7 @@ def create_new_class():
                     template_vmid=template_id,
                     num_students=pool_size,
                     deployment_node=deployment_node,
-                    cluster_id=class_obj.template.cluster_id if template else None
+                    cluster_id=template_cluster_id
                 )
                 
                 if success:
