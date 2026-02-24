@@ -496,10 +496,33 @@ def recreate_student_vms_from_template(
         ssh_executor = get_pooled_ssh_executor_from_config()
         # Pooled executor is already connected
         
-        # Export template to temporary base QCOW2
-        base_qcow2_path = f"{DEFAULT_TEMPLATE_STORAGE_PATH}/{class_prefix}-base.qcow2"
+        # First, get the template's disk storage to know where to export it
+        from app.services.vm_utils import get_vm_config_ssh, parse_disk_config
+        template_config = get_vm_config_ssh(ssh_executor, template_vmid, node=template_node)
         
-        logger.info(f"Exporting template {template_vmid} to {base_qcow2_path}")
+        # Find which storage the template is on
+        template_storage = None
+        for disk_slot in ['scsi0', 'virtio0', 'sata0', 'ide0', 'scsi1', 'virtio1']:
+            if disk_slot in template_config:
+                disk_config = template_config[disk_slot]
+                disk_info = parse_disk_config(disk_config)
+                template_storage = disk_info.get('storage')
+                if template_storage:
+                    logger.info(f"Template {template_vmid} disk is on storage: {template_storage}")
+                    break
+        
+        # Use template's storage if found, otherwise fall back to default
+        if not template_storage:
+            template_storage = PROXMOX_STORAGE_NAME
+            logger.warning(f"Could not determine template storage, using default: {template_storage}")
+        
+        # Build path using template's actual storage
+        template_storage_path = f"/mnt/pve/{template_storage}/images"
+        
+        # Export template to base QCOW2
+        base_qcow2_path = f"{template_storage_path}/{class_prefix}-base.qcow2"
+        
+        logger.info(f"Exporting template {template_vmid} to {base_qcow2_path} (storage: {template_storage})")
         success, error, disk_controller_type, ostype, bios, machine, cpu, scsihw, memory, cores, sockets, efi_disk, tpm_state, boot_order, net_model, disk_options_str, net_options_str, other_settings = export_template_to_qcow2(
             ssh_executor=ssh_executor,
             template_vmid=template_vmid,
@@ -520,10 +543,10 @@ def recreate_student_vms_from_template(
         
         # Student VMs should use class-base VM's disk as backing file, NOT the original base QCOW2
         # This creates proper 3-tier hierarchy: template → class-base → student VMs
-        qcow2_storage = PROXMOX_STORAGE_NAME  # Storage name for QCOW2 images
+        # Use the template's storage for all VMs in this class
         class_base_vmid = class_.vmid_prefix * 100 + 99  # e.g., 732 * 100 + 99 = 73299
-        class_base_disk_path = f"/mnt/pve/{qcow2_storage}/images/{class_base_vmid}/vm-{class_base_vmid}-disk-0.qcow2"
-        logger.info(f"Student VMs will use class-base backing file: {class_base_disk_path}")
+        class_base_disk_path = f"/mnt/pve/{template_storage}/images/{class_base_vmid}/vm-{class_base_vmid}-disk-0.qcow2"
+        logger.info(f"Student VMs will use class-base backing file: {class_base_disk_path} (storage: {template_storage})")
         
         for i in range(count):
             try:
