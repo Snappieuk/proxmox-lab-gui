@@ -12,18 +12,31 @@ logger = logging.getLogger(__name__)
 maintenance_bp = Blueprint('maintenance', __name__, url_prefix='/api/admin/maintenance')
 
 
+@maintenance_bp.route("/health", methods=["GET"])
+@admin_required
+def maintenance_health():
+    """Simple health check endpoint."""
+    return jsonify({"ok": True, "status": "maintenance API is working"})
+
+
 @maintenance_bp.route("/assignments/stats", methods=["GET"])
 @admin_required
 def get_assignment_stats():
     """Get statistics about VM assignments."""
     try:
         total = VMAssignment.query.count()
-        unassigned = VMAssignment.query.filter_by(assigned_user_id=None).count()
-        assigned_count = VMAssignment.query.filter(
+        
+        # VMs in classes (class_id is NOT NULL)
+        in_classes = VMAssignment.query.filter(
+            VMAssignment.class_id.isnot(None)
+        ).count()
+        
+        # VMs assigned to users (assigned_user_id is NOT NULL)
+        assigned_to_users = VMAssignment.query.filter(
             VMAssignment.assigned_user_id.isnot(None)
         ).count()
         
-        # Find duplicates
+        # Find duplicate groups
         duplicates = db.session.query(
             VMAssignment.proxmox_vmid,
             VMAssignment.class_id,
@@ -37,8 +50,8 @@ def get_assignment_stats():
             "ok": True,
             "stats": {
                 "total": total,
-                "assigned": assigned_count,
-                "unassigned": unassigned,
+                "in_classes": in_classes,
+                "assigned_to_users": assigned_to_users,
                 "duplicate_groups": duplicates
             }
         })
@@ -212,13 +225,21 @@ def delete_assignment(assignment_id: int):
 def scan_recoverable_vms():
     """Scan Proxmox for VMs that match class ID patterns."""
     try:
+        logger.info("Starting VM recovery scan")
+        
         from app.services.proxmox_service import get_all_vms
         
         # Get all VMs from Proxmox
-        all_vms = get_all_vms(skip_ips=True)
+        try:
+            all_vms = get_all_vms(skip_ips=True)
+            logger.info(f"Found {len(all_vms)} VMs in Proxmox")
+        except Exception as e:
+            logger.error(f"Failed to get VMs from Proxmox: {e}")
+            raise
         
         # Get all classes
         classes = Class.query.all()
+        logger.info(f"Found {len(classes)} classes")
         
         # Find VMs matching class ID patterns
         # Pattern: class_id=5 → look for VMIDs starting with 50 (50001, 50002, etc)
@@ -257,15 +278,18 @@ def scan_recoverable_vms():
                     'count': len(matching_vms)
                 }
         
+        total_recoverable = sum(d['count'] for d in recoverable.values())
+        logger.info(f"Found {total_recoverable} recoverable VMs")
+        
         return jsonify({
             "ok": True,
             "recoverable": recoverable,
-            "total_recoverable": sum(d['count'] for d in recoverable.values())
+            "total_recoverable": total_recoverable
         })
     
     except Exception as e:
         logger.exception("Failed to scan recoverable VMs")
-        return jsonify({"ok": False, "error": str(e)}), 500
+        return jsonify({"ok": False, "error": f"Scan error: {str(e)}"}), 500
 
 
 @maintenance_bp.route("/recover-vms/recover", methods=["POST"])
@@ -273,10 +297,17 @@ def scan_recoverable_vms():
 def recover_deleted_vms():
     """Recover deleted class VM assignments from Proxmox."""
     try:
+        logger.info("Starting VM recovery")
+        
         from app.services.proxmox_service import get_all_vms
         
         # Scan for recoverable VMs
-        all_vms = get_all_vms(skip_ips=True)
+        try:
+            all_vms = get_all_vms(skip_ips=True)
+        except Exception as e:
+            logger.error(f"Failed to get VMs: {e}")
+            raise
+        
         classes = Class.query.all()
         
         recovered = 0
@@ -314,7 +345,7 @@ def recover_deleted_vms():
                             continue
         
         db.session.commit()
-        logger.info(f"Recovered {recovered} VMs to classes")
+        logger.info(f"Successfully recovered {recovered} VMs")
         
         return jsonify({
             "ok": True,
@@ -325,4 +356,4 @@ def recover_deleted_vms():
     except Exception as e:
         db.session.rollback()
         logger.exception("Failed to recover VMs")
-        return jsonify({"ok": False, "error": str(e)}), 500
+        return jsonify({"ok": False, "error": f"Recovery error: {str(e)}"}), 500
