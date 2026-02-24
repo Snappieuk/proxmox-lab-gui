@@ -567,12 +567,6 @@ def recreate_student_vms_from_template(
                 created_vmids.append(vmid)
                 logger.info(f"Created student VM {vmid} ({student_name}) with MAC {student_mac}")
                 
-                # DISABLED: Automatic hostname rename can cause boot issues
-                # Enable this only if QEMU Guest Agent is installed in your templates
-                # from app.services.hostname_service import auto_rename_vm_after_boot
-                # from flask import current_app
-                # auto_rename_vm_after_boot(vmid, hostname, template_node, app=current_app._get_current_object())
-                
             except Exception as e:
                 logger.exception(f"Error creating student VM: {e}")
         
