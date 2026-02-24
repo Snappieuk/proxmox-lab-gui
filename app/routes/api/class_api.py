@@ -858,6 +858,8 @@ def list_class_vms(class_id: int):
     # Check access
     if not user.is_adminer and not user.is_teacher:
         # Student can only see their own VM
+        # Refresh session cache one more time for this query
+        db.session.expire_all()
         assignment = get_user_vm_in_class(user.id, class_id)
         if not assignment:
             return jsonify({"ok": False, "error": "Access denied"}), 403
@@ -876,6 +878,8 @@ def list_class_vms(class_id: int):
     if not user.is_adminer and not class_.is_owner(user):
         return jsonify({"ok": False, "error": "Access denied"}), 403
     
+    # Refresh session cache before teacher/admin query
+    db.session.expire_all()
     assignments = get_vm_assignments_for_class(class_id)
     vms = []
     
