@@ -128,20 +128,30 @@ def update_mappings():
         
         # Assign VMs to this user
         for vmid in vmids_to_assign:
-            # Check if VM is already assigned to someone else
-            existing = VMAssignment.query.filter_by(proxmox_vmid=vmid).first()
+            # Prioritize class-based assignments over direct assignments
+            # 1. First look for ANY class-based assignment for this VM
+            class_assignment = VMAssignment.query.filter_by(
+                proxmox_vmid=vmid
+            ).filter(VMAssignment.class_id.isnot(None)).first()
             
-            if existing:
-                if existing.assigned_user_id and existing.assigned_user_id != user_obj.id:
-                    # VM assigned to different user - log and skip
-                    other_user = existing.assigned_user.username if existing.assigned_user else "unknown"
+            # 2. If no class assignment, look for direct assignment
+            if not class_assignment:
+                class_assignment = VMAssignment.query.filter_by(
+                    proxmox_vmid=vmid,
+                    class_id=None
+                ).first()
+            
+            if class_assignment:
+                # Check if already assigned to a different user
+                if class_assignment.assigned_user_id and class_assignment.assigned_user_id != user_obj.id:
+                    other_user = class_assignment.assigned_user.username if class_assignment.assigned_user else "unknown"
                     logger.warning("VM %d already assigned to %s, skipping", vmid, other_user)
                     continue
                 
-                # Update existing assignment (whether class or direct)
-                existing.assigned_user_id = user_obj.id
-                existing.status = 'assigned'
-                logger.info("Updated assignment: user=%s, vmid=%d (class_id=%s)", user, vmid, existing.class_id)
+                # Update existing assignment (class or direct)
+                class_assignment.assigned_user_id = user_obj.id
+                class_assignment.status = 'assigned'
+                logger.info("Updated assignment: user=%s, vmid=%d (class_id=%s)", user, vmid, class_assignment.class_id)
             else:
                 # Create new direct assignment (class_id=NULL)
                 assignment = VMAssignment(

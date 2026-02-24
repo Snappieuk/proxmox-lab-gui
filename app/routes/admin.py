@@ -184,6 +184,17 @@ def admin_settings():
 
 
 # ==============================================================================
+# MAINTENANCE
+# ==============================================================================
+
+@admin_bp.route("/maintenance")
+@admin_required
+def maintenance():
+    """Admin maintenance page for system tasks."""
+    return render_template("admin/maintenance.html")
+
+
+# ==============================================================================
 # LEGACY MAPPINGS UI
 # ==============================================================================
 
