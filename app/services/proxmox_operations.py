@@ -35,9 +35,119 @@ logger = logging.getLogger(__name__)
 # Re-export sanitize_vm_name from vm_utils for backward compatibility
 # New code should import from vm_utils directly
 from app.services.vm_utils import sanitize_vm_name  # noqa: F401, E402
+from app.services.vm_utils import get_next_available_vmid_api, get_vm_mac_address_api  # noqa: E402
 
 # Default cluster IP for class operations (restricted to single cluster)
 CLASS_CLUSTER_IP = "10.220.15.249"
+
+# Ordered list of boot-disk config keys to check in Proxmox VM configs.
+# Used by _find_boot_disk() and any caller that needs to locate the primary disk.
+_BOOT_DISK_SLOTS = ['scsi0', 'virtio0', 'sata0', 'ide0']
+
+
+def _get_proxmox_for_cluster(cluster_ip=None):
+    """Return a Proxmox API connection for the given cluster IP.
+
+    Looks up the cluster by host IP, falling back to CLASS_CLUSTER_IP when
+    cluster_ip is None.
+
+    Returns:
+        (proxmox, None) on success, (None, error_message) on failure.
+    """
+    target_ip = cluster_ip or CLASS_CLUSTER_IP
+    cluster_id = None
+    for cluster in get_clusters_from_db():
+        if cluster["host"] == target_ip:
+            cluster_id = cluster["id"]
+            break
+    if not cluster_id:
+        return None, f"Cluster not found for IP: {target_ip}"
+    return get_proxmox_admin_for_cluster(cluster_id), None
+
+
+def _find_boot_disk(config: dict):
+    """Find the first boot-disk entry in a Proxmox VM config dict.
+
+    Searches _BOOT_DISK_SLOTS in order and returns the first match.
+
+    Returns:
+        (disk_key, disk_config_str) or (None, None) if no disk found.
+    """
+    for key in _BOOT_DISK_SLOTS:
+        if key in config:
+            return key, config[key]
+    return None, None
+
+
+def _get_vm_actual_node(proxmox, vmid: int, fallback_node: str) -> str:
+    """Resolve the node a VM currently lives on via cluster resources.
+
+    Falls back to *fallback_node* if the cluster query fails or the VM is
+    not found (e.g. the VM was not yet visible in the cluster index).
+
+    Args:
+        proxmox: ProxmoxAPI instance.
+        vmid: VM ID to locate.
+        fallback_node: Node name to return when the VM cannot be found.
+            Callers that always have a valid hint (start/stop/delete) should
+            pass that hint here.  Callers without a known node should handle
+            the case where this returns the same ``fallback_node`` they passed.
+
+    Returns:
+        Resolved node name.  Returns *fallback_node* (which may be None if
+        the caller passed None) when the VM is not found in cluster resources.
+    """
+    try:
+        resources = proxmox.cluster.resources.get(type="vm")
+        for r in resources:
+            if int(r.get('vmid', -1)) == int(vmid):
+                actual = r.get('node')
+                if actual and actual != fallback_node:
+                    logger.info(
+                        f"VM {vmid} was migrated from {fallback_node} to {actual}, "
+                        "using actual node"
+                    )
+                return actual or fallback_node
+    except Exception as e:
+        logger.warning(
+            f"Cluster resources query failed: {e}, using provided node {fallback_node}"
+        )
+    return fallback_node
+
+
+def _execute_vm_power_action(proxmox, vmid: int, node: str, action: str) -> Tuple[bool, str]:
+    """Perform a power action on a VM after resolving its current node.
+
+    Both start and stop share identical cluster-resource lookup and node-resolution
+    logic; only the final API call and guard checks differ.
+
+    Args:
+        proxmox: ProxmoxAPI instance.
+        vmid: VM ID.
+        node: Hint node (used as fallback if cluster lookup fails).
+        action: 'start' or 'stop'.
+
+    Returns:
+        Tuple of (success, message).
+    """
+    actual_node = _get_vm_actual_node(proxmox, vmid, node)
+
+    if action == 'start':
+        vm_config = proxmox.nodes(actual_node).qemu(vmid).config.get()
+        if vm_config.get('template') == 1:
+            return (
+                False,
+                "Cannot start a template VM. This VM is configured as a template "
+                "and must be cloned to a regular VM before it can be started.",
+            )
+        proxmox.nodes(actual_node).qemu(vmid).status.start.post()
+        logger.info(f"Started VM {vmid} on {actual_node}")
+        return True, "VM started successfully"
+
+    # action == 'stop'
+    proxmox.nodes(actual_node).qemu(vmid).status.shutdown.post()
+    logger.info(f"Stopped VM {vmid} on {actual_node}")
+    return True, "VM stopped successfully"
 
 
 def get_node_specific_template_vmid(node_id: int, template_base_id: int) -> int:
@@ -130,7 +240,6 @@ def wait_for_clone_completion(proxmox, node: str, vmid: int, timeout: int = 300)
     # Timeout reached
     logger.error(f"Timeout waiting for VM {vmid} clone after {timeout}s")
     raise TimeoutError(f"Clone of VM {vmid} did not complete within {timeout} seconds")
-    raise TimeoutError(f"Clone timeout: VM {vmid} did not complete within {timeout}s")
 
 
 def verify_template_has_disk(proxmox, node: str, template_vmid: int, retries: int = 3, retry_delay: float = 2.0) -> Tuple[bool, str]:
@@ -153,11 +262,10 @@ def verify_template_has_disk(proxmox, node: str, template_vmid: int, retries: in
             config = proxmox.nodes(node).qemu(template_vmid).config.get()
             
             # Check for boot disk
-            disk_keys = ['scsi0', 'virtio0', 'sata0', 'ide0']
-            for key in disk_keys:
-                if key in config:
-                    logger.debug(f"Template {template_vmid} has disk: {key} (attempt {attempt + 1}/{retries})")
-                    return True, key
+            disk_key, _ = _find_boot_disk(config)
+            if disk_key:
+                logger.debug(f"Template {template_vmid} has disk: {disk_key} (attempt {attempt + 1}/{retries})")
+                return True, disk_key
             
             if attempt < retries - 1:
                 logger.warning(f"Template {template_vmid} has no disk on attempt {attempt + 1}/{retries}, retrying in {retry_delay}s...")
@@ -198,15 +306,7 @@ def move_vm_disk_to_local_storage(proxmox, node: str, vmid: int, target_storage:
         config = proxmox.nodes(node).qemu(vmid).config.get()
         
         # Find the disk to move
-        disk_keys = ['scsi0', 'virtio0', 'sata0', 'ide0']
-        source_disk = None
-        disk_key = None
-        
-        for key in disk_keys:
-            if key in config:
-                disk_key = key
-                source_disk = config[key]
-                break
+        disk_key, source_disk = _find_boot_disk(config)
         
         if not source_disk:
             return False, f"No disk found on VM {vmid}"
@@ -284,16 +384,11 @@ def replicate_templates_to_all_nodes(cluster_ip: str = None) -> None:
         from app.models import Template, db
         
         target_ip = cluster_ip or CLASS_CLUSTER_IP
-        cluster_id = None
-        for cluster in get_clusters_from_db():
-            if cluster["host"] == target_ip:
-                cluster_id = cluster["id"]
-                break
-        if not cluster_id:
-            logger.warning(f"replicate_templates_to_all_nodes: Cluster not found for IP {target_ip}")
+        proxmox, err = _get_proxmox_for_cluster(cluster_ip)
+        if err:
+            logger.warning(f"replicate_templates_to_all_nodes: {err}")
             return
 
-        proxmox = get_proxmox_admin_for_cluster(cluster_id)
         nodes = [n.get('node') for n in proxmox.nodes.get()]
         logger.info(f"Template replication startup: nodes={nodes}")
 
@@ -574,18 +669,11 @@ def list_proxmox_templates(cluster_ip: str = None) -> List[Dict[str, Any]]:
         if cluster_ip and cluster_ip != CLASS_CLUSTER_IP:
             logger.warning(f"Template listing restricted to {CLASS_CLUSTER_IP}, ignoring request for {cluster_ip}")
         
-        # Find cluster by IP
-        cluster_id = None
-        for cluster in get_clusters_from_db():
-            if cluster["host"] == target_ip:
-                cluster_id = cluster["id"]
-                break
-        
-        if not cluster_id:
-            logger.error(f"Cluster not found for IP: {target_ip}")
+        proxmox, err = _get_proxmox_for_cluster(target_ip)
+        if err:
+            logger.error(f"list_proxmox_templates: {err}")
             return []
         
-        proxmox = get_proxmox_admin_for_cluster(cluster_id)
         templates = []
         
         for node in proxmox.nodes.get():
@@ -633,20 +721,12 @@ def clone_vm_from_template(template_vmid: int, new_vmid: int, name: str, node: s
     
     try:
         # Restrict to 10.220.15.249 cluster only
-        target_ip = CLASS_CLUSTER_IP
         if cluster_ip and cluster_ip != CLASS_CLUSTER_IP:
             return False, f"VM deployment restricted to {CLASS_CLUSTER_IP} cluster only"
         
-        cluster_id = None
-        for cluster in get_clusters_from_db():
-            if cluster["host"] == target_ip:
-                cluster_id = cluster["id"]
-                break
-        
-        if not cluster_id:
-            return False, f"Cluster not found for IP: {target_ip}"
-        
-        proxmox = get_proxmox_admin_for_cluster(cluster_id)
+        proxmox, err = _get_proxmox_for_cluster(cluster_ip)
+        if err:
+            return False, err
 
         # Skip pre-clone verification - if template is bad, clone will fail anyway
         # Verification here causes race conditions with freshly converted templates
@@ -665,12 +745,8 @@ def clone_vm_from_template(template_vmid: int, new_vmid: int, name: str, node: s
             if not full_clone:
                 tpl_cfg = proxmox.nodes(node).qemu(template_vmid).config.get()
                 # Determine boot disk entry (scsi0/virtio0/sata0/ide0)
-                boot_key = None
-                for key in ['scsi0','virtio0','sata0','ide0']:
-                    if key in tpl_cfg:
-                        boot_key = key
-                        break
-                disk_str = tpl_cfg.get(boot_key, '') if boot_key else ''
+                boot_key, disk_str = _find_boot_disk(tpl_cfg)
+                disk_str = disk_str or ''
                 # Example: 'TRUENAS-NFS:112/vm-112-disk-0.qcow2,size=32G'
                 backing = disk_str.split(',')[0]
                 stor = backing.split(':',1)[0] if ':' in backing else ''
@@ -784,44 +860,10 @@ def start_class_vm(vmid: int, node: str, cluster_ip: str = None) -> Tuple[bool, 
         Tuple of (success, message)
     """
     try:
-        cluster_id = None
-        for cluster in get_clusters_from_db():
-            if cluster["host"] == (cluster_ip or CLASS_CLUSTER_IP):
-                cluster_id = cluster["id"]
-                break
-        
-        if not cluster_id:
-            return False, "Cluster not found"
-        
-        proxmox = get_proxmox_admin_for_cluster(cluster_id)
-        
-        # Query cluster-wide to find which node actually has this VM
-        actual_node = None
-        try:
-            resources = proxmox.cluster.resources.get(type="vm")
-            for r in resources:
-                if int(r.get('vmid', -1)) == int(vmid):
-                    actual_node = r.get('node')
-                    if actual_node != node:
-                        logger.info(f"VM {vmid} was migrated from {node} to {actual_node}, using actual node")
-                    break
-        except Exception as e:
-            logger.warning(f"Cluster resources query failed: {e}, using provided node {node}")
-            actual_node = node
-        
-        if not actual_node:
-            actual_node = node
-        
-        # Check if this is a template before trying to start
-        vm_config = proxmox.nodes(actual_node).qemu(vmid).config.get()
-        if vm_config.get('template') == 1:
-            return False, "Cannot start a template VM. This VM is configured as a template and must be cloned to a regular VM before it can be started."
-        
-        proxmox.nodes(actual_node).qemu(vmid).status.start.post()
-        
-        logger.info(f"Started VM {vmid} on {actual_node}")
-        return True, "VM started successfully"
-        
+        proxmox, err = _get_proxmox_for_cluster(cluster_ip)
+        if err:
+            return False, err
+        return _execute_vm_power_action(proxmox, vmid, node, 'start')
     except Exception as e:
         logger.exception(f"Failed to start VM {vmid}: {e}")
         return False, f"Start failed: {str(e)}"
@@ -839,39 +881,10 @@ def stop_class_vm(vmid: int, node: str, cluster_ip: str = None) -> Tuple[bool, s
         Tuple of (success, message)
     """
     try:
-        cluster_id = None
-        for cluster in get_clusters_from_db():
-            if cluster["host"] == (cluster_ip or CLASS_CLUSTER_IP):
-                cluster_id = cluster["id"]
-                break
-        
-        if not cluster_id:
-            return False, "Cluster not found"
-        
-        proxmox = get_proxmox_admin_for_cluster(cluster_id)
-        
-        # Query cluster-wide to find which node actually has this VM
-        actual_node = None
-        try:
-            resources = proxmox.cluster.resources.get(type="vm")
-            for r in resources:
-                if int(r.get('vmid', -1)) == int(vmid):
-                    actual_node = r.get('node')
-                    if actual_node != node:
-                        logger.info(f"VM {vmid} was migrated from {node} to {actual_node}, using actual node")
-                    break
-        except Exception as e:
-            logger.warning(f"Cluster resources query failed: {e}, using provided node {node}")
-            actual_node = node
-        
-        if not actual_node:
-            actual_node = node
-        
-        proxmox.nodes(actual_node).qemu(vmid).status.shutdown.post()
-        
-        logger.info(f"Stopped VM {vmid} on {actual_node}")
-        return True, "VM stopped successfully"
-        
+        proxmox, err = _get_proxmox_for_cluster(cluster_ip)
+        if err:
+            return False, err
+        return _execute_vm_power_action(proxmox, vmid, node, 'stop')
     except Exception as e:
         logger.exception(f"Failed to stop VM {vmid}: {e}")
         return False, f"Stop failed: {str(e)}"
@@ -898,15 +911,18 @@ def get_vm_status_from_inventory(vmid: int, cluster_ip: str = None) -> Dict[str,
     
     try:
         # Find cluster_id from cluster_ip
+        proxmox, err = _get_proxmox_for_cluster(cluster_ip)
+        if err:
+            logger.warning(f"get_vm_status_from_inventory: {err}")
+            return {"status": "unknown", "mac": "N/A", "ip": "N/A"}
+        
+        # Derive cluster_id for VMInventory query
+        target_ip = cluster_ip or CLASS_CLUSTER_IP
         cluster_id = None
         for cluster in get_clusters_from_db():
-            if cluster["host"] == (cluster_ip or CLASS_CLUSTER_IP):
+            if cluster["host"] == target_ip:
                 cluster_id = cluster["id"]
                 break
-        
-        if not cluster_id:
-            logger.warning(f"Cluster not found for IP {cluster_ip or CLASS_CLUSTER_IP}")
-            return {"status": "unknown", "mac": "N/A", "ip": "N/A"}
         
         # Query VMInventory table
         vm_record = VMInventory.query.filter_by(
@@ -971,24 +987,21 @@ def get_vm_status(vmid: int, node: str = None, cluster_ip: str = None) -> Dict[s
         Dict with status, uptime, mac, ip, etc.
     """
     try:
-        cluster_id = None
-        for cluster in get_clusters_from_db():
-            if cluster["host"] == (cluster_ip or CLASS_CLUSTER_IP):
-                cluster_id = cluster["id"]
-                break
-        
-        if not cluster_id:
+        proxmox, err = _get_proxmox_for_cluster(cluster_ip)
+        if err:
             return {"status": "unknown", "mac": "N/A", "ip": "N/A"}
         
-        proxmox = get_proxmox_admin_for_cluster(cluster_id)
-        
-        # If node not provided, find it from cluster resources
+        # If node not provided (or stale hint), discover it from cluster resources.
+        # We don't have a valid fallback here, so scan directly and fail if missing.
         if not node or node == "qemu" or node == "None":
-            resources = proxmox.cluster.resources.get(type="vm")
-            for r in resources:
-                if int(r.get('vmid', -1)) == int(vmid):
-                    node = r.get('node')
-                    break
+            try:
+                resources = proxmox.cluster.resources.get(type="vm")
+                for r in resources:
+                    if int(r.get('vmid', -1)) == int(vmid):
+                        node = r.get('node')
+                        break
+            except Exception:
+                pass
         
         if not node:
             return {"status": "unknown", "mac": "N/A", "ip": "N/A"}
@@ -1000,25 +1013,9 @@ def get_vm_status(vmid: int, node: str = None, cluster_ip: str = None) -> Dict[s
             logger.warning(f"Failed to get VM {vmid} status: {e}")
             return {"status": "unknown", "mac": "N/A", "ip": "N/A", "error": str(e)}
         
-        # Get MAC address from VM config
-        mac_address = None
+        # Get MAC address from VM config using canonical helper
+        mac_address = get_vm_mac_address_api(proxmox, node, vmid)
         ip_address = None
-        try:
-            config = proxmox.nodes(node).qemu(vmid).config.get()
-            # Look for net0, net1, etc.
-            for key in config:
-                if key.startswith('net'):
-                    net_config = config[key]
-                    # Format: "virtio=XX:XX:XX:XX:XX:XX,bridge=vmbr0"
-                    if '=' in net_config:
-                        parts = net_config.split(',')
-                        if len(parts) > 0:
-                            mac_part = parts[0].split('=')[1] if '=' in parts[0] else None
-                            if mac_part:
-                                mac_address = mac_part.upper()
-                                break
-        except Exception as e:
-            logger.debug(f"Failed to get MAC address for VM {vmid}: {e}")
         
         # Primary: resolve IP via ARP scanner (guest agent/LXC may not be available)
         try:
@@ -1073,16 +1070,9 @@ def create_vm_snapshot(vmid: int, node: str, snapname: str, description: str = "
         Tuple of (success, message)
     """
     try:
-        cluster_id = None
-        for cluster in get_clusters_from_db():
-            if cluster["host"] == (cluster_ip or CLASS_CLUSTER_IP):
-                cluster_id = cluster["id"]
-                break
-        
-        if not cluster_id:
-            return False, "Cluster not found"
-        
-        proxmox = get_proxmox_admin_for_cluster(cluster_id)
+        proxmox, err = _get_proxmox_for_cluster(cluster_ip)
+        if err:
+            return False, err
         proxmox.nodes(node).qemu(vmid).snapshot.post(
             snapname=snapname,
             description=description
@@ -1110,16 +1100,9 @@ def revert_vm_to_snapshot(vmid: int, node: str, snapname: str,
         Tuple of (success, message)
     """
     try:
-        cluster_id = None
-        for cluster in get_clusters_from_db():
-            if cluster["host"] == (cluster_ip or CLASS_CLUSTER_IP):
-                cluster_id = cluster["id"]
-                break
-        
-        if not cluster_id:
-            return False, "Cluster not found"
-        
-        proxmox = get_proxmox_admin_for_cluster(cluster_id)
+        proxmox, err = _get_proxmox_for_cluster(cluster_ip)
+        if err:
+            return False, err
         proxmox.nodes(node).qemu(vmid).snapshot(snapname).rollback.post()
         
         logger.info(f"Reverted VM {vmid} to snapshot {snapname}")
@@ -1158,16 +1141,9 @@ def delete_vm(vmid: int, node: str, cluster_ip: str = None) -> Tuple[bool, str]:
     
     try:
         # Get Proxmox API connection for VM control
-        cluster_id = None
-        for cluster in get_clusters_from_db():
-            if cluster["host"] == (cluster_ip or CLASS_CLUSTER_IP):
-                cluster_id = cluster["id"]
-                break
-        
-        if not cluster_id:
-            return False, "Cluster not found"
-        
-        proxmox = get_proxmox_admin_for_cluster(cluster_id)
+        proxmox, err = _get_proxmox_for_cluster(cluster_ip)
+        if err:
+            return False, err
         
         # Use Proxmox API to delete VM (handles node routing automatically)
         try:
@@ -1258,16 +1234,9 @@ def convert_vm_to_template(vmid: int, node: str, cluster_ip: str = None) -> Tupl
         Tuple of (success, message)
     """
     try:
-        cluster_id = None
-        for cluster in get_clusters_from_db():
-            if cluster["host"] == (cluster_ip or CLASS_CLUSTER_IP):
-                cluster_id = cluster["id"]
-                break
-        
-        if not cluster_id:
-            return False, "Cluster not found"
-        
-        proxmox = get_proxmox_admin_for_cluster(cluster_id)
+        proxmox, err = _get_proxmox_for_cluster(cluster_ip)
+        if err:
+            return False, err
 
         # Verify VM exists on the target node before conversion to prevent 500 errors
         try:
@@ -1365,37 +1334,12 @@ def save_teacher_template(teacher_vm_vmid: int, teacher_vm_node: str, old_base_t
         Tuple of (success, new_template_vmid, teacher_vm_vmid, message)
     """
     try:
-        cluster_id = None
-        for cluster in get_clusters_from_db():
-            if cluster["host"] == (cluster_ip or CLASS_CLUSTER_IP):
-                cluster_id = cluster["id"]
-                break
-        
-        if not cluster_id:
-            return False, None, None, "Cluster not found"
-        
-        proxmox = get_proxmox_admin_for_cluster(cluster_id)
+        proxmox, err = _get_proxmox_for_cluster(cluster_ip)
+        if err:
+            return False, None, None, err
         
         # Step 1: Find next available VMID for the new template
-        used_vmids = set()
-        try:
-            resources = proxmox.cluster.resources.get(type="vm")
-            for r in resources:
-                used_vmids.add(r["vmid"])
-        except Exception:
-            for node_info in proxmox.nodes.get():
-                node_name = node_info["node"]
-                try:
-                    for vm in proxmox.nodes(node_name).qemu.get():
-                        used_vmids.add(vm["vmid"])
-                    for ct in proxmox.nodes(node_name).lxc.get():
-                        used_vmids.add(ct["vmid"])
-                except Exception:
-                    pass
-        
-        new_template_vmid = 200
-        while new_template_vmid in used_vmids:
-            new_template_vmid += 1
+        new_template_vmid = get_next_available_vmid_api(proxmox, start=200)
         
         # Step 2: Clone teacher's VM to create the new base template
         new_template_name = f"{name_prefix}-BaseTemplate"
@@ -1452,16 +1396,9 @@ def reimage_teacher_vm(old_teacher_vm_vmid: int, old_teacher_vm_node: str,
         Tuple of (success, new_teacher_vm_vmid, message)
     """
     try:
-        cluster_id = None
-        for cluster in get_clusters_from_db():
-            if cluster["host"] == (cluster_ip or CLASS_CLUSTER_IP):
-                cluster_id = cluster["id"]
-                break
-        
-        if not cluster_id:
-            return False, None, "Cluster not found"
-        
-        proxmox = get_proxmox_admin_for_cluster(cluster_id)
+        proxmox, err = _get_proxmox_for_cluster(cluster_ip)
+        if err:
+            return False, None, err
         
         # Step 1: Delete old teacher VM
         logger.info(f"Deleting old teacher VM {old_teacher_vm_vmid}")
@@ -1520,16 +1457,9 @@ def push_template_to_students(base_template_vmid: int, base_template_node: str,
     from app.services.clone_progress import update_clone_progress
     
     try:
-        cluster_id = None
-        for cluster in get_clusters_from_db():
-            if cluster["host"] == (cluster_ip or CLASS_CLUSTER_IP):
-                cluster_id = cluster["id"]
-                break
-        
-        if not cluster_id:
-            return False, [], "Cluster not found"
-        
-        proxmox = get_proxmox_admin_for_cluster(cluster_id)
+        proxmox, err = _get_proxmox_for_cluster(cluster_ip)
+        if err:
+            return False, [], err
         
         # Step 1: Delete all existing student VMs
         logger.info(f"Deleting {len(student_vm_list)} existing student VMs")
@@ -1638,16 +1568,9 @@ def convert_template_to_vm(template_vmid: int, new_vmid: int, name: str, node: s
         Tuple of (success, new_vmid, message)
     """
     try:
-        cluster_id = None
-        for cluster in get_clusters_from_db():
-            if cluster["host"] == (cluster_ip or CLASS_CLUSTER_IP):
-                cluster_id = cluster["id"]
-                break
-        
-        if not cluster_id:
-            return False, None, "Cluster not found"
-        
-        proxmox = get_proxmox_admin_for_cluster(cluster_id)
+        proxmox, err = _get_proxmox_for_cluster(cluster_ip)
+        if err:
+            return False, None, err
         safe_name = sanitize_vm_name(name)
         
         # Clone template to create a regular VM
@@ -1699,49 +1622,16 @@ def clone_template_for_class(template_vmid: int, node: str, name: str,
             logger.error("clone_template_for_class: node parameter is empty or None")
             return False, None, "Template node is not set. Please ensure the template has a valid node."
         
-        target_ip = cluster_ip or CLASS_CLUSTER_IP
-        cluster_id = None
-        for cluster in get_clusters_from_db():
-            if cluster["host"] == target_ip:
-                cluster_id = cluster["id"]
-                break
-        
-        if not cluster_id:
-            return False, None, f"Cluster not found for IP: {target_ip}"
-        
-        proxmox = get_proxmox_admin_for_cluster(cluster_id)
+        proxmox, err = _get_proxmox_for_cluster(cluster_ip)
+        if err:
+            return False, None, err
         
         safe_name = sanitize_vm_name(name, fallback="clonetemplate")
         logger.info(f"Cloning template VMID {template_vmid} from node '{node}' to create '{safe_name}' (original requested name: '{name}')")
         
-        # Find next available VMID - use cluster resources API for complete view
-        used_vmids = set()
-        try:
-            # Use cluster resources API to get ALL VMs and containers across all nodes
-            resources = proxmox.cluster.resources.get(type="vm")
-            for r in resources:
-                used_vmids.add(r["vmid"])
-            logger.info(f"Found {len(used_vmids)} existing VMIDs via cluster resources API")
-        except Exception as e:
-            logger.warning(f"Cluster resources API failed, falling back to per-node query: {e}")
-            # Fallback: query each node individually
-            for node_info in proxmox.nodes.get():
-                node_name = node_info["node"]
-                try:
-                    # Get both QEMU VMs and LXC containers
-                    for vm in proxmox.nodes(node_name).qemu.get():
-                        used_vmids.add(vm["vmid"])
-                    for ct in proxmox.nodes(node_name).lxc.get():
-                        used_vmids.add(ct["vmid"])
-                except Exception as node_error:
-                    logger.warning(f"Failed to query node {node_name}: {node_error}")
-        
-        # Find next available VMID starting from 100
-        new_vmid = 100
-        while new_vmid in used_vmids:
-            new_vmid += 1
-        
-        logger.info(f"Selected new VMID: {new_vmid} (next available after checking {len(used_vmids)} existing VMs)")
+        # Find next available VMID using canonical helper
+        new_vmid = get_next_available_vmid_api(proxmox, start=100)
+        logger.info(f"Selected new VMID: {new_vmid}")
         
         # Clone the template (full clone, not linked)
         logger.info(f"Calling proxmox.nodes('{node}').qemu({template_vmid}).clone.post(newid={new_vmid}, name='{safe_name}', full=1)")
@@ -1756,9 +1646,7 @@ def clone_template_for_class(template_vmid: int, node: str, name: str,
             # If clone fails due to VMID conflict, try once more with next VMID
             if "already exists" in str(clone_error).lower() or "vmid" in str(clone_error).lower():
                 logger.warning(f"VMID {new_vmid} conflict detected, trying next VMID...")
-                new_vmid += 1
-                while new_vmid in used_vmids:
-                    new_vmid += 1
+                new_vmid = get_next_available_vmid_api(proxmox, start=new_vmid + 1)
                 
                 logger.info(f"Retrying clone with VMID {new_vmid}")
                 proxmox.nodes(node).qemu(template_vmid).clone.post(
@@ -1795,35 +1683,21 @@ def create_vm_shells(count: int, name_prefix: str, node: str, cluster_ip: str = 
         List of dicts with keys: vmid, name, node, success, error
     """
     results = []
-    target_ip = cluster_ip or CLASS_CLUSTER_IP
-    cluster_id = None
-    
-    for cluster in get_clusters_from_db():
-        if cluster["host"] == target_ip:
-            cluster_id = cluster["id"]
-            break
-    
-    if not cluster_id:
-        logger.error(f"Cluster not found for IP: {target_ip}")
+    proxmox, err = _get_proxmox_for_cluster(cluster_ip)
+    if err:
+        logger.error(f"create_vm_shells: {err}")
         return []
     
     try:
-        proxmox = get_proxmox_admin_for_cluster(cluster_id)
-        
-        # Get all used VMIDs
-        used_vmids = set()
-        resources = proxmox.cluster.resources.get(type="vm")
-        for r in resources:
-            used_vmids.add(r["vmid"])
+        # Seed the used-VMID set once; each iteration reserves its allocation.
+        used_vmids: set = set()
         
         logger.info(f"Creating {count} VM shells on node '{node}'...")
         
         for i in range(1, count + 1):
-            # Find next available VMID
-            new_vmid = 100
-            while new_vmid in used_vmids:
-                new_vmid += 1
-            used_vmids.add(new_vmid)  # Reserve this VMID
+            # Find next available VMID using canonical helper (pass accumulated set)
+            new_vmid = get_next_available_vmid_api(proxmox, start=100, used_vmids=used_vmids)
+            used_vmids.add(new_vmid)  # Reserve for subsequent iterations
             
             vm_name = sanitize_vm_name(f"{name_prefix}-{i}", fallback=f"vm-{new_vmid}")
             
@@ -1841,24 +1715,11 @@ def create_vm_shells(count: int, name_prefix: str, node: str, cluster_ip: str = 
                     # No disk attached - that comes later
                 )
                 
-                # Fetch MAC address from VM config
-                mac_address = None
-                try:
-                    import time
-                    time.sleep(0.5)  # Brief delay to ensure config is written
-                    vm_config = proxmox.nodes(node).qemu(new_vmid).config.get()
-                    net0 = vm_config.get('net0', '')
-                    # Parse MAC from net0 config (format: "virtio=XX:XX:XX:XX:XX:XX,bridge=vmbr0")
-                    if '=' in net0:
-                        parts = net0.split(',')
-                        for part in parts:
-                            if ':' in part and len(part.replace(':', '')) == 12:
-                                # Found MAC address
-                                mac_address = part.split('=')[-1] if '=' in part else part
-                                break
-                    logger.info(f"VM {new_vmid} MAC address: {mac_address}")
-                except Exception as e:
-                    logger.warning(f"Failed to fetch MAC address for VM {new_vmid}: {e}")
+                # Fetch MAC address using canonical helper
+                import time
+                time.sleep(0.5)  # Brief delay to ensure config is written
+                mac_address = get_vm_mac_address_api(proxmox, node, new_vmid)
+                logger.info(f"VM {new_vmid} MAC address: {mac_address}")
                 
                 logger.info(f"Created VM shell: {vm_name} (VMID {new_vmid})")
                 results.append({
@@ -1903,31 +1764,16 @@ def populate_vm_shell_with_disk(vmid: int, node: str, template_vmid: int, templa
     Returns:
         Tuple of (success, message)
     """
-    target_ip = cluster_ip or CLASS_CLUSTER_IP
-    cluster_id = None
-    
-    for cluster in get_clusters_from_db():
-        if cluster["host"] == target_ip:
-            cluster_id = cluster["id"]
-            break
-    
-    if not cluster_id:
-        return False, f"Cluster not found for IP: {target_ip}"
+    proxmox, err = _get_proxmox_for_cluster(cluster_ip)
+    if err:
+        return False, err
     
     try:
-        proxmox = get_proxmox_admin_for_cluster(cluster_id)
-        
         # Get template disk configuration
         template_config = proxmox.nodes(template_node).qemu(template_vmid).config.get()
         
         # Find the boot disk (usually scsi0 or virtio0)
-        disk_key = None
-        disk_config = None
-        for key in ['scsi0', 'virtio0', 'sata0', 'ide0']:
-            if key in template_config:
-                disk_key = key
-                disk_config = template_config[key]
-                break
+        disk_key, disk_config = _find_boot_disk(template_config)
         
         if not disk_key or not disk_config:
             return False, f"No disk found in template {template_vmid}"
@@ -1969,29 +1815,16 @@ def remove_vm_disk(vmid: int, node: str, cluster_ip: str = None) -> Tuple[bool, 
     Returns:
         Tuple of (success, message)
     """
-    target_ip = cluster_ip or CLASS_CLUSTER_IP
-    cluster_id = None
-    
-    for cluster in get_clusters_from_db():
-        if cluster["host"] == target_ip:
-            cluster_id = cluster["id"]
-            break
-    
-    if not cluster_id:
-        return False, f"Cluster not found for IP: {target_ip}"
+    proxmox, err = _get_proxmox_for_cluster(cluster_ip)
+    if err:
+        return False, err
     
     try:
-        proxmox = get_proxmox_admin_for_cluster(cluster_id)
-        
         # Get VM config to find the disk
         vm_config = proxmox.nodes(node).qemu(vmid).config.get()
         
         # Find the boot disk (usually scsi0 or virtio0)
-        disk_key = None
-        for key in ['scsi0', 'virtio0', 'sata0', 'ide0']:
-            if key in vm_config:
-                disk_key = key
-                break
+        disk_key, _ = _find_boot_disk(vm_config)
         
         if not disk_key:
             return False, f"No disk found in VM {vmid}"
@@ -2024,31 +1857,16 @@ def copy_vm_disk(source_vmid: int, source_node: str, target_vmid: int, target_no
     Returns:
         Tuple of (success, message)
     """
-    target_ip = cluster_ip or CLASS_CLUSTER_IP
-    cluster_id = None
-    
-    for cluster in get_clusters_from_db():
-        if cluster["host"] == target_ip:
-            cluster_id = cluster["id"]
-            break
-    
-    if not cluster_id:
-        return False, f"Cluster not found for IP: {target_ip}"
+    proxmox, err = _get_proxmox_for_cluster(cluster_ip)
+    if err:
+        return False, err
     
     try:
-        proxmox = get_proxmox_admin_for_cluster(cluster_id)
-        
         # Get source VM disk configuration
         source_config = proxmox.nodes(source_node).qemu(source_vmid).config.get()
         
         # Find the boot disk (usually scsi0 or virtio0)
-        disk_key = None
-        disk_config = None
-        for key in ['scsi0', 'virtio0', 'sata0', 'ide0']:
-            if key in source_config:
-                disk_key = key
-                disk_config = source_config[key]
-                break
+        disk_key, disk_config = _find_boot_disk(source_config)
         
         if not disk_key or not disk_config:
             return False, f"No disk found in source VM {source_vmid}"
