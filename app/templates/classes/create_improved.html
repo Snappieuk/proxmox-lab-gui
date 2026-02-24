@@ -63,6 +63,15 @@
                         </select>
                         <span class="form-help-compact">Leave empty to distribute across all nodes</span>
                     </div>
+                    
+                    <div class="form-group-compact">
+                        <label for="deployment-method">Deployment Method</label>
+                        <select id="deployment-method" name="deployment_method">
+                            <option value="config_clone">Config Clone (Recommended)</option>
+                            <option value="linked_clone">Linked Clone (Fast)</option>
+                        </select>
+                        <span class="form-help-compact">Config Clone: flexible, slower | Linked Clone: simple, faster</span>
+                    </div>
                 </div>
             </div>
             
@@ -586,7 +595,8 @@ document.getElementById('create-class-form').addEventListener('submit', async fu
                 disk_size_gb: diskSizeGb,
                 template_id: templateId,
                 deployment_node: document.getElementById('deployment-node').value || null,
-                deployment_cluster: document.getElementById('deployment-cluster').value || null
+                deployment_cluster: document.getElementById('deployment-cluster').value || null,
+                deployment_method: document.getElementById('deployment-method').value || 'config_clone'
             })
         });
         

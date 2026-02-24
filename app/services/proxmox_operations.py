@@ -24,7 +24,7 @@ with SSHExecutor for direct qm/qemu-img operations.
 """
 
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 from app.services.proxmox_service import get_clusters_from_db
 from app.models import VMInventory
@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 # Re-export sanitize_vm_name from vm_utils for backward compatibility
 # New code should import from vm_utils directly
 from app.services.vm_utils import sanitize_vm_name  # noqa: F401, E402
-from app.services.vm_utils import get_next_available_vmid_api, get_vm_mac_address_api  # noqa: E402
+from app.services.vm_utils import get_vm_mac_address_api  # noqa: E402
 
 # Default cluster IP for class operations (restricted to single cluster)
 CLASS_CLUSTER_IP = "10.220.15.249"
@@ -1145,7 +1145,7 @@ def convert_vm_to_template(vmid: int, node: str, cluster_ip: str = None) -> Tupl
                 # Update VMInventory database immediately
                 try:
                     from app.models import VMInventory, db
-                    vm_record = VMInventory.query.filter_by(cluster_id=cluster_id, vmid=vmid).first()
+                    vm_record = VMInventory.query.filter_by(vmid=vmid).first()
                     if vm_record:
                         vm_record.is_template = True
                         vm_record.status = 'stopped'  # Templates are always stopped

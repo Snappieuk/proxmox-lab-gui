@@ -9,6 +9,7 @@ import logging
 
 from flask import Blueprint, flash, redirect, render_template, url_for
 
+from app.models import db
 from app.services.class_service import (
     get_class_by_id,
     get_class_by_token,
@@ -107,6 +108,10 @@ def view_class(class_id: int):
         else:
             flash("You don't have access to this class.", "error")
             return redirect(url_for('classes.classes_list'))
+    
+    # Clear SQLAlchemy session cache to ensure fresh data from database
+    # This is critical when assignments are manually edited outside the app
+    db.session.expire_all()
     
     # Get VM assignments for this class
     if can_manage:

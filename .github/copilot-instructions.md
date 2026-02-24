@@ -307,7 +307,7 @@ api/
 **`app/config.py`** (Configuration, ~105 lines):
 - **Multi-cluster**: `CLUSTERS` list (id, name, host, user, password, verify_ssl) – loads from `clusters.json` if exists
 - **Legacy single-cluster**: `PVE_HOST`, `PVE_ADMIN_USER`, `PVE_ADMIN_PASS` (still used as defaults)
-- **Admin privileges**: `ADMIN_USERS` (comma-separated), `ADMIN_GROUP` (Proxmox group name, default "adminers")
+- **Admin privileges**: Proxmox users are automatically admins. Local admin users have role='adminer'. Admin group management is optional supplementary control via Proxmox groups.
 - **Performance**: `VM_CACHE_TTL` (300s), `PROXMOX_CACHE_TTL` (30s), `ENABLE_IP_LOOKUP` (bool), `ENABLE_IP_PERSISTENCE` (slow, disabled by default)
 - **Persistence files**: `CLUSTER_CONFIG_FILE` (JSON for cluster definitions), `VM_CACHE_FILE` (deprecated), `IP_CACHE_FILE` (deprecated)
 - **ARP scanner**: `ARP_SUBNETS` (broadcast addresses, default `["10.220.15.255"]` for 10.220.8.0/21 network)
@@ -369,6 +369,14 @@ api/
 - `migrate_config_imports.py` – Removed, one-time migration completed
 - `debug_vminventory.py` – Removed, use database queries or `/api/sync/status` instead
 - `fix_vminventory.py` – Removed, background sync handles inventory repairs automatically
+
+**Code quality updates (Feb 2026)**:
+- Fixed all ruff linting errors (E722, E712, E402, F401, F821, F841 rules)
+- Resolved hostname_service.py syntax errors (indentation issues in try/except blocks)
+- Fixed undefined variable references in proxmox_operations.py and template_migration_service.py
+- Updated user_manager.py admin group functions to accept optional admin_group parameter instead of using undefined module constants
+- Removed unused imports and variables throughout codebase (hostname_service, template_migration_service, vm_utils, tests)
+- All 46 ruff errors resolved, codebase now passes strict linting checks
 
 **Code deduplication completed (2024)**:
 - Removed 100-line duplicate `export_template_to_qcow2()` from `class_vm_service.py` → now imports from `vm_template`
@@ -520,10 +528,11 @@ git add . && git commit -m "Changes" && git push
 - IP lookups have separate `_ip_cache` (5min TTL) to avoid guest agent timeout storms
 - Cache invalidation: `start_vm()` and `shutdown_vm()` call `_invalidate_vm_cache()` to clear module-level cache
 
-**Admin group membership API quirks** (DEPRECATED):
-- Legacy code checks `ADMIN_USERS` list and `ADMIN_GROUP` Proxmox group membership
-- **Going forward**: Any Proxmox authentication = admin. Group membership checks unnecessary.
-- Set `ADMIN_GROUP=None` to disable (or remove this logic entirely)
+**Admin group membership API** (Proxmox group management):
+- `add_user_to_admin_group(user: str, admin_group: str = None)`: Adds user to Proxmox admin group. If `admin_group` not provided, uses first configured admin group from `get_all_admin_groups()`.
+- `remove_user_from_admin_group(user: str, admin_group: str = None)`: Removes user from Proxmox admin group. Requires `admin_group` parameter (auto-detects if None).
+- These functions manage Proxmox group membership for admin access control
+- **Design principle**: Any Proxmox authentication = admin. Group membership management is for supplementary Proxmox access control.
 
 **LXC vs QEMU differences** (both exposed as "VMs"):
 - LXC: `nodes(node).lxc(vmid)`, IP via `.interfaces.get()` (fast, works when stopped)
@@ -533,6 +542,18 @@ git add . && git commit -m "Changes" && git push
 **RDP file generation failures**:
 - `build_rdp(vm)` raises `ValueError` if VM has no IP address (stopped VMs, missing guest agent)
 - `app.py` catches this in `/rdp/<vmid>.rdp` route, renders `error.html` with 503 status
+
+**SQLAlchemy session caching with manual database edits** (CRITICAL for assignment visibility):
+- **Issue**: When VM assignments are manually edited outside Flask (direct SQL, database tools), SQLAlchemy's session cache doesn't detect these changes. Queries return stale cached objects instead of fresh database data.
+- **Manifests as**: Manual assignments not showing in UI, student VMs showing as "Unassigned" when they should be assigned, database changes not visible.
+- **Root cause**: SQLAlchemy uses an identity map (session cache) - when you query an object already in cache, it returns the cached instance without checking the database.
+- **Fix**: Call `db.session.expire_all()` before querying assignments in routes that may have external edits:
+  - `app/routes/classes.py` `view_class()` - line 111 (added Feb 2026)
+  - `app/routes/api/class_api.py` `list_class_vms()` - line 787 (added Feb 2026)
+- **Performance**: expire_all() is fast (<1ms) - just clears Python dicts. Database queries use connection pooling/caching.
+- **Alternative approaches**: Use eager loading with `.options(joinedload(VMAssignment.assigned_user))` or `db.session.refresh(assignment)` for specific objects.
+- **Related fix**: See `SQLALCHEMY_SESSION_CACHING_FIX.md` and `test_session_caching_fix.py` for detailed documentation and verification script.
+
 **No JSON files used for data storage**:
 - All user/class/VM data in SQLite database (`app/lab_portal.db`)
 - Configuration in environment variables or `clusters.json` (cluster definitions only)

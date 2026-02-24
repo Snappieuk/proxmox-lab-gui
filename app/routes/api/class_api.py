@@ -112,7 +112,12 @@ def list_classes():
 @api_classes_bp.route("", methods=["POST"])
 @login_required
 def create_new_class():
-    """Create a new class and automatically deploy VMs (teacher or adminer only)."""
+    """Create a new class and automatically deploy VMs (teacher or adminer only).
+    
+    Supports two deployment methods:
+    - "config_clone" (default): Uses config cloning + QCOW2 overlays (recommended)
+    - "linked_clone": Uses qm clone --full true with load balancing (simpler)
+    """
     user, error = require_teacher_or_adminer()
     if error:
         return jsonify(error[0]), error[1]
@@ -127,9 +132,13 @@ def create_new_class():
     disk_size_gb = data.get('disk_size_gb', 32)
     deployment_node = (data.get('deployment_node') or '').strip() or None  # Optional: single-node deployment
     deployment_cluster = (data.get('deployment_cluster') or '').strip() or None  # Optional: target cluster
+    deployment_method = (data.get('deployment_method') or 'config_clone').strip()  # "config_clone" or "linked_clone"
     
     if not name:
         return jsonify({"ok": False, "error": "Class name is required"}), 400
+    
+    if deployment_method not in ["config_clone", "linked_clone"]:
+        return jsonify({"ok": False, "error": "Invalid deployment_method. Must be 'config_clone' or 'linked_clone'"}), 400
     
     # Template is now optional - classes can be created without templates
     # Pool size can be 0 - VMs can be added manually later
@@ -187,7 +196,7 @@ def create_new_class():
             logger.exception(f"Failed to get cluster nodes: {e}")
             return jsonify({"ok": False, "error": f"Failed to get cluster nodes: {str(e)}"}), 500
     
-    # Create VMs in background thread using SSH + QCOW2 overlay cloning
+    # Create VMs in background thread using selected deployment method
     import threading
 
     from flask import current_app
@@ -204,6 +213,7 @@ def create_new_class():
             
             from app.models import Class
             from app.services.class_vm_service import deploy_class_vms
+            from app.services.linked_clone_service import deploy_linked_clones
 
             # Re-fetch class within the app context to get fresh database session
             with app.app_context():
@@ -217,21 +227,49 @@ def create_new_class():
                 template_id = class_obj.template_id
                 pool_size = class_obj.pool_size
             
-            # Deploy VMs using QCOW2 overlay cloning (fast)
-            logger.info(f"Deploying VMs for class '{class_name}' (template={template_id}, students={pool_size})...")
-            
-            success, message, vm_info = deploy_class_vms(
-                class_id=class_id_for_error,
-                num_students=pool_size
-            )
-            
-            if success:
-                logger.info(f"Class {class_id_for_error} VM deployment succeeded: {message}")
-                logger.info(f"Created: {vm_info.get('teacher_vm_count', 0)} teacher VM, "
-                           f"{vm_info.get('template_vm_count', 0)} template VM, "
-                           f"{vm_info.get('student_vm_count', 0)} student VMs")
+            # Use selected deployment method
+            if deployment_method == "linked_clone":
+                # Linked clone deployment using qm clone
+                if not template_id:
+                    logger.error("Linked clone deployment requires a template")
+                    return
+                
+                template = class_obj.template
+                if not template:
+                    logger.error(f"Template {template_id} not found")
+                    return
+                
+                logger.info(f"Deploying VMs for class '{class_name}' using linked clone method (template={template_id}, students={pool_size})...")
+                
+                success, message, vm_info = deploy_linked_clones(
+                    class_id=class_id_for_error,
+                    template_vmid=template_id,
+                    num_students=pool_size,
+                    deployment_node=deployment_node,
+                    cluster_id=class_obj.template.cluster_id if template else None
+                )
+                
+                if success:
+                    logger.info(f"Class {class_id_for_error} linked clone deployment succeeded: {message}")
+                    logger.info(f"Created: {vm_info.get('created_count', 0)} student VMs")
+                else:
+                    logger.error(f"Class {class_id_for_error} linked clone deployment failed: {message}")
             else:
-                logger.error(f"Class {class_id_for_error} VM deployment failed: {message}")
+                # Default: Config cloning + QCOW2 overlay deployment
+                logger.info(f"Deploying VMs for class '{class_name}' using config clone method (template={template_id}, students={pool_size})...")
+                
+                success, message, vm_info = deploy_class_vms(
+                    class_id=class_id_for_error,
+                    num_students=pool_size
+                )
+                
+                if success:
+                    logger.info(f"Class {class_id_for_error} VM deployment succeeded: {message}")
+                    logger.info(f"Created: {vm_info.get('teacher_vm_count', 0)} teacher VM, "
+                               f"{vm_info.get('template_vm_count', 0)} template VM, "
+                               f"{vm_info.get('student_vm_count', 0)} student VMs")
+                else:
+                    logger.error(f"Class {class_id_for_error} VM deployment failed: {message}")
                 
         except Exception as e:
             logger.exception(f"Failed to deploy VMs for class {class_id_for_error}: {e}")
@@ -249,12 +287,15 @@ def create_new_class():
     # Return immediately
     message = "Class created successfully"
     if pool_size > 0:
-        total_vms = pool_size + 2  # pool_size students + 1 teacher + 1 template
-        message += f" - deploying {total_vms} VMs ({pool_size} student + 1 teacher + 1 template) in background using QCOW2 overlay cloning"
+        if deployment_method == "linked_clone":
+            message += f" - deploying {pool_size} student VMs in background using linked clone method (qm clone)"
+        else:
+            total_vms = pool_size + 2  # pool_size students + 1 teacher + 1 template
+            message += f" - deploying {total_vms} VMs ({pool_size} student + 1 teacher + 1 template) in background using config clone method"
     else:
-        message += " - deploying 2 VMs in background (1 template + 1 teacher, no students)"
+        message += " - deploying VMs in background"
     
-    logger.info(f"Class {class_.id} '{class_.name}' created, VMs deploying in background")
+    logger.info(f"Class {class_.id} '{class_.name}' created, using {deployment_method} deployment method")
     return jsonify({
         "ok": True,
         "message": message,
@@ -795,6 +836,10 @@ def list_class_vms(class_id: int):
     class_ = get_class_by_id(class_id)
     if not class_:
         return jsonify({"ok": False, "error": "Class not found"}), 404
+    
+    # Clear SQLAlchemy session cache to ensure fresh data from database
+    # This is critical when assignments are manually edited outside the app
+    db.session.expire_all()
     
     # Get cluster_ip from class template (used by both students and teachers)
     cluster_ip = None
