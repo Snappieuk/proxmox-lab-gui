@@ -19,6 +19,18 @@ def get_cached_vms():
     try:
         all_vms = get_all_vms()
         
+        # Augment VMs with assignment info from database
+        for vm in all_vms:
+            vmid = vm.get('vmid')
+            # Look up the most recent/relevant assignment for this VM
+            assignment = VMAssignment.query.filter_by(proxmox_vmid=vmid).first()
+            if assignment:
+                vm['class_id'] = assignment.class_id  # None if direct assignment
+                vm['assigned_user_id'] = assignment.assigned_user_id
+            else:
+                vm['class_id'] = None
+                vm['assigned_user_id'] = None
+        
         # Return all VMs - user can add any VM to any class
         # (allows moving VMs between classes or adding duplicates if needed)
         return jsonify({
