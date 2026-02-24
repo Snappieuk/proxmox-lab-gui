@@ -128,30 +128,39 @@ def update_mappings():
         
         # Assign VMs to this user
         for vmid in vmids_to_assign:
-            # Prioritize class-based assignments over direct assignments
-            # 1. First look for ANY class-based assignment for this VM
-            class_assignment = VMAssignment.query.filter_by(
-                proxmox_vmid=vmid
+            # Look for assignments in order of preference:
+            # 1. Unassigned class pool VM (ideal for class-based assignment)
+            # 2. Any other class-based assignment
+            # 3. Direct assignment
+            assignment = VMAssignment.query.filter_by(
+                proxmox_vmid=vmid,
+                assigned_user_id=None
             ).filter(VMAssignment.class_id.isnot(None)).first()
             
-            # 2. If no class assignment, look for direct assignment
-            if not class_assignment:
-                class_assignment = VMAssignment.query.filter_by(
+            if not assignment:
+                # Look for any class-based assignment
+                assignment = VMAssignment.query.filter_by(
+                    proxmox_vmid=vmid
+                ).filter(VMAssignment.class_id.isnot(None)).first()
+            
+            if not assignment:
+                # Look for direct assignment
+                assignment = VMAssignment.query.filter_by(
                     proxmox_vmid=vmid,
                     class_id=None
                 ).first()
             
-            if class_assignment:
-                # Check if already assigned to a different user
-                if class_assignment.assigned_user_id and class_assignment.assigned_user_id != user_obj.id:
-                    other_user = class_assignment.assigned_user.username if class_assignment.assigned_user else "unknown"
+            if assignment:
+                # If already assigned to different user, skip
+                if assignment.assigned_user_id and assignment.assigned_user_id != user_obj.id:
+                    other_user = assignment.assigned_user.username if assignment.assigned_user else "unknown"
                     logger.warning("VM %d already assigned to %s, skipping", vmid, other_user)
                     continue
                 
                 # Update existing assignment (class or direct)
-                class_assignment.assigned_user_id = user_obj.id
-                class_assignment.status = 'assigned'
-                logger.info("Updated assignment: user=%s, vmid=%d (class_id=%s)", user, vmid, class_assignment.class_id)
+                assignment.assigned_user_id = user_obj.id
+                assignment.status = 'assigned'
+                logger.info("Updated assignment: user=%s, vmid=%d (class_id=%s)", user, vmid, assignment.class_id)
             else:
                 # Create new direct assignment (class_id=NULL)
                 assignment = VMAssignment(
