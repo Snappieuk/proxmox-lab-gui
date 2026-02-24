@@ -405,10 +405,11 @@ class Class(db.Model):
             return False
     
     def to_dict(self) -> dict:
-        # Get enrolled students with their VM assignments
+        # Build students list from enrolled students with their VM assignments
         students_list = []
+        
         for student in self.students:
-            # Find VM assigned to this student in this class
+            # Find ANY VM assignment for this student in this class
             vm_assignment = VMAssignment.query.filter_by(
                 class_id=self.id,
                 assigned_user_id=student.id
