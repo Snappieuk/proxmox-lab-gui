@@ -7,7 +7,7 @@ Allows teachers to create and manage VM templates for their classes.
 
 import logging
 
-from flask import Blueprint, jsonify, render_template, session
+from flask import Blueprint, render_template
 
 from app.utils.decorators import login_required
 

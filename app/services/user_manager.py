@@ -283,11 +283,23 @@ def add_user_to_admin_group(user: str, admin_group: str = None) -> bool:
         return False
 
 
-def remove_user_from_admin_group(user: str) -> bool:
-    """Remove a user from the admin group in Proxmox."""
-    if not ADMIN_GROUP:
-        logger.warning("ADMIN_GROUP not configured, cannot remove user")
-        return False
+def remove_user_from_admin_group(user: str, admin_group: str = None) -> bool:
+    """Remove a user from the admin group in Proxmox.
+    
+    Args:
+        user: Username to remove (with realm suffix, e.g., user@pam)
+        admin_group: Proxmox group name (if None, uses first configured admin group)
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    if not admin_group:
+        from app.services.settings_service import get_all_admin_groups
+        admin_groups = get_all_admin_groups()
+        if not admin_groups:
+            logger.warning("No admin groups configured, cannot remove user")
+            return False
+        admin_group = admin_groups[0]  # Use first configured group
     
     try:
         from app.services.proxmox_service import get_proxmox_admin
@@ -301,17 +313,17 @@ def remove_user_from_admin_group(user: str) -> bool:
         
         # Get current group to fetch comment
         try:
-            group_info = get_proxmox_admin().access.groups(ADMIN_GROUP).get()
+            group_info = get_proxmox_admin().access.groups(admin_group).get()
             comment = group_info.get('comment', '') if group_info else ''
         except Exception:
             comment = ''
         
-        get_proxmox_admin().access.groups(ADMIN_GROUP).put(
+        get_proxmox_admin().access.groups(admin_group).put(
             comment=comment,
             members=",".join(current_members)
         )
         _invalidate_admin_group_cache()
-        logger.info("Removed user %s from admin group %s", user, ADMIN_GROUP)
+        logger.info("Removed user %s from admin group %s", user, admin_group)
         return True
     except Exception as e:
         logger.exception("Failed to remove user %s from admin group: %s", user, e)

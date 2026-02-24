@@ -11,13 +11,9 @@ Based on the deployment.py architecture with support for:
 
 import logging
 import time
-import subprocess
-import os
-import tempfile
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Tuple
 
 from app.services.proxmox_service import get_proxmox_admin_for_cluster
-from app.services.ssh_executor import SSHExecutor, get_ssh_executor_from_config
 from app.services.proxmox_service import get_clusters_from_db
 
 logger = logging.getLogger(__name__)

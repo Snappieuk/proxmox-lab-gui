@@ -14,18 +14,18 @@ import sys
 import logging
 from datetime import datetime
 
+# Add app directory to path before imports
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from app import create_app
+from app.models import db
+
 # Setup logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
-
-# Add app directory to path
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
-from app import create_app
-from app.models import db
 
 
 def backup_database():

@@ -9,7 +9,7 @@ import logging
 
 from flask import Blueprint, jsonify, request, session
 
-from app.models import User, db
+from app.models import db
 from app.utils.decorators import login_required
 
 logger = logging.getLogger(__name__)

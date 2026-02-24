@@ -354,8 +354,8 @@ def migrate_clusters_from_json(cursor):
         
         if migrated_count > 0:
             print(f"\n✅ Migrated {migrated_count} cluster(s) from JSON to database")
-            print(f"   You can now manage clusters via admin UI")
-            print(f"   The clusters.json file can be backed up and removed")
+            print("   You can now manage clusters via admin UI")
+            print("   The clusters.json file can be backed up and removed")
         else:
             print("\n✓ All clusters already in database")
         
@@ -384,7 +384,7 @@ def migrate():
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         print(f"   ✓ Created empty database at {DB_PATH}")
-        print(f"   ℹ️  Tables will be created by Flask on first startup")
+        print("   ℹ️  Tables will be created by Flask on first startup")
     else:
         print(f"✓ Database found: {DB_PATH}")
         conn = sqlite3.connect(DB_PATH)

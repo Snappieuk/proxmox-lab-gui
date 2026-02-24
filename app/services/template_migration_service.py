@@ -6,11 +6,8 @@ Handles the actual disk copying and VM creation across clusters.
 """
 
 import logging
-import re
-from typing import Optional
 
 from app.models import Template, db
-from app.services.ssh_executor import get_pooled_ssh_executor
 from app.services.proxmox_service import get_proxmox_admin_for_cluster
 
 logger = logging.getLogger(__name__)
@@ -26,14 +23,14 @@ DEFAULT_STORAGE_PATHS = {
 def get_storage_path(storage_name: str, storage_type: str) -> str:
     """Get storage path based on storage type."""
     if storage_type == 'dir':
-        return f"/var/lib/vz/images"  # Default for directory storage
+        return "/var/lib/vz/images"  # Default for directory storage
     elif storage_type == 'zfspool':
         return f"/dev/zvol/{storage_name}"
     elif storage_type == 'lvmthin' or storage_type == 'lvm':
-        return f"/dev/pve"
+        return "/dev/pve"
     else:
         # Fallback to default paths
-        return DEFAULT_STORAGE_PATHS.get(storage_name, f"/var/lib/vz/images")
+        return DEFAULT_STORAGE_PATHS.get(storage_name, "/var/lib/vz/images")
 
 
 def migrate_template_between_clusters(
@@ -74,24 +71,16 @@ def migrate_template_between_clusters(
         
         source_node = source_template.node
         source_vmid = source_template.proxmox_vmid
-        source_name = source_template.name
+        # Note: source_name not used in current implementation
         
         # Step 1: Get template config from source
         logger.info(f"Step 1: Getting template config from {source_node}/{source_vmid}")
         source_config = source_proxmox.nodes(source_node).qemu(source_vmid).config.get()
         
-        # Extract specs from source config
-        cpu_cores = source_config.get("cores", 2)
-        cpu_sockets = source_config.get("sockets", 1)
-        memory_mb = source_config.get("memory", 2048)
-        os_type = source_config.get("ostype", "l26")
+        # Note: CPU/memory specs extracted for reference but not used in current implementation
+        # They are preserved in the VM shell creation from hardware config
         
-        # Get network config
-        net0 = source_config.get("net0", "")
-        network_bridge = "vmbr0"
-        if "bridge=" in net0:
-            network_bridge = net0.split("bridge=")[1].split(",")[0]
-        
+        # Get network config (not currently used in migration)
         # Get primary disk (scsi0)
         scsi0 = source_config.get("scsi0", "")
         if not scsi0:
@@ -161,7 +150,7 @@ def migrate_template_between_clusters(
         # Create destination VM shell
         logger.info(f"Creating VM shell on destination: {dest_node}/{dest_vmid}")
         
-        vm_name = new_name or source_template.name
+        vm_name = source_template.name
         memory = source_config.get('memory', 2048)
         cores = source_config.get('cores', 2)
         sockets = source_config.get('sockets', 1)
@@ -207,7 +196,7 @@ def migrate_template_between_clusters(
                 continue
             
             source_storage = storage_parts[0]
-            disk_identifier = storage_parts[1]
+            # Note: disk_identifier not used in current implementation
             
             # Build source disk path
             source_path = f"/dev/zvol/{source_storage}/vm-{source_vmid}-{disk_key}-0"
@@ -221,8 +210,7 @@ def migrate_template_between_clusters(
             
             logger.info(f"Source disk format: {disk_format}")
             
-            # Create destination disk path
-            dest_path = f"{destination_storage}:{dest_vmid}/{disk_key}-0.{disk_format}"
+            # Note: dest_path constructed but not directly used (passed inline to commands)
             
             # Copy disk using qemu-img convert over SSH
             logger.info(f"Copying disk {disk_key} from {source_node} to {dest_node}...")

@@ -3,12 +3,9 @@ VNC WebSocket Proxy - Proxies VNC WebSocket connections with authentication
 """
 
 import logging
-import asyncio
-import websockets
 from flask import Blueprint, request, session
 from flask_sock import Sock
 
-from app.utils.decorators import login_required
 from app.services.user_manager import require_user
 from app.services.proxmox_service import get_proxmox_admin_for_cluster
 from app.services.proxmox_service import get_clusters_from_db
@@ -73,7 +70,7 @@ def vnc_proxy_page(vmid: int):
                         vm_node = node_name
                         vm_type = 'qemu'
                         break
-            except:
+            except Exception:  # noqa: E722
                 pass
             
             # Check LXC containers
@@ -84,7 +81,7 @@ def vnc_proxy_page(vmid: int):
                             vm_node = node_name
                             vm_type = 'lxc'
                             break
-                except:
+                except Exception:  # noqa: E722
                     pass
             
             if vm_node:
@@ -179,5 +176,5 @@ if sock:
             logger.error(f"VNC WebSocket proxy error: {e}", exc_info=True)
             try:
                 ws.close(reason=str(e))
-            except:
+            except Exception:  # noqa: E722
                 pass

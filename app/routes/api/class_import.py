@@ -7,15 +7,14 @@ and automatically creates classes with proper VM assignments.
 """
 
 import logging
-import re
 from typing import Dict, List, Tuple
 
 from flask import Blueprint, jsonify, request
 
-from app.models import Class, User, VMAssignment, db
+from app.models import Class, VMAssignment, db
 from app.services.inventory_service import fetch_vm_inventory
 from app.services.user_manager import is_admin_user, require_user
-from app.utils.decorators import admin_required, login_required
+from app.utils.decorators import login_required
 
 logger = logging.getLogger(__name__)
 

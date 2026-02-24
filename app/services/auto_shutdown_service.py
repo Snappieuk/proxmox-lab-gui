@@ -5,12 +5,11 @@ Monitors VMs in classes with auto-shutdown enabled and shuts them down
 if CPU usage stays below threshold for the configured duration.
 """
 import logging
-import time
-from datetime import datetime, timedelta
+from datetime import datetime
 from threading import Thread, Event
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 
-from app.models import Class, VMAssignment, db
+from app.models import Class, VMAssignment
 from app.services.proxmox_service import get_proxmox_admin_for_cluster
 
 logger = logging.getLogger(__name__)
@@ -79,8 +78,8 @@ def check_and_shutdown_idle_vms():
     """Check all VMs and enforce auto-shutdown and hour restrictions."""
     # Get all classes with restrictions enabled
     classes = Class.query.filter(
-        (Class.auto_shutdown_enabled == True) | 
-        (Class.restrict_hours == True)
+        (Class.auto_shutdown_enabled) |
+        (Class.restrict_hours)
     ).all()
     
     if not classes:

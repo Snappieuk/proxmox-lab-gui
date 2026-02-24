@@ -666,7 +666,6 @@ def list_templates():
                 break
     
     # Query templates from database (database-first architecture)
-    from app.models import Template
     query = Template.query.filter_by(is_class_template=False)
     
     if cluster_ip:

@@ -99,7 +99,7 @@ def api_switch_cluster():
 @admin_required
 def api_get_cluster_config():
     """Get all cluster configurations from database (without passwords)."""
-    from app.models import Cluster, db
+    from app.models import Cluster
     
     try:
         clusters = Cluster.query.order_by(Cluster.priority.desc(), Cluster.name).all()

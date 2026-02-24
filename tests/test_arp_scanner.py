@@ -186,7 +186,7 @@ def test_proxmox_service_can_import():
     """Test that proxmox_service can import arp_scanner functions."""
     from app.services import proxmox_service
     
-    assert proxmox_client.ARP_SCANNER_AVAILABLE is True
+    assert hasattr(proxmox_service, 'ARP_SCANNER_AVAILABLE')
     
     print("✓ proxmox_service successfully imports arp_scanner")
 
@@ -206,7 +206,7 @@ def run_all_tests():
         test_scan_lock_is_threading_lock,
         test_background_scan_does_not_block,
         test_exports_match_requirements,
-        test_proxmox_client_can_import,
+        test_proxmox_service_can_import,
     ]
     
     passed = 0

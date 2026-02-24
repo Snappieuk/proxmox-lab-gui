@@ -133,7 +133,7 @@ def get_all_admin_users():
                 cluster_dict = cluster.to_dict()
                 admin_users.update(get_admin_users(cluster_dict))
             return admin_users
-    except:
+    except Exception:  # noqa: E722
         pass
     
     # Fallback
@@ -158,7 +158,7 @@ def get_all_admin_groups():
                 if group:
                     admin_groups.add(group)
             return admin_groups
-    except:
+    except Exception:  # noqa: E722
         pass
     
     # Fallback

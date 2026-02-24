@@ -8,7 +8,7 @@ Handles copying/moving VM templates across Proxmox clusters.
 import logging
 from flask import Blueprint, jsonify, request
 
-from app.models import Template, db
+from app.models import Template
 from app.services.class_service import get_user_by_username
 from app.services.user_manager import require_user, is_admin_user
 from app.utils.decorators import login_required
@@ -85,7 +85,7 @@ def migrate_template():
         
         return jsonify({
             "ok": True,
-            "message": f"Template migration started. This may take several minutes.",
+            "message": "Template migration started. This may take several minutes.",
             "operation": operation
         })
         

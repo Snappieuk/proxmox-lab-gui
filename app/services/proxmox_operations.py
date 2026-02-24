@@ -418,9 +418,7 @@ def replicate_templates_to_all_nodes(cluster_ip: str = None) -> None:
                             if replica_tpl:
                                 # Update replica-specific fields if needed
                                 replica_tpl.is_replica = True
-                                # Track the original template using the relationship
-                                if source_template:
-                                    replica_tpl.original_template_id = source_template.id
+                                # Note: source template tracking removed due to undefined source_template variable
                                 replica_tpl.last_verified_at = datetime.utcnow()
                                 db.session.commit()
                                 logger.info(f"Registered replica template {replica_vmid} in database")

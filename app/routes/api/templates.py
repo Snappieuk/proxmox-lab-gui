@@ -397,7 +397,6 @@ def migrate_template():
     }
     """
     import threading
-    from app.services.proxmox_service import get_proxmox_admin_for_cluster
     
     data = request.get_json()
     source_template_id = data.get("source_template_id")

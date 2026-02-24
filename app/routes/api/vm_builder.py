@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 vm_builder_bp = Blueprint('vm_builder', __name__, url_prefix='/api/vm-builder')
 
 # Log blueprint registration
-logger.info(f"VM Builder blueprint created with prefix: /api/vm-builder")
+logger.info("VM Builder blueprint created with prefix: /api/vm-builder")
 
 
 @vm_builder_bp.before_request
@@ -193,7 +193,7 @@ def api_build_vm():
         
         # Start background thread
         from flask import current_app
-        app = current_app._get_current_object()
+        _current_app = current_app._get_current_object()
         threading.Thread(target=build_vm_background, daemon=True).start()
         
         # Return immediately
@@ -407,7 +407,7 @@ def api_clone_from_template():
             # Start background thread
             thread = threading.Thread(target=background_clone_completion, daemon=True)
             thread.start()
-            logger.info(f"Started background thread for clone completion monitoring")
+            logger.info("Started background thread for clone completion monitoring")
             
             # Return immediately with success
             return jsonify({
@@ -579,7 +579,7 @@ def api_list_storages():
         if not proxmox:
             return jsonify({
                 "ok": False,
-                "error": f"Failed to connect to cluster"
+                "error": "Failed to connect to cluster"
             }), 500
         
         storages = proxmox.nodes(node).storage.get()
@@ -827,7 +827,6 @@ def api_upload_iso():
         try:
             from app.models import Cluster
             import requests
-            from werkzeug.datastructures import FileStorage
             
             # Get cluster config for direct Proxmox upload
             cluster = Cluster.query.filter_by(cluster_id=cluster_id).first()
@@ -850,7 +849,6 @@ def api_upload_iso():
             import ssl
             import urllib3
             from requests.adapters import HTTPAdapter
-            from urllib3.poolmanager import PoolManager
             
             # Disable SSL warnings
             urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)

@@ -6,9 +6,9 @@ Triggers immediate IP discovery using guest agent and ARP scanning.
 """
 
 import logging
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify
 
-from app.models import Class, VMAssignment
+from app.models import VMAssignment
 from app.services.class_service import get_class_by_id
 from app.utils.decorators import login_required
 

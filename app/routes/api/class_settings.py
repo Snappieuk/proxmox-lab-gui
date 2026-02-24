@@ -236,7 +236,7 @@ def get_any_vm_session_progress(vmid: int):
                 if result["status"] == "running":
                     uptime_seconds = status_data.get("uptime", 0)
                     result["uptime_minutes"] = uptime_seconds / 60
-    except Exception as e:
+    except Exception:
         pass
     
     # Check if within allowed hours
@@ -313,7 +313,7 @@ def get_vm_session_progress(class_id: int, vmid: int):
                 if result["status"] == "running":
                     uptime_seconds = status_data.get("uptime", 0)
                     result["uptime_minutes"] = uptime_seconds / 60
-    except Exception as e:
+    except Exception:
         # If we can't get status, just return defaults
         pass
     

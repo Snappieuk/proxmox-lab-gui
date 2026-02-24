@@ -8,13 +8,11 @@ get_vnc_ticket(), get_auth_ticket(), and find_vm_location() helper functions.
 
 import logging
 import ssl
-import socket
 import urllib.parse
 from flask import Blueprint, jsonify, request, session, render_template
 
 from app.utils.decorators import login_required
 from app.services.user_manager import require_user, is_admin_user
-from app.services.class_service import get_user_by_username
 from app.services.proxmox_service import get_proxmox_admin_for_cluster, get_clusters_from_db
 
 logger = logging.getLogger(__name__)
@@ -27,7 +25,7 @@ _vnc_connection_cache = {}
 
 # Try to import websocket support
 try:
-    from flask_sock import Sock
+    from flask_sock import Sock  # noqa: F401
     import websocket
     import threading
     WEBSOCKET_AVAILABLE = True
@@ -132,7 +130,7 @@ def api_get_vnc_info(vmid: int):
                         vm_name = vm.get('name', f'VM-{vmid}')
                         vm_type = 'kvm'
                         break
-            except:
+            except Exception:  # noqa: E722
                 pass
             
             # Check LXC containers
@@ -145,7 +143,7 @@ def api_get_vnc_info(vmid: int):
                             vm_name = vm.get('name', f'CT-{vmid}')
                             vm_type = 'lxc'
                             break
-                except:
+                except Exception:  # noqa: E722
                     pass
             
             if vm_node:
@@ -405,7 +403,7 @@ def view_console(vmid: int):
                 if vnc_data:
                     temp_ticket = vnc_data['ticket']
                     _vnc_connection_cache[vmid]['ticket'] = temp_ticket
-                    logger.info(f"Generated temp VNC ticket for frontend auth")
+                    logger.info("Generated temp VNC ticket for frontend auth")
         except Exception as e:
             logger.warning(f"Could not generate temp ticket: {e}")
         
@@ -569,9 +567,9 @@ def init_websocket_proxy(app, sock_instance):
                 logger.info(f"[{vmid}] Proxmox WebSocket state: connected={proxmox_ws.connected}")
                 logger.info(f"[{vmid}] Step 8: ✓ VNC stream ready - starting bidirectional forwarding")
                 
-            except websocket.WebSocketTimeoutException as timeout_error:
-                logger.error(f"❌ Connection timeout to Proxmox VNC server (30 seconds)")
-                logger.error(f"   This usually means: 1) Proxmox server is slow/overloaded, 2) Firewall blocking WebSocket, 3) VM not responding")
+            except websocket.WebSocketTimeoutException:
+                logger.error("❌ Connection timeout to Proxmox VNC server (30 seconds)")
+                logger.error("   This usually means: 1) Proxmox server is slow/overloaded, 2) Firewall blocking WebSocket, 3) VM not responding")
                 logger.error(f"   Connection: wss://{host}:{proxmox_port} → node {node} → VM {vmid}")
                 logger.error(f"   VNC port: {vnc_port}")
                 try:

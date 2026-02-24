@@ -76,7 +76,7 @@ def cleanup_orphaned_records():
     """
     from app.services.proxmox_service import get_all_vms, get_clusters_from_db
     from app.services.inventory_service import persist_vm_inventory
-    from app.models import Class, VMAssignment, VMInventory, db
+    from app.models import Class, VMAssignment, db
 
     try:
         # Force refresh inventory from Proxmox, then cleanup missing inventory entries

@@ -10,10 +10,9 @@ from datetime import datetime
 
 from flask import Blueprint, jsonify, session
 
-from app.models import Template, db
+from app.models import db
 from app.services.class_service import get_class_by_id, get_user_by_username
 from app.services.proxmox_operations import (
-    delete_vm,
     get_vm_status,
     start_class_vm,
     stop_class_vm,
@@ -475,7 +474,7 @@ def reimage_template(class_id: int):
             logger.info(f"Teacher VM reimaged: deleted {old_vmid}, created {new_vmid}")
             return jsonify({
                 'ok': True,
-                'message': f'Teacher VM reimaged successfully',
+                'message': 'Teacher VM reimaged successfully',
                 'old_vmid': old_vmid,
                 'new_vmid': new_vmid
             })

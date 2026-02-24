@@ -75,11 +75,12 @@ def get_optimal_node(ssh_executor, proxmox=None, vm_memory_mb=2048, simulated_vm
                 mem_free_pct = (mem_total - mem_used) / mem_total if mem_total > 0 else 0
                 
                 try:
-                    cpu_total = float(node.get('maxcpu', 1))
+                    # Get max CPU cores (this is informational, not used in calculation)
+                    # cpu_total = float(node.get('maxcpu', 1))
                     cpu_used = float(node.get('cpu', 0))
                 except (ValueError, TypeError):
                     logger.debug(f"Node {node_name}: Invalid CPU values, using defaults")
-                    cpu_total = 1
+                    # Use defaults in case of error
                     cpu_used = 0
                     
                 cpu_free_pct = (1 - cpu_used) if cpu_used < 1 else 0
@@ -124,10 +125,8 @@ def get_optimal_node(ssh_executor, proxmox=None, vm_memory_mb=2048, simulated_vm
             node = stdout.strip()
             logger.warning(f"Could not determine optimal node via API, using hostname: {node}")
             return node
-    except:
+    except Exception:  # noqa: E722
         pass
-    
-    logger.error("Could not determine any valid node - this should not happen!")
     raise RuntimeError("No valid Proxmox node could be determined for VM creation")
 
 

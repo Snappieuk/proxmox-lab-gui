@@ -16,6 +16,7 @@ Set SECRET_KEY in .env file or environment variable.
 """
 
 import os
+import logging
 
 # Load environment variables from .env file
 try:
@@ -35,7 +36,6 @@ SECRET_KEY = os.getenv("SECRET_KEY", "fallback-insecure-secret-key-1234567890123
 if not SECRET_KEY or len(SECRET_KEY.strip()) == 0:
     SECRET_KEY = "fallback-insecure-secret-key-12345678901234567890123456789012"
     
-import logging
 logger = logging.getLogger(__name__)
 if SECRET_KEY == "fallback-insecure-secret-key-12345678901234567890123456789012":
     logger.warning(
