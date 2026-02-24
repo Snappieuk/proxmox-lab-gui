@@ -89,18 +89,34 @@ def add_vms_to_class():
                     errors.append(f"VMID {vmid} not found in Proxmox")
                     continue
                 
-                # Create assignment
-                assignment = VMAssignment(
-                    proxmox_vmid=vmid,
-                    class_id=class_id,
-                    assigned_user_id=None,  # Unassigned pool VM
-                    status='available',
-                    vm_name=vm.get('name'),
-                    node=vm.get('node'),
-                    mac_address=vm.get('mac_address'),
-                    cached_ip=vm.get('ip')
-                )
-                db.session.add(assignment)
+                # FIRST: Check if assignment exists for this VMID (regardless of class)
+                # If so, UPDATE it instead of creating a duplicate
+                any_assignment = VMAssignment.query.filter_by(proxmox_vmid=vmid).first()
+                
+                if any_assignment:
+                    # Update existing assignment
+                    any_assignment.class_id = class_id
+                    any_assignment.assigned_user_id = None  # Reset to unassigned pool VM
+                    any_assignment.status = 'available'
+                    any_assignment.vm_name = vm.get('name')
+                    any_assignment.node = vm.get('node')
+                    any_assignment.mac_address = vm.get('mac_address')
+                    any_assignment.cached_ip = vm.get('ip')
+                    db.session.add(any_assignment)
+                else:
+                    # Create new assignment only if none exists
+                    assignment = VMAssignment(
+                        proxmox_vmid=vmid,
+                        class_id=class_id,
+                        assigned_user_id=None,  # Unassigned pool VM
+                        status='available',
+                        vm_name=vm.get('name'),
+                        node=vm.get('node'),
+                        mac_address=vm.get('mac_address'),
+                        cached_ip=vm.get('ip')
+                    )
+                    db.session.add(assignment)
+                
                 added += 1
             
             except Exception as e:
