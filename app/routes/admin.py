@@ -183,20 +183,12 @@ def admin_settings():
     return render_template("settings.html")
 
 
-# ==============================================================================
-# MAINTENANCE
-# ==============================================================================
-
-@admin_bp.route("/maintenance")
-@admin_required
-def maintenance():
-    """Admin maintenance page for system tasks."""
-    return render_template("admin/maintenance.html")
 
 
 # ==============================================================================
 # LEGACY MAPPINGS UI
 # ==============================================================================
+
 
 @admin_bp.route("/mappings", endpoint="admin_mappings")
 @admin_required

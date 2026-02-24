@@ -11,7 +11,6 @@ from app.routes.api.class_ip_refresh import class_ip_refresh_bp
 from app.routes.api.clusters import api_clusters_bp
 from app.routes.api.console import console_bp
 from app.routes.api.mappings import api_mappings_bp
-from app.routes.api.maintenance import maintenance_bp
 from app.routes.api.profile import api_profile_bp
 from app.routes.api.publish_template import api_publish_template_bp
 from app.routes.api.rdp import api_rdp_bp

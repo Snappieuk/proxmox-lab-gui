@@ -81,10 +81,6 @@
                    href="{{ url_for('admin.vm_class_mappings') }}">
                     <i class="ti ti-topology-star-3"></i> VM:Class Mappings
                 </a>
-                <a class="sidebar-link {% if request.endpoint == 'admin.maintenance' %}sidebar-link-active{% endif %}"
-                   href="{{ url_for('admin.maintenance') }}">
-                    <i class="ti ti-tools"></i> Maintenance
-                </a>
                 
             {% endif %}
     {% endif %}
