@@ -190,13 +190,31 @@ def deploy_linked_clones(
         # Get Proxmox connection
         proxmox = get_proxmox_admin_for_cluster(cluster_config["id"])
         
-        # Verify template exists and get its storage
-        try:
-            proxmox.nodes(deployment_node).qemu(template_vmid).status.current.get()
-            logger.info(f"Template VM {template_vmid} found on node {deployment_node}")
-        except Exception as e:
-            logger.error(f"Template VM {template_vmid} not found on node {deployment_node}: {e}")
-            return False, f"Template VM {template_vmid} not found: {str(e)}", {}
+        # If no deployment node specified, find which node the template is on
+        if not deployment_node:
+            logger.info(f"No deployment node specified, searching for template VM {template_vmid}...")
+            template_found = False
+            for node in proxmox.nodes.get():
+                node_name = node['node']
+                try:
+                    proxmox.nodes(node_name).qemu(template_vmid).status.current.get()
+                    deployment_node = node_name
+                    template_found = True
+                    logger.info(f"Template VM {template_vmid} found on node {node_name}")
+                    break
+                except:
+                    continue
+            
+            if not template_found:
+                return False, f"Template VM {template_vmid} not found on any node", {}
+        else:
+            # Verify template exists on specified node
+            try:
+                proxmox.nodes(deployment_node).qemu(template_vmid).status.current.get()
+                logger.info(f"Template VM {template_vmid} found on node {deployment_node}")
+            except Exception as e:
+                logger.error(f"Template VM {template_vmid} not found on node {deployment_node}: {e}")
+                return False, f"Template VM {template_vmid} not found: {str(e)}", {}
         
         # Get template's storage location
         template_storage = get_template_storage(proxmox, deployment_node, template_vmid)
