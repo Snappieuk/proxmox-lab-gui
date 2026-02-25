@@ -359,13 +359,16 @@ def api_test_cluster_connection(cluster_db_id: int):
     
     try:
         # Attempt to connect and get version
-        proxmox = ProxmoxAPI(
-            cluster.host,
-            user=cluster.user,
-            password=cluster.password,
-            verify_ssl=cluster.verify_ssl,
-            port=cluster.port
-        )
+        from app.services.proxmox_service import create_proxmox_connection
+        # Convert Cluster model to dict for connection
+        cluster_dict = {
+            "host": cluster.host,
+            "user": cluster.user,
+            "password": cluster.password,
+            "verify_ssl": cluster.verify_ssl,
+            "port": cluster.port
+        }
+        proxmox = create_proxmox_connection(cluster_dict)
         version = proxmox.version.get()
         nodes = proxmox.nodes.get()
         

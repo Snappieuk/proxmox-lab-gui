@@ -216,10 +216,19 @@ def deploy_linked_clones(
         else:
             logger.info(f"Multi-node deployment: using load balancing across cluster nodes")
         
-        # Get SSH executor for the template node (qm clone must run from template's node)
+        # Get SSH executor for the cluster (qm clone must run from template's node)
         try:
-            ssh_executor = get_pooled_ssh_executor_from_config(cluster_config)
-            logger.info(f"SSH connection established - will run clone commands from template node {template_node}")
+            from app.services.ssh_executor import get_pooled_ssh_executor
+            
+            # Extract username without realm (root@pam -> root)
+            username = cluster_config["user"].split("@")[0] if "@" in cluster_config["user"] else cluster_config["user"]
+            
+            ssh_executor = get_pooled_ssh_executor(
+                host=cluster_config["host"],
+                username=username,
+                password=cluster_config["password"]
+            )
+            logger.info(f"SSH connection established to {cluster_config['host']} - will run clone commands from template node {template_node}")
         except Exception as e:
             logger.error(f"Failed to get SSH connection: {e}")
             return False, f"SSH connection failed: {str(e)}", {}

@@ -56,6 +56,53 @@ _proxmox_lock = threading.Lock()
 _proxmox_connections: Dict[str, Any] = {}
 
 
+def create_proxmox_connection(cluster: Dict[str, Any], timeout: int = 30) -> ProxmoxAPI:
+    """
+    Create a Proxmox API connection with standardized settings.
+    
+    This is the SINGLE centralized function for creating ProxmoxAPI connections.
+    All other functions should use this instead of calling ProxmoxAPI() directly.
+    
+    Args:
+        cluster: Cluster configuration dict with keys: host, user, password, verify_ssl, port
+        timeout: Request timeout in seconds (default 30)
+    
+    Returns:
+        ProxmoxAPI connection instance with connection pooling enabled
+    """
+    # Create requests session with connection pooling
+    import requests
+    session = requests.Session()
+    session.mount('http://', _http_adapter)
+    session.mount('https://', _http_adapter)
+    
+    try:
+        connection = ProxmoxAPI(
+            cluster["host"],
+            user=cluster["user"],
+            password=cluster["password"],
+            verify_ssl=cluster.get("verify_ssl", False),
+            port=cluster.get("port", 8006),
+            timeout=timeout,
+        )
+        # Monkey-patch session for connection pooling
+        if hasattr(connection, '_backend') and hasattr(connection._backend, 'session'):
+            connection._backend.session.mount('http://', _http_adapter)
+            connection._backend.session.mount('https://', _http_adapter)
+        return connection
+    except Exception as e:
+        logger.error(f"Failed to create Proxmox connection to {cluster['host']}: {e}")
+        # Fallback without session monkey-patching
+        return ProxmoxAPI(
+            cluster["host"],
+            user=cluster["user"],
+            password=cluster["password"],
+            verify_ssl=cluster.get("verify_ssl", False),
+            port=cluster.get("port", 8006),
+            timeout=timeout,
+        )
+
+
 def get_clusters_from_db():
     """Load active clusters from database (database-first architecture)."""
     try:
@@ -148,34 +195,7 @@ def get_proxmox_admin_for_cluster(cluster_id: str) -> ProxmoxAPI:
         return _proxmox_connections[cluster_id]
     
     # Create connection OUTSIDE lock (slow network operation)
-    import requests
-    from requests.adapters import HTTPAdapter
-    
-    session = requests.Session()
-    adapter = HTTPAdapter(pool_connections=50, pool_maxsize=50)
-    session.mount('http://', adapter)
-    session.mount('https://', adapter)
-    
-    try:
-        new_connection = ProxmoxAPI(
-            cluster["host"],
-            user=cluster["user"],
-            password=cluster["password"],
-            verify_ssl=cluster.get("verify_ssl", False),
-        )
-        # Monkey-patch the session after creation
-        if hasattr(new_connection, '_backend') and hasattr(new_connection._backend, 'session'):
-            new_connection._backend.session.mount('http://', adapter)
-            new_connection._backend.session.mount('https://', adapter)
-    except Exception as e:
-        logger.error(f"Failed to create Proxmox connection with pooling: {e}")
-        # Fallback without advanced session configuration
-        new_connection = ProxmoxAPI(
-            cluster["host"],
-            user=cluster["user"],
-            password=cluster["password"],
-            verify_ssl=cluster.get("verify_ssl", False),
-        )
+    new_connection = create_proxmox_connection(cluster)
     
     # Now acquire lock ONLY for dictionary write (fast)
     with _proxmox_lock:
@@ -211,26 +231,7 @@ def get_proxmox_admin() -> ProxmoxAPI:
             session.mount('http://', _http_adapter)
             session.mount('https://', _http_adapter)
             
-            try:
-                _proxmox_connections[cluster_id] = ProxmoxAPI(
-                    cluster["host"],
-                    user=cluster["user"],
-                    password=cluster["password"],
-                    verify_ssl=cluster.get("verify_ssl", False),
-                )
-                # Monkey-patch the session after creation
-                if hasattr(_proxmox_connections[cluster_id], '_backend') and hasattr(_proxmox_connections[cluster_id]._backend, 'session'):
-                    _proxmox_connections[cluster_id]._backend.session.mount('http://', _http_adapter)
-                    _proxmox_connections[cluster_id]._backend.session.mount('https://', _http_adapter)
-            except Exception as e:
-                logger.error(f"Failed to create Proxmox connection with pooling: {e}")
-                # Fallback without session parameter
-                _proxmox_connections[cluster_id] = ProxmoxAPI(
-                    cluster["host"],
-                    user=cluster["user"],
-                    password=cluster["password"],
-                    verify_ssl=cluster.get("verify_ssl", False),
-                )
+            _proxmox_connections[cluster_id] = create_proxmox_connection(cluster)
             
             logger.info("Connected to Proxmox cluster '%s' at %s (pool_size=100)", cluster["name"], cluster["host"])
     
@@ -264,33 +265,7 @@ def create_proxmox_client() -> ProxmoxAPI:
     across threads, since ProxmoxAPI may not be fully thread-safe.
     """
     cluster = get_current_cluster()
-    
-    # Create with connection pooling
-    import requests
-    session = requests.Session()
-    session.mount('http://', _http_adapter)
-    session.mount('https://', _http_adapter)
-    
-    try:
-        client = ProxmoxAPI(
-            cluster["host"],
-            user=cluster["user"],
-            password=cluster["password"],
-            verify_ssl=cluster.get("verify_ssl", False),
-        )
-        # Monkey-patch session after creation
-        if hasattr(client, '_backend') and hasattr(client._backend, 'session'):
-            client._backend.session.mount('http://', _http_adapter)
-            client._backend.session.mount('https://', _http_adapter)
-        return client
-    except Exception:
-        # Fallback without pooling
-        return ProxmoxAPI(
-            cluster["host"],
-            user=cluster["user"],
-            password=cluster["password"],
-            verify_ssl=cluster.get("verify_ssl", False),
-        )
+    return create_proxmox_connection(cluster)
 
 
 def probe_proxmox() -> Dict[str, Any]:

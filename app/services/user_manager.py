@@ -59,12 +59,10 @@ def authenticate_proxmox_user(username: str, password: str) -> Optional[str]:
     # If username already has realm suffix, try as-is
     if '@' in username:
         try:
-            prox = ProxmoxAPI(
-                cluster["host"],
-                user=username,
-                password=password,
-                verify_ssl=cluster.get("verify_ssl", False),
-            )
+            from app.services.proxmox_service import create_proxmox_connection
+            # Create temporary cluster config with test username
+            test_cluster = {**cluster, "user": username, "password": password}
+            prox = create_proxmox_connection(test_cluster)
             prox.version.get()
             logger.debug("Proxmox auth succeeded for %s", username)
             return username
@@ -75,12 +73,10 @@ def authenticate_proxmox_user(username: str, password: str) -> Optional[str]:
     # Try with @pve realm for bare username (backwards compatibility)
     full_user = f"{username}@pve"
     try:
-        prox = ProxmoxAPI(
-            cluster["host"],
-            user=full_user,
-            password=password,
-            verify_ssl=cluster.get("verify_ssl", False),
-        )
+        from app.services.proxmox_service import create_proxmox_connection
+        # Create temporary cluster config with test username
+        test_cluster = {**cluster, "user": full_user, "password": password}
+        prox = create_proxmox_connection(test_cluster)
         prox.version.get()
         logger.debug("Proxmox auth succeeded for %s", full_user)
         return full_user
