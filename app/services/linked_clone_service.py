@@ -190,39 +190,36 @@ def deploy_linked_clones(
         # Get Proxmox connection
         proxmox = get_proxmox_admin_for_cluster(cluster_config["id"])
         
-        # If no deployment node specified, find which node the template is on
-        if not deployment_node:
-            logger.info(f"No deployment node specified, searching for template VM {template_vmid}...")
-            template_found = False
-            for node in proxmox.nodes.get():
-                node_name = node['node']
-                try:
-                    proxmox.nodes(node_name).qemu(template_vmid).status.current.get()
-                    deployment_node = node_name
-                    template_found = True
-                    logger.info(f"Template VM {template_vmid} found on node {node_name}")
-                    break
-                except:
-                    continue
-            
-            if not template_found:
-                return False, f"Template VM {template_vmid} not found on any node", {}
-        else:
-            # Verify template exists on specified node
+        # Find which node the template is on (for verification and storage detection)
+        logger.info(f"Searching for template VM {template_vmid}...")
+        template_node = None
+        for node in proxmox.nodes.get():
+            node_name = node['node']
             try:
-                proxmox.nodes(deployment_node).qemu(template_vmid).status.current.get()
-                logger.info(f"Template VM {template_vmid} found on node {deployment_node}")
-            except Exception as e:
-                logger.error(f"Template VM {template_vmid} not found on node {deployment_node}: {e}")
-                return False, f"Template VM {template_vmid} not found: {str(e)}", {}
+                proxmox.nodes(node_name).qemu(template_vmid).status.current.get()
+                template_node = node_name
+                logger.info(f"Template VM {template_vmid} found on node {node_name}")
+                break
+            except:
+                continue
+        
+        if not template_node:
+            return False, f"Template VM {template_vmid} not found on any node", {}
         
         # Get template's storage location
-        template_storage = get_template_storage(proxmox, deployment_node, template_vmid)
+        template_storage = get_template_storage(proxmox, template_node, template_vmid)
         logger.info(f"Template VM {template_vmid} uses storage: {template_storage}")
         
-        # Get SSH executor for the node
+        # Determine deployment strategy
+        if deployment_node:
+            logger.info(f"Single-node deployment: all VMs will be created on {deployment_node}")
+        else:
+            logger.info(f"Multi-node deployment: using load balancing across cluster nodes")
+        
+        # Get SSH executor for the template node (qm clone must run from template's node)
         try:
             ssh_executor = get_pooled_ssh_executor_from_config(cluster_config)
+            logger.info(f"SSH connection established - will run clone commands from template node {template_node}")
         except Exception as e:
             logger.error(f"Failed to get SSH connection: {e}")
             return False, f"SSH connection failed: {str(e)}", {}
@@ -242,15 +239,21 @@ def deploy_linked_clones(
                 target_node = deployment_node
             else:
                 nodes = get_nodes_for_load_balancing(cluster_config)
-                target_node = nodes[i % len(nodes)] if nodes else deployment_node
+                target_node = nodes[i % len(nodes)] if nodes else template_node
             
             vm_name = f"{class_.name.replace(' ', '-').lower()}-student-{i+1}-{new_vmid}"
             
             try:
-                # Execute qm clone command (WITHOUT --full true for true linked clones)
-                # Linked clones are snapshot-based and much faster
+                # Execute qm clone command from template node
+                # If target node differs from template node, use --target parameter for cross-node clone
                 cmd = f"qm clone {template_vmid} {new_vmid} --name {vm_name} --storage {template_storage}"
-                logger.info(f"Creating linked clone: {cmd}")
+                
+                # Add target node if cloning to a different node
+                if target_node != template_node:
+                    cmd += f" --target {target_node}"
+                    logger.info(f"Creating cross-node linked clone on {target_node}: {cmd}")
+                else:
+                    logger.info(f"Creating linked clone on same node {target_node}: {cmd}")
                 
                 output = ssh_executor.run_command(cmd)
                 logger.info(f"Linked clone created: {output}")
