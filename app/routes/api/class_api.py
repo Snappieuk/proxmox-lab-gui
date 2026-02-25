@@ -232,6 +232,7 @@ def create_new_class():
                 
                 # Fetch template object if it exists (inside the session context!)
                 template_obj = class_obj.template if class_obj.template_id else None
+                template_proxmox_vmid = template_obj.proxmox_vmid if template_obj else None
             
             # Use selected deployment method
             if deployment_method == "linked_clone":
@@ -244,11 +245,11 @@ def create_new_class():
                     logger.error(f"Template {template_id} not found")
                     return
                 
-                logger.info(f"Deploying VMs for class '{class_name}' using linked clone method (template={template_id}, students={pool_size})...")
+                logger.info(f"Deploying VMs for class '{class_name}' using linked clone method (template DB ID={template_id}, Proxmox VMID={template_proxmox_vmid}, students={pool_size})...")
                 
                 success, message, vm_info = deploy_linked_clones(
                     class_id=class_id_for_error,
-                    template_vmid=template_id,
+                    template_vmid=template_proxmox_vmid,
                     num_students=pool_size,
                     deployment_node=deployment_node
                 )
