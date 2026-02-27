@@ -232,8 +232,17 @@ def deploy_linked_clones(
             logger.error(f"Failed to get SSH connection: {e}")
             return False, f"SSH connection failed: {str(e)}", {}
         
-        # Determine starting VMID
-        start_vmid = get_available_vmid(cluster_config, start_vmid=100)
+        # Determine starting VMID based on class prefix
+        class_ = Class.query.get(class_id)
+        
+        if class_ and class_.vmid_prefix:
+            # Use class prefix range (e.g., 123 = 12300-12399)
+            start_vmid = class_.vmid_prefix * 100
+            logger.info(f"Using class VMID prefix range {class_.vmid_prefix} (start: {start_vmid})")
+        else:
+            # Fallback to finding next available VMID
+            start_vmid = get_available_vmid(cluster_config, start_vmid=100)
+            logger.info(f"Using fallback VMID start: {start_vmid}")
         
         created_vms = []
         errors = []
@@ -263,8 +272,13 @@ def deploy_linked_clones(
                 else:
                     logger.info(f"Creating linked clone on same node {target_node}: {cmd}")
                 
-                output = ssh_executor.run_command(cmd)
-                logger.info(f"Linked clone created: {output}")
+                exit_code, stdout, stderr = ssh_executor.execute(cmd)
+                if exit_code == 0:
+                    logger.info(f"Linked clone created: {stdout}")
+                else:
+                    logger.error(f"Failed to create linked clone: {stderr}")
+                    errors.append(f"Failed to create VM {new_vmid}: {stderr}")
+                    continue
                 
                 # Verify VM was created
                 vm_config = proxmox.nodes(target_node).qemu(new_vmid).config.get()

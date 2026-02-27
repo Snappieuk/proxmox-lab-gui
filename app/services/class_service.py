@@ -232,13 +232,24 @@ def create_class(name: str, teacher_id: int, description: str = None,
                 else:
                     raise
 
+        # Allocate VMID prefix BEFORE generating token
+        # This ensures every class has a prefix allocated before any VMs are created
+        from app.services.class_vm_service import allocate_vmid_prefix_simple
+        vmid_prefix = allocate_vmid_prefix_simple()
+        if vmid_prefix:
+            class_.vmid_prefix = vmid_prefix
+            logger.info(f"Allocated VMID prefix {vmid_prefix} for class (range: {vmid_prefix}00-{vmid_prefix}99)")
+        else:
+            logger.warning(f"Failed to allocate VMID prefix for class {name}, will retry during VM creation")
+
         # Auto-generate join token (never expires) if none
+        # Token format includes the prefix for readability
         class_.generate_join_token(expires_in_days=0)
 
         _commit_with_retry()
         
-        logger.info("Created class: %s by teacher %s (template_id=%s)", 
-                   name, teacher.username, template_id)
+        logger.info("Created class: %s by teacher %s (template_id=%s, vmid_prefix=%s)", 
+                   name, teacher.username, template_id, class_.vmid_prefix)
         
         # Note: VMs are created via the "Create VMs" button in the UI
         # which calls /api/classes/{id}/vms endpoint -> deploy_class_vms()

@@ -89,6 +89,44 @@ def get_cached_ssh_executor():
     return _ssh_connection_cache.executor
 
 
+def allocate_vmid_prefix_simple() -> Optional[int]:
+    """Allocate a unique 3-digit prefix for a class, without requiring SSH/Proxmox connection.
+    
+    This is called during class creation to ensure the prefix is allocate BEFORE any VMs.
+    Uses database-only checks, fast and reliable.
+    
+    Returns a prefix like 123, which means the class can use VMIDs 12300-12399.
+    Range: 200-999 (100-199 reserved for system/templates)
+    
+    Returns:
+        3-digit prefix (200-999) or None if allocation fails
+    """
+    import random
+    
+    with _vmid_allocation_lock:
+        try:
+            # Get all used prefixes from database
+            used_prefixes = {c.vmid_prefix for c in Class.query.all() if c.vmid_prefix}
+            
+            # Try to find an available prefix (200-999)
+            # Avoid 100-199 (reserved for system/templates)
+            max_attempts = 100
+            for _ in range(max_attempts):
+                prefix = random.randint(200, 999)
+                
+                # Check if this prefix is already used by another class
+                if prefix not in used_prefixes:
+                    logger.info(f"Allocated VMID prefix {prefix} (range {prefix}00-{prefix}99, 100 VMs)")
+                    return prefix
+            
+            logger.error(f"Failed to allocate VMID prefix after {max_attempts} attempts")
+            return None
+            
+        except Exception as e:
+            logger.exception(f"Error allocating VMID prefix: {e}")
+            return None
+
+
 def allocate_vmid_prefix_for_class(ssh_executor: SSHExecutor) -> Optional[int]:
     """Allocate a unique 3-digit prefix for a class's VMIDs.
     
