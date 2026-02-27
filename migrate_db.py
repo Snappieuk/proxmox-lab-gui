@@ -22,6 +22,7 @@ CRITICAL_MIGRATIONS = [
     ('classes', 'vmid_prefix', 'INTEGER', 'NULL'),  # 3-digit prefix for VMID allocation (200-999)
     ('classes', 'deployment_node', 'TEXT', 'NULL'),  # Optional: deploy all VMs to specific node
     ('classes', 'deployment_cluster', 'TEXT', 'NULL'),  # Optional: target cluster for deployment
+    ('classes', 'deployment_method', 'VARCHAR(20)', "'config_clone'"),  # "config_clone" or "linked_clone"
     ('classes', 'auto_shutdown_enabled', 'BOOLEAN', '0'),  # Enable auto-shutdown for idle VMs
     ('classes', 'auto_shutdown_cpu_threshold', 'INTEGER', '20'),  # CPU % threshold for idle detection
     ('classes', 'auto_shutdown_idle_minutes', 'INTEGER', '30'),  # Minutes of idle time before shutdown

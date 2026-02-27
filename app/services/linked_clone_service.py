@@ -10,12 +10,80 @@ Includes automatic load balancing across cluster nodes and fast deployment.
 """
 
 import logging
+from datetime import datetime
 from typing import List, Tuple, Dict, Optional
 
 from app.models import db, VMAssignment, Class
 from app.services.proxmox_service import get_proxmox_admin_for_cluster, get_clusters_from_db
 
 logger = logging.getLogger(__name__)
+
+
+def check_storage_available(proxmox, node: str, storage_name: str) -> Tuple[bool, str]:
+    """
+    Check if a storage is available on a specific node.
+    
+    Args:
+        proxmox: ProxmoxAPI connection
+        node: Node name to check
+        storage_name: Storage name to validate (e.g., "NFS-Datastore", "local-lvm")
+    
+    Returns:
+        (is_available: bool, message: str)
+    """
+    try:
+        # Get storage list for the node
+        storages = proxmox.nodes(node).storage.get()
+        
+        available_storages = [s['storage'] for s in storages if s.get('enabled', True)]
+        
+        if storage_name in available_storages:
+            # Get storage info
+            storage_info = proxmox.nodes(node).storage(storage_name).status.get()
+            msg = f"Storage '{storage_name}' available on {node}: {storage_info.get('content', 'N/A')}"
+            return True, msg
+        else:
+            available = ", ".join(available_storages) if available_storages else "none"
+            msg = f"Storage '{storage_name}' NOT available on node {node}. Available storages: {available}"
+            return False, msg
+            
+    except Exception as e:
+        msg = f"Error checking storage on {node}: {str(e)}"
+        logger.error(msg)
+        return False, msg
+
+
+def get_template_storage(proxmox, node: str, template_vmid: int) -> str:
+    """
+    Get the storage location of a template VM's disk.
+    
+    Args:
+        proxmox: ProxmoxAPI connection
+        node: Node where template resides
+        template_vmid: Template VM ID
+    
+    Returns:
+        Storage name (e.g., "TRUENAS-NFS", "NFS-Datastore", "local-lvm")
+    """
+    try:
+        config = proxmox.nodes(node).qemu(template_vmid).config.get()
+        
+        # Look for disk entries (scsi0, virtio0, ide0, etc.)
+        for disk_key in ['scsi0', 'scsi1', 'virtio0', 'ide0', 'ide1', 'ide2']:
+            if disk_key in config:
+                disk_path = config[disk_key]
+                # Format is typically "storage:path" or "storage:vmid/disk-name"
+                if ':' in disk_path:
+                    storage_name = disk_path.split(':')[0]
+                    logger.info(f"Template VM {template_vmid} uses storage: {storage_name}")
+                    return storage_name
+        
+        logger.warning(f"Could not determine template storage for VM {template_vmid}, using default")
+        return "local-lvm"
+        
+    except Exception as e:
+        logger.error(f"Failed to get template storage: {e}")
+        return "local-lvm"
 
 
 def get_available_vmid(cluster_config: dict, start_vmid: int = 100) -> int:
@@ -243,6 +311,25 @@ def deploy_linked_clones(
         else:
             logger.info("Multi-node deployment: using load balancing across cluster nodes")
         
+        # Get template storage and validate it's available on target nodes
+        template_storage = get_template_storage(proxmox, template_node, template_vmid)
+        logger.info(f"Template uses storage: {template_storage}")
+        
+        # Get list of deployment nodes
+        if deployment_node:
+            target_nodes = [deployment_node]
+        else:
+            target_nodes = get_nodes_for_load_balancing(cluster_config, count=num_students)
+            if not target_nodes:
+                target_nodes = [template_node]  # Fallback to template node
+        
+        # Validate storage is available on all target nodes
+        for target_node in target_nodes:
+            is_available, msg = check_storage_available(proxmox, target_node, template_storage)
+            logger.info(msg)
+            if not is_available:
+                return False, f"Storage validation failed: {msg}", {}
+        
         # Get SSH executor for the cluster (qm clone must run from template's node)
         try:
             from app.services.ssh_executor import get_pooled_ssh_executor
@@ -290,9 +377,65 @@ def deploy_linked_clones(
         created_vms = []
         errors = []
         
-        # Create student VMs (linked clones - fast, snapshot-based)
+        # Step 1: Create TEACHER VM at prefix*100 + 0 (index 0)
+        teacher_vmid = start_vmid
+        teacher_name = f"{class_.name.replace(' ', '-').lower()}-teacher-{teacher_vmid}"
+        
+        if deployment_node:
+            teacher_node = deployment_node
+        else:
+            nodes = get_nodes_for_load_balancing(cluster_config)
+            teacher_node = nodes[0] if nodes else template_node
+        
+        try:
+            logger.info(f"Creating teacher VM: {teacher_vmid} ({teacher_name}) on {teacher_node}")
+            cmd = f"qm clone {template_vmid} {teacher_vmid} --name '{teacher_name}'"
+            
+            if teacher_node != template_node:
+                cmd += f" --target {teacher_node}"
+            
+            exit_code, stdout, stderr = ssh_executor.execute(cmd)
+            if exit_code == 0:
+                logger.info(f"Teacher VM created: {stdout}")
+                created_vms.append({
+                    "vmid": teacher_vmid,
+                    "name": teacher_name,
+                    "node": teacher_node,
+                    "is_teacher": True
+                })
+                
+                # Create baseline snapshot for teacher VM
+                try:
+                    from app.services.vm_core import create_snapshot_ssh
+                    
+                    snap_success, snap_error = create_snapshot_ssh(
+                        ssh_executor=ssh_executor,
+                        vmid=teacher_vmid,
+                        snapname="baseline",
+                        description="Baseline snapshot from initial clone - use for reimage",
+                        include_ram=False
+                    )
+                    
+                    if snap_success:
+                        logger.info(f"Created baseline snapshot for teacher VM {teacher_vmid}")
+                    else:
+                        logger.warning(f"Failed to create baseline snapshot for teacher VM {teacher_vmid}: {snap_error}")
+                
+                except Exception as e:
+                    logger.error(f"Error creating baseline snapshot for teacher VM {teacher_vmid}: {e}")
+                
+            else:
+                logger.error(f"Failed to create teacher VM: {stderr}")
+                errors.append(f"Failed to create teacher VM {teacher_vmid}: {stderr}")
+                
+        except Exception as e:
+            error_msg = f"Failed to create teacher VM {teacher_vmid}: {str(e)}"
+            logger.error(error_msg)
+            errors.append(error_msg)
+        
+        # Step 2: Create STUDENT VMs at prefix*100 + 1 through prefix*100 + num_students
         for i in range(num_students):
-            new_vmid = start_vmid + i
+            new_vmid = start_vmid + 1 + i  # Start from prefix*100 + 1 (index 1)
             
             # Pick node for this VM (load balance if not single node deployment)
             if deployment_node:
@@ -331,9 +474,34 @@ def deploy_linked_clones(
                     created_vms.append({
                         "vmid": new_vmid,
                         "name": vm_name,
-                        "node": target_node
+                        "node": target_node,
+                        "is_teacher": False  # This is a student VM
                     })
                     logger.info(f"Created VM {new_vmid}: {vm_name} on {target_node}")
+                    
+                    # Create baseline snapshot immediately after VM creation
+                    # This captures the clean state from the clone for reimage functionality
+                    try:
+                        from app.services.vm_core import create_snapshot_ssh
+                        
+                        snap_success, snap_error = create_snapshot_ssh(
+                            ssh_executor=ssh_executor,
+                            vmid=new_vmid,
+                            snapname="baseline",
+                            description="Baseline snapshot from initial clone - use for reimage",
+                            include_ram=False
+                        )
+                        
+                        if snap_success:
+                            logger.info(f"Created baseline snapshot for VM {new_vmid}")
+                        else:
+                            logger.warning(f"Failed to create baseline snapshot for VM {new_vmid}: {snap_error}")
+                            # Don't fail VM creation if snapshot fails - snapshot is not critical
+                    
+                    except Exception as e:
+                        logger.error(f"Error creating baseline snapshot for VM {new_vmid}: {e}")
+                        # Continue - snapshot failure is non-fatal
+                
                 else:
                     errors.append(f"VM {new_vmid} created but not verified")
                     
@@ -344,13 +512,22 @@ def deploy_linked_clones(
         
         # Create database records for created VMs
         try:
+            # Get teacher ID for the class
+            teacher_id = class_.teacher_id if class_ else None
+            
             for vm_info in created_vms:
+                is_teacher = vm_info.get("is_teacher", False)
+                
                 assignment = VMAssignment(
                     class_id=class_id,
                     proxmox_vmid=vm_info["vmid"],
                     vm_name=vm_info["name"],
                     node=vm_info["node"],
-                    status="available"
+                    status="assigned" if is_teacher else "available",
+                    is_teacher_vm=is_teacher,
+                    is_template_vm=False,
+                    assigned_user_id=teacher_id if is_teacher else None,
+                    assigned_at=datetime.utcnow() if is_teacher else None
                 )
                 db.session.add(assignment)
             

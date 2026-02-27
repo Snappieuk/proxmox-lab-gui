@@ -165,7 +165,8 @@ def delete_user(user_id: int) -> Tuple[bool, str]:
 def create_class(name: str, teacher_id: int, description: str = None, 
                  template_id: int = None, pool_size: int = 0,
                  cpu_cores: int = 2, memory_mb: int = 2048, disk_size_gb: int = 32,
-                 deployment_node: str = None, deployment_cluster: str = None) -> Tuple[Optional[Class], str]:
+                 deployment_node: str = None, deployment_cluster: str = None,
+                 deployment_method: str = 'config_clone') -> Tuple[Optional[Class], str]:
     """Create a new class.
     
     Template is optional - classes can be created without templates and VMs can be added manually later.
@@ -174,6 +175,7 @@ def create_class(name: str, teacher_id: int, description: str = None,
         disk_size_gb: Disk size in GB (only used for template-less classes, default 32)
         deployment_node: Optional override to deploy all VMs on a specific node
         deployment_cluster: Optional cluster ID where VMs should be deployed
+        deployment_method: VM deployment method ('config_clone' for QCOW2 overlays or 'linked_clone' for qm clone)
     
     Returns: (class, message/error)
     """
@@ -186,6 +188,10 @@ def create_class(name: str, teacher_id: int, description: str = None,
     
     if not teacher.is_teacher and not teacher.is_adminer:
         return None, "User must be a teacher or adminer to create classes"
+    
+    # Verify deployment method is valid
+    if deployment_method not in ['config_clone', 'linked_clone']:
+        return None, "Invalid deployment_method. Must be 'config_clone' or 'linked_clone'"
     
     # Verify template exists if specified (template is now optional)
     original_template = None
@@ -211,7 +217,8 @@ def create_class(name: str, teacher_id: int, description: str = None,
             memory_mb=memory_mb,
             disk_size_gb=disk_size_gb,
             deployment_node=deployment_node,  # Optional: single-node deployment override
-            deployment_cluster=deployment_cluster  # Optional: target cluster
+            deployment_cluster=deployment_cluster,  # Optional: target cluster
+            deployment_method=deployment_method  # Store deployment method for later reference
         )
         db.session.add(class_)
         

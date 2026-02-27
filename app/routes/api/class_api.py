@@ -157,7 +157,8 @@ def create_new_class():
         memory_mb=memory_mb,
         disk_size_gb=disk_size_gb,
         deployment_node=deployment_node,
-        deployment_cluster=deployment_cluster
+        deployment_cluster=deployment_cluster,
+        deployment_method=deployment_method
     )
     
     if not class_:

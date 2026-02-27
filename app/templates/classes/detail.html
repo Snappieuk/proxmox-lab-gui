@@ -319,6 +319,19 @@
                     </div>
                     
                     <!-- Quick Actions Row -->
+                    {% if class_.deployment_method == 'linked_clone' %}
+                    <!-- For linked clones: only show Reimage button (2 col layout) -->
+                    <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem; margin-bottom: 2rem;">
+                        <button onclick="reimageTemplate()" class="btn-action-large btn-gray">
+                            <i class="ti ti-refresh"></i>
+                            <span>Reimage</span>
+                            <small>Reset to baseline</small>
+                        </button>
+                        <!-- Placeholder for grid alignment -->
+                        <div></div>
+                    </div>
+                    {% else %}
+                    <!-- For config clones: show all 3 action buttons (3 col layout) -->
                     <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin-bottom: 2rem;">
                         <button onclick="reimageTemplate()" class="btn-action-large btn-gray">
                             <i class="ti ti-refresh"></i>
@@ -336,8 +349,23 @@
                             <small>Update all students</small>
                         </button>
                     </div>
+                    {% endif %}
                     
                     <!-- Info Box -->
+                    {% if class_.deployment_method == 'linked_clone' %}
+                    <div style="padding: 1rem; background: #e8f4fd; border-radius: 6px; border-left: 4px solid #0078d4;">
+                        <div style="display: flex; align-items: start; gap: 0.75rem;">
+                            <i class="ti ti-info-circle" style="font-size: 1.25rem; color: #0078d4; margin-top: 0.1rem;"></i>
+                            <div style="font-size: 0.9rem; color: #323130;">
+                                <strong style="display: block; margin-bottom: 0.5rem;">Linked Clone Workflow</strong>
+                                <div style="line-height: 1.6;">
+                                    <strong>Reimage:</strong> Reset template to original snapshot baseline.<br>
+                                    <em style="color: #666;">Note: Template modifications are persisted automatically. Linked clones cannot be individually customized after creation.</em>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    {% else %}
                     <div style="padding: 1rem; background: #e8f4fd; border-radius: 6px; border-left: 4px solid #0078d4;">
                         <div style="display: flex; align-items: start; gap: 0.75rem;">
                             <i class="ti ti-info-circle" style="font-size: 1.25rem; color: #0078d4; margin-top: 0.1rem;"></i>
@@ -351,6 +379,7 @@
                             </div>
                         </div>
                     </div>
+                    {% endif %}
                 </div>
             </div>
         </div>
@@ -2106,19 +2135,31 @@ function rdpToTemplate() {
 }
 
 async function reimageTemplate() {
-    if (!confirm('Revert template to baseline? This will reset all changes made to the template VM.')) return;
+    // Check deployment method and show appropriate confirmation
+    const deploymentMethod = {{ class_.deployment_method | tojson }};
+    
+    let confirmMsg;
+    if (deploymentMethod === 'linked_clone') {
+        confirmMsg = 'Revert template VM to snapshot baseline? This will discard all changes made to the template VM.';
+    } else {
+        confirmMsg = 'Revert template to baseline? This will delete the current teacher VM and recreate a fresh copy from the baseline. All changes will be lost.';
+    }
+    
+    if (!confirm(confirmMsg)) return;
     
     try {
         const resp = await fetch(`/api/classes/${classId}/template/reimage`, { method: 'POST' });
         const data = await resp.json();
         
         if (data.ok) {
-            showAlert(data.message, 'success');
+            showAlert(data.message || 'Template reverted successfully', 'success');
+            // Reload page to show updated VM status
+            setTimeout(() => location.reload(), 2000);
         } else {
             showAlert(data.error || 'Failed to reimage template', 'error');
         }
     } catch (e) {
-        showAlert('Failed to reimage template', 'error');
+        showAlert('Failed to reimage template: ' + e.message, 'error');
     }
 }
 

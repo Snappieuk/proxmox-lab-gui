@@ -38,6 +38,7 @@ from app.services.ssh_executor import (
 from app.services.vm_core import wait_for_vm_stopped
 from app.services.vm_template import export_template_to_qcow2
 from app.services.clone_progress import update_clone_progress
+from app.services.linked_clone_service import check_storage_available, get_template_storage
 
 # Import utility functions from new modular structure
 # These provide the canonical implementations
@@ -921,6 +922,38 @@ def create_class_vms(
         else:
             # NEW CLASS: Create full infrastructure (teacher + class-base + students)
             logger.info("=== CREATING NEW CLASS - Full infrastructure deployment ===")
+            
+            # STORAGE VALIDATION: Ensure storage is available before starting VM creation
+            if template_vmid and proxmox:
+                logger.info("Validating storage availability for template-based deployment...")
+                try:
+                    # Get template storage
+                    template_storage = get_template_storage(proxmox, template_node_name, template_vmid)
+                    if template_storage:
+                        logger.info(f"Template {template_vmid} uses storage: {template_storage}")
+                        
+                        # Validate storage on template node
+                        is_available, storage_msg = check_storage_available(proxmox, template_node_name, template_storage)
+                        logger.info(storage_msg)
+                        if not is_available:
+                            result.error = f"Storage validation failed: {storage_msg}"
+                            return result
+                        
+                        # Validate storage on deployment node if specified (for single-node deployments)
+                        if class_.deployment_node and class_.deployment_node != template_node_name:
+                            is_available, storage_msg = check_storage_available(proxmox, class_.deployment_node, template_storage)
+                            logger.info(storage_msg)
+                            if not is_available:
+                                result.error = f"Storage validation failed on deployment node: {storage_msg}"
+                                return result
+                    else:
+                        logger.warning(f"Could not determine storage for template {template_vmid} - skipping validation")
+                except Exception as e:
+                    logger.warning(f"Storage validation skipped due to error: {e}")
+            elif not template_vmid:
+                logger.info("Template-less deployment - storage validation not applicable")
+            else:
+                logger.warning("Proxmox API connection not available - skipping storage validation")
         
             # Step 1: Handle template vs no-template workflow (ONLY for new classes)
             if template_vmid:
@@ -1131,6 +1164,22 @@ def create_class_vms(
                 
                 result.details.append(f"Teacher VM {teacher_vmid} created on {teacher_actual_node}")
                 logger.info(f"Teacher VM {teacher_vmid} confirmed on node {teacher_actual_node}")
+                
+                # Create VMAssignment for newly created teacher VM
+                teacher_assignment = VMAssignment(
+                    class_id=class_id,
+                    proxmox_vmid=teacher_vmid,
+                    vm_name=teacher_name,
+                    mac_address=teacher_mac,
+                    node=teacher_actual_node,
+                    assigned_user_id=teacher_id,
+                    status='assigned',
+                    is_template_vm=False,
+                    is_teacher_vm=True,
+                    assigned_at=datetime.utcnow(),
+                )
+                db.session.add(teacher_assignment)
+                logger.info(f"Created VMAssignment for newly created teacher VM {teacher_vmid}")
             
             # Step 3: Create class-base VM (reserved for template management, never assigned to students)
             # This VM is used when pushing template updates via save-and-deploy

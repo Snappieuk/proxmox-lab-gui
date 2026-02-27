@@ -408,10 +408,10 @@ def stop_template(class_id: int):
 @api_class_template_bp.route("/<int:class_id>/template/reimage", methods=['POST'])
 @login_required
 def reimage_template(class_id: int):
-    """Delete teacher VM and recreate fresh copy from class base QCOW2.
+    """Reset template to baseline.
     
-    This resets the teacher's working VM to match the original class template,
-    discarding any changes the teacher has made.
+    For config_clone classes: Delete teacher VM and recreate fresh copy from class base QCOW2.
+    For linked_clone classes: Revert teacher VM to snapshot baseline.
     """
     class_, error_response, status_code = require_teacher_or_admin(class_id)
     if error_response:
@@ -420,6 +420,9 @@ def reimage_template(class_id: int):
     try:
         from app.models import VMAssignment, db
         from app.services.proxmox_operations import delete_vm
+        
+        # Check deployment method
+        deployment_method = getattr(class_, 'deployment_method', 'config_clone')
         
         # Find the teacher VM
         teacher_vm = VMAssignment.query.filter_by(
@@ -438,8 +441,8 @@ def reimage_template(class_id: int):
         if not teacher_vm:
             return jsonify({'ok': False, 'error': 'No teacher VM found for this class'}), 404
         
-        old_vmid = teacher_vm.proxmox_vmid
-        old_node = teacher_vm.node
+        vmid = teacher_vm.proxmox_vmid
+        node = teacher_vm.node
         cluster_ip = class_.template.cluster_ip if class_.template else None
         
         if not cluster_ip:
@@ -449,37 +452,82 @@ def reimage_template(class_id: int):
             else:
                 return jsonify({'ok': False, 'error': 'No clusters configured'}), 500
         
-        logger.info(f"Reimaging teacher VM {old_vmid} for class {class_id} (will recreate from class base)")
+        if deployment_method == 'linked_clone':
+            # For linked clones: revert to snapshot baseline
+            logger.info(f"Reimaging linked clone teacher VM {vmid} for class {class_id} (reverting to snapshot baseline)")
+            
+            try:
+                from app.services.ssh_executor import get_pooled_ssh_executor_from_config
+                from app.services.vm_core import rollback_snapshot_ssh
+                from app.config import CLUSTERS
+                
+                # Get cluster config by IP
+                cluster_config = None
+                for c in CLUSTERS:
+                    if c.get('host') == cluster_ip:
+                        cluster_config = c
+                        break
+                
+                if not cluster_config:
+                    return jsonify({'ok': False, 'error': 'Cluster configuration not found'}), 500
+                
+                # Get pooled SSH executor
+                ssh_executor = get_pooled_ssh_executor_from_config(cluster_config)
+                
+                # Revert to baseline snapshot
+                snap_success, snap_error = rollback_snapshot_ssh(
+                    ssh_executor=ssh_executor,
+                    vmid=vmid,
+                    snapname="baseline"
+                )
+                
+                if snap_success:
+                    logger.info(f"Successfully reverted linked clone teacher VM {vmid} to baseline snapshot")
+                    return jsonify({
+                        'ok': True,
+                        'message': 'Teacher VM reverted to baseline snapshot'
+                    })
+                else:
+                    logger.error(f"Failed to revert linked clone VM {vmid} to baseline snapshot: {snap_error}")
+                    return jsonify({'ok': False, 'error': f'Failed to revert to baseline: {snap_error}'}), 500
+            
+            except Exception as e:
+                logger.exception(f"Error reverting linked clone VM {vmid}: {e}")
+                return jsonify({'ok': False, 'error': f'Failed to revert: {str(e)}'}), 500
         
-        # Delete old teacher VM
-        delete_success, delete_msg = delete_vm(old_vmid, old_node, cluster_ip)
-        
-        if not delete_success:
-            logger.warning(f"Failed to delete teacher VM {old_vmid}: {delete_msg}")
-            # Continue anyway - may already be deleted
-        
-        # Delete VMAssignment record
-        db.session.delete(teacher_vm)
-        db.session.commit()
-        
-        # Recreate teacher VM from class base using same overlay approach
-        from app.services.class_vm_service import recreate_teacher_vm_from_base
-        
-        success, message, new_vmid = recreate_teacher_vm_from_base(
-            class_id=class_id,
-            class_name=class_.name
-        )
-        
-        if success:
-            logger.info(f"Teacher VM reimaged: deleted {old_vmid}, created {new_vmid}")
-            return jsonify({
-                'ok': True,
-                'message': 'Teacher VM reimaged successfully',
-                'old_vmid': old_vmid,
-                'new_vmid': new_vmid
-            })
         else:
-            return jsonify({'ok': False, 'error': f'Failed to recreate teacher VM: {message}'}), 500
+            # For config_clone: delete and recreate from class base QCOW2
+            logger.info(f"Reimaging config_clone teacher VM {vmid} for class {class_id} (recreating from class base)")
+            
+            # Delete old teacher VM
+            delete_success, delete_msg = delete_vm(vmid, node, cluster_ip)
+            
+            if not delete_success:
+                logger.warning(f"Failed to delete teacher VM {vmid}: {delete_msg}")
+                # Continue anyway - may already be deleted
+            
+            # Delete VMAssignment record
+            db.session.delete(teacher_vm)
+            db.session.commit()
+            
+            # Recreate teacher VM from class base using same overlay approach
+            from app.services.class_vm_service import recreate_teacher_vm_from_base
+            
+            success, message, new_vmid = recreate_teacher_vm_from_base(
+                class_id=class_id,
+                class_name=class_.name
+            )
+            
+            if success:
+                logger.info(f"Teacher VM reimaged: deleted {vmid}, created {new_vmid}")
+                return jsonify({
+                    'ok': True,
+                    'message': 'Teacher VM reimaged successfully',
+                    'old_vmid': vmid,
+                    'new_vmid': new_vmid
+                })
+            else:
+                return jsonify({'ok': False, 'error': f'Failed to recreate teacher VM: {message}'}), 500
             
     except Exception as e:
         db.session.rollback()

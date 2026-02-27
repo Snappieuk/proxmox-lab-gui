@@ -297,6 +297,7 @@ class Class(db.Model):
     clone_task_id = db.Column(db.String(64), nullable=True)  # Track ongoing class creation
     deployment_node = db.Column(db.String(80), nullable=True)  # Override: deploy all VMs to this specific node
     deployment_cluster = db.Column(db.String(50), nullable=True)  # Cluster ID where VMs are deployed
+    deployment_method = db.Column(db.String(20), default='config_clone', nullable=False)  # "config_clone" or "linked_clone"
     
     # Auto-shutdown settings
     auto_shutdown_enabled = db.Column(db.Boolean, default=False)  # Enable auto-shutdown
@@ -464,6 +465,7 @@ class Class(db.Model):
             'unassigned_count': self.unassigned_count,
             'enrolled_count': self.enrolled_count,
             'students': students_list,
+            'deployment_method': self.deployment_method,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
         }
