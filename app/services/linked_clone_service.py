@@ -10,7 +10,7 @@ Includes automatic load balancing across cluster nodes and fast deployment.
 """
 
 import logging
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Optional
 
 from app.models import db, VMAssignment, Class
 from app.services.proxmox_service import get_proxmox_admin_for_cluster, get_clusters_from_db
@@ -148,6 +148,55 @@ def get_template_storage(proxmox, node: str, template_vmid: int) -> str:
         return "local-lvm"
 
 
+def get_node_ip_via_gateway(gateway_host: str, gateway_user: str, gateway_password: str, target_node: str) -> Optional[str]:
+    """
+    Resolve a target node's IP address by SSH-ing to the gateway and running a hostname lookup.
+    
+    Args:
+        gateway_host: Gateway/master node IP or hostname (e.g., netlab1)
+        gateway_user: SSH username
+        gateway_password: SSH password
+        target_node: Target node hostname to resolve (e.g., netlab2)
+    
+    Returns:
+        IP address of the target node, or None if resolution fails
+    """
+    try:
+        from app.services.ssh_executor import get_pooled_ssh_executor
+        
+        gate_executor = get_pooled_ssh_executor(
+            host=gateway_host,
+            username=gateway_user,
+            password=gateway_password
+        )
+        
+        # Try multiple methods to resolve hostname to IP
+        # First try getent (Linux standard method)
+        cmd = f"getent hosts {target_node} | awk '{{print $1}}'"
+        exit_code, stdout, stderr = gate_executor.execute(cmd)
+        
+        if exit_code == 0 and stdout.strip():
+            ip = stdout.strip().split()[0]  # Get first IP
+            logger.info(f"Resolved {target_node} to IP {ip} via gateway {gateway_host}")
+            return ip
+        
+        # Fallback to nslookup
+        cmd = f"nslookup {target_node} | grep 'Address:' | head -1 | awk '{{print $2}}'"
+        exit_code, stdout, stderr = gate_executor.execute(cmd)
+        
+        if exit_code == 0 and stdout.strip():
+            ip = stdout.strip()
+            logger.info(f"Resolved {target_node} to IP {ip} via nslookup on gateway {gateway_host}")
+            return ip
+        
+        logger.error(f"Failed to resolve {target_node} on gateway {gateway_host}: {stderr}")
+        return None
+        
+    except Exception as e:
+        logger.error(f"Error resolving node IP via gateway: {e}")
+        return None
+
+
 def deploy_linked_clones(
     class_id: int,
     template_vmid: int,
@@ -222,15 +271,26 @@ def deploy_linked_clones(
             # Extract username without realm (root@pam -> root)
             username = cluster_config["user"].split("@")[0] if "@" in cluster_config["user"] else cluster_config["user"]
             
-            # SSH to the CLUSTER GATEWAY (netlab1 or main IP)
-            # This gateway knows all the node hostnames in the cluster
-            # and can route qm commands to the appropriate nodes via hostname
+            # Resolve template node's hostname to IP via gateway
+            template_node_ip = get_node_ip_via_gateway(
+                gateway_host=cluster_config["host"],
+                gateway_user=username,
+                gateway_password=cluster_config["password"],
+                target_node=template_node
+            )
+            
+            if not template_node_ip:
+                # Fallback: try to SSH directly to the hostname in case of DNS issues
+                logger.warning(f"Could not resolve {template_node} IP via gateway, will try SSH directly to hostname")
+                template_node_ip = template_node
+            
+            # SSH directly to the template node (either by IP or hostname)
             ssh_executor = get_pooled_ssh_executor(
-                host=cluster_config["host"],  # Main cluster gateway (e.g., netlab1)
+                host=template_node_ip,
                 username=username,
                 password=cluster_config["password"]
             )
-            logger.info(f"SSH connection established to cluster gateway {cluster_config['host']} - will execute qm clone from there (target node: {template_node})")
+            logger.info(f"SSH connection established to template node {template_node} (IP: {template_node_ip}) - will execute qm clone from there")
         except Exception as e:
             logger.error(f"Failed to get SSH connection: {e}")
             return False, f"SSH connection failed: {str(e)}", {}
