@@ -791,6 +791,49 @@ class ProxmoxNode(db.Model):
         return f'<ProxmoxNode {self.cluster_id}:{self.hostname}={self.ip_address}>'
 
 
+class Resource(db.Model):
+    """Resource cards with URLs accessible to teachers and admins.
+    
+    Provides a simple way to share links to documentation, tools, and resources.
+    Each resource is a card with name, description, and URL that opens in a new tab.
+    """
+    __tablename__ = 'resources'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(255), nullable=False)  # Resource name (displayed on card)
+    description = db.Column(db.Text, nullable=True)  # Optional description or tooltip
+    url = db.Column(db.String(2048), nullable=False)  # Resource URL (opens in new tab)
+    icon = db.Column(db.String(50), nullable=True, default='ti-external-link')  # Tabler icon name without 'ti' prefix
+    color = db.Column(db.String(50), nullable=True, default='blue')  # Color scheme (blue, green, red, orange, purple, etc.)
+    display_order = db.Column(db.Integer, default=0)  # Sort order on resources page (ascending)
+    is_active = db.Column(db.Boolean, default=True)  # Enable/disable resource
+    created_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)  # User who created this resource
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Relationships
+    creator = db.relationship('User', foreign_keys=[created_by], backref='created_resources')
+    
+    def to_dict(self):
+        """Convert resource to dictionary for JSON response."""
+        return {
+            'id': self.id,
+            'name': self.name,
+            'description': self.description,
+            'url': self.url,
+            'icon': self.icon,
+            'color': self.color,
+            'display_order': self.display_order,
+            'is_active': self.is_active,
+            'created_by': self.creator.username if self.creator else 'System',
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+        }
+    
+    def __repr__(self):
+        return f'<Resource {self.id} {self.name}>'
+
+
 def init_db(app):
     """Initialize database with Flask app context.
     

@@ -19,10 +19,20 @@ def api_health_daemons():
     
     Admin-only endpoint for monitoring system health.
     Returns status of background sync, auto-shutdown, IP scanner, and template sync daemons.
-    Also includes resource health (DB connections, VM inventory).
+    Also includes resource health (DB connections, VM inventory) and daemon monitor status.
     """
     try:
         status = get_health_status()
+        
+        # Get daemon monitor status
+        try:
+            from app.services.daemon_monitor import get_monitor_status
+            monitor_status = get_monitor_status()
+            status['daemon_monitor'] = monitor_status
+        except Exception as e:
+            logger.warning(f"Could not get daemon monitor status: {e}")
+            status['daemon_monitor'] = {'error': str(e)}
+        
         return jsonify({
             "ok": True,
             "health": status,
@@ -69,6 +79,29 @@ def api_health_daemon_specific(daemon_name: str):
         return jsonify({
             "ok": False,
             "error": f"Failed to retrieve daemon health: {str(e)}",
+        }), 500
+
+
+@health_bp.route("/api/health/daemon-monitor", methods=["GET"])
+@admin_required
+def api_daemon_monitor():
+    """Get daemon monitor status (automatic restart tracking).
+    
+    Shows which daemons have been restarted, restart counts, and monitor health.
+    """
+    try:
+        from app.services.daemon_monitor import get_monitor_status
+        monitor_status = get_monitor_status()
+        
+        return jsonify({
+            "ok": True,
+            "monitor": monitor_status,
+        }), 200
+    except Exception as e:
+        logger.exception(f"Failed to get daemon monitor status: {e}")
+        return jsonify({
+            "ok": False,
+            "error": f"Failed to retrieve daemon monitor status: {str(e)}",
         }), 500
 
 

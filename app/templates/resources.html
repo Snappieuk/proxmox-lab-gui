@@ -1,0 +1,288 @@
+{% extends "base.html" %}
+
+{% block title %}Resources - Lab VM Portal{% endblock %}
+
+{% block content %}
+<div class="app-shell">
+    <nav class="sidebar">
+        <div class="sidebar-section-title">Navigation</div>
+        <a class="sidebar-link sidebar-link-active" href="{{ url_for('portal.portal') }}">
+            <i class="ti ti-home"></i> Portal Home
+        </a>
+        <a class="sidebar-link" href="{{ url_for('classes.classes_list') }}">
+            <i class="ti ti-school"></i> Classes
+        </a>
+        {% if is_admin %}
+        <a class="sidebar-link" href="{{ url_for('admin.resources') }}">
+            <i class="ti ti-settings"></i> Manage Resources
+        </a>
+        {% endif %}
+    </nav>
+
+    <main class="main">
+        <div class="page-header">
+            <div>
+                <h1><i class="ti ti-external-link"></i> Resources</h1>
+                <p class="page-subtitle">Useful links and tools for your labs</p>
+            </div>
+        </div>
+        
+        <!-- Resources Grid -->
+        <div id="resources-container">
+            <div style="padding: 3rem 2rem; text-align: center;">
+                <div class="spinner"></div>
+                <p>Loading resources...</p>
+            </div>
+        </div>
+    </main>
+</div>
+
+<style>
+    .page-header {
+        margin-bottom: 2rem;
+    }
+    
+    h1 {
+        margin: 0 0 0.5rem 0;
+        font-size: 2rem;
+        color: #1e293b;
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+    }
+    
+    .page-subtitle {
+        font-size: 0.95rem;
+        color: #64748b;
+        margin: 0;
+    }
+    
+    .resources-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        gap: 2rem;
+    }
+    
+    .resource-card {
+        background: white;
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        overflow: hidden;
+        transition: all 0.3s ease;
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+        cursor: pointer;
+    }
+    
+    .resource-card:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 12px 24px rgba(0, 0, 0, 0.12);
+        border-color: #cbd5e1;
+    }
+    
+    .resource-card-header {
+        padding: 2rem 1.5rem 1.5rem;
+        background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+        border-bottom: 1px solid #e2e8f0;
+        display: flex;
+        align-items: flex-start;
+        gap: 1rem;
+    }
+    
+    .resource-icon-container {
+        width: 50px;
+        height: 50px;
+        border-radius: 8px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.75rem;
+        color: white;
+        flex-shrink: 0;
+    }
+    
+    .resource-icon-container.blue { background: linear-gradient(135deg, #3b82f6 0%, #1e40af 100%); }
+    .resource-icon-container.green { background: linear-gradient(135deg, #10b981 0%, #047857 100%); }
+    .resource-icon-container.red { background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); }
+    .resource-icon-container.orange { background: linear-gradient(135deg, #f97316 0%, #ea580c 100%); }
+    .resource-icon-container.purple { background: linear-gradient(135deg, #a855f7 0%, #7e22ce 100%); }
+    .resource-icon-container.indigo { background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%); }
+    .resource-icon-container.pink { background: linear-gradient(135deg, #ec4899 0%, #be185d 100%); }
+    .resource-icon-container.gray { background: linear-gradient(135deg, #6b7280 0%, #374151 100%); }
+    
+    .resource-title {
+        font-size: 1.1rem;
+        font-weight: 600;
+        color: #1e293b;
+        margin: 0;
+    }
+    
+    .resource-card-body {
+        padding: 1.5rem;
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+    }
+    
+    .resource-description {
+        font-size: 0.9rem;
+        color: #64748b;
+        line-height: 1.5;
+        flex: 1;
+    }
+    
+    .resource-footer {
+        display: flex;
+        gap: 0.75rem;
+        padding-top: 1rem;
+        border-top: 1px solid #e2e8f0;
+    }
+    
+    .btn-open-resource {
+        flex: 1;
+        padding: 0.75rem 1rem;
+        background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+        color: white;
+        border: none;
+        border-radius: 6px;
+        cursor: pointer;
+        font-weight: 500;
+        font-size: 0.95rem;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.5rem;
+        transition: all 0.2s;
+        text-decoration: none;
+    }
+    
+    .btn-open-resource:hover {
+        background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+    }
+    
+    .no-resources {
+        text-align: center;
+        padding: 4rem 2rem;
+        background: #f8fafc;
+        border-radius: 12px;
+        border: 2px dashed #cbd5e1;
+    }
+    
+    .no-resources-icon {
+        font-size: 4rem;
+        color: #cbd5e1;
+        margin-bottom: 1rem;
+    }
+    
+    .no-resources p {
+        color: #64748b;
+        font-size: 1.05rem;
+    }
+    
+    .main {
+        flex: 1;
+        padding: 2rem;
+        overflow-y: auto;
+    }
+    
+    .spinner {
+        display: inline-block;
+        width: 2rem;
+        height: 2rem;
+        vertical-align: text-bottom;
+        border: 0.25em solid currentColor;
+        border-right-color: transparent;
+        border-radius: 50%;
+        animation: spinner-border 0.75s linear infinite;
+        color: #3b82f6;
+    }
+    
+    @keyframes spinner-border {
+        to { transform: rotate(360deg); }
+    }
+    
+    @media (max-width: 768px) {
+        .resources-grid {
+            grid-template-columns: 1fr;
+        }
+        
+        h1 {
+            font-size: 1.5rem;
+        }
+    }
+</style>
+
+<script>
+async function loadResources() {
+    try {
+        const response = await fetch('/api/resources');
+        const data = await response.json();
+        
+        if (!data.ok) {
+            document.getElementById('resources-container').innerHTML = `
+                <div class="no-resources">
+                    <div class="no-resources-icon"><i class="ti ti-alert-triangle"></i></div>
+                    <p>${escapeHtml(data.error || 'Failed to load resources')}</p>
+                </div>
+            `;
+            return;
+        }
+        
+        const resources = data.data;
+        const container = document.getElementById('resources-container');
+        
+        if (resources.length === 0) {
+            container.innerHTML = `
+                <div class="no-resources">
+                    <div class="no-resources-icon"><i class="ti ti-inbox"></i></div>
+                    <p>No resources available. Check back soon!</p>
+                </div>
+            `;
+            return;
+        }
+        
+        container.innerHTML = `<div class="resources-grid">${
+            resources.map(r => `
+                <div class="resource-card">
+                    <div class="resource-card-header">
+                        <div class="resource-icon-container ${r.color}">
+                            <i class="ti ${r.icon}"></i>
+                        </div>
+                        <h3 class="resource-title">${escapeHtml(r.name)}</h3>
+                    </div>
+                    <div class="resource-card-body">
+                        ${r.description ? `<p class="resource-description">${escapeHtml(r.description)}</p>` : ''}
+                        <div class="resource-footer">
+                            <a href="${escapeHtml(r.url)}" target="_blank" rel="noopener noreferrer" class="btn-open-resource">
+                                <i class="ti ti-external-link"></i> Open Link
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            `).join('')
+        }</div>`;
+        
+    } catch (error) {
+        console.error('Error loading resources:', error);
+        document.getElementById('resources-container').innerHTML = `
+            <div class="no-resources">
+                <div class="no-resources-icon"><i class="ti ti-alert-circle"></i></div>
+                <p>Failed to load resources. Please try again later.</p>
+            </div>
+        `;
+    }
+}
+
+function escapeHtml(text) {
+    if (!text) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// Load resources on page load
+document.addEventListener('DOMContentLoaded', loadResources);
+</script>
+{% endblock %}

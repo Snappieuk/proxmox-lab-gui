@@ -138,14 +138,7 @@ def start_background_sync(app):
                           (now - _sync_stats['last_iso_quick_sync']).total_seconds() >= 300):
                         _perform_iso_quick_sync()
                         error_count = 0
-                finally:
-                    # CRITICAL: Clean up DB session to prevent connection pool exhaustion
-                    from app.models import db
-                    db.session.remove()
-                
-                # Sleep 60 seconds between checks
-                time.sleep(60)
-                
+            
             except Exception as e:
                 error_count += 1
                 backoff = min(2 ** error_count, max_backoff)
@@ -156,12 +149,18 @@ def start_background_sync(app):
                 # Report sync error to health service
                 update_daemon_sync('background_sync', error=error_msg)
                 
+                time.sleep(backoff)
+            
+            finally:
+                # CRITICAL: Clean up DB session to prevent connection pool exhaustion
                 try:
                     from app.models import db
                     db.session.remove()
                 except Exception as cleanup_err:
                     logger.warning(f"Failed to cleanup DB session on error: {cleanup_err}")
-                time.sleep(backoff)
+            
+            # Sleep 60 seconds between checks
+            time.sleep(60)
     
     _sync_thread = threading.Thread(
         target=_sync_loop,

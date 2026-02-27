@@ -16,6 +16,7 @@ from app.routes.api.profile import api_profile_bp
 from app.routes.api.recover_vms import recover_vms_bp
 from app.routes.api.publish_template import api_publish_template_bp
 from app.routes.api.rdp import api_rdp_bp
+from app.routes.api.resources import resources_bp
 from app.routes.api.snapshots import api_snapshots_bp
 from app.routes.api.ssh import api_ssh_bp
 from app.routes.api.sync import sync_bp as api_sync_bp
@@ -64,6 +65,7 @@ def register_blueprints(app):
     app.register_blueprint(api_profile_bp)
     app.register_blueprint(api_publish_template_bp)
     app.register_blueprint(vm_builder_bp)
+    app.register_blueprint(resources_bp)
     app.register_blueprint(health_bp)
     
     import logging

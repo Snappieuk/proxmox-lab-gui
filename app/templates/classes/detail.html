@@ -583,12 +583,9 @@
                 <!-- Auto-Shutdown Configuration Section -->
                 <div class="settings-card">
                     <div class="settings-card-header" onclick="toggleSection('auto-shutdown')">
-                        <div style="display: flex; align-items: center; gap: 12px;">
-                            <i class="ti ti-power" style="font-size: 20px; color: #1e293b;"></i>
-                            <div>
-                                <h2 style="margin: 0; font-size: 17px; font-weight: 600; color: #1e293b;">Auto-Shutdown Configuration</h2>
-                                <p style="margin: 4px 0 0 0; font-size: 14px; color: #64748b;">Automatically shut down idle VMs to save resources</p>
-                            </div>
+                        <div>
+                            <h2 style="margin: 0; font-size: 17px; font-weight: 600; color: #1e293b;">Auto-Shutdown Configuration</h2>
+                            <p style="margin: 4px 0 0 0; font-size: 14px; color: #64748b;">Automatically shut down idle VMs to save resources</p>
                         </div>
                         <i id="auto-shutdown-chevron" class="ti ti-chevron-down" style="font-size: 20px; color: #64748b; transition: transform 0.2s;"></i>
                     </div>
@@ -669,12 +666,9 @@
                 <!-- Available Hours & Session Limits Section -->
                 <div class="settings-card">
                     <div class="settings-card-header" onclick="toggleSection('time-limits')">
-                        <div style="display: flex; align-items: center; gap: 12px;">
-                            <i class="ti ti-clock" style="font-size: 20px; color: #1e293b;"></i>
-                            <div>
-                                <h2 style="margin: 0; font-size: 17px; font-weight: 600; color: #1e293b;">Available Hours & Session Limits</h2>
-                                <p style="margin: 4px 0 0 0; font-size: 14px; color: #64748b;">Control when VMs can be used and for how long</p>
-                            </div>
+                        <div>
+                            <h2 style="margin: 0; font-size: 17px; font-weight: 600; color: #1e293b;">Available Hours & Session Limits</h2>
+                            <p style="margin: 4px 0 0 0; font-size: 14px; color: #64748b;">Control when VMs can be used and for how long</p>
                         </div>
                         <i id="time-limits-chevron" class="ti ti-chevron-down" style="font-size: 20px; color: #64748b; transition: transform 0.2s;"></i>
                     </div>
@@ -748,15 +742,13 @@
                     </div>
                 </div>
                 
-                <!-- VM Hardware Specifications Section -->
+                <!-- VM Hardware Specifications Section (Config Clone Only) -->
+                {% if class_.deployment_method != 'linked_clone' %}
                 <div class="settings-card">
                     <div class="settings-card-header" onclick="toggleSection('vm-hardware')">
-                        <div style="display: flex; align-items: center; gap: 12px;">
-                            <i class="ti ti-cpu" style="font-size: 20px; color: #1e293b;"></i>
-                            <div>
-                                <h2 style="margin: 0; font-size: 17px; font-weight: 600; color: #1e293b;">VM Hardware Specifications</h2>
-                                <p style="margin: 4px 0 0 0; font-size: 14px; color: #64748b;">Configure CPU and RAM for student VMs</p>
-                            </div>
+                        <div>
+                            <h2 style="margin: 0; font-size: 17px; font-weight: 600; color: #1e293b;">VM Hardware Specifications</h2>
+                            <p style="margin: 4px 0 0 0; font-size: 14px; color: #64748b;">Configure CPU and RAM for student VMs</p>
                         </div>
                         <i id="vm-hardware-chevron" class="ti ti-chevron-down" style="font-size: 20px; color: #64748b; transition: transform 0.2s;"></i>
                     </div>
@@ -824,6 +816,23 @@
                         </div>
                     </div>
                 </div>
+                {% else %}
+                <!-- Linked Clone Classes: Hardware specs inherited from template -->
+                <div class="settings-card">
+                    <div class="settings-card-header">
+                        <div>
+                            <h2 style="margin: 0; font-size: 17px; font-weight: 600; color: #1e293b;">VM Hardware Specifications</h2>
+                            <p style="margin: 4px 0 0 0; font-size: 14px; color: #64748b;">Inherited from template</p>
+                        </div>
+                    </div>
+                    
+                    <div class="settings-card-content" style="background: #f0f9ff; border-radius: 8px; padding: 16px;">
+                        <div style="color: #0c4a6e; font-size: 14px; line-height: 1.5;">
+                            <strong>Linked clone classes use template hardware specifications.</strong> Student VMs automatically inherit the CPU cores and memory configured in the template. To modify hardware specs, update the template configuration on the Proxmox server directly.
+                        </div>
+                    </div>
+                </div>
+                {% endif %}
                 
                 <!-- Settings Status Message -->
                 <div id="settings-status" style="display: none; margin-top: 24px; padding: 16px; border-radius: 8px;"></div>

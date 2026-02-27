@@ -219,6 +219,55 @@ def create_app(config=None):
     import threading
     threading.Thread(target=check_template_replication, daemon=True).start()
     
+    # Start daemon monitor for automatic restart of failed background services
+    try:
+        from app.services.daemon_monitor import start_daemon_monitor, register_daemon
+        from app.services.health_service import is_daemon_healthy
+        
+        # Helper functions to restart daemons
+        def _restart_background_sync(app):
+            """Restart background sync daemon."""
+            from app.services.background_sync import start_background_sync
+            with app.app_context():
+                start_background_sync(app)
+        
+        def _restart_auto_shutdown(app):
+            """Restart auto-shutdown daemon."""
+            from app.services.auto_shutdown_service import start_auto_shutdown_daemon
+            with app.app_context():
+                start_auto_shutdown_daemon(app)
+        
+        def _restart_ip_scanner(app):
+            """Restart IP scanner daemon."""
+            from app.services.proxmox_service import start_background_ip_scanner
+            with app.app_context():
+                start_background_ip_scanner(app)
+        
+        # Register daemons for monitoring
+        register_daemon(
+            'background_sync',
+            health_check_func=lambda: is_daemon_healthy('background_sync', max_age_seconds=630),  # 10.5 min
+            restart_func=lambda: _restart_background_sync(app),
+            max_restarts_per_hour=5
+        )
+        register_daemon(
+            'auto_shutdown',
+            health_check_func=lambda: is_daemon_healthy('auto_shutdown', max_age_seconds=330),  # 5.5 min
+            restart_func=lambda: _restart_auto_shutdown(app),
+            max_restarts_per_hour=5
+        )
+        register_daemon(
+            'ip_scanner',
+            health_check_func=lambda: is_daemon_healthy('ip_scanner', max_age_seconds=60),  # 30+30 sec
+            restart_func=lambda: _restart_ip_scanner(app),
+            max_restarts_per_hour=10
+        )
+        
+        start_daemon_monitor(app)
+        logger.info("Daemon monitor started")
+    except Exception as e:
+        logger.error(f"Failed to start daemon monitor: {e}", exc_info=True)
+    
     # Depl0y integration removed
     
     logger.info("Flask app created successfully")

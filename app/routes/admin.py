@@ -400,3 +400,10 @@ def api_delete_user(username):
     except Exception as e:
         logger.exception("Failed to delete user")
         return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+@admin_bp.route("/resources")
+@admin_required
+def resources():
+    """Resources management page (admin only)."""
+    return render_template('admin/resources.html')
