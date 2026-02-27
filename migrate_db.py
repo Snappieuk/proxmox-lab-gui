@@ -131,6 +131,25 @@ CREATE TABLE IF NOT EXISTS iso_images (
 )
 """
 
+# Proxmox node IP cache table schema
+PROXMOX_NODE_TABLE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS proxmox_nodes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    cluster_id VARCHAR(50) NOT NULL,
+    hostname VARCHAR(255) NOT NULL,
+    ip_address VARCHAR(45) NOT NULL,
+    last_resolved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(cluster_id, hostname)
+)
+"""
+
+PROXMOX_NODE_INDEXES = [
+    "CREATE INDEX IF NOT EXISTS idx_proxmox_node_cluster_id ON proxmox_nodes(cluster_id)",
+    "CREATE INDEX IF NOT EXISTS idx_proxmox_node_hostname ON proxmox_nodes(hostname)",
+]
+
 ISO_IMAGES_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_iso_volid ON iso_images(volid)",
     "CREATE INDEX IF NOT EXISTS idx_iso_name ON iso_images(name)",
@@ -214,6 +233,30 @@ def create_iso_images_table(cursor):
         return True
     else:
         print("✓ ISO images table already exists")
+        return False
+
+
+def create_proxmox_node_table(cursor):
+    """Create proxmox_nodes table if it doesn't exist.
+    
+    This table caches hostname-to-IP mappings for nodes in each cluster
+    to avoid repeated SSH hostname lookups during VM deployment.
+    """
+    print("\n📋 Checking proxmox_nodes table...")
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='proxmox_nodes'")
+    if not cursor.fetchone():
+        print("➕ Creating proxmox_nodes table")
+        cursor.execute(PROXMOX_NODE_TABLE_SCHEMA)
+        print("   ✓ Proxmox nodes table created")
+        
+        # Create indexes
+        print("➕ Creating indexes for proxmox_nodes table")
+        for index_sql in PROXMOX_NODE_INDEXES:
+            cursor.execute(index_sql)
+        print("   ✓ Indexes created")
+        return True
+    else:
+        print("✓ Proxmox nodes table already exists")
         return False
 
 
@@ -479,6 +522,11 @@ def migrate():
         # Step 6: Create ISO images cache table
         iso_table_created = create_iso_images_table(cursor)
         if iso_table_created:
+            total_changes += 1
+        
+        # Step 7: Create Proxmox node IP cache table
+        proxmox_node_table_created = create_proxmox_node_table(cursor)
+        if proxmox_node_table_created:
             total_changes += 1
         
         # Commit all changes

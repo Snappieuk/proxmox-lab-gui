@@ -14,6 +14,7 @@ All tables use SQLite via SQLAlchemy.
 
 import os
 from datetime import datetime, timedelta
+from typing import Optional
 
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -707,6 +708,85 @@ class VMInventory(db.Model):
     
     def __repr__(self):
         return f'<VMInventory {self.cluster_id}:{self.vmid} {self.name} [{self.status}]>'
+
+
+class ProxmoxNode(db.Model):
+    """Cached mapping of Proxmox node hostnames to IP addresses.
+    
+    Used to avoid repeated SSH hostname lookups during VM deployment.
+    Hostnames resolved once and cached for 7 days.
+    """
+    __tablename__ = 'proxmox_nodes'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    cluster_id = db.Column(db.String(50), nullable=False, index=True)  # Cluster identifier
+    hostname = db.Column(db.String(255), nullable=False)  # Node hostname (e.g., netlab2)
+    ip_address = db.Column(db.String(45), nullable=False)  # IPv4 or IPv6 address
+    last_resolved_at = db.Column(db.DateTime, default=datetime.utcnow)  # When the IP was resolved
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    __table_args__ = (
+        db.UniqueConstraint('cluster_id', 'hostname', name='unique_cluster_hostname'),
+    )
+    
+    @classmethod
+    def get_cached_ip(cls, cluster_id: str, hostname: str, cache_days: int = 7) -> Optional[str]:
+        """Get cached IP for a hostname if it exists and is still fresh.
+        
+        Args:
+            cluster_id: Cluster identifier
+            hostname: Node hostname to look up
+            cache_days: How many days to trust the cached IP (default 7 days)
+        
+        Returns:
+            Cached IP address if fresh, None if not found or stale
+        """
+        node = cls.query.filter_by(cluster_id=cluster_id, hostname=hostname).first()
+        if not node:
+            return None
+        
+        # Check if cache is still fresh
+        age = datetime.utcnow() - node.last_resolved_at
+        if age > timedelta(days=cache_days):
+            return None  # Cache is stale
+        
+        return node.ip_address
+    
+    @classmethod
+    def cache_ip(cls, cluster_id: str, hostname: str, ip_address: str) -> 'ProxmoxNode':
+        """Cache a hostname-to-IP mapping.
+        
+        Args:
+            cluster_id: Cluster identifier
+            hostname: Node hostname
+            ip_address: Resolved IP address
+        
+        Returns:
+            ProxmoxNode object (newly created or updated)
+        """
+        node = cls.query.filter_by(cluster_id=cluster_id, hostname=hostname).first()
+        
+        if node:
+            # Update existing entry
+            node.ip_address = ip_address
+            node.last_resolved_at = datetime.utcnow()
+            node.updated_at = datetime.utcnow()
+        else:
+            # Create new entry
+            node = cls(
+                cluster_id=cluster_id,
+                hostname=hostname,
+                ip_address=ip_address,
+                last_resolved_at=datetime.utcnow()
+            )
+            db.session.add(node)
+        
+        db.session.commit()
+        return node
+    
+    def __repr__(self):
+        return f'<ProxmoxNode {self.cluster_id}:{self.hostname}={self.ip_address}>'
 
 
 def init_db(app):

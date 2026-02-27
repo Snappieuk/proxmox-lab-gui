@@ -148,19 +148,29 @@ def get_template_storage(proxmox, node: str, template_vmid: int) -> str:
         return "local-lvm"
 
 
-def get_node_ip_via_gateway(gateway_host: str, gateway_user: str, gateway_password: str, target_node: str) -> Optional[str]:
+def get_node_ip_via_gateway(gateway_host: str, gateway_user: str, gateway_password: str, target_node: str, cluster_id: str) -> Optional[str]:
     """
     Resolve a target node's IP address by SSH-ing to the gateway and running a hostname lookup.
+    Uses database cache to avoid repeated lookups (7 day TTL).
     
     Args:
         gateway_host: Gateway/master node IP or hostname (e.g., netlab1)
         gateway_user: SSH username
         gateway_password: SSH password
         target_node: Target node hostname to resolve (e.g., netlab2)
+        cluster_id: Cluster identifier for caching
     
     Returns:
         IP address of the target node, or None if resolution fails
     """
+    from app.models import ProxmoxNode
+    
+    # Check cache first (7 day TTL)
+    cached_ip = ProxmoxNode.get_cached_ip(cluster_id, target_node, cache_days=7)
+    if cached_ip:
+        logger.info(f"Using cached IP for {target_node}: {cached_ip}")
+        return cached_ip
+    
     try:
         from app.services.ssh_executor import get_pooled_ssh_executor
         
@@ -178,6 +188,8 @@ def get_node_ip_via_gateway(gateway_host: str, gateway_user: str, gateway_passwo
         if exit_code == 0 and stdout.strip():
             ip = stdout.strip().split()[0]  # Get first IP
             logger.info(f"Resolved {target_node} to IP {ip} via gateway {gateway_host}")
+            # Cache the result
+            ProxmoxNode.cache_ip(cluster_id, target_node, ip)
             return ip
         
         # Fallback to nslookup
@@ -187,6 +199,8 @@ def get_node_ip_via_gateway(gateway_host: str, gateway_user: str, gateway_passwo
         if exit_code == 0 and stdout.strip():
             ip = stdout.strip()
             logger.info(f"Resolved {target_node} to IP {ip} via nslookup on gateway {gateway_host}")
+            # Cache the result
+            ProxmoxNode.cache_ip(cluster_id, target_node, ip)
             return ip
         
         logger.error(f"Failed to resolve {target_node} on gateway {gateway_host}: {stderr}")
@@ -276,7 +290,8 @@ def deploy_linked_clones(
                 gateway_host=cluster_config["host"],
                 gateway_user=username,
                 gateway_password=cluster_config["password"],
-                target_node=template_node
+                target_node=template_node,
+                cluster_id=cluster_config["id"]
             )
             
             if not template_node_ip:
