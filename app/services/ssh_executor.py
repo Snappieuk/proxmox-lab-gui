@@ -30,11 +30,20 @@ class SSHConnectionPool:
     Connections are lazily created and automatically reconnected if dropped.
     """
     
-    def __init__(self):
+    MAX_CONNECTIONS = 50  # Prevent unbounded connection growth
+    
+    def __init__(self, max_connections: int = MAX_CONNECTIONS):
         self._connections: Dict[Tuple[str, str], 'SSHExecutor'] = {}
         self._lock = threading.Lock()
         self._last_used: Dict[Tuple[str, str], float] = {}
         self._connection_timeout = 600  # Close connections idle for 10 minutes
+        self._max_connections = max_connections
+        self._stats = {
+            'created': 0,
+            'reused': 0,
+            'closed': 0,
+            'dropped': 0,  # Closed due to max exceeded
+        }
     
     def get_executor(self, host: str, username: str, password: str, port: int = 22) -> 'SSHExecutor':
         """
@@ -48,6 +57,9 @@ class SSHConnectionPool:
             
         Returns:
             SSHExecutor instance (connected)
+            
+        Raises:
+            RuntimeError: If pool is at max capacity and no idle connections to recycle
         """
         key = (host, username)
         
@@ -62,6 +74,7 @@ class SSHConnectionPool:
                 # Verify connection is still alive
                 if executor.is_connected():
                     self._last_used[key] = time.time()
+                    self._stats['reused'] += 1
                     logger.debug(f"Reusing SSH connection to {username}@{host}")
                     return executor
                 else:
@@ -77,12 +90,32 @@ class SSHConnectionPool:
                         if key in self._last_used:
                             del self._last_used[key]
             
+            # Check if pool is at capacity
+            if len(self._connections) >= self._max_connections:
+                # Try to recycle oldest idle connection
+                if self._last_used:
+                    oldest_key = min(self._last_used, key=self._last_used.get)
+                    logger.warning(f"SSH pool at max capacity ({self._max_connections}), "
+                                 f"closing oldest idle connection: {oldest_key[1]}@{oldest_key[0]}")
+                    try:
+                        self._connections[oldest_key].close()
+                    except Exception as e:
+                        logger.warning(f"Error closing idle SSH connection: {e}")
+                    del self._connections[oldest_key]
+                    del self._last_used[oldest_key]
+                    self._stats['dropped'] += 1
+                else:
+                    raise RuntimeError(f"SSH connection pool at max capacity ({self._max_connections}) "
+                                     f"and no idle connections to recycle")
+            
             # Create new connection
-            logger.info(f"Creating new pooled SSH connection to {username}@{host}")
+            logger.info(f"Creating new pooled SSH connection to {username}@{host} "
+                       f"({len(self._connections) + 1}/{self._max_connections})")
             executor = SSHExecutor(host, username, password, port)
             executor.connect()
             self._connections[key] = executor
             self._last_used[key] = time.time()
+            self._stats['created'] += 1
             return executor
     
     def _cleanup_stale_connections(self):
@@ -99,6 +132,7 @@ class SSHConnectionPool:
                 try:
                     self._connections[key].disconnect()
                     logger.info(f"Closed stale SSH connection to {key[1]}@{key[0]}")
+                    self._stats['closed'] += 1
                 except Exception as e:
                     logger.warning(f"Error closing stale connection: {e}")
                 finally:
@@ -112,11 +146,25 @@ class SSHConnectionPool:
             for executor in self._connections.values():
                 try:
                     executor.disconnect()
+                    self._stats['closed'] += 1
                 except Exception as e:
                     logger.warning(f"Error closing connection: {e}")
             self._connections.clear()
             self._last_used.clear()
             logger.info("Closed all pooled SSH connections")
+    
+    def get_stats(self) -> Dict:
+        """Get connection pool statistics."""
+        with self._lock:
+            return {
+                'created': self._stats['created'],
+                'reused': self._stats['reused'],
+                'closed': self._stats['closed'],
+                'dropped': self._stats['dropped'],
+                'active': len(self._connections),
+                'max_size': self._max_connections,
+                'utilization_percent': int((len(self._connections) / self._max_connections) * 100),
+            }
 
 
 # Global connection pool instance

@@ -618,7 +618,9 @@ def clone_vm_from_template(template_vmid: int, new_vmid: int, name: str, node: s
 
         import time
         attempt = 0
-        while True:
+        # Safeguard: cap retries at 3 for transient lock errors (caller can pass higher, but we bound it)
+        safe_max_retries = min(max_retries, 3)
+        while attempt < safe_max_retries:
             try:
                 clone_params = {
                     'newid': new_vmid,
@@ -665,19 +667,20 @@ def clone_vm_from_template(template_vmid: int, new_vmid: int, name: str, node: s
                         logger.error(f"Clone verification failed for VM {new_vmid}: {e}")
                         return False, str(e)
                 
-                break
+                return True, f"Successfully cloned VM {safe_name}"  # Success - exit retry loop
             except Exception as clone_err:
                 msg = str(clone_err).lower()
+                attempt += 1
                 # Typical locked error: 'VM is locked (clone)' – wait and retry
-                if ('locked' in msg or 'busy' in msg) and attempt < max_retries - 1:
-                    attempt += 1
+                if ('locked' in msg or 'busy' in msg) and attempt < safe_max_retries:
                     backoff = retry_delay * (2 ** (attempt - 1))
                     if backoff > 60:
                         backoff = 60
-                    logger.warning(f"Template VMID {template_vmid} locked/busy, retrying in {backoff}s (attempt {attempt}/{max_retries})")
+                    logger.warning(f"Template VMID {template_vmid} locked/busy, retrying in {backoff}s (attempt {attempt}/{safe_max_retries})")
                     time.sleep(backoff)
                     continue
-                logger.exception(f"Clone failed for template {template_vmid} after {attempt+1} attempts: {clone_err}")
+                # Non-retryable error or max retries exhausted
+                logger.exception(f"Clone failed for template {template_vmid} after {attempt} attempts: {clone_err}")
                 return False, f"Clone failed: {clone_err}"
 
         # Create baseline snapshot for reimage functionality (optional, skipped for mass deploy)

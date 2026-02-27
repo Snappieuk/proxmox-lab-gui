@@ -11,6 +11,10 @@ from typing import Dict, Optional
 
 from app.models import Class, VMAssignment
 from app.services.proxmox_service import get_proxmox_admin_for_cluster
+from app.services.health_service import (
+    register_daemon_started,
+    update_daemon_check,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +38,10 @@ def start_auto_shutdown_daemon(app):
         return
     
     shutdown_daemon_stop_event.clear()
+    
+    # Register daemon as started
+    register_daemon_started('auto_shutdown')
+    
     shutdown_daemon_thread = Thread(
         target=_auto_shutdown_daemon_worker,
         args=(app,),
@@ -67,6 +75,13 @@ def _auto_shutdown_daemon_worker(app):
                 check_and_shutdown_idle_vms()
         except Exception as e:
             logger.error(f"Error in auto-shutdown daemon: {e}", exc_info=True)
+        finally:
+            # CRITICAL: Clean up DB session to prevent connection pool exhaustion
+            try:
+                from app.models import db
+                db.session.remove()
+            except Exception as cleanup_err:
+                logger.warning(f"Failed to cleanup DB session: {cleanup_err}")
         
         # Wait for next check (or until stop event)
         shutdown_daemon_stop_event.wait(CHECK_INTERVAL)
@@ -83,19 +98,32 @@ def check_and_shutdown_idle_vms():
     ).all()
     
     if not classes:
+        update_daemon_check('auto_shutdown', items_processed=0)
         return
     
     logger.info(f"Checking restrictions for {len(classes)} classes")
     
+    total_vms_checked = 0
+    check_error = None
+    
     for class_ in classes:
         try:
-            check_class_vms(class_)
+            vms_checked = check_class_vms(class_)
+            total_vms_checked += vms_checked if vms_checked else 0
         except Exception as e:
             logger.error(f"Error checking class {class_.id} ({class_.name}): {e}", exc_info=True)
+            check_error = f"Error checking class {class_.id}: {str(e)}"
+    
+    # Report health status
+    update_daemon_check('auto_shutdown', error=check_error, items_processed=total_vms_checked)
 
 
 def check_class_vms(class_: Class):
-    """Check VMs in a specific class for all restrictions."""
+    """Check VMs in a specific class for all restrictions.
+    
+    Returns:
+        Number of VMs checked
+    """
     from datetime import datetime
     
     # Get student VMs (exclude teacher and template VMs)
@@ -106,7 +134,7 @@ def check_class_vms(class_: Class):
     ).all()
     
     if not vms:
-        return
+        return 0
     
     current_hour = datetime.now().hour
     
@@ -124,7 +152,7 @@ def check_class_vms(class_: Class):
     cluster_identifier = class_.deployment_cluster
     if not cluster_identifier:
         logger.warning(f"Class {class_.id} has no deployment_cluster set")
-        return
+        return 0
     
     try:
         # Handle both numeric IDs and cluster names
@@ -142,21 +170,23 @@ def check_class_vms(class_: Class):
             
             if not cluster:
                 logger.error(f"Could not find cluster with identifier '{cluster_identifier}'")
-                return
+                return 0
             
             cluster_id = cluster.id
         
         proxmox = get_proxmox_admin_for_cluster(cluster_id)
     except Exception as e:
         logger.error(f"Failed to get Proxmox connection for cluster {cluster_identifier}: {e}", exc_info=True)
-        return
+        return 0
     
+    vms_checked = 0
     for vm in vms:
         try:
             # Check hour restrictions first (highest priority)
             if class_.restrict_hours:
                 if not is_within_allowed_hours(current_hour, class_.hours_start, class_.hours_end):
                     shutdown_vm_outside_hours(vm, proxmox, class_)
+                    vms_checked += 1
                     continue
             
             # Note: max_usage_hours is tracked cumulatively and enforced at VM start time
@@ -171,8 +201,12 @@ def check_class_vms(class_: Class):
                     idle_minutes=class_.auto_shutdown_idle_minutes or 30,
                     class_id=class_.id
                 )
+                vms_checked += 1
         except Exception as e:
             logger.error(f"Error checking VM {vm.proxmox_vmid}: {e}", exc_info=True)
+            vms_checked += 1
+    
+    return vms_checked
 
 
 def is_within_allowed_hours(current_hour: int, start_hour: int, end_hour: int) -> bool:

@@ -667,16 +667,24 @@ def create_student_overlays(
     for i in range(count):
         student_name = build_vm_name(class_prefix, "student", i + 1)
         
-        # Find next available VMID
-        while True:
+        # Find next available VMID with safeguard against infinite loops
+        max_search_iterations = 1000  # Prevent infinite loop if VMID space exhausted
+        search_iterations = 0
+        while search_iterations < max_search_iterations:
+            search_iterations += 1
             exit_code, _, _ = ssh_executor.execute(
                 f"qm status {current_vmid}",
                 check=False,
                 timeout=10
             )
             if exit_code != 0:
-                break
+                break  # VMID is available
             current_vmid += 1
+        
+        if search_iterations >= max_search_iterations:
+            logger.error(f"Failed to find available VMID after {max_search_iterations} iterations (starting from {current_vmid - max_search_iterations})")
+            failed += 1
+            continue  # Skip this VM and try next one
         
         vmid = current_vmid
         current_vmid += 1

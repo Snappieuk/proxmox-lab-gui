@@ -24,6 +24,13 @@ import time
 from datetime import datetime, timedelta
 from typing import Any, Dict
 
+from app.services.health_service import (
+    register_daemon_started,
+    register_daemon_stopped,
+    update_daemon_sync,
+    update_resource_vm_inventory,
+)
+
 logger = logging.getLogger(__name__)
 
 # ARP scanner availability flag
@@ -76,6 +83,9 @@ def start_background_sync(app):
     
     def _sync_loop():
         """Main sync loop with exponential backoff and multiple sync schedules."""
+        # Register daemon as started
+        register_daemon_started('background_sync')
+        
         error_count = 0
         max_backoff = 300  # 5 minutes
         
@@ -89,12 +99,18 @@ def start_background_sync(app):
                         (now - _sync_stats['last_full_sync']).total_seconds() >= 600):
                         logger.info("Starting full VM inventory sync...")
                         _perform_full_sync()
+                        # Report successful full sync to health service
+                        update_daemon_sync('background_sync', full_sync=True, 
+                                         items_processed=_sync_stats.get('vms_synced', 0))
                         error_count = 0
                     
                     # VM Inventory: Quick sync every 2 minutes (120 seconds)
                     elif (_sync_stats['last_quick_sync'] is None or
                           (now - _sync_stats['last_quick_sync']).total_seconds() >= 120):
                         _perform_quick_sync()
+                        # Report successful quick sync to health service
+                        update_daemon_sync('background_sync', full_sync=False,
+                                         items_processed=_sync_stats.get('vms_synced', 0))
                         error_count = 0
                     
                     # Templates: Full sync every 30 minutes (1800 seconds)
@@ -122,6 +138,10 @@ def start_background_sync(app):
                           (now - _sync_stats['last_iso_quick_sync']).total_seconds() >= 300):
                         _perform_iso_quick_sync()
                         error_count = 0
+                finally:
+                    # CRITICAL: Clean up DB session to prevent connection pool exhaustion
+                    from app.models import db
+                    db.session.remove()
                 
                 # Sleep 60 seconds between checks
                 time.sleep(60)
@@ -129,8 +149,18 @@ def start_background_sync(app):
             except Exception as e:
                 error_count += 1
                 backoff = min(2 ** error_count, max_backoff)
+                error_msg = str(e)
                 logger.exception(f"Background sync error (attempt {error_count}): {e}")
-                _sync_stats['last_error'] = str(e)
+                _sync_stats['last_error'] = error_msg
+                
+                # Report sync error to health service
+                update_daemon_sync('background_sync', error=error_msg)
+                
+                try:
+                    from app.models import db
+                    db.session.remove()
+                except Exception as cleanup_err:
+                    logger.warning(f"Failed to cleanup DB session on error: {cleanup_err}")
                 time.sleep(backoff)
     
     _sync_thread = threading.Thread(

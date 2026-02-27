@@ -6,6 +6,7 @@ from app.routes.api.class_api import api_classes_bp
 from app.routes.api.class_owners import api_class_owners_bp
 from app.routes.api.class_import import class_import_bp
 from app.routes.api.class_settings import bp as api_class_settings_bp
+from app.routes.api.health import health_bp
 from app.routes.api.class_template import api_class_template_bp
 from app.routes.api.class_ip_refresh import class_ip_refresh_bp
 from app.routes.api.clusters import api_clusters_bp
@@ -63,6 +64,7 @@ def register_blueprints(app):
     app.register_blueprint(api_profile_bp)
     app.register_blueprint(api_publish_template_bp)
     app.register_blueprint(vm_builder_bp)
+    app.register_blueprint(health_bp)
     
     import logging
     logger = logging.getLogger(__name__)

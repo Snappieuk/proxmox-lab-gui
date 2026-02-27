@@ -28,6 +28,10 @@ import urllib3
 from app.config import PROXMOX_CACHE_TTL, DB_IP_CACHE_TTL
 from app.services.user_manager import is_admin_user
 from app.services.arp_scanner import has_rdp_port_open, invalidate_arp_cache
+from app.services.health_service import (
+    register_daemon_started,
+    update_daemon_sync,
+)
 
 # Suppress SSL warnings for self-signed certificates
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -1625,6 +1629,9 @@ def start_background_ip_scanner(app=None):
     
     _background_scanner_running = True
     
+    # Register daemon as started
+    register_daemon_started('ip_scanner')
+    
     # Pass Flask app to background thread for context
     if app is None:
         from flask import current_app
@@ -1656,6 +1663,13 @@ def _background_ip_scan_loop(app):
             logger.info(f"Background IP scanner: initial scan complete - {with_ips}/{running_count} running VMs have IPs")
     except Exception as e:
         logger.exception(f"Background IP scanner: initial scan failed: {e}")
+    finally:
+        # CRITICAL: Clean up DB session after startup scan
+        try:
+            from app.models import db
+            db.session.remove()
+        except Exception as cleanup_err:
+            logger.warning(f"Failed to cleanup DB session on startup: {cleanup_err}")
     
     while _background_scanner_running:
         try:
@@ -1670,14 +1684,26 @@ def _background_ip_scan_loop(app):
                 
                 if len(running_vms) > 0:
                     logger.info(f"Background IP scanner: {with_ips}/{len(running_vms)} running VMs have IPs")
+                    # Report successful scan to health service
+                    update_daemon_sync('ip_scanner', full_sync=False, items_processed=len(running_vms))
                 else:
                     logger.debug("Background IP scanner: no running VMs found")
+                    update_daemon_sync('ip_scanner', full_sync=False, items_processed=0)
             
             # Sleep for 30 seconds before next check (faster updates)
             time.sleep(30)
         except Exception as e:
             logger.exception(f"Background IP scanner error: {e}")
+            # Report scan error to health service
+            update_daemon_sync('ip_scanner', error=str(e))
             time.sleep(30)  # Sleep 30 seconds on error
+        finally:
+            # CRITICAL: Clean up DB session after each iteration
+            try:
+                from app.models import db
+                db.session.remove()
+            except Exception as cleanup_err:
+                logger.warning(f"Failed to cleanup DB session in IP scanner: {cleanup_err}")
     
     logger.info("Background IP scanner: stopped")
 
