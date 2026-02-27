@@ -222,14 +222,15 @@ def deploy_linked_clones(
             # Extract username without realm (root@pam -> root)
             username = cluster_config["user"].split("@")[0] if "@" in cluster_config["user"] else cluster_config["user"]
             
-            # SSH to the TEMPLATE NODE specifically (not the cluster gateway)
-            # because qm clone needs to run locally on the node with the template
+            # SSH to the CLUSTER GATEWAY (netlab1 or main IP)
+            # This gateway knows all the node hostnames in the cluster
+            # and can route qm commands to the appropriate nodes via hostname
             ssh_executor = get_pooled_ssh_executor(
-                host=template_node,  # SSH to template node directly
+                host=cluster_config["host"],  # Main cluster gateway (e.g., netlab1)
                 username=username,
                 password=cluster_config["password"]
             )
-            logger.info(f"SSH connection established to template node {template_node} - will execute qm clone from there")
+            logger.info(f"SSH connection established to cluster gateway {cluster_config['host']} - will execute qm clone from there (target node: {template_node})")
         except Exception as e:
             logger.error(f"Failed to get SSH connection: {e}")
             return False, f"SSH connection failed: {str(e)}", {}
