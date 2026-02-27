@@ -10,6 +10,7 @@ Includes automatic load balancing across cluster nodes and fast deployment.
 """
 
 import logging
+import time
 from datetime import datetime
 from typing import List, Tuple, Dict, Optional
 
@@ -377,9 +378,9 @@ def deploy_linked_clones(
         created_vms = []
         errors = []
         
-        # Step 1: Create TEACHER VM at prefix*100 + 0 (index 0)
+        # Step 1: Create TEACHER VM at prefix*100 + 0 (index 0) using qm clone
         teacher_vmid = start_vmid
-        teacher_name = f"{class_.name.replace(' ', '-').lower()}-teacher-{teacher_vmid}"
+        teacher_name = f"{class_.name.replace(' ', '-').lower()}-teacher"
         
         if deployment_node:
             teacher_node = deployment_node
@@ -403,27 +404,6 @@ def deploy_linked_clones(
                     "node": teacher_node,
                     "is_teacher": True
                 })
-                
-                # Create baseline snapshot for teacher VM
-                try:
-                    from app.services.vm_core import create_snapshot_ssh
-                    
-                    snap_success, snap_error = create_snapshot_ssh(
-                        ssh_executor=ssh_executor,
-                        vmid=teacher_vmid,
-                        snapname="baseline",
-                        description="Baseline snapshot from initial clone - use for reimage",
-                        include_ram=False
-                    )
-                    
-                    if snap_success:
-                        logger.info(f"Created baseline snapshot for teacher VM {teacher_vmid}")
-                    else:
-                        logger.warning(f"Failed to create baseline snapshot for teacher VM {teacher_vmid}: {snap_error}")
-                
-                except Exception as e:
-                    logger.error(f"Error creating baseline snapshot for teacher VM {teacher_vmid}: {e}")
-                
             else:
                 logger.error(f"Failed to create teacher VM: {stderr}")
                 errors.append(f"Failed to create teacher VM {teacher_vmid}: {stderr}")
@@ -444,7 +424,7 @@ def deploy_linked_clones(
                 nodes = get_nodes_for_load_balancing(cluster_config)
                 target_node = nodes[i % len(nodes)] if nodes else template_node
             
-            vm_name = f"{class_.name.replace(' ', '-').lower()}-student-{i+1}-{new_vmid}"
+            vm_name = f"{class_.name.replace(' ', '-').lower()}-student-{i+1}"
             
             try:
                 # Execute qm clone command from template node
@@ -478,29 +458,6 @@ def deploy_linked_clones(
                         "is_teacher": False  # This is a student VM
                     })
                     logger.info(f"Created VM {new_vmid}: {vm_name} on {target_node}")
-                    
-                    # Create baseline snapshot immediately after VM creation
-                    # This captures the clean state from the clone for reimage functionality
-                    try:
-                        from app.services.vm_core import create_snapshot_ssh
-                        
-                        snap_success, snap_error = create_snapshot_ssh(
-                            ssh_executor=ssh_executor,
-                            vmid=new_vmid,
-                            snapname="baseline",
-                            description="Baseline snapshot from initial clone - use for reimage",
-                            include_ram=False
-                        )
-                        
-                        if snap_success:
-                            logger.info(f"Created baseline snapshot for VM {new_vmid}")
-                        else:
-                            logger.warning(f"Failed to create baseline snapshot for VM {new_vmid}: {snap_error}")
-                            # Don't fail VM creation if snapshot fails - snapshot is not critical
-                    
-                    except Exception as e:
-                        logger.error(f"Error creating baseline snapshot for VM {new_vmid}: {e}")
-                        # Continue - snapshot failure is non-fatal
                 
                 else:
                     errors.append(f"VM {new_vmid} created but not verified")
@@ -510,7 +467,38 @@ def deploy_linked_clones(
                 logger.error(error_msg)
                 errors.append(error_msg)
         
-        # Create database records for created VMs
+        # Step 3: Wait for all VM config files to be written, then create baseline snapshots for all VMs
+        if created_vms:
+            logger.info("Waiting for config files to sync before snapshot creation...")
+            time.sleep(2)
+            
+            logger.info(f"Creating baseline snapshots for {len(created_vms)} VMs...")
+            from app.services.vm_core import create_snapshot_ssh
+            
+            for vm_info in created_vms:
+                vmid = vm_info["vmid"]
+                vm_name = vm_info["name"]
+                
+                try:
+                    snap_success, snap_error = create_snapshot_ssh(
+                        ssh_executor=ssh_executor,
+                        vmid=vmid,
+                        snapname="baseline",
+                        description="Baseline snapshot from initial clone - use for reimage",
+                        include_ram=False
+                    )
+                    
+                    if snap_success:
+                        logger.info(f"Created baseline snapshot for VM {vmid} ({vm_name})")
+                    else:
+                        logger.warning(f"Failed to create baseline snapshot for VM {vmid} ({vm_name}): {snap_error}")
+                        # Snapshot failure is non-critical, VM still works
+                
+                except Exception as e:
+                    logger.error(f"Error creating baseline snapshot for VM {vmid} ({vm_name}): {e}")
+                    # Continue to next VM - snapshot failure is non-critical
+        
+        # Step 4: Create database records for created VMs
         try:
             # Get teacher ID for the class
             teacher_id = class_.teacher_id if class_ else None
