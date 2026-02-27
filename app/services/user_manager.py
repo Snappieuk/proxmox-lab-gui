@@ -11,7 +11,6 @@ import threading
 from typing import Any, Dict, List, Optional
 
 from flask import abort, session
-from proxmoxer import ProxmoxAPI
 
 logger = logging.getLogger(__name__)
 

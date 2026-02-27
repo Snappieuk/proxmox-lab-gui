@@ -372,23 +372,36 @@ class Class(db.Model):
     
     @property
     def assigned_count(self) -> int:
-        """Number of student VMs assigned to users (excludes teacher and template VMs)."""
-        return sum(1 for vm in self.vm_assignments 
-                   if vm.assigned_user_id is not None 
-                   and not vm.is_teacher_vm
-                   and not vm.is_template_vm)
+        """Number of student VMs assigned to users (excludes teacher and template VMs).
+        
+        Queries database directly to ensure fresh count after manual assignment changes.
+        """
+        return VMAssignment.query.filter(
+            VMAssignment.class_id == self.id,
+            VMAssignment.assigned_user_id.isnot(None),
+            ~VMAssignment.is_teacher_vm,
+            ~VMAssignment.is_template_vm
+        ).count()
     
     @property
     def unassigned_count(self) -> int:
-        """Number of student VMs not assigned to any user (excludes teacher and template VMs)."""
-        return sum(1 for vm in self.vm_assignments 
-                   if vm.assigned_user_id is None 
-                   and not vm.is_teacher_vm
-                   and not vm.is_template_vm)
+        """Number of student VMs not assigned to any user (excludes teacher and template VMs).
+        
+        Queries database directly to ensure fresh count after manual assignment changes.
+        """
+        return VMAssignment.query.filter(
+            VMAssignment.class_id == self.id,
+            VMAssignment.assigned_user_id.is_(None),
+            ~VMAssignment.is_teacher_vm,
+            ~VMAssignment.is_template_vm
+        ).count()
     
     @property
     def enrolled_count(self) -> int:
-        """Number of students enrolled in this class."""
+        """Number of students enrolled in this class.
+        
+        Queries database directly to ensure fresh count.
+        """
         return self.students.count()
     
     def is_owner(self, user) -> bool:

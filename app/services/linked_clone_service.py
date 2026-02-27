@@ -13,7 +13,6 @@ import logging
 from typing import List, Tuple, Dict
 
 from app.models import db, VMAssignment, Class
-from app.services.ssh_executor import get_pooled_ssh_executor_from_config
 from app.services.proxmox_service import get_proxmox_admin_for_cluster, get_clusters_from_db
 
 logger = logging.getLogger(__name__)
@@ -200,7 +199,7 @@ def deploy_linked_clones(
                 template_node = node_name
                 logger.info(f"Template VM {template_vmid} found on node {node_name}")
                 break
-            except:
+            except Exception:
                 continue
         
         if not template_node:
@@ -214,7 +213,7 @@ def deploy_linked_clones(
         if deployment_node:
             logger.info(f"Single-node deployment: all VMs will be created on {deployment_node}")
         else:
-            logger.info(f"Multi-node deployment: using load balancing across cluster nodes")
+            logger.info("Multi-node deployment: using load balancing across cluster nodes")
         
         # Get SSH executor for the cluster (qm clone must run from template's node)
         try:

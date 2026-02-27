@@ -351,7 +351,6 @@ def api_delete_cluster(cluster_db_id: int):
 def api_test_cluster_connection(cluster_db_id: int):
     """Test connection to a cluster."""
     from app.models import Cluster
-    from proxmoxer import ProxmoxAPI
     
     cluster = Cluster.query.get(cluster_db_id)
     if not cluster:
