@@ -2,7 +2,7 @@
 
 {% block content %}
 <div class="admin-container">
-    <h2 class="page-title">⚙️ Cluster Management</h2>
+    <h2 class="page-title">Cluster Management</h2>
     <p class="page-description">Configure and manage Proxmox cluster connections. All changes are saved to the database and persist across restarts.</p>
     
     <div class="settings-section">
@@ -12,18 +12,17 @@
                 <p class="section-description">Add, edit, and manage your Proxmox clusters with deployment options.</p>
             </div>
             <button class="btn btn-primary" onclick="showAddClusterModal()">
-                <i class="ti ti-circle-plus"></i> Add Cluster
+                Add Cluster
             </button>
         </div>
         
         <div id="clusters-list" class="clusters-grid"></div>
         
         <div id="empty-state" class="empty-state" style="display: none;">
-            <i class="ti ti-server"></i>
             <h3>No Clusters Configured</h3>
             <p>Add your first Proxmox cluster to get started</p>
             <button class="btn btn-primary" onclick="showAddClusterModal()">
-                <i class="ti ti-circle-plus"></i> Add First Cluster
+                Add First Cluster
             </button>
         </div>
     </div>
@@ -208,12 +207,12 @@
                 
                 <div class="modal-actions">
                     <button type="button" class="btn btn-test" onclick="testConnection()">
-                        <i class="ti ti-plug"></i> Test Connection
+                        Test Connection
                     </button>
                     <div style="flex: 1;"></div>
                     <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
                     <button type="submit" class="btn btn-primary">
-                        <i class="ti ti-device-floppy"></i> Save Cluster
+                        Save Cluster
                     </button>
                 </div>
             </form>
@@ -280,22 +279,22 @@
 }
 
 .cluster-card {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    background: #667eea;
     border-radius: 12px;
     padding: 24px;
     color: white;
     position: relative;
-    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.2);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
     transition: all 0.3s;
 }
 
 .cluster-card:hover {
-    transform: translateY(-4px);
-    box-shadow: 0 8px 24px rgba(102, 126, 234, 0.3);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
 }
 
 .cluster-card.inactive {
-    background: linear-gradient(135deg, #94a3b8 0%, #64748b 100%);
+    background: #94a3b8;
     opacity: 0.7;
 }
 
@@ -616,7 +615,7 @@
 }
 
 .toggle-switch input:checked + .toggle-label {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    background: #667eea;
 }
 
 .toggle-switch input:checked + .toggle-label::after {
@@ -663,7 +662,7 @@
 }
 
 .btn-primary {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    background: #667eea;
     color: white;
 }
 
@@ -798,10 +797,10 @@ function renderClusters() {
         
         // Build badges
         let badges = '';
-        if (cluster.is_default) badges += '<span class="badge badge-default"><i class="ti ti-star-filled"></i> Default</span>';
-        if (!cluster.is_active) badges += '<span class="badge"><i class="ti ti-circle-pause"></i> Inactive</span>';
-        if (cluster.allow_vm_deployment) badges += '<span class="badge"><i class="ti ti-device-hard-drive"></i> Deployable</span>';
-        if (cluster.auto_shutdown_enabled) badges += '<span class="badge"><i class="ti ti-power"></i> Auto-Shutdown</span>';
+        if (cluster.is_default) badges += '<span class="badge badge-default">Default</span>';
+        if (!cluster.is_active) badges += '<span class="badge">Inactive</span>';
+        if (cluster.allow_vm_deployment) badges += '<span class="badge">Deployable</span>';
+        if (cluster.auto_shutdown_enabled) badges += '<span class="badge">Auto-Shutdown</span>';
         
         card.innerHTML = `
             <div class="cluster-header">
@@ -827,10 +826,10 @@ function renderClusters() {
             </div>
             <div class="cluster-actions">
                 <button class="btn-card" onclick="editCluster(${cluster.db_id})">
-                    <i class="ti ti-pencil"></i> Edit
+                    Edit
                 </button>
                 <button class="btn-card btn-danger" onclick="deleteCluster(${cluster.db_id}, '${escapeHtml(cluster.name)}')">
-                    <i class="ti ti-trash"></i> Delete
+                    Delete
                 </button>
             </div>
         `;
@@ -918,7 +917,7 @@ async function loadStorages() {
     const button = event.target.closest('button');
     const originalHTML = button.innerHTML;
     button.disabled = true;
-    button.innerHTML = '<i class="ti ti-hourglass"></i> Loading...';
+    button.innerHTML = 'Loading...';
     
     try {
         let url;
@@ -1144,7 +1143,6 @@ function showAlert(message, type) {
     const alert = document.createElement('div');
     alert.className = `alert alert-${type}`;
     alert.innerHTML = `
-        <i class="ti ti-${iconMap[type]}"></i>
         <span>${message}</span>
     `;
     

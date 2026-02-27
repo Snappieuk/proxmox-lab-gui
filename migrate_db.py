@@ -146,6 +146,24 @@ CREATE TABLE IF NOT EXISTS proxmox_nodes (
 )
 """
 
+# Resource cards table schema (URLs/links for teachers and admins)
+RESOURCE_TABLE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS resources (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    url VARCHAR(2048) NOT NULL,
+    icon VARCHAR(50) DEFAULT 'ti-external-link',
+    color VARCHAR(50) DEFAULT 'blue',
+    display_order INTEGER DEFAULT 0,
+    is_active BOOLEAN DEFAULT 1,
+    created_by INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(created_by) REFERENCES users(id)
+)
+"""
+
 PROXMOX_NODE_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_proxmox_node_cluster_id ON proxmox_nodes(cluster_id)",
     "CREATE INDEX IF NOT EXISTS idx_proxmox_node_hostname ON proxmox_nodes(hostname)",
@@ -258,6 +276,23 @@ def create_proxmox_node_table(cursor):
         return True
     else:
         print("✓ Proxmox nodes table already exists")
+        return False
+
+
+def create_resource_table(cursor):
+    """Create resources table if it doesn't exist.
+    
+    This table stores resource cards with URLs accessible to teachers and admins.
+    """
+    print("\n📋 Checking resources table...")
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='resources'")
+    if not cursor.fetchone():
+        print("➕ Creating resources table")
+        cursor.execute(RESOURCE_TABLE_SCHEMA)
+        print("   ✓ Resources table created")
+        return True
+    else:
+        print("✓ Resources table already exists")
         return False
 
 
@@ -528,6 +563,11 @@ def migrate():
         # Step 7: Create Proxmox node IP cache table
         proxmox_node_table_created = create_proxmox_node_table(cursor)
         if proxmox_node_table_created:
+            total_changes += 1
+        
+        # Step 8: Create Resources table
+        resource_table_created = create_resource_table(cursor)
+        if resource_table_created:
             total_changes += 1
         
         # Commit all changes
