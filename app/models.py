@@ -355,13 +355,9 @@ class Class(db.Model):
             # Token has expiration date and hasn't expired
             return True
         
-        # Edge case: token exists but no expiration info
-        # This can happen with old classes created before token_never_expires field
-        # Treat as invalid to force regeneration
-        if not self.token_never_expires and not self.token_expires_at:
-            return False
-        
-        # Fallback: token exists and is valid
+        # Edge case: token exists but no expiration info (old classes created before token_never_expires field)
+        # Treat as valid since it was likely created to never expire before the schema was updated
+        # Token is only invalid if explicitly marked otherwise
         return True
     
     def invalidate_token(self) -> None:

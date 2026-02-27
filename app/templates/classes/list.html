@@ -97,6 +97,15 @@
             </div>
             {% if (user_role == 'teacher' and class.teacher_id == user.id) or user_role == 'adminer' %}
             <div class="class-card-actions">
+                {% if class.token_valid %}
+                <button class="action-btn success" onclick="event.stopPropagation(); toggleInvite({{ class.id }}, false)" title="Disable invite link">
+                    <i class="ti ti-link-off"></i> Disable Invite
+                </button>
+                {% else %}
+                <button class="action-btn primary" onclick="event.stopPropagation(); toggleInvite({{ class.id }}, true)" title="Enable invite link">
+                    <i class="ti ti-link"></i> Enable Invite
+                </button>
+                {% endif %}
                 <button class="action-btn danger" onclick="event.stopPropagation(); deleteClass({{ class.id }}, '{{ class.name }}')">
                     <i class="ti ti-trash"></i> Delete
                 </button>
@@ -304,6 +313,28 @@
 </style>
 
 <script>
+async function toggleInvite(classId, enable) {
+    try {
+        const method = enable ? 'POST' : 'DELETE';
+        const resp = await fetch(`/api/classes/${classId}/invite`, {
+            method: method
+        });
+        
+        const data = await resp.json();
+        
+        if (data.ok) {
+            const msg = enable ? 'Invite link enabled' : 'Invite link disabled';
+            alert(msg);
+            location.reload();
+        } else {
+            alert('Failed to toggle invite: ' + (data.error || 'Unknown error'));
+        }
+    } catch (e) {
+        console.error('Failed to toggle invite:', e);
+        alert('Failed to toggle invite. Please try again.');
+    }
+}
+
 async function deleteClass(classId, className) {
     if (!confirm(`Are you sure you want to delete the class "${className}"?\n\nThis will delete all associated VMs and cannot be undone!`)) {
         return;

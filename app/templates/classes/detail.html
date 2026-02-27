@@ -2748,25 +2748,41 @@ function displayInviteLink(url) {
     
     if (!url) {
         display.innerHTML = `
-            <div style="padding: 1.5rem; background: #f9f9f9; border-radius: 6px; text-align: center;">
-                <p style="color: #666; margin-bottom: 1rem;">No invite link created yet.</p>
-                <button onclick="generateInviteLink()" class="btn-primary" style="display: inline-flex; align-items: center; gap: 0.5rem;">
-                    <i class="ti ti-link"></i> Create Invite Link
-                </button>
+            <div style="padding: 1.5rem; background: #f9f9f9; border-radius: 6px;">
+                <div style="display: flex; align-items: center; justify-content: space-between; gap: 1rem;">
+                    <div>
+                        <p style="color: #666; margin: 0 0 0.5rem 0; font-weight: 500;">Invite Link Disabled</p>
+                        <p style="color: #999; font-size: 0.9rem; margin: 0;">Students cannot join this class via invite link</p>
+                    </div>
+                    <button onclick="generateInviteLink()" class="btn-primary" style="white-space: nowrap;">
+                        <i class="ti ti-link"></i> Enable Invite
+                    </button>
+                </div>
             </div>
         `;
         return;
     }
     
     display.innerHTML = `
-        <div class="invite-link-box">
-            <input type="text" value="${url}" readonly onclick="this.select()">
-            <button onclick="copyInviteLink('${url}')" style="background: #0078d4;">
-                <i class="ti ti-clipboard"></i> Copy
-            </button>
-        </div>
-        <div style="margin-top: 0.75rem; font-size: 0.85rem; color: #605e5c;">
-            <i class="ti ti-info-circle"></i> This link never expires and can be used by multiple students.
+        <div style="padding: 1.5rem; background: #f0f8ff; border-radius: 6px;">
+            <div style="display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1rem;">
+                <div>
+                    <p style="color: #0078d4; margin: 0 0 0.5rem 0; font-weight: 500;">Invite Link Active</p>
+                    <p style="color: #666; font-size: 0.9rem; margin: 0;">Students can join using this link</p>
+                </div>
+                <button onclick="deleteInviteLink()" class="btn-danger" style="white-space: nowrap;">
+                    <i class="ti ti-link-off"></i> Disable Invite
+                </button>
+            </div>
+            <div class="invite-link-box" style="margin-top: 1rem;">
+                <input type="text" value="${url}" readonly onclick="this.select()">
+                <button onclick="copyInviteLink('${url}')" style="background: #0078d4;">
+                    <i class="ti ti-clipboard"></i> Copy
+                </button>
+            </div>
+            <div style="margin-top: 0.75rem; font-size: 0.85rem; color: #605e5c;">
+                <i class="ti ti-info-circle"></i> This link never expires and can be used by multiple students.
+            </div>
         </div>
     `;
 }
