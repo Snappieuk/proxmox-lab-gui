@@ -154,8 +154,9 @@ def start_background_sync(app):
             finally:
                 # CRITICAL: Clean up DB session to prevent connection pool exhaustion
                 try:
-                    from app.models import db
-                    db.session.remove()
+                    with app.app_context():
+                        from app.models import db
+                        db.session.remove()
                 except Exception as cleanup_err:
                     logger.warning(f"Failed to cleanup DB session on error: {cleanup_err}")
             

@@ -85,6 +85,10 @@
                    href="{{ url_for('admin.recover_vms') }}">
                     <i class="ti ti-refresh"></i> Recover VMs
                 </a>
+                <a class="sidebar-link {% if request.endpoint == 'admin.resources' %}sidebar-link-active{% endif %}"
+                   href="{{ url_for('admin.resources') }}">
+                    <i class="ti ti-link"></i> Resources
+                </a>
                 
             {% endif %}
     {% endif %}

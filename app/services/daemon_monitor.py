@@ -80,15 +80,14 @@ def start_daemon_monitor(app) -> None:
             try:
                 with app.app_context():
                     _check_all_daemons()
+                    # Clean up DB session after check iteration
+                    try:
+                        from app.models import db
+                        db.session.remove()
+                    except Exception as cleanup_err:
+                        logger.warning(f"Failed to cleanup DB session in monitor: {cleanup_err}")
             except Exception as e:
                 logger.error(f"Daemon monitor error: {e}", exc_info=True)
-            finally:
-                # Clean up DB session after check iteration
-                try:
-                    from app.models import db
-                    db.session.remove()
-                except Exception as cleanup_err:
-                    logger.warning(f"Failed to cleanup DB session in monitor: {cleanup_err}")
             
             # Check every 30 seconds
             time.sleep(30)

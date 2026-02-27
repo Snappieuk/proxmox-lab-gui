@@ -73,15 +73,14 @@ def _auto_shutdown_daemon_worker(app):
         try:
             with app.app_context():
                 check_and_shutdown_idle_vms()
+                # CRITICAL: Clean up DB session to prevent connection pool exhaustion
+                try:
+                    from app.models import db
+                    db.session.remove()
+                except Exception as cleanup_err:
+                    logger.warning(f"Failed to cleanup DB session: {cleanup_err}")
         except Exception as e:
             logger.error(f"Error in auto-shutdown daemon: {e}", exc_info=True)
-        finally:
-            # CRITICAL: Clean up DB session to prevent connection pool exhaustion
-            try:
-                from app.models import db
-                db.session.remove()
-            except Exception as cleanup_err:
-                logger.warning(f"Failed to cleanup DB session: {cleanup_err}")
         
         # Wait for next check (or until stop event)
         shutdown_daemon_stop_event.wait(CHECK_INTERVAL)

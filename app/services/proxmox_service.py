@@ -1666,8 +1666,9 @@ def _background_ip_scan_loop(app):
     finally:
         # CRITICAL: Clean up DB session after startup scan
         try:
-            from app.models import db
-            db.session.remove()
+            with app.app_context():
+                from app.models import db
+                db.session.remove()
         except Exception as cleanup_err:
             logger.warning(f"Failed to cleanup DB session on startup: {cleanup_err}")
     
@@ -1700,8 +1701,9 @@ def _background_ip_scan_loop(app):
         finally:
             # CRITICAL: Clean up DB session after each iteration
             try:
-                from app.models import db
-                db.session.remove()
+                with app.app_context():
+                    from app.models import db
+                    db.session.remove()
             except Exception as cleanup_err:
                 logger.warning(f"Failed to cleanup DB session in IP scanner: {cleanup_err}")
     
