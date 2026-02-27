@@ -633,7 +633,11 @@ def manage_invite(class_id: int):
         return jsonify({"ok": True, "message": msg})
     
     # Handle POST (enable/generate invite)
-    data = request.get_json() or {}
+    try:
+        data = request.get_json() or {}
+    except Exception:
+        data = {}
+    
     never_expires = data.get('never_expires', True)  # Default to True for never-expires
     
     token, msg = generate_class_invite(class_id, never_expires)
