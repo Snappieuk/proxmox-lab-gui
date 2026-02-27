@@ -4,10 +4,10 @@ API endpoints for resource management (URLs/cards accessible to teachers and adm
 """
 
 import logging
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, session
 from app.models import db, Resource, User
 from app.utils.decorators import login_required, admin_required
-from app.utils.auth_helpers import require_user
+from app.utils.auth_helpers import get_current_user
 from app.services.user_manager import is_admin_user
 from datetime import datetime
 
@@ -32,7 +32,7 @@ def _check_teacher_or_admin(user):
 @login_required
 def list_resources():
     """List all active resources in display order (teachers and admins only)."""
-    user = require_user()
+    user = session.get('user')
     
     # Check if user is teacher or admin
     if not _check_teacher_or_admin(user):
@@ -58,8 +58,7 @@ def create_resource():
     Optional fields: description, icon, color, display_order
     """
     try:
-        from app.utils.auth_helpers import require_user
-        user = require_user()
+        user = session.get('user')
         
         data = request.get_json() or {}
         
@@ -113,7 +112,7 @@ def create_resource():
 @login_required
 def get_resource(resource_id):
     """Get a specific resource by ID (teachers and admins only)."""
-    user = require_user()
+    user = session.get('user')
     
     if not _check_teacher_or_admin(user):
         return jsonify({'ok': False, 'error': 'Access denied'}), 403
