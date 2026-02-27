@@ -222,12 +222,14 @@ def deploy_linked_clones(
             # Extract username without realm (root@pam -> root)
             username = cluster_config["user"].split("@")[0] if "@" in cluster_config["user"] else cluster_config["user"]
             
+            # SSH to the TEMPLATE NODE specifically (not the cluster gateway)
+            # because qm clone needs to run locally on the node with the template
             ssh_executor = get_pooled_ssh_executor(
-                host=cluster_config["host"],
+                host=template_node,  # SSH to template node directly
                 username=username,
                 password=cluster_config["password"]
             )
-            logger.info(f"SSH connection established to {cluster_config['host']} - will run clone commands from template node {template_node}")
+            logger.info(f"SSH connection established to template node {template_node} - will execute qm clone from there")
         except Exception as e:
             logger.error(f"Failed to get SSH connection: {e}")
             return False, f"SSH connection failed: {str(e)}", {}
@@ -263,7 +265,8 @@ def deploy_linked_clones(
             try:
                 # Execute qm clone command from template node
                 # If target node differs from template node, use --target parameter for cross-node clone
-                cmd = f"qm clone {template_vmid} {new_vmid} --name {vm_name} --storage {template_storage}"
+                # Proper quoting for vm_name and storage to handle special characters
+                cmd = f"qm clone {template_vmid} {new_vmid} --name '{vm_name}' --storage {template_storage}"
                 
                 # Add target node if cloning to a different node
                 if target_node != template_node:
