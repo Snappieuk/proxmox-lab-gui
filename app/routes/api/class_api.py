@@ -625,8 +625,16 @@ def manage_invite(class_id: int):
     if not user.is_adminer and not class_.is_owner(user):
         return jsonify({"ok": False, "error": "Access denied"}), 403
     
+    # Handle DELETE (disable invite)
+    if request.method == 'DELETE':
+        success, msg = invalidate_class_invite(class_id)
+        if not success:
+            return jsonify({"ok": False, "error": msg}), 400
+        return jsonify({"ok": True, "message": msg})
+    
+    # Handle POST (enable/generate invite)
     data = request.get_json() or {}
-    never_expires = data.get('never_expires', False)
+    never_expires = data.get('never_expires', True)  # Default to True for never-expires
     
     token, msg = generate_class_invite(class_id, never_expires)
     
@@ -639,29 +647,6 @@ def manage_invite(class_id: int):
         "token": token,
         "invite_url": f"/classes/join/{token}"
     })
-
-
-@api_classes_bp.route("/<int:class_id>/invite", methods=["DELETE"])
-@login_required
-def disable_invite(class_id: int):
-    """Disable (invalidate) the invite token for a class."""
-    user, error = require_teacher_or_adminer()
-    if error:
-        return jsonify(error[0]), error[1]
-    
-    class_ = get_class_by_id(class_id)
-    if not class_:
-        return jsonify({"ok": False, "error": "Class not found"}), 404
-    
-    if not user.is_adminer and not class_.is_owner(user):
-        return jsonify({"ok": False, "error": "Access denied"}), 403
-    
-    success, msg = invalidate_class_invite(class_id)
-    
-    if not success:
-        return jsonify({"ok": False, "error": msg}), 400
-    
-    return jsonify({"ok": True, "message": msg})
 
 
 @api_classes_bp.route("/join/<token>", methods=["POST"])
