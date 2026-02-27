@@ -115,37 +115,6 @@ def get_nodes_for_load_balancing(cluster_config: dict, count: int = 1) -> List[s
         return []
 
 
-def get_template_storage(proxmox, node: str, template_vmid: int) -> str:
-    """
-    Get the storage location of a template VM's disk.
-    
-    Args:
-        proxmox: ProxmoxAPI connection
-        node: Node where template resides
-        template_vmid: Template VM ID
-    
-    Returns:
-        Storage name (e.g., "TRUENAS-NFS", "NFS-Datastore", "local-lvm")
-    """
-    try:
-        config = proxmox.nodes(node).qemu(template_vmid).config.get()
-        
-        # Look for disk entries (scsi0, virtio0, ide0, etc.)
-        for disk_key in ['scsi0', 'scsi1', 'virtio0', 'ide0', 'ide1', 'ide2']:
-            if disk_key in config:
-                disk_path = config[disk_key]
-                # Format is typically "storage:path" or "storage:vmid/disk-name"
-                if ':' in disk_path:
-                    storage_name = disk_path.split(':')[0]
-                    logger.info(f"Template VM {template_vmid} uses storage: {storage_name}")
-                    return storage_name
-        
-        logger.warning(f"Could not determine template storage for VM {template_vmid}, using default")
-        return "local-lvm"
-        
-    except Exception as e:
-        logger.error(f"Failed to get template storage: {e}")
-        return "local-lvm"
 
 
 def get_node_ip_via_gateway(gateway_host: str, gateway_user: str, gateway_password: str, target_node: str, cluster_id: str) -> Optional[str]:
@@ -268,10 +237,6 @@ def deploy_linked_clones(
         if not template_node:
             return False, f"Template VM {template_vmid} not found on any node", {}
         
-        # Get template's storage location
-        template_storage = get_template_storage(proxmox, template_node, template_vmid)
-        logger.info(f"Template VM {template_vmid} uses storage: {template_storage}")
-        
         # Determine deployment strategy
         if deployment_node:
             logger.info(f"Single-node deployment: all VMs will be created on {deployment_node}")
@@ -340,9 +305,10 @@ def deploy_linked_clones(
             
             try:
                 # Execute qm clone command from template node
-                # If target node differs from template node, use --target parameter for cross-node clone
-                # Proper quoting for vm_name and storage to handle special characters
-                cmd = f"qm clone {template_vmid} {new_vmid} --name '{vm_name}' --storage {template_storage}"
+                # Linked clones automatically use the same storage as the template
+                # Do NOT use --storage parameter with linked clones (not supported)
+                # Proper quoting for vm_name to handle special characters
+                cmd = f"qm clone {template_vmid} {new_vmid} --name '{vm_name}'"
                 
                 # Add target node if cloning to a different node
                 if target_node != template_node:
