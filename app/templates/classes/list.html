@@ -317,7 +317,10 @@ async function toggleInvite(classId, enable) {
     try {
         const method = enable ? 'POST' : 'DELETE';
         const resp = await fetch(`/api/classes/${classId}/invite`, {
-            method: method
+            method: method,
+            headers: {
+                'Content-Type': 'application/json'
+            }
         });
         
         const data = await resp.json();

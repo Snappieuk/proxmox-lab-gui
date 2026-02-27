@@ -2727,7 +2727,8 @@ async function deleteInviteLink() {
     
     try {
         const resp = await fetch(`/api/classes/${classId}/invite`, {
-            method: 'DELETE'
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' }
         });
         
         const data = await resp.json();
