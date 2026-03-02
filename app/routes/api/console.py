@@ -417,7 +417,9 @@ def view_console(vmid: int):
                 'console.html',
                 vmid=vmid,
                 vm_name=vm_name,
-                websocket_available=WEBSOCKET_AVAILABLE
+                websocket_available=WEBSOCKET_AVAILABLE,
+                proxmox_host=proxmox_host,
+                proxmox_port=proxmox_port
             )
             logger.info(f"[VNC VIEW2] Template rendered successfully (length={len(rendered)})")
             return rendered
