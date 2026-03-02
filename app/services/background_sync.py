@@ -26,9 +26,7 @@ from typing import Any, Dict
 
 from app.services.health_service import (
     register_daemon_started,
-    register_daemon_stopped,
     update_daemon_sync,
-    update_resource_vm_inventory,
 )
 
 logger = logging.getLogger(__name__)
@@ -88,56 +86,87 @@ def start_background_sync(app):
         
         error_count = 0
         max_backoff = 300  # 5 minutes
+
+        def _run_sync_task(task_name: str, task_func) -> bool:
+            """Run one sync task and isolate failures from other tasks.
+
+            Returns:
+                True if task succeeded, False if it failed.
+            """
+            try:
+                task_func()
+                return True
+            except Exception as task_err:
+                logger.warning(f"{task_name} failed (continuing loop): {task_err}", exc_info=True)
+                _sync_stats['last_error'] = f"{task_name}: {task_err}"
+                return False
         
         while _sync_running:
             try:
                 with app.app_context():
                     now = datetime.utcnow()
+                    had_task_error = False
+                    ran_task = False
                     
                     # VM Inventory: Full sync every 10 minutes (600 seconds)
                     if (_sync_stats['last_full_sync'] is None or 
                         (now - _sync_stats['last_full_sync']).total_seconds() >= 600):
                         logger.info("Starting full VM inventory sync...")
-                        _perform_full_sync()
-                        # Report successful full sync to health service
-                        update_daemon_sync('background_sync', full_sync=True, 
-                                         items_processed=_sync_stats.get('vms_synced', 0))
-                        error_count = 0
+                        ran_task = True
+                        if _run_sync_task('vm_full_sync', _perform_full_sync):
+                            update_daemon_sync('background_sync', full_sync=True,
+                                             items_processed=_sync_stats.get('vms_synced', 0))
+                        else:
+                            had_task_error = True
                     
                     # VM Inventory: Quick sync every 2 minutes (120 seconds)
                     elif (_sync_stats['last_quick_sync'] is None or
                           (now - _sync_stats['last_quick_sync']).total_seconds() >= 120):
-                        _perform_quick_sync()
-                        # Report successful quick sync to health service
-                        update_daemon_sync('background_sync', full_sync=False,
-                                         items_processed=_sync_stats.get('vms_synced', 0))
-                        error_count = 0
+                        ran_task = True
+                        if _run_sync_task('vm_quick_sync', _perform_quick_sync):
+                            update_daemon_sync('background_sync', full_sync=False,
+                                             items_processed=_sync_stats.get('vms_synced', 0))
+                        else:
+                            had_task_error = True
                     
                     # Templates: Full sync every 30 minutes (1800 seconds)
                     if (_sync_stats['last_template_full_sync'] is None or
                         (now - _sync_stats['last_template_full_sync']).total_seconds() >= 1800):
                         logger.info("Starting full template sync...")
-                        _perform_template_full_sync()
-                        error_count = 0
+                        ran_task = True
+                        if not _run_sync_task('template_full_sync', _perform_template_full_sync):
+                            had_task_error = True
                     
                     # Templates: Quick verification every 5 minutes (300 seconds)
                     elif (_sync_stats['last_template_quick_sync'] is None or
                           (now - _sync_stats['last_template_quick_sync']).total_seconds() >= 300):
-                        _perform_template_quick_sync()
-                        error_count = 0
+                        ran_task = True
+                        if not _run_sync_task('template_quick_sync', _perform_template_quick_sync):
+                            had_task_error = True
                     
                     # ISOs: Full sync every 30 minutes (1800 seconds)
                     if (_sync_stats['last_iso_full_sync'] is None or
                         (now - _sync_stats['last_iso_full_sync']).total_seconds() >= 1800):
                         logger.info("Starting full ISO sync...")
-                        _perform_iso_full_sync()
-                        error_count = 0
+                        ran_task = True
+                        if not _run_sync_task('iso_full_sync', _perform_iso_full_sync):
+                            had_task_error = True
                     
                     # ISOs: Quick verification every 5 minutes (300 seconds)
                     elif (_sync_stats['last_iso_quick_sync'] is None or
                           (now - _sync_stats['last_iso_quick_sync']).total_seconds() >= 300):
-                        _perform_iso_quick_sync()
-                        error_count = 0
+                        ran_task = True
+                        if not _run_sync_task('iso_quick_sync', _perform_iso_quick_sync):
+                            had_task_error = True
+
+                    if ran_task:
+                        if had_task_error:
+                            error_count += 1
+                            update_daemon_sync('background_sync', error=_sync_stats.get('last_error', 'sync task failed'))
+                        else:
+                            error_count = 0
+                            update_daemon_sync('background_sync', full_sync=False,
+                                             items_processed=_sync_stats.get('vms_synced', 0))
             
             except Exception as e:
                 error_count += 1

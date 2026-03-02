@@ -246,7 +246,7 @@ def create_app(config=None):
         # Register daemons for monitoring
         register_daemon(
             'background_sync',
-            health_check_func=lambda: is_daemon_healthy('background_sync', max_age_seconds=630),  # 10.5 min
+            health_check_func=lambda: is_daemon_healthy('background_sync', max_age_seconds=1200),  # 20 min
             restart_func=lambda: _restart_background_sync(app),
             max_restarts_per_hour=5
         )
@@ -258,7 +258,7 @@ def create_app(config=None):
         )
         register_daemon(
             'ip_scanner',
-            health_check_func=lambda: is_daemon_healthy('ip_scanner', max_age_seconds=60),  # 30+30 sec
+            health_check_func=lambda: is_daemon_healthy('ip_scanner', max_age_seconds=900),  # tolerate slow cluster timeout windows
             restart_func=lambda: _restart_ip_scanner(app),
             max_restarts_per_hour=10
         )

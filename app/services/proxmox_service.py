@@ -74,12 +74,6 @@ def create_proxmox_connection(cluster: Dict[str, Any], timeout: int = 30) -> Pro
     Returns:
         ProxmoxAPI connection instance with connection pooling enabled
     """
-    # Create requests session with connection pooling
-    import requests
-    session = requests.Session()
-    session.mount('http://', _http_adapter)
-    session.mount('https://', _http_adapter)
-    
     try:
         connection = ProxmoxAPI(
             cluster["host"],
@@ -96,15 +90,7 @@ def create_proxmox_connection(cluster: Dict[str, Any], timeout: int = 30) -> Pro
         return connection
     except Exception as e:
         logger.error(f"Failed to create Proxmox connection to {cluster['host']}: {e}")
-        # Fallback without session monkey-patching
-        return ProxmoxAPI(
-            cluster["host"],
-            user=cluster["user"],
-            password=cluster["password"],
-            verify_ssl=cluster.get("verify_ssl", False),
-            port=cluster.get("port", 8006),
-            timeout=timeout,
-        )
+        raise
 
 
 def get_clusters_from_db():
@@ -1676,19 +1662,33 @@ def _background_ip_scan_loop(app):
         try:
             # Use Flask app context for database access
             with app.app_context():
+                scan_started = time.time()
+                # Heartbeat BEFORE potentially slow Proxmox calls so daemon monitor
+                # does not mark scanner unhealthy while blocked on network timeouts.
+                update_daemon_sync('ip_scanner', full_sync=False, items_processed=0)
+
                 # Get all VMs with IP check (don't skip IPs anymore - always get fresh data)
                 vms = get_all_vms(skip_ips=False, force_refresh=True)
                 
                 # Count running VMs and those with IPs
                 running_vms = [vm for vm in vms if vm.get('status') == 'running']
                 with_ips = sum(1 for vm in running_vms if vm.get('ip') and vm['ip'] not in ('N/A', 'Fetching...', ''))
+                scan_duration = time.time() - scan_started
                 
                 if len(running_vms) > 0:
-                    logger.info(f"Background IP scanner: {with_ips}/{len(running_vms)} running VMs have IPs")
+                    logger.info(
+                        "Background IP scanner: %d/%d running VMs have IPs (scan_duration=%.1fs)",
+                        with_ips,
+                        len(running_vms),
+                        scan_duration,
+                    )
                     # Report successful scan to health service
                     update_daemon_sync('ip_scanner', full_sync=False, items_processed=len(running_vms))
                 else:
-                    logger.debug("Background IP scanner: no running VMs found")
+                    logger.debug(
+                        "Background IP scanner: no running VMs found (scan_duration=%.1fs)",
+                        scan_duration,
+                    )
                     update_daemon_sync('ip_scanner', full_sync=False, items_processed=0)
             
             # Sleep for 30 seconds before next check (faster updates)
@@ -1696,7 +1696,7 @@ def _background_ip_scan_loop(app):
         except Exception as e:
             logger.exception(f"Background IP scanner error: {e}")
             # Report scan error to health service
-            update_daemon_sync('ip_scanner', error=str(e))
+            update_daemon_sync('ip_scanner', error=f"scan_loop_error: {e}")
             time.sleep(30)  # Sleep 30 seconds on error
         finally:
             # CRITICAL: Clean up DB session after each iteration
