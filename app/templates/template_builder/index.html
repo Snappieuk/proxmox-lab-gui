@@ -1243,7 +1243,7 @@ async function loadMyVMs() {
                     </div>
                 </div>
                 <div class="template-actions">
-                    <button class="btn-icon" onclick="openConsole(${vm.vmid}, '${vm.name}')" title="Open Console">
+                    <button class="btn-icon" onclick='openConsole(${vm.vmid}, ${JSON.stringify(vm.name || ("VM " + vm.vmid))}, ${JSON.stringify(vm.cluster_id || CURRENT_CLUSTER_ID || "")})' title="Open Console">
                         <i class="ti ti-terminal"></i> Console
                     </button>
                     <button class="btn-icon btn-secondary" onclick="editVM(${vm.vmid}, '${vm.name}', ${vm.cores || 2}, ${vm.memory || 2048})" title="Edit Hardware Specs">
@@ -1634,6 +1634,7 @@ async function submitBuildVM(event) {
             const successModal = document.getElementById('build-success-modal');
             successModal.setAttribute('data-vmid', data.vmid);
             successModal.setAttribute('data-vm-name', formData.vm_name);
+            successModal.setAttribute('data-cluster-id', CURRENT_CLUSTER_ID || '');
             successModal.style.display = 'flex';
             successModal.style.visibility = 'visible';
             
@@ -1680,17 +1681,22 @@ async function openConsoleFromSuccess() {
     const modal = document.getElementById('build-success-modal');
     const vmid = modal.getAttribute('data-vmid');
     const vmName = modal.getAttribute('data-vm-name');
+    const clusterId = modal.getAttribute('data-cluster-id') || CURRENT_CLUSTER_ID || '';
     
     closeBuildSuccessModal();
-    await openConsole(vmid, vmName);
+    await openConsole(vmid, vmName, clusterId);
 }
 
-async function openConsole(vmid, vmName) {
+async function openConsole(vmid, vmName, clusterId = '') {
     try {
         // Use the same console view as the main portal (with WebSocket proxy and ticket auth)
         // This avoids 401 errors from direct Proxmox console URLs
         document.getElementById('console-vm-name').textContent = vmName || `VM ${vmid}`;
-        document.getElementById('console-frame').src = `/api/console/${vmid}/view2`;
+        const resolvedClusterId = clusterId || CURRENT_CLUSTER_ID || '';
+        const consoleUrl = resolvedClusterId
+            ? `/api/console/${vmid}/view2?cluster_id=${encodeURIComponent(resolvedClusterId)}`
+            : `/api/console/${vmid}/view2`;
+        document.getElementById('console-frame').src = consoleUrl;
         
         // Show console modal
         const consoleModal = document.getElementById('console-modal');

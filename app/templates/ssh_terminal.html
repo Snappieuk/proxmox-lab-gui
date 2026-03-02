@@ -4,8 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SSH - {{ vm_name }}</title>
-    <!-- xterm.js CSS -->
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css">
+    <!-- xterm.js CSS (self-hosted) -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='vendor/xterm/xterm.min.css') }}">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -196,9 +196,9 @@
         <div id="terminal"></div>
     </div>
 
-    <!-- xterm.js scripts -->
-    <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
+    <!-- xterm.js scripts (self-hosted) -->
+    <script src="{{ url_for('static', filename='vendor/xterm/xterm.min.js') }}"></script>
+    <script src="{{ url_for('static', filename='vendor/xterm/xterm-addon-fit.min.js') }}"></script>
     <script>
         // Check if xterm.js loaded
         if (typeof Terminal === 'undefined') {
