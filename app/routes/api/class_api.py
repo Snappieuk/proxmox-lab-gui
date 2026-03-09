@@ -841,11 +841,7 @@ def list_class_vms(class_id: int):
     db.session.expire_all()
     
     # Get cluster_ip from class template (used by both students and teachers)
-    cluster_ip = None
-    if class_.template and class_.template.cluster_ip:
-        cluster_ip = class_.template.cluster_ip
-    else:
-        cluster_ip = "10.220.15.249"  # Default fallback
+    cluster_ip = class_.template.cluster_ip if class_.template and class_.template.cluster_ip else None
     
     # Check access
     if not user.is_adminer and not user.is_teacher:
@@ -1126,11 +1122,7 @@ def get_my_vm(class_id: int):
         return jsonify({"ok": False, "error": "Class not found"}), 404
     
     # Get cluster_ip from class template
-    cluster_ip = None
-    if class_.template and class_.template.cluster_ip:
-        cluster_ip = class_.template.cluster_ip
-    else:
-        cluster_ip = "10.220.15.249"  # Default fallback
+    cluster_ip = class_.template.cluster_ip if class_.template and class_.template.cluster_ip else None
     
     vm_data = assignment.to_dict()
     # Get status from VMInventory (database-first, no Proxmox API call)

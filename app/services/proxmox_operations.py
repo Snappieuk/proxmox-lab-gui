@@ -768,25 +768,19 @@ def get_vm_status_from_inventory(vmid: int, cluster_ip: str = None) -> Dict[str,
     from app.models import VMAssignment
     
     try:
-        # Find cluster_id from cluster_ip
-        proxmox, err = _get_proxmox_for_cluster(cluster_ip)
-        if err:
-            logger.warning(f"get_vm_status_from_inventory: {err}")
-            return {"status": "unknown", "mac": "N/A", "ip": "N/A"}
-        
-        # Derive cluster_id for VMInventory query
-        target_ip = cluster_ip or CLASS_CLUSTER_IP
         cluster_id = None
-        for cluster in get_clusters_from_db():
-            if cluster["host"] == target_ip:
-                cluster_id = cluster["id"]
-                break
-        
-        # Query VMInventory table
-        vm_record = VMInventory.query.filter_by(
-            cluster_id=cluster_id,
-            vmid=vmid
-        ).first()
+        if cluster_ip:
+            for cluster in get_clusters_from_db():
+                if cluster.get("host") == cluster_ip or cluster.get("id") == cluster_ip:
+                    cluster_id = cluster.get("id")
+                    break
+
+        if cluster_id:
+            vm_record = VMInventory.query.filter_by(cluster_id=cluster_id, vmid=vmid).first()
+            if not vm_record:
+                vm_record = VMInventory.query.filter_by(vmid=vmid).order_by(VMInventory.last_updated.desc()).first()
+        else:
+            vm_record = VMInventory.query.filter_by(vmid=vmid).order_by(VMInventory.last_updated.desc()).first()
         
         if vm_record:
             # Found in VMInventory - use synced data
@@ -804,7 +798,6 @@ def get_vm_status_from_inventory(vmid: int, cluster_ip: str = None) -> Dict[str,
             }
         
         # VM not in VMInventory yet - fallback to VMAssignment (newly created VMs)
-        # This happens right after VM creation, before background sync runs
         logger.info(f"VM {vmid} not in VMInventory yet, checking VMAssignment...")
         assignment = VMAssignment.query.filter_by(proxmox_vmid=vmid).first()
         
