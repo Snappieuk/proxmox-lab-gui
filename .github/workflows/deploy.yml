@@ -7,39 +7,70 @@ on:
 jobs:
   deploy:
     runs-on: self-hosted
+    env:
+      APP_DIR: /opt/proxmox-lab-gui
+      SERVICE_NAME: proxmox-gui
     steps:
-      - name: Stop running Flask app
+      - name: Validate install path
         run: |
-          pkill -9 -f "run.py" 2>/dev/null || true
-          pkill -9 -f "python.*proxmox-lab-gui" 2>/dev/null || true
-          lsof -ti:8080 | xargs kill -9 2>/dev/null || true
-          sleep 2
+          if [ ! -d "${APP_DIR}" ]; then
+            echo "ERROR: ${APP_DIR} does not exist on this runner"
+            echo "Run installer first: curl -sSL https://raw.githubusercontent.com/Snappieuk/proxmox-lab-gui/main/install.sh | sudo bash"
+            exit 1
+          fi
+
+      - name: Stop running app
+        run: |
+          if systemctl list-unit-files | grep -q "^${SERVICE_NAME}.service"; then
+            sudo systemctl stop "${SERVICE_NAME}" || true
+          fi
+          pkill -f "${APP_DIR}/run.py" 2>/dev/null || true
+          sleep 1
           
       - name: Pull latest changes
         run: |
-          cd ~/
-          git pull
+          cd "${APP_DIR}"
+          git fetch --all --prune
+          git reset --hard origin/main
           
       - name: Install dependencies
         run: |
-          cd ~/
-          source venv/bin/activate
-          pip install -r requirements.txt
-          
-      - name: Start Flask app
+          "${APP_DIR}/venv/bin/pip" install -r "${APP_DIR}/requirements.txt"
+
+      - name: Run migrations
         run: |
-          cd ~/
-          source venv/bin/activate
-          nohup python3 run.py > /tmp/flask.log 2>&1 &
-          sleep 3
+          cd "${APP_DIR}"
+          "${APP_DIR}/venv/bin/python3" migrate_db.py
           
-      - name: Verify Flask is running
+      - name: Start app
         run: |
-          if pgrep -f "run.py" > /dev/null; then
-            echo "✓ Flask app is running"
-            exit 0
+          if systemctl list-unit-files | grep -q "^${SERVICE_NAME}.service"; then
+            sudo systemctl daemon-reload
+            sudo systemctl restart "${SERVICE_NAME}"
+            sleep 2
           else
-            echo "ERROR: Flask app failed to start!"
-            tail -30 /tmp/flask.log
-            exit 1
+            nohup "${APP_DIR}/venv/bin/python3" "${APP_DIR}/run.py" > /tmp/flask.log 2>&1 &
+            sleep 3
+          fi
+          
+      - name: Verify app is running
+        run: |
+          if systemctl list-unit-files | grep -q "^${SERVICE_NAME}.service"; then
+            if systemctl is-active --quiet "${SERVICE_NAME}"; then
+              echo "✓ ${SERVICE_NAME} service is running"
+              exit 0
+            else
+              echo "ERROR: ${SERVICE_NAME} failed to start"
+              sudo journalctl -u "${SERVICE_NAME}" -n 50 --no-pager || true
+              exit 1
+            fi
+          else
+            if pgrep -f "${APP_DIR}/run.py" > /dev/null; then
+              echo "✓ Flask app is running"
+              exit 0
+            else
+              echo "ERROR: Flask app failed to start"
+              tail -30 /tmp/flask.log || true
+              exit 1
+            fi
           fi

@@ -65,22 +65,18 @@ wget -qO- https://raw.githubusercontent.com/Snappieuk/proxmox-lab-gui/main/insta
 
 **Note:** No .env configuration needed! All cluster credentials are managed through the web UI.
 
-### 🔄 One-Command Update
+### 🔄 Update Existing Installation
 
 Update to the latest version:
 
 ```bash
-sudo bash /opt/proxmox-lab-gui/update.sh
+cd /opt/proxmox-lab-gui
+sudo git pull
+sudo /opt/proxmox-lab-gui/venv/bin/pip install -r requirements.txt
+sudo /opt/proxmox-lab-gui/venv/bin/python3 migrate_db.py
+sudo systemctl restart proxmox-gui
+sudo systemctl status proxmox-gui
 ```
-
-**What it does:**
-- ✅ Creates automatic backup (database + config)
-- ✅ Stops the service
-- ✅ Pulls latest code from git
-- ✅ Updates Python dependencies
-- ✅ Runs database migrations
-- ✅ Restarts the service
-- ✅ Keeps last 5 backups
 
 ### Development Setup (Testing Only)
 

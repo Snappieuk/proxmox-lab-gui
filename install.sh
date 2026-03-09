@@ -80,6 +80,7 @@ if [[ "$OS" == "ubuntu" ]] || [[ "$OS" == "debian" ]]; then
         git \
         nmap \
         sqlite3 \
+        openssl \
         curl \
         wget \
         openssh-client \
@@ -94,6 +95,7 @@ elif [[ "$OS" == "centos" ]] || [[ "$OS" == "rhel" ]] || [[ "$OS" == "fedora" ]]
             git \
             nmap \
             sqlite \
+            openssl \
             curl \
             wget \
             openssh-clients \
@@ -105,6 +107,7 @@ elif [[ "$OS" == "centos" ]] || [[ "$OS" == "rhel" ]] || [[ "$OS" == "fedora" ]]
             git \
             nmap \
             sqlite \
+            openssl \
             curl \
             wget \
             openssh-clients \
@@ -196,46 +199,58 @@ echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━�
 echo -e "${BLUE}Initial Cluster Configuration${NC}"
 echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
-echo -e "${BLUE}To get started, let's configure your first Proxmox cluster.${NC}"
-echo -e "${YELLOW}(Storage pools and advanced settings can be configured via web UI at /setup)${NC}"
+echo -e "${BLUE}You can configure your first Proxmox cluster now, or skip and do it in the web UI.${NC}"
+echo -e "${YELLOW}(Press Enter on host to skip and configure later at /setup)${NC}"
 echo ""
 
 read -p "Enter Proxmox host IP or hostname: " CLUSTER_HOST
-read -p "Enter Proxmox admin user (default: root@pam): " CLUSTER_USER
-CLUSTER_USER=${CLUSTER_USER:-root@pam}
-read -sp "Enter Proxmox password: " CLUSTER_PASS
-echo ""
-read -p "Verify SSL certificates? (y/N): " VERIFY_SSL
-VERIFY_SSL=${VERIFY_SSL:-N}
+if [ -n "${CLUSTER_HOST}" ]; then
+    read -p "Enter Proxmox admin user (default: root@pam): " CLUSTER_USER
+    CLUSTER_USER=${CLUSTER_USER:-root@pam}
+    read -sp "Enter Proxmox password: " CLUSTER_PASS
+    echo ""
+    read -p "Verify SSL certificates? (y/N): " VERIFY_SSL
+    VERIFY_SSL=${VERIFY_SSL:-N}
 
-if [[ $VERIFY_SSL =~ ^[Yy]$ ]]; then
-    VERIFY_SSL_BOOL="1"
-else
-    VERIFY_SSL_BOOL="0"
-fi
+    if [[ $VERIFY_SSL =~ ^[Yy]$ ]]; then
+        VERIFY_SSL_BOOL="1"
+    else
+        VERIFY_SSL_BOOL="0"
+    fi
 
-# Create initial cluster in database
-echo -e "${BLUE}→ Adding cluster to database...${NC}"
-python3 <<EOF
+    # Create initial cluster in database
+    echo -e "${BLUE}→ Adding cluster to database...${NC}"
+    CLUSTER_HOST_ENV="${CLUSTER_HOST}" \
+    CLUSTER_USER_ENV="${CLUSTER_USER}" \
+    CLUSTER_PASS_ENV="${CLUSTER_PASS}" \
+    APP_DIR_ENV="${APP_DIR}" \
+    VERIFY_SSL_ENV="${VERIFY_SSL_BOOL}" \
+    python3 <<'EOF'
+import os
 import sys
-sys.path.insert(0, '${APP_DIR}')
+
+sys.path.insert(0, os.environ.get("APP_DIR_ENV", "/opt/proxmox-lab-gui"))
 
 from app import create_app
-from app.models import db, Cluster
+from app.models import Cluster, db
 
 app = create_app()
 with app.app_context():
-    # Check if any clusters exist
     existing = Cluster.query.first()
     if not existing:
+        cluster_host = os.environ.get("CLUSTER_HOST_ENV", "").strip()
+        cluster_user = os.environ.get("CLUSTER_USER_ENV", "root@pam").strip() or "root@pam"
+        cluster_pass = os.environ.get("CLUSTER_PASS_ENV", "")
+        verify_ssl = os.environ.get("VERIFY_SSL_ENV", "0") == "1"
+
         cluster = Cluster(
             cluster_id='cluster1',
-            name='${CLUSTER_HOST}',
-            host='${CLUSTER_HOST}',
+            name=cluster_host,
+            host=cluster_host,
             port=8006,
-            user='${CLUSTER_USER}',
-            password='${CLUSTER_PASS}',
-            verify_ssl=${VERIFY_SSL_BOOL},
+            user=cluster_user,
+            password=cluster_pass,
+            verify_ssl=verify_ssl,
             is_default=True,
             is_active=True,
             allow_vm_deployment=True,
@@ -250,7 +265,11 @@ with app.app_context():
         print("✓ Cluster already exists in database")
 EOF
 
-echo -e "${GREEN}✓ Initial cluster configured${NC}"
+    echo -e "${GREEN}✓ Initial cluster configured${NC}"
+else
+    echo -e "${YELLOW}⚠ Skipping initial cluster setup${NC}"
+    echo -e "${BLUE}  Configure your first cluster in the web UI at /setup${NC}"
+fi
 echo ""
 
 # Create systemd service
@@ -336,7 +355,4 @@ echo -e "  1. Visit http://${IP_ADDR}:8080/setup to configure your first cluster
 echo -e "  2. Configure storage pools (default, template, ISO) for optimal performance"
 echo -e "  3. Create teacher/student accounts via /admin/users"
 echo -e "  4. Create classes and deploy VMs"
-echo ""
-echo -e "${BLUE}Update:${NC}"
-echo -e "  Run:      ${YELLOW}bash ${APP_DIR}/update.sh${NC}"
 echo ""
