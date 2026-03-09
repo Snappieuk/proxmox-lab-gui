@@ -29,18 +29,18 @@ jobs:
           
       - name: Pull latest changes
         run: |
-          cd "${APP_DIR}"
-          git fetch --all --prune
-          git reset --hard origin/main
+          sudo git config --global --add safe.directory "${APP_DIR}" || true
+          sudo git -C "${APP_DIR}" fetch --all --prune
+          sudo git -C "${APP_DIR}" reset --hard origin/main
           
       - name: Install dependencies
         run: |
-          "${APP_DIR}/venv/bin/pip" install -r "${APP_DIR}/requirements.txt"
+          sudo "${APP_DIR}/venv/bin/pip" install -r "${APP_DIR}/requirements.txt"
 
       - name: Run migrations
         run: |
           cd "${APP_DIR}"
-          "${APP_DIR}/venv/bin/python3" migrate_db.py
+          sudo "${APP_DIR}/venv/bin/python3" migrate_db.py
           
       - name: Start app
         run: |
@@ -56,7 +56,7 @@ jobs:
       - name: Verify app is running
         run: |
           if systemctl list-unit-files | grep -q "^${SERVICE_NAME}.service"; then
-            if systemctl is-active --quiet "${SERVICE_NAME}"; then
+            if sudo systemctl is-active --quiet "${SERVICE_NAME}"; then
               echo "✓ ${SERVICE_NAME} service is running"
               exit 0
             else
