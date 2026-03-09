@@ -193,83 +193,9 @@ PYEOF
 
 echo -e "${GREEN}✓ Database initialized${NC}"
 
-# Prompt for initial cluster configuration
+# Initial cluster setup is done in web UI after service starts
 echo ""
-echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo -e "${BLUE}Initial Cluster Configuration${NC}"
-echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo ""
-echo -e "${BLUE}You can configure your first Proxmox cluster now, or skip and do it in the web UI.${NC}"
-echo -e "${YELLOW}(Press Enter on host to skip and configure later at /setup)${NC}"
-echo ""
-
-read -p "Enter Proxmox host IP or hostname: " CLUSTER_HOST
-if [ -n "${CLUSTER_HOST}" ]; then
-    read -p "Enter Proxmox admin user (default: root@pam): " CLUSTER_USER
-    CLUSTER_USER=${CLUSTER_USER:-root@pam}
-    read -sp "Enter Proxmox password: " CLUSTER_PASS
-    echo ""
-    read -p "Verify SSL certificates? (y/N): " VERIFY_SSL
-    VERIFY_SSL=${VERIFY_SSL:-N}
-
-    if [[ $VERIFY_SSL =~ ^[Yy]$ ]]; then
-        VERIFY_SSL_BOOL="1"
-    else
-        VERIFY_SSL_BOOL="0"
-    fi
-
-    # Create initial cluster in database
-    echo -e "${BLUE}→ Adding cluster to database...${NC}"
-    CLUSTER_HOST_ENV="${CLUSTER_HOST}" \
-    CLUSTER_USER_ENV="${CLUSTER_USER}" \
-    CLUSTER_PASS_ENV="${CLUSTER_PASS}" \
-    APP_DIR_ENV="${APP_DIR}" \
-    VERIFY_SSL_ENV="${VERIFY_SSL_BOOL}" \
-    python3 <<'EOF'
-import os
-import sys
-
-sys.path.insert(0, os.environ.get("APP_DIR_ENV", "/opt/proxmox-lab-gui"))
-
-from app import create_app
-from app.models import Cluster, db
-
-app = create_app()
-with app.app_context():
-    existing = Cluster.query.first()
-    if not existing:
-        cluster_host = os.environ.get("CLUSTER_HOST_ENV", "").strip()
-        cluster_user = os.environ.get("CLUSTER_USER_ENV", "root@pam").strip() or "root@pam"
-        cluster_pass = os.environ.get("CLUSTER_PASS_ENV", "")
-        verify_ssl = os.environ.get("VERIFY_SSL_ENV", "0") == "1"
-
-        cluster = Cluster(
-            cluster_id='cluster1',
-            name=cluster_host,
-            host=cluster_host,
-            port=8006,
-            user=cluster_user,
-            password=cluster_pass,
-            verify_ssl=verify_ssl,
-            is_default=True,
-            is_active=True,
-            allow_vm_deployment=True,
-            allow_template_sync=True,
-            allow_iso_sync=True,
-            priority=50
-        )
-        db.session.add(cluster)
-        db.session.commit()
-        print("✓ Cluster added to database")
-    else:
-        print("✓ Cluster already exists in database")
-EOF
-
-    echo -e "${GREEN}✓ Initial cluster configured${NC}"
-else
-    echo -e "${YELLOW}⚠ Skipping initial cluster setup${NC}"
-    echo -e "${BLUE}  Configure your first cluster in the web UI at /setup${NC}"
-fi
+echo -e "${BLUE}→ Initial cluster configuration will be done in web UI (/setup) after install${NC}"
 echo ""
 
 # Create systemd service
