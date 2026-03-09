@@ -149,7 +149,7 @@ if [ ! -f "${APP_DIR}/.env" ]; then
         # Replace placeholder with actual random key
         sed -i "s/change-me-to-random-string-in-production/${SECRET_KEY}/" "${APP_DIR}/.env"
         echo -e "${GREEN}✓ .env file created with random secret key${NC}"
-    else:
+    else
         # Create minimal .env
         cat > "${APP_DIR}/.env" <<EOF
 # Flask Configuration

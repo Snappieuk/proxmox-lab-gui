@@ -60,7 +60,7 @@ _proxmox_lock = threading.Lock()
 _proxmox_connections: Dict[str, Any] = {}
 
 
-def create_proxmox_connection(cluster: Dict[str, Any], timeout: int = 30) -> ProxmoxAPI:
+def create_proxmox_connection(cluster: Dict[str, Any], timeout: int = 120) -> ProxmoxAPI:
     """
     Create a Proxmox API connection with standardized settings.
     
@@ -69,10 +69,16 @@ def create_proxmox_connection(cluster: Dict[str, Any], timeout: int = 30) -> Pro
     
     Args:
         cluster: Cluster configuration dict with keys: host, user, password, verify_ssl, port
-        timeout: Request timeout in seconds (default 30)
+        timeout: Request timeout in seconds (default 120 - allows VM power operations to complete)
     
     Returns:
         ProxmoxAPI connection instance with connection pooling enabled
+    
+    IMPORTANT: Timeout must be long enough for VM start/stop operations (can take 60-120s).
+               Short timeouts create "orphaned requests" that overwhelm pveproxy:
+               - Python client abandons the request after timeout
+               - pveproxy keeps processing the abandoned request
+               - Multiple orphaned requests accumulate and cause pveproxy failures
     """
     try:
         connection = ProxmoxAPI(
